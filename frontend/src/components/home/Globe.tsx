@@ -499,12 +499,39 @@ export function Globe({ onPickProgram }: GlobeProps) {
       v.zoom += (t.zoom - v.zoom) * 0.08;
 
       draw();
-      frame = requestAnimationFrame(tick);
+      frame = running ? requestAnimationFrame(tick) : 0;
     };
 
+    // The globe only turns while it can be seen: off screen or in a hidden tab
+    // it would redraw the whole world sixty times a second for nobody.
+    let onScreen = false;
+    let running = false;
+    const sync = () => {
+      const next = onScreen && !document.hidden;
+      if (next === running) return;
+      running = next;
+      if (running) {
+        last = performance.now();
+        if (!frame) frame = requestAnimationFrame(tick);
+      } else {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      }
+    };
+    const seen = new IntersectionObserver((entries) => {
+      onScreen = entries.some((e) => e.isIntersecting);
+      sync();
+    });
+    seen.observe(canvas);
+    document.addEventListener("visibilitychange", sync);
+
     resize();
-    frame = requestAnimationFrame(tick);
-    const observer = new ResizeObserver(resize);
+    draw();
+    // Resizing clears the canvas, so draw straight away even while the loop is paused.
+    const observer = new ResizeObserver(() => {
+      resize();
+      draw();
+    });
     observer.observe(canvas);
 
     // --- dragging -------------------------------------------------------
@@ -596,6 +623,8 @@ export function Globe({ onPickProgram }: GlobeProps) {
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      seen.disconnect();
+      document.removeEventListener("visibilitychange", sync);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);

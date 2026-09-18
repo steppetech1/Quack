@@ -30,7 +30,7 @@ import {
   signalArc,
 } from "./journeyArt";
 import styles from "./journey.module.css";
-import { PixelSprite } from "./PixelSprite";
+import { PixelImage, usePoolImage } from "./PixelImage";
 import { useStepScroll } from "./useStepScroll";
 
 const STEPS = copy.journey.steps;
@@ -50,6 +50,22 @@ const ZOOM = [1, 0.86, 0.64, 0.78];
 const LIFT = [36, 34, 80, 52];
 /** Half the width of each step's main figure, in world pixels: the boat, then each island. The text stands just outside it. */
 const HALF = [70, 125, 184, 184];
+/** How far each step's main figure reaches above and below the middle of the
+    screen, per unit of zoom. Not the same both ways: the figure is centred by
+    its height, but an island's bank and front shore hang lower than its top. */
+const REACH_UP = [34, 92, 132, 152];
+const REACH_DOWN = [38, 118, 192, 170];
+
+/**
+ * Narrow or portrait screens (phones, tablets held upright) have no room beside
+ * the figure, so the text goes above and below it instead. Must match the
+ * media query of the same name in journey.module.css.
+ */
+const STACKED_QUERY = "(max-width: 760px), (max-aspect-ratio: 5/6)";
+/** Side layout: the room each text block needs beside the figure, in screen pixels. */
+const SIDE_ROOM = 330;
+/** Stacked layout: the height kept above and below the figure for the heading, a text block and the step marks. */
+const STACK_ROOM = 210;
 
 /* Heights above the sea plane, in world pixels. */
 const WATER_Z = -10;
@@ -89,8 +105,6 @@ const LOOK: Pt[] = [
 const THREAD_AHEAD = 340;
 const THREAD_BEHIND = 360;
 const SWAY = 5;
-/** Bounds of the thread's drawing surface on the plane. */
-const THREAD_BOX = { x: -400, y: -400, w: 2400, h: 2000 };
 
 const ISLE_1_SIZE = { w: 60, h: 40 };
 const ISLE_2_SIZE = { w: 92, h: 60 };
@@ -137,29 +151,59 @@ function routeAt(d: number): Pt {
   return d <= LEG_M[0].total ? pointAt(LEG_M[0], d) : pointAt(LEG_M[1], d - LEG_M[0].total);
 }
 
+/** The route sampled every ROUTE_STEP world pixels, with its unit normal at each sample, so the thread never searches for a point. */
+const ROUTE_STEP = 2;
+const ROUTE_N = Math.ceil(ROUTE / ROUTE_STEP) + 1;
+const RX = new Float32Array(ROUTE_N);
+const RY = new Float32Array(ROUTE_N);
+const NX = new Float32Array(ROUTE_N);
+const NY = new Float32Array(ROUTE_N);
+for (let i = 0; i < ROUTE_N; i++) {
+  const d = Math.min(ROUTE, i * ROUTE_STEP);
+  const p = routeAt(d);
+  const q = routeAt(Math.min(ROUTE, d + 1));
+  const r = routeAt(Math.max(0, d - 1));
+  const tl = Math.hypot(q.x - r.x, q.y - r.y) || 1;
+  RX[i] = p.x;
+  RY[i] = p.y;
+  NX[i] = -(q.y - r.y) / tl;
+  NY[i] = (q.x - r.x) / tl;
+}
+
 /** How far along the route the boat is at scroll position `pos`. */
 function boatDistance(pos: number) {
   if (pos < 1) return LEG_M[0].total * clamp01(pos);
   return LEG_M[0].total + LEG_M[1].total * clamp01(pos - 1);
 }
 
+/** Bounds of the last thread drawn, in world pixels, so its SVG can be sized to fit it. */
+type Box = { x0: number; y0: number; x1: number; y1: number };
+
 /** The thread from distance `a` to `b` as a path swaying about the route; it is held still at the duck's end. */
-function threadPath(a: number, b: number, anchor: number, time: number) {
+function threadPath(a: number, b: number, anchor: number, time: number, box: Box) {
   if (b - a < 2) return "";
   let d = "";
   for (let s = a; ; s = Math.min(b, s + 6)) {
-    const p = routeAt(s);
-    const q = routeAt(Math.min(ROUTE, s + 1));
-    const r = routeAt(Math.max(0, s - 1));
-    const tx = q.x - r.x;
-    const ty = q.y - r.y;
-    const tl = Math.hypot(tx, ty) || 1;
+    const i = Math.min(ROUTE_N - 1, Math.round(s / ROUTE_STEP));
     const hold = clamp01(Math.abs(s - anchor) / 90);
     const off = SWAY * hold * (Math.sin(time * 1.3 + s * 0.028) + 0.4 * Math.sin(time * 2.1 - s * 0.05));
-    d += `${d ? "L" : "M"}${(p.x - (ty / tl) * off).toFixed(1)} ${(p.y + (tx / tl) * off).toFixed(1)}`;
+    const x = RX[i] + NX[i] * off;
+    const y = RY[i] + NY[i] * off;
+    if (x < box.x0) box.x0 = x;
+    if (y < box.y0) box.y0 = y;
+    if (x > box.x1) box.x1 = x;
+    if (y > box.y1) box.y1 = y;
+    d += `${d ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
     if (s >= b) break;
   }
   return d;
+}
+
+let stackedList: MediaQueryList | null = null;
+/** The stacked-layout media query, created once. */
+function stackedQuery() {
+  stackedList ??= window.matchMedia(STACKED_QUERY);
+  return stackedList;
 }
 
 /** Copy with its *starred* words picked out in the accent colour. */
@@ -191,7 +235,7 @@ function Stand({ map, x, y, unit = U, children }: { map: string[]; x: number; y:
   const h = map.length * unit;
   return (
     <div className={styles.stand} style={place(x, y, w, h)}>
-      <PixelSprite map={map} palette={JOURNEY_PALETTE} unit={unit} />
+      <PixelImage map={map} palette={JOURNEY_PALETTE} unit={unit} />
       {children}
     </div>
   );
@@ -200,10 +244,13 @@ function Stand({ map, x, y, unit = U, children }: { map: string[]; x: number; y:
 /** A patch of sea: a soft pool of water that fades out on every side, with a few glints. */
 function Water({ c, w, h, seed }: { c: Pt; w: number; h: number; seed: number }) {
   const glints = useMemo(() => [glintMap(w / U, h / U, seed), glintMap(w / U, h / U, seed + 1)], [w, h, seed]);
+  const pool = usePoolImage();
   return (
     <div className={styles.water} style={{ left: c.x - w / 2, top: c.y - h / 2, width: w, height: h, transform: `translateZ(${WATER_Z}px)` }}>
-      <PixelSprite map={glints[0]} palette={JOURNEY_PALETTE} unit={U} className={styles.glintA} />
-      <PixelSprite map={glints[1]} palette={JOURNEY_PALETTE} unit={U} className={styles.glintB} />
+      {/* eslint-disable-next-line @next/next/no-img-element -- a generated data URL */}
+      {pool && <img className={styles.pool} src={pool} alt="" draggable={false} />}
+      <PixelImage map={glints[0]} palette={JOURNEY_PALETTE} unit={U} className={styles.glintA} />
+      <PixelImage map={glints[1]} palette={JOURNEY_PALETTE} unit={U} className={styles.glintB} />
     </div>
   );
 }
@@ -223,11 +270,11 @@ function IslandBody({ w, h, grass, seed }: { w: number; h: number; grass: number
     <>
       {Array.from({ length: SLICES }, (_, i) => SLICES - i).map((k) => (
         <div key={k} className={styles.flat} style={{ ...box, transform: `translateZ(${-k * SLICE_Z}px)` }}>
-          <PixelSprite map={k > 2 ? maps.foot : maps.bank} palette={JOURNEY_PALETTE} unit={U} />
+          <PixelImage map={k > 2 ? maps.foot : maps.bank} palette={JOURNEY_PALETTE} unit={U} />
         </div>
       ))}
       <div className={styles.flat} style={box}>
-        <PixelSprite map={maps.top} palette={JOURNEY_PALETTE} unit={U} />
+        <PixelImage map={maps.top} palette={JOURNEY_PALETTE} unit={U} />
       </div>
     </>
   );
@@ -252,7 +299,7 @@ function Laptop() {
     <>
       <span className={styles.screenGlow} />
       <div className={styles.laptop}>
-        <PixelSprite map={LAPTOP} palette={JOURNEY_PALETTE} unit={U} />
+        <PixelImage map={LAPTOP} palette={JOURNEY_PALETTE} unit={U} />
       </div>
     </>
   );
@@ -310,6 +357,7 @@ export function JourneySection() {
   const aheadRef = useRef<SVGPathElement>(null);
   const behindRef = useRef<SVGPathElement>(null);
   const gradRef = useRef<SVGLinearGradientElement>(null);
+  const threadRef = useRef<SVGSVGElement>(null);
   const posRef = useRef(0);
   const t = copy.journey;
 
@@ -317,8 +365,20 @@ export function JourneySection() {
   const drawThread = useCallback((time: number) => {
     const here = boatDistance(posRef.current);
     const end = Math.min(ROUTE, here + THREAD_AHEAD);
-    aheadRef.current?.setAttribute("d", threadPath(here, end, here, time));
-    behindRef.current?.setAttribute("d", threadPath(Math.max(0, here - THREAD_BEHIND), here, here, time));
+    const box: Box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    aheadRef.current?.setAttribute("d", threadPath(here, end, here, time, box));
+    behindRef.current?.setAttribute("d", threadPath(Math.max(0, here - THREAD_BEHIND), here, here, time, box));
+    // Keep the drawing surface just big enough for the thread: it is redrawn every
+    // frame, and a surface the size of the whole sea would be re-rasterised with it.
+    const svg = threadRef.current;
+    if (svg && box.x1 >= box.x0) {
+      const x = Math.floor(box.x0 - 4);
+      const y = Math.floor(box.y0 - 4);
+      const w = Math.ceil(box.x1 + 4) - x;
+      const h = Math.ceil(box.y1 + 4) - y;
+      svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+      svg.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;transform:translateZ(${THREAD_Z}px)`;
+    }
     const grad = gradRef.current;
     if (grad) {
       const a = routeAt(here);
@@ -336,6 +396,7 @@ export function JourneySection() {
       const world = worldRef.current;
       const scene = sceneRef.current;
       if (!world || !scene) return;
+      const stacked = stackedQuery();
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
       // Boat: along the first leg, then the second; pulled up on shore in between.
@@ -358,11 +419,23 @@ export function JourneySection() {
       const fy = b.y + lerp(LOOK[k].y, LOOK[k + 1].y, e);
       const vw = scene.clientWidth;
       const vh = scene.clientHeight;
-      const base = Math.max(0.8, Math.min(2.6, Math.min(vw / 330, vh / 400)));
-      const zoom = base * lerp(ZOOM[k], ZOOM[k + 1], e);
+      // Stacked, the figure may take nearly the full width; side by side it shares it.
+      const base = Math.max(0.8, Math.min(3.4, Math.min(vw / (stacked.matches ? 250 : 330), vh / 400)));
+      const halfW = lerp(HALF[k], HALF[k + 1], e);
+      const up = lerp(REACH_UP[k], REACH_UP[k + 1], e);
+      const down = lerp(REACH_DOWN[k], REACH_DOWN[k + 1], e);
+      // The figure gives way to the text: beside it on wide screens, above and
+      // below it on narrow ones — whichever the screen is, both must fit.
+      const fit = stacked.matches
+        ? Math.min((vw - 24) / (2 * halfW), (vh / 2 - STACK_ROOM) / Math.max(up, down))
+        : (vw / 2 - SIDE_ROOM) / halfW;
+      const zoom = Math.max(0.4, Math.min(base * lerp(ZOOM[k], ZOOM[k + 1], e), fit));
       const s = zoom.toFixed(4);
       const cy = vh / 2 + lerp(LIFT[k], LIFT[k + 1], e) * zoom;
-      scene.parentElement?.style.setProperty("--half", `${(lerp(HALF[k], HALF[k + 1], e) * zoom).toFixed(0)}px`);
+      const stage = scene.parentElement;
+      stage?.style.setProperty("--half", `${(halfW * zoom).toFixed(0)}px`);
+      stage?.style.setProperty("--up", `${(up * zoom).toFixed(0)}px`);
+      stage?.style.setProperty("--down", `${(down * zoom).toFixed(0)}px`);
       world.style.transform = `translate(${(vw / 2).toFixed(1)}px, ${cy.toFixed(1)}px) scale3d(${s}, ${s}, ${s}) rotateX(${TILT}deg) translate(${(-fx).toFixed(1)}px, ${(-fy).toFixed(1)}px)`;
 
       // The duck steps ashore as the boat lands, and back in as it leaves.
@@ -393,13 +466,23 @@ export function JourneySection() {
 
   const { active, jumpTo } = useStepScroll(sectionRef, N, onFrame);
 
-  // Wind: keep the thread swaying while the section is on screen.
+  // Wind: keep the thread swaying while the section is on screen. Off screen,
+  // every idle animation in the scene is paused too (see .section[data-idle]).
   useEffect(() => {
     const section = sectionRef.current;
-    if (!section || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!section) return;
+    const idle = new IntersectionObserver((entries) => {
+      section.dataset.idle = String(!entries.some((en) => en.isIntersecting));
+    });
+    idle.observe(section);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return () => idle.disconnect();
     let frame = 0;
+    let lastDraw = 0;
     const loop = (now: number) => {
-      drawThread(now / 1000);
+      if (now - lastDraw > 30) {
+        lastDraw = now;
+        drawThread(now / 1000);
+      }
       frame = requestAnimationFrame(loop);
     };
     const observer = new IntersectionObserver((entries) => {
@@ -408,6 +491,7 @@ export function JourneySection() {
     });
     observer.observe(section);
     return () => {
+      idle.disconnect();
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
@@ -461,11 +545,7 @@ export function JourneySection() {
               <Water c={{ x: 0, y: 0 }} w={320} h={220} seed={3} />
             </div>
 
-            <svg
-              className={styles.thread}
-              style={{ left: THREAD_BOX.x, top: THREAD_BOX.y, width: THREAD_BOX.w, height: THREAD_BOX.h, transform: `translateZ(${THREAD_Z}px)` }}
-              viewBox={`${THREAD_BOX.x} ${THREAD_BOX.y} ${THREAD_BOX.w} ${THREAD_BOX.h}`}
-            >
+            <svg ref={threadRef} className={styles.thread}>
               <defs>
                 <linearGradient ref={gradRef} id="journey-thread" gradientUnits="userSpaceOnUse">
                   <stop offset="0" stopColor="#fff" stopOpacity="0.75" />
@@ -486,7 +566,7 @@ export function JourneySection() {
               <div className={styles.stand} style={place(58, 28, DUCK_W, DUCK_H)}>
                 <DuckFigure innerRef={scoutRef}>
                   <div className={styles.map}>
-                    <PixelSprite map={MAP} palette={JOURNEY_PALETTE} unit={U} />
+                    <PixelImage map={MAP} palette={JOURNEY_PALETTE} unit={U} />
                   </div>
                 </DuckFigure>
               </div>
@@ -516,7 +596,7 @@ export function JourneySection() {
                     <div className={styles.signal} style={{ left: mastW / 2, top: 0 }}>
                       {[5, 9, 13].map((r, i) => (
                         <div key={r} className={styles.arc} style={{ "--i": i, left: -r * U - U / 2, top: -r * U - U / 2 } as CSSProperties}>
-                          <PixelSprite map={signalArc(r)} palette={JOURNEY_PALETTE} unit={U} />
+                          <PixelImage map={signalArc(r)} palette={JOURNEY_PALETTE} unit={U} />
                         </div>
                       ))}
                     </div>
@@ -534,10 +614,10 @@ export function JourneySection() {
             <div ref={boatRef} className={styles.boat} style={{ width: bw }} data-moving="false">
               <div className={styles.bob}>
                 <DuckFigure innerRef={boatDuckRef} style={{ left: 28, top: -42 }} />
-                <PixelSprite map={BOAT} palette={JOURNEY_PALETTE} unit={BIG_U} />
+                <PixelImage map={BOAT} palette={JOURNEY_PALETTE} unit={BIG_U} />
                 <div className={styles.wake}>
                   {WAKE.map((frame, i) => (
-                    <PixelSprite key={i} map={frame} palette={JOURNEY_PALETTE} unit={BIG_U} className={i ? styles.glintB : styles.glintA} />
+                    <PixelImage key={i} map={frame} palette={JOURNEY_PALETTE} unit={BIG_U} className={i ? styles.glintB : styles.glintA} />
                   ))}
                 </div>
               </div>
@@ -550,7 +630,7 @@ export function JourneySection() {
           <div key={i} className={styles.fog} data-active={i === active} aria-hidden="true">
             {pair.map((ghost, j) => (
               <div key={j} className={styles.ghost} data-place={j ? "low" : "high"}>
-                <PixelSprite map={ghost.map} palette={FOG_PALETTE} unit={FOG_U} />
+                <PixelImage map={ghost.map} palette={FOG_PALETTE} unit={FOG_U} />
                 {ghost.lamp && (
                   <span
                     className={styles.lamp}
@@ -562,7 +642,7 @@ export function JourneySection() {
                 {Array.from({ length: ghost.gulls ?? 0 }, (_, g) => (
                   <span key={g} className={styles.gull} style={{ "--g": g } as CSSProperties}>
                     {GULL.map((frame, f) => (
-                      <PixelSprite key={f} map={frame} palette={FOG_PALETTE} unit={3} className={f ? styles.glintB : styles.glintA} />
+                      <PixelImage key={f} map={frame} palette={FOG_PALETTE} unit={3} className={f ? styles.glintB : styles.glintA} />
                     ))}
                   </span>
                 ))}

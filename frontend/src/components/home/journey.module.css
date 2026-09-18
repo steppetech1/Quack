@@ -2,16 +2,25 @@
    to the viewport while the scroll carries a duck from island to island. The
    sea is a 3D plane moved by script; everything here is layout and idle motion. */
 
+/* Off screen the section's idle animations (ducks bobbing, glints, gulls, the
+   lighthouse) stop until it comes back. */
 .section {
   position: relative;
   z-index: 1;
 }
 
+.section[data-idle="true"] * {
+  animation-play-state: paused !important;
+}
+
+/* The stage is a fixed-size box: nothing inside it can change the page's layout
+   or paint outside it. */
 .stage {
   position: sticky;
   top: 0;
   height: 100dvh;
   overflow: hidden;
+  contain: layout paint;
 }
 
 /* One line on every screen: the size follows the width. */
@@ -93,7 +102,7 @@
   position: absolute;
 }
 
-.flat > svg {
+.flat > img {
   display: block;
 }
 
@@ -109,18 +118,22 @@
   transform: rotateX(-90deg) scaleY(var(--stand-lift));
 }
 
-.stand > svg,
-.boat svg {
+.stand > img,
+.boat img {
   display: block;
 }
 
-/* Sea: a soft pool of water, no hard edge anywhere. */
-.water {
-  border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(62, 104, 120, 0.95), rgba(43, 71, 83, 0.85) 45%, rgba(43, 71, 83, 0.35) 75%, transparent);
+/* Sea: a soft pool of water, no hard edge anywhere. The pool is a small
+   generated gradient image stretched to size, which costs far less to draw in
+   the moving 3D scene than a gradient the size of the pool. */
+.pool {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
-.water > svg {
+.water > img:not(.pool) {
   position: absolute;
   inset: 0;
   -webkit-mask-image: radial-gradient(closest-side, #000 40%, transparent 80%);
@@ -174,7 +187,7 @@
   animation-duration: 1.2s;
 }
 
-.bob > svg {
+.bob > img {
   position: relative;
 }
 
@@ -203,7 +216,7 @@
   transition: opacity 0.4s ease;
 }
 
-.wake > svg {
+.wake > img {
   position: absolute;
   inset: 0;
 }
@@ -223,7 +236,7 @@
   animation: flutter 3.2s ease-in-out infinite;
 }
 
-.map > svg {
+.map > img {
   display: block;
 }
 
@@ -246,7 +259,7 @@
   height: 24px;
 }
 
-.laptop > svg {
+.laptop > img {
   display: block;
 }
 
@@ -305,7 +318,7 @@
   animation-delay: calc(var(--i) * 0.4s);
 }
 
-.arc > svg {
+.arc > img {
   display: block;
 }
 
@@ -332,13 +345,17 @@
   pointer-events: none;
 }
 
+/* Only opacity and position ever change on a ghost: the soft focus is a static
+   filter on its picture, so it is worked out once, not on every frame of the
+   drift. Hidden ghosts are not drawn at all. */
 .ghost {
   position: absolute;
   opacity: 0;
-  filter: blur(6px);
+  visibility: hidden;
+  animation: drift 7s ease-in-out infinite;
   transition:
     opacity 0.9s ease,
-    filter 0.9s ease;
+    visibility 0s linear 0.9s;
 }
 
 .ghost[data-place="high"] {
@@ -351,14 +368,14 @@
   left: max(40px, 17vw);
 }
 
-.ghost > svg:first-child {
+.ghost > img:first-child {
   display: block;
   -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
-  animation: drift 7s ease-in-out infinite;
+  filter: blur(1px);
 }
 
-.ghost[data-place="low"] > svg:first-child {
+.ghost[data-place="low"] {
   animation-delay: -3.5s;
 }
 
@@ -376,8 +393,10 @@
 
 .fog[data-active="true"] .ghost {
   opacity: 0.5;
-  filter: blur(1px);
-  transition-delay: 0.35s;
+  visibility: visible;
+  transition:
+    opacity 0.9s ease 0.35s,
+    visibility 0s linear 0s;
 }
 
 /* Lighthouse: a lamp that pulses and a beam sweeping out and back, as if turning. */
@@ -454,16 +473,16 @@
   animation: circle calc(9s + var(--g) * 2s) ease-in-out calc(var(--g) * -3s) infinite;
 }
 
-.gull > svg {
+.gull > img {
   display: block;
   position: absolute;
 }
 
-.gull > svg:first-child {
+.gull > img:first-child {
   animation-duration: 0.9s;
 }
 
-.gull > svg:last-child {
+.gull > img:last-child {
   animation-duration: 0.9s;
   animation-delay: -0.45s;
 }
@@ -506,7 +525,7 @@
 .text {
   position: absolute;
   --gap: 44px;
-  width: min(420px, calc(50% - var(--half, 150px) - var(--gap) - 24px));
+  width: min(420px, calc(50% - var(--half, 150px) - var(--gap) - 56px));
   margin: 0;
   color: rgba(255, 255, 255, 0.8);
   font-family: var(--font-text);
@@ -516,11 +535,13 @@
   text-wrap: pretty;
   text-shadow: 0 1px 12px rgba(20, 18, 17, 0.8);
   opacity: 0;
+  visibility: hidden;
   filter: blur(12px);
   transition:
     opacity 0.45s ease,
     filter 0.45s ease,
-    translate 0.45s ease;
+    translate 0.45s ease,
+    visibility 0s linear 0.45s;
 }
 
 /* The key phrase of each block: accent colour, heavier, so it reads first. */
@@ -550,16 +571,18 @@
 
 .copy[data-active="true"] .text {
   opacity: 1;
+  visibility: visible;
   filter: none;
   translate: 0 0;
   transition:
     opacity 0.7s ease 0.25s,
     filter 0.7s var(--ease-out) 0.25s,
-    translate 0.7s var(--ease-out) 0.25s;
+    translate 0.7s var(--ease-out) 0.25s,
+    visibility 0s linear 0s;
 }
 
 .copy[data-active="true"] .text[data-place="follow"] {
-  transition-delay: 0.55s;
+  transition-delay: 0.55s, 0.55s, 0.55s, 0s;
 }
 
 /* Step marks along the bottom: the only thing left there. */
@@ -599,35 +622,57 @@
   background-color: var(--accent);
 }
 
+/* Big screens: a little more room for the text. */
+@media (min-width: 1800px) {
+  .heading {
+    font-size: clamp(32px, 1.9vw, 44px);
+  }
+  .text {
+    width: min(560px, calc(50% - var(--half, 150px) - var(--gap) - 56px));
+    font-size: clamp(29px, 1.6vw, 38px);
+  }
+}
+
+/* Stacked: phones and tablets held upright. No room beside the figure, so the
+   text stands right above and right below it: --up and --down (how far the
+   figure reaches above and below the middle, from the scene) put it there. Must match
+   STACKED_QUERY in JourneySection.tsx. */
+@media (max-width: 760px), (max-aspect-ratio: 5/6) {
+  .text {
+    --gap: 18px;
+    width: min(620px, calc(100% - 32px));
+    font-size: clamp(17px, 2.9vw, 26px);
+  }
+  .text[data-place="lead"],
+  .text[data-place="follow"] {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .text[data-place="lead"] {
+    top: auto;
+    bottom: calc(50% + var(--up, 120px) + var(--gap));
+    text-align: left;
+    translate: 0 -16px;
+  }
+  .text[data-place="follow"] {
+    top: calc(50% + var(--down, 140px) + var(--gap));
+    bottom: auto;
+    text-align: right;
+    translate: 0 16px;
+  }
+  /* The corners hold text here, so the fog has nowhere to go. */
+  .fog {
+    display: none;
+  }
+}
+
 @media (max-width: 760px) {
   .heading {
     top: 84px;
   }
-  .text {
-    width: auto;
-    font-size: 18px;
-  }
-  .text[data-place="lead"] {
-    top: 150px;
-    right: 16px;
-    left: 16px;
-    text-align: left;
-    transform: none;
-  }
-  .text[data-place="follow"] {
-    top: auto;
-    right: 16px;
-    bottom: 84px;
-    left: 16px;
-    text-align: right;
-    transform: none;
-  }
   .nav {
     bottom: 28px;
-  }
-  /* No free corners on a phone: the text takes the full width. */
-  .fog {
-    display: none;
   }
 }
 
@@ -636,7 +681,7 @@
   .glintB,
   .bob,
   .map,
-  .ghost > svg,
+  .ghost,
   .gull,
   .beam,
   .lamp::before,
