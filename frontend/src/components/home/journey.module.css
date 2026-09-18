@@ -1,0 +1,411 @@
+/* "Quack! персонализация, которая работает": a tall section whose stage sticks
+   to the viewport while the scroll carries a duck from island to island. The
+   sea is a 3D plane moved by script; everything here is layout and idle motion. */
+
+.section {
+  position: relative;
+  z-index: 1;
+}
+
+.stage {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* One line on every screen: the size follows the width. */
+.heading {
+  position: absolute;
+  top: 112px;
+  left: 50%;
+  z-index: 3;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: clamp(14px, 3.8vw, 32px);
+  font-weight: 400;
+  line-height: 1.2;
+  white-space: nowrap;
+  translate: -50% 0;
+}
+
+/* A vignette round the middle of the screen, where the main figure of each
+   step stands: whatever the camera has moved away from fades out, and so does
+   anything that would reach under the heading or the text. */
+.scene {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  perspective: 2600px;
+  -webkit-mask-image: radial-gradient(ellipse 46% 40% at 50% 50%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(ellipse 46% 40% at 50% 50%, #000 55%, transparent 100%);
+}
+
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* Every container in the world keeps its children in 3D. */
+.world,
+.world .group,
+.world .turner,
+.world .before,
+.world .after,
+.world .follower {
+  transform-style: preserve-3d;
+}
+
+.group,
+.turner,
+.before,
+.after,
+.follower {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+}
+
+.turner,
+.follower {
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.turner[data-after="true"] .before,
+.turner[data-after="false"] .after {
+  display: none;
+}
+
+/* Lying flat on the plane. */
+.flat,
+.water,
+.thread {
+  position: absolute;
+}
+
+.flat > svg {
+  display: block;
+}
+
+/* Standing upright on the plane, about their own bottom edge, like real
+   objects: when an island turns, its figures turn with it. */
+.stand,
+.boat {
+  position: absolute;
+  transform-origin: 50% 100%;
+}
+
+.stand {
+  transform: rotateX(-90deg) scaleY(var(--stand-lift));
+}
+
+.stand > svg,
+.boat svg {
+  display: block;
+}
+
+/* Sea: a soft pool of water, no hard edge anywhere. */
+.water {
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(62, 104, 120, 0.95), rgba(43, 71, 83, 0.85) 45%, rgba(43, 71, 83, 0.35) 75%, transparent);
+}
+
+.water > svg {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: radial-gradient(closest-side, #000 40%, transparent 80%);
+  mask-image: radial-gradient(closest-side, #000 40%, transparent 80%);
+}
+
+/* Two frames of glints swap places, so the water shimmers without moving. */
+.glintA {
+  animation: glint 1.6s steps(1, end) infinite;
+}
+
+.glintB {
+  animation: glint 1.6s steps(1, end) -0.8s infinite;
+}
+
+@keyframes glint {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* The route: a thin vector thread, redrawn every frame as it sways. */
+.thread {
+  overflow: visible;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.threadBehind {
+  stroke: rgba(255, 255, 255, 0.14);
+}
+
+/* Boat: the duck sits behind the hull, so only its top half shows. */
+.boat {
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.bob {
+  position: relative;
+  animation: bob 2.4s ease-in-out infinite;
+}
+
+.boat[data-moving="true"] .bob {
+  animation-duration: 1.2s;
+}
+
+.bob > svg {
+  position: relative;
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(-1.5deg);
+  }
+}
+
+.duck {
+  position: absolute;
+  width: 64px;
+}
+
+.wake {
+  position: absolute;
+  top: 14px;
+  left: -42px;
+  width: 40px;
+  height: 10px;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.wake > svg {
+  position: absolute;
+  inset: 0;
+}
+
+.boat[data-moving="true"] .wake {
+  opacity: 1;
+}
+
+/* Duck on the first island studying an open map, which stirs a little in the breeze. */
+.map {
+  position: absolute;
+  top: 22px;
+  left: 30px;
+  width: 48px;
+  height: 28px;
+  transform-origin: 0 100%;
+  animation: flutter 3.2s ease-in-out infinite;
+}
+
+.map > svg {
+  display: block;
+}
+
+@keyframes flutter {
+  0%,
+  100% {
+    rotate: 0deg;
+  }
+  50% {
+    rotate: -4deg;
+  }
+}
+
+/* Duck at work: the laptop's lid faces us, its screen lights the duck's face. */
+.laptop {
+  position: absolute;
+  top: 30px;
+  left: 34px;
+  width: 36px;
+  height: 24px;
+}
+
+.laptop > svg {
+  display: block;
+}
+
+.screenGlow {
+  position: absolute;
+  top: 10px;
+  left: 40px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #8fd3ff;
+  opacity: 0.3;
+  filter: blur(6px);
+  animation: screen 2.2s ease-in-out infinite;
+}
+
+@keyframes screen {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 0.45;
+  }
+  70% {
+    opacity: 0.22;
+  }
+}
+
+/* Radio mast: a blinking light and rings going out, one after another. */
+.mastLight {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  animation: blink 1.2s steps(1, end) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.signal {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.arc {
+  position: absolute;
+  opacity: 0;
+  animation: signal 2.4s ease-out infinite;
+  animation-delay: calc(var(--i) * 0.4s);
+}
+
+.arc > svg {
+  display: block;
+}
+
+@keyframes signal {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.9;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Text along the bottom: one paragraph per step, swapped through a blur, with
+   the step marks under it. */
+.copy {
+  position: absolute;
+  bottom: 56px;
+  left: 50%;
+  z-index: 3;
+  width: min(1280px, calc(100% - 32px));
+  translate: -50% 0;
+}
+
+.texts {
+  display: grid;
+}
+
+.text {
+  grid-area: 1 / 1;
+  align-self: end;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.86);
+  font-family: var(--font-text);
+  font-size: 27px;
+  line-height: 1.4;
+  text-align: center;
+  text-wrap: balance;
+  opacity: 0;
+  filter: blur(12px);
+  transition:
+    opacity 0.55s ease,
+    filter 0.55s var(--ease-out);
+}
+
+.text[data-active="true"] {
+  opacity: 1;
+  filter: none;
+}
+
+.pips {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pip {
+  display: block;
+  width: 28px;
+  height: 20px;
+  padding: 8px 0;
+  border: 0;
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: content-box;
+  cursor: pointer;
+  transition:
+    width 0.35s var(--ease),
+    background-color 0.35s ease;
+}
+
+.pip[data-active="true"] {
+  width: 44px;
+  background-color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .heading {
+    top: 84px;
+  }
+  .copy {
+    bottom: 28px;
+  }
+  .text {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glintA,
+  .glintB,
+  .bob,
+  .map,
+  .screenGlow,
+  .mastLight,
+  .arc {
+    animation: none;
+  }
+  .text {
+    transition: none;
+  }
+}

@@ -2,10 +2,11 @@ import { copy } from "@/components/home/copy";
 import { Closing } from "@/components/home/Closing";
 import { CursorAura } from "@/components/home/CursorAura";
 import { HeroLandscape } from "@/components/home/HeroLandscape";
+import { GlobeSection } from "@/components/home/GlobeSection";
 import { HeroTitle } from "@/components/home/HeroTitle";
 import { LayerStack } from "@/components/home/LayerStack";
 import { PageSky } from "@/components/home/PageSky";
-import { QuackSection } from "@/components/home/QuackSection";
+import { JourneySection } from "@/components/home/JourneySection";
 import { Roadmap } from "@/components/home/Roadmap";
 import { SiteFooter } from "@/components/home/SiteFooter";
 import { SiteHeader } from "@/components/home/SiteHeader";
@@ -48,7 +49,9 @@ export default function HomePage() {
           </span>
         </main>
 
-        <QuackSection />
+        <JourneySection />
+
+        <GlobeSection />
 
         <LayerStack />
 

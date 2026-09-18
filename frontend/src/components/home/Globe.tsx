@@ -625,7 +625,7 @@ export function Globe({ onPickProgram }: GlobeProps) {
                 </p>
                 <p className={styles.cardWhere}>
                   €{selected.program.costEur.toLocaleString("ru-RU")}
-                  {copy.quack.uni.perYear} · {t.deadline} {selected.program.deadline}
+                  {t.perYear} · {t.deadline} {selected.program.deadline}
                 </p>
               </>
             ) : (

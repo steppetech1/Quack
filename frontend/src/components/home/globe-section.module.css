@@ -1,0 +1,14 @@
+/* The globe block under the journey: the globe on the centre line, a lane of
+   ducks down each side. The lanes are absolutely placed and take no width. */
+
+.section {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  padding: 96px 16px;
+}
+
+.globeWrap {
+  width: min(600px, 100%);
+}
