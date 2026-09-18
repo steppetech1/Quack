@@ -20,6 +20,8 @@ from app.api.chat import router as chat_router
 from app.api.deps import get_current_student
 from app.api.health import router as health_router
 from app.api.knowledge import router as knowledge_router
+from app.api.matching import router as matching_router
+from app.api.overview import router as overview_router
 from app.api.prep import router as prep_router
 from app.api.profile import router as profile_router
 from app.api.programs import router as programs_router
@@ -177,4 +179,6 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(sets_router)
     app.include_router(knowledge_router)
+    app.include_router(matching_router)
+    app.include_router(overview_router)
     return app
