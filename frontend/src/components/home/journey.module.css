@@ -37,8 +37,12 @@
   inset: 0;
   pointer-events: none;
   perspective: 2600px;
-  -webkit-mask-image: radial-gradient(ellipse 46% 40% at 50% 50%, #000 55%, transparent 100%);
-  mask-image: radial-gradient(ellipse 46% 40% at 50% 50%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 60% 54% at 50% 50%, #000 64%, transparent 100%);
+  mask-image: radial-gradient(ellipse 60% 54% at 50% 50%, #000 64%, transparent 100%);
+}
+
+.bang {
+  color: var(--accent);
 }
 
 .world {
@@ -318,48 +322,260 @@
   }
 }
 
-/* Text along the bottom: one paragraph per step, swapped through a blur, with
-   the step marks under it. */
-.copy {
+/* Silhouettes in the fog, upper right and lower left of the main figure: faint,
+   soft, sinking into a haze at the waterline, and drifting slowly. They come
+   and go with the step, a little slower than the text. */
+.fog {
   position: absolute;
-  bottom: 56px;
-  left: 50%;
-  z-index: 3;
-  width: min(1280px, calc(100% - 32px));
-  translate: -50% 0;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
 }
 
-.texts {
-  display: grid;
+.ghost {
+  position: absolute;
+  opacity: 0;
+  filter: blur(6px);
+  transition:
+    opacity 0.9s ease,
+    filter 0.9s ease;
+}
+
+.ghost[data-place="high"] {
+  top: 25%;
+  right: max(40px, 17vw);
+}
+
+.ghost[data-place="low"] {
+  bottom: 19%;
+  left: max(40px, 17vw);
+}
+
+.ghost > svg:first-child {
+  display: block;
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  animation: drift 7s ease-in-out infinite;
+}
+
+.ghost[data-place="low"] > svg:first-child {
+  animation-delay: -3.5s;
+}
+
+/* The haze they stand in. */
+.ghost::after {
+  position: absolute;
+  right: -30%;
+  bottom: -18px;
+  left: -30%;
+  height: 40px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(150, 175, 185, 0.22), transparent);
+  content: "";
+}
+
+.fog[data-active="true"] .ghost {
+  opacity: 0.5;
+  filter: blur(1px);
+  transition-delay: 0.35s;
+}
+
+/* Lighthouse: a lamp that pulses and a beam sweeping out and back, as if turning. */
+.lamp {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.lamp::before {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffd98a;
+  box-shadow: 0 0 14px 4px rgba(255, 200, 110, 0.7);
+  animation: lamp 4s ease-in-out infinite;
+  content: "";
+}
+
+.beam {
+  position: absolute;
+  top: -14px;
+  left: 0;
+  width: 220px;
+  height: 28px;
+  background: linear-gradient(to right, rgba(255, 220, 150, 0.55), transparent);
+  clip-path: polygon(0 45%, 100% 0, 100% 100%, 0 55%);
+  transform-origin: 0 50%;
+  animation: sweep 4s ease-in-out infinite;
+}
+
+@keyframes lamp {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  25%,
+  75% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes sweep {
+  0% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  25% {
+    transform: scaleX(0.05);
+    opacity: 0.2;
+  }
+  50% {
+    transform: scaleX(-1);
+    opacity: 1;
+  }
+  75% {
+    transform: scaleX(0.05);
+    opacity: 0.2;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+/* Gulls circling slowly over a silhouette, each on its own beat. */
+.gull {
+  position: absolute;
+  top: -34px;
+  left: calc(30% + var(--g) * 22%);
+  animation: circle calc(9s + var(--g) * 2s) ease-in-out calc(var(--g) * -3s) infinite;
+}
+
+.gull > svg {
+  display: block;
+  position: absolute;
+}
+
+.gull > svg:first-child {
+  animation-duration: 0.9s;
+}
+
+.gull > svg:last-child {
+  animation-duration: 0.9s;
+  animation-delay: -0.45s;
+}
+
+@keyframes circle {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  25% {
+    translate: 26px -10px;
+  }
+  50% {
+    translate: 48px 2px;
+  }
+  75% {
+    translate: 20px 8px;
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+/* Text in two blocks: one above and left of the main figure, one to its right
+   and below. On a new step they blur in one after the other. */
+.copy {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
 }
 
 .text {
-  grid-area: 1 / 1;
-  align-self: end;
+  position: absolute;
+  --gap: 44px;
+  width: min(420px, calc(50% - var(--half, 150px) - var(--gap) - 24px));
   margin: 0;
-  color: rgba(255, 255, 255, 0.86);
+  color: rgba(255, 255, 255, 0.8);
   font-family: var(--font-text);
-  font-size: 27px;
-  line-height: 1.4;
-  text-align: center;
-  text-wrap: balance;
+  font-size: clamp(18px, 1.9vw, 29px);
+  font-weight: 500;
+  line-height: 1.32;
+  text-wrap: pretty;
+  text-shadow: 0 1px 12px rgba(20, 18, 17, 0.8);
   opacity: 0;
   filter: blur(12px);
   transition:
-    opacity 0.55s ease,
-    filter 0.55s var(--ease-out);
+    opacity 0.45s ease,
+    filter 0.45s ease,
+    translate 0.45s ease;
 }
 
-.text[data-active="true"] {
+/* The key phrase of each block: accent colour, heavier, so it reads first. */
+.accent {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* The blocks stand either side of the main figure, level with its middle:
+   the left one a little above, the right one a little below. --half is half
+   the figure's width on screen, kept up to date by the scene. */
+.text[data-place="lead"] {
+  top: 40%;
+  right: calc(50% + var(--half, 150px) + var(--gap));
+  text-align: right;
+  transform: translateY(-50%);
+  translate: -24px 0;
+}
+
+.text[data-place="follow"] {
+  top: 63%;
+  left: calc(50% + var(--half, 150px) + var(--gap));
+  transform: translateY(-50%);
+  translate: 24px 0;
+}
+
+.copy[data-active="true"] .text {
   opacity: 1;
   filter: none;
+  translate: 0 0;
+  transition:
+    opacity 0.7s ease 0.25s,
+    filter 0.7s var(--ease-out) 0.25s,
+    translate 0.7s var(--ease-out) 0.25s;
+}
+
+.copy[data-active="true"] .text[data-place="follow"] {
+  transition-delay: 0.55s;
+}
+
+/* Step marks along the bottom: the only thing left there. */
+.nav {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  z-index: 3;
+  translate: -50% 0;
 }
 
 .pips {
   display: flex;
   justify-content: center;
   gap: 6px;
-  margin: 18px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -387,11 +603,31 @@
   .heading {
     top: 84px;
   }
-  .copy {
+  .text {
+    width: auto;
+    font-size: 18px;
+  }
+  .text[data-place="lead"] {
+    top: 150px;
+    right: 16px;
+    left: 16px;
+    text-align: left;
+    transform: none;
+  }
+  .text[data-place="follow"] {
+    top: auto;
+    right: 16px;
+    bottom: 84px;
+    left: 16px;
+    text-align: right;
+    transform: none;
+  }
+  .nav {
     bottom: 28px;
   }
-  .text {
-    font-size: 16px;
+  /* No free corners on a phone: the text takes the full width. */
+  .fog {
+    display: none;
   }
 }
 
@@ -400,12 +636,17 @@
   .glintB,
   .bob,
   .map,
+  .ghost > svg,
+  .gull,
+  .beam,
+  .lamp::before,
   .screenGlow,
   .mastLight,
   .arc {
     animation: none;
   }
-  .text {
+  .text,
+  .copy[data-active="true"] .text {
     transition: none;
   }
 }

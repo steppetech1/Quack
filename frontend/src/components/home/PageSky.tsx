@@ -117,7 +117,9 @@ export function PageSky() {
         </div>
       ))}
 
-      <Flock />
+      <div className={styles.flockLayer}>
+        <Flock />
+      </div>
     </div>
   );
 }

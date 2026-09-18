@@ -254,3 +254,153 @@ export function signalArc(r: number) {
   }
   return rows.map((row) => row.join(""));
 }
+
+/* Silhouettes in the fog round the edges of the scene, in two flat tones
+   (light on top, darker at the waterline), drawn faint and soft by the stylesheet. */
+
+export const FOG_PALETTE: Palette = { f: "#aec1c7", F: "#7e9298" };
+
+/** Rows padded to one width, so a hand-drawn map never comes out ragged. */
+function even(map: string[]) {
+  const w = Math.max(...map.map((r) => r.length));
+  return map.map((r) => r.padEnd(w, "."));
+}
+
+/** A wreck sinking stern first: the bow up in the air, a broken mast with a rag of sail, portholes. */
+export const WRECK = even([
+  "......................F",
+  "..........f..........FF",
+  "..........ff........fFF",
+  "..........fff......ffFF",
+  "..........ff......fffFF",
+  "..........f......ff.fFF",
+  "..........f.....fffffFF",
+  "..........f....fff.ffFF",
+  ".........ff...fffffffF",
+  "........fff..fffff.ffF",
+  ".......fffffffffffffF",
+  "......ffff.fffffffffF",
+  ".....fffffffffff.ffF",
+  "....ffffffffffffffF",
+  "..FFFFFFFFFFFFFFFF...F.F",
+  ".FFFFFFFFFFFFF....F.....",
+]);
+
+export const LIGHTHOUSE = [
+  "...f...",
+  "..fff..",
+  ".f...f.",
+  ".fffff.",
+  "..fff..",
+  "..FFF..",
+  "..fff..",
+  "..fff..",
+  ".FFFFF.",
+  ".fffff.",
+  ".fffff.",
+  ".FFFFF.",
+  ".fffff.",
+  "fffffff",
+];
+/** Where the lamp sits in the lighthouse map, in its pixels. */
+export const LAMP = { x: 3, y: 2 };
+
+const HUT_SHAPE = [
+  "....fff....",
+  "..fffffff..",
+  "fffffffffff",
+  ".fffffffff.",
+  ".ff..fffff.",
+  ".ff..ff..f.",
+  ".fffffff.f.",
+  ".FFFFFFFFF.",
+];
+
+const PALM = [
+  "ff.....ff",
+  ".fff.fff.",
+  "...fff...",
+  "..f.f.f..",
+  ".f..f..f.",
+  "....f....",
+  ".....f...",
+  ".....f...",
+  "....f....",
+  "....f....",
+];
+
+const TALL_PINE = [
+  "...f...",
+  "..fff..",
+  ".fffff.",
+  "..fff..",
+  ".fffff.",
+  "fffffff",
+  "..fff..",
+  ".fffff.",
+  "fffffff",
+  "...F...",
+];
+
+/** A rock with a sea arch worn through it, and a smaller rock beside it. */
+export const ARCH = even([
+  "......fffff.........",
+  "....fffffffff.......",
+  "...fffffffffff......",
+  "..fffff...ffffff....",
+  "..ffff.....fffff....",
+  ".ffff.......ffff..f.",
+  ".fff.........fff.fff",
+  "FFF...........FFFFFF",
+]);
+
+/** Three sea stacks, the tallest on the left. */
+export const STACKS = even([
+  "....f",
+  "...fff",
+  "...fff.........f",
+  "..ffff........fff",
+  "..fffff.......fff",
+  "..fffff......ffff....f",
+  ".ffffff......fffff..fff",
+  ".ffffff.....ffffff..fff",
+  "FFFFFFFF....FFFFFF.FFFFF",
+]);
+
+/**
+ * An islet on the horizon: a low dome, light above and dark at the waterline,
+ * with props standing on it centred on the given columns. Also returns where
+ * each prop's top-left corner ended up, for anything drawn on top of it.
+ */
+export function fogIsle(w: number, h: number, props: [string[], number][] = []) {
+  const top = Math.max(0, ...props.map(([m]) => m.length));
+  const rows = Array.from({ length: top + h }, () => Array(w).fill("."));
+  const surface: number[] = [];
+  for (let x = 0; x < w; x++) {
+    const nx = (x + 0.5 - w / 2) / (w / 2);
+    const rise = Math.max(1, Math.round(h * Math.sqrt(Math.max(0, 1 - nx * nx))));
+    surface.push(top + h - rise);
+    for (let y = top + h - rise; y < top + h; y++) rows[y][x] = y >= top + h - 2 ? "F" : "f";
+  }
+  const anchors = props.map(([map, cx]) => {
+    const pw = map[0].length;
+    const x0 = cx - Math.floor(pw / 2);
+    const y0 = surface[Math.min(w - 1, Math.max(0, cx))] - map.length + 1;
+    map.forEach((row, dy) =>
+      [...row].forEach((ch, dx) => {
+        if (ch !== "." && rows[y0 + dy] && x0 + dx >= 0 && x0 + dx < w) rows[y0 + dy][x0 + dx] = ch;
+      })
+    );
+    return { x: x0, y: y0 };
+  });
+  return { map: rows.map((r) => r.join("")), anchors };
+}
+
+/** Pieces the fog scenes are built from. */
+export const FOG_PROPS = { HUT_SHAPE, PALM, TALL_PINE };
+
+/** A gull, wings up and wings down. */
+export const GULL = [
+  ["f...f", ".f.f.", "..f.."],
+  [".....", "fffff", "..f.."],
+];

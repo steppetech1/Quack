@@ -6,6 +6,7 @@ import { copy } from "./copy";
 import {
   BOAT,
   BUSH,
+  FOG_PALETTE,
   HUT,
   JOURNEY_PALETTE,
   MAP,
@@ -15,6 +16,14 @@ import {
   TOWER,
   U,
   WAKE,
+  WRECK,
+  ARCH,
+  FOG_PROPS,
+  GULL,
+  LAMP,
+  LIGHTHOUSE,
+  STACKS,
+  fogIsle,
   glintMap,
   islandSlice,
   islandTop,
@@ -39,6 +48,8 @@ const ZOOM = [1, 0.86, 0.64, 0.78];
 /** How far above its footing the middle of each step's main figure is, in world
     pixels, so the figure — not its footing — lands in the middle of the screen. */
 const LIFT = [36, 34, 80, 52];
+/** Half the width of each step's main figure, in world pixels: the boat, then each island. The text stands just outside it. */
+const HALF = [70, 125, 184, 184];
 
 /* Heights above the sea plane, in world pixels. */
 const WATER_Z = -10;
@@ -151,6 +162,24 @@ function threadPath(a: number, b: number, anchor: number, time: number) {
   return d;
 }
 
+/** Copy with its *starred* words picked out in the accent colour. */
+function Accented({ text }: { text: string }) {
+  return (
+    <>
+      {/* A dash never starts a line: it stays with the word before it. */}
+      {text.replace(/ —/g, " —").split("*").map((part, i) =>
+        i % 2 ? (
+          <em key={i} className={styles.accent}>
+            {part}
+          </em>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
+
 /** Bottom-centre placement on the plane (or inside a group, relative to its centre). */
 function place(x: number, bottom: number, w: number, h: number): CSSProperties {
   return { left: x - w / 2, top: bottom - h, width: w, height: h };
@@ -228,6 +257,26 @@ function Laptop() {
     </>
   );
 }
+
+/** A silhouette in the fog, with what lives on it: gulls overhead, or a lighthouse lamp (in map pixels). */
+type Ghost = { map: string[]; gulls?: number; lamp?: Pt };
+
+const { HUT_SHAPE, PALM, TALL_PINE } = FOG_PROPS;
+const LIGHT_ISLE = fogIsle(30, 6, [[LIGHTHOUSE, 11], [TALL_PINE, 21]]);
+
+/** For each step, the silhouettes in the fog: one to the upper right of the main figure, one to its lower left. */
+const FOG: [Ghost, Ghost][] = [
+  [{ map: WRECK, gulls: 2 }, { map: fogIsle(26, 5, [[PALM, 9], [TALL_PINE, 18]]).map }],
+  [
+    { map: LIGHT_ISLE.map, lamp: { x: LIGHT_ISLE.anchors[0].x + LAMP.x, y: LIGHT_ISLE.anchors[0].y + LAMP.y } },
+    { map: ARCH, gulls: 1 },
+  ],
+  [{ map: fogIsle(34, 5, [[TALL_PINE, 7], [HUT_SHAPE, 17], [TALL_PINE, 27]]).map, gulls: 1 }, { map: STACKS, gulls: 2 }],
+  [{ map: fogIsle(38, 6, [[TALL_PINE, 6], [TALL_PINE, 12], [PALM, 30]]).map, gulls: 3 }, { map: fogIsle(22, 4, [[HUT_SHAPE, 11]]).map }],
+];
+
+/** Pixel size of the fog silhouettes. */
+const FOG_U = 8;
 
 /** Pixel sizes of the scenery: pines and buildings are drawn coarser than the duck so they stand taller. */
 const PINE_U = 6;
@@ -313,6 +362,7 @@ export function JourneySection() {
       const zoom = base * lerp(ZOOM[k], ZOOM[k + 1], e);
       const s = zoom.toFixed(4);
       const cy = vh / 2 + lerp(LIFT[k], LIFT[k + 1], e) * zoom;
+      scene.parentElement?.style.setProperty("--half", `${(lerp(HALF[k], HALF[k + 1], e) * zoom).toFixed(0)}px`);
       world.style.transform = `translate(${(vw / 2).toFixed(1)}px, ${cy.toFixed(1)}px) scale3d(${s}, ${s}, ${s}) rotateX(${TILT}deg) translate(${(-fx).toFixed(1)}px, ${(-fy).toFixed(1)}px)`;
 
       // The duck steps ashore as the boat lands, and back in as it leaves.
@@ -363,6 +413,27 @@ export function JourneySection() {
     };
   }, [drawThread]);
 
+  // The ducks flying across the page sky would crowd this scene: while the
+  // section holds the middle of the screen, the page is marked so the sky
+  // leaves them out (see sky.module.css).
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const root = document.documentElement;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((en) => en.isIntersecting)) root.dataset.quietSky = "true";
+        else delete root.dataset.quietSky;
+      },
+      { rootMargin: "-20% 0px -20% 0px" }
+    );
+    observer.observe(section);
+    return () => {
+      observer.disconnect();
+      delete root.dataset.quietSky;
+    };
+  }, []);
+
   const bw = BOAT[0].length * BIG_U;
   const towerW = TOWER[0].length * BIG_U;
   const mastW = MAST[0].length * BIG_U;
@@ -377,7 +448,8 @@ export function JourneySection() {
     >
       <div className={styles.stage}>
         <h2 id="journey-heading" className={styles.heading}>
-          {t.brand} {t.heading}
+          {t.brand.slice(0, -1)}
+          <span className={styles.bang}>{t.brand.slice(-1)}</span> {t.heading}
         </h2>
 
         <div ref={sceneRef} className={styles.scene} aria-hidden="true">
@@ -473,14 +545,50 @@ export function JourneySection() {
           </div>
         </div>
 
-        <div className={styles.copy}>
-          <div className={styles.texts}>
-            {STEPS.map((text, i) => (
-              <p key={i} className={styles.text} data-active={i === active} aria-hidden={i !== active}>
-                {text}
-              </p>
+        {/* Faint shapes in the fog in the corners the text leaves free, so the frame does not feel empty. */}
+        {FOG.map((pair, i) => (
+          <div key={i} className={styles.fog} data-active={i === active} aria-hidden="true">
+            {pair.map((ghost, j) => (
+              <div key={j} className={styles.ghost} data-place={j ? "low" : "high"}>
+                <PixelSprite map={ghost.map} palette={FOG_PALETTE} unit={FOG_U} />
+                {ghost.lamp && (
+                  <span
+                    className={styles.lamp}
+                    style={{ left: (ghost.lamp.x + 0.5) * FOG_U, top: (ghost.lamp.y + 0.5) * FOG_U }}
+                  >
+                    <i className={styles.beam} />
+                  </span>
+                )}
+                {Array.from({ length: ghost.gulls ?? 0 }, (_, g) => (
+                  <span key={g} className={styles.gull} style={{ "--g": g } as CSSProperties}>
+                    {GULL.map((frame, f) => (
+                      <PixelSprite key={f} map={frame} palette={FOG_PALETTE} unit={3} className={f ? styles.glintB : styles.glintA} />
+                    ))}
+                  </span>
+                ))}
+              </div>
             ))}
           </div>
+        ))}
+
+        {/* The step's text, in two blocks either side of the main figure. */}
+        {STEPS.map((pair, i) => (
+          <div
+            key={i}
+            className={styles.copy}
+            data-active={i === active}
+            aria-hidden={i !== active}
+          >
+            <p className={styles.text} data-place="lead">
+              <Accented text={pair[0]} />
+            </p>
+            <p className={styles.text} data-place="follow">
+              <Accented text={pair[1]} />
+            </p>
+          </div>
+        ))}
+
+        <nav className={styles.nav} aria-label={t.heading}>
           <ol className={styles.pips}>
             {STEPS.map((_, i) => (
               <li key={i}>
@@ -496,7 +604,7 @@ export function JourneySection() {
               </li>
             ))}
           </ol>
-        </div>
+        </nav>
       </div>
     </section>
   );

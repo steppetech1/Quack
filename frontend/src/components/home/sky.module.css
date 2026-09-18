@@ -35,6 +35,17 @@
   animation: cross 28s linear forwards;
 }
 
+/* Kept out of the journey section, which marks the page while it is on screen. */
+.flockLayer {
+  position: absolute;
+  inset: 0;
+  transition: opacity 0.6s ease;
+}
+
+:global(html[data-quiet-sky="true"]) .flockLayer {
+  opacity: 0;
+}
+
 .flockDuck {
   position: absolute;
   width: 32px;
