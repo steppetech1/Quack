@@ -19,10 +19,12 @@ from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.deps import get_current_student
 from app.api.health import router as health_router
+from app.api.knowledge import router as knowledge_router
 from app.api.prep import router as prep_router
 from app.api.profile import router as profile_router
 from app.api.programs import router as programs_router
 from app.api.saved import router as saved_router
+from app.api.sets import router as sets_router
 from app.api.tasks import router as tasks_router
 from app.config import settings
 from app.db.engine import close_engine, create_engine, create_sessionmaker
@@ -173,4 +175,6 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(prep_router)
     app.include_router(tasks_router)
+    app.include_router(sets_router)
+    app.include_router(knowledge_router)
     return app
