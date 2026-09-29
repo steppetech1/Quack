@@ -209,3 +209,18 @@ def test_invalid_value_type_returns_empty():
         NOW,
     )
     assert pairs == []
+
+
+def test_trial_score_out_of_scale_writes_no_prior():
+    """«Пробный ЕНТ 95» — это сумма по пяти предметам, а не математика из 50.
+
+    Обрезка до 1.0 заявляла бы идеальное знание каждого навыка и выносила их
+    из плана; молчание честнее выдуманного приора.
+    """
+    skills = [_weight("s1", 3.0), _weight("s2", 3.0)]
+    assert (
+        reconcile_prior(
+            "academics.ent_trial_score", 95.0, skills, [_area()], {}, PARAMS, NOW
+        )
+        == []
+    )

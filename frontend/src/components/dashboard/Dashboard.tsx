@@ -9,7 +9,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { Profile } from "../choice/assistant";
 import { Icon } from "../choice/Icon";
 import { programById } from "../choice/programs";
-import { initialModel, readiness, reviveModel, type PrepTab } from "../prep/prepModel";
+import { readiness, type PrepTab } from "../prep/prepModel";
+import { loadPrepModel } from "../prep/prepStore";
+import { REMOTE_PREP } from "../prep/remoteFlag";
 import type { AdviceAction, Signal } from "../quack/contract";
 import { useQuack } from "../quack/source";
 import { forecastScore, markableId } from "../quack/standing";
@@ -44,7 +46,6 @@ import styles from "./dashboard.module.css";
 import { store } from "../account/store";
 
 const WATCH_KEY = "quack-dashboard-watch";
-const PREP_KEY = "quack-prep";
 
 type Props = {
   /** The open category; the left column switches it too */
@@ -61,7 +62,7 @@ type Props = {
 
 export function Dashboard({ tab, onTab, saved, profile, chatDays, onUnsave, onOpenChoice, onOpenPrep }: Props) {
   const [watched, setWatched] = useState<string[]>([]);
-  const { state: quack } = useQuack();
+  const { state: quack, decide } = useQuack();
   const doneMilestones = useDoneMilestones();
   const testDates = useChosenTestDates();
   const targets = useChosenTargets();
@@ -90,16 +91,28 @@ export function Dashboard({ tab, onTab, saved, profile, chatDays, onUnsave, onOp
     store.set(WATCH_KEY, next);
   };
 
-  // Preparation is a separate screen with its own storage; here we only read it
-  const prep = useMemo(() => reviveModel(store.get(PREP_KEY)) ?? initialModel(), []);
+  // Preparation is a separate screen with its own storage; here we only read it. At `remote` that
+  // storage holds no domain any more, so readiness and activity come from the standing instead.
+  const prep = useMemo(() => loadPrepModel(), []);
 
   const programs = saved.map(programById).filter(Boolean);
   const exams = unionExams(programs);
   const events = calendarEvents(programs, exams, testDates);
   // The calendar also lists the other sittings, so a date can be picked right there
   const calendarDays = calendarEvents(programs, exams, testDates, true);
-  const predicted = forecastScore(readiness(prep));
-  const activity = useMemo(() => activityByDay(Object.values(prep.evidence).flat(), chatDays), [prep, chatDays]);
+  const predicted = forecastScore(REMOTE_PREP ? (quack.standing?.readiness ?? 0) : readiness(prep));
+  const localActivity = useMemo(
+    () => activityByDay(Object.values(prep.evidence).flat(), chatDays),
+    [prep, chatDays]
+  );
+  // The server counts activity across devices; the browser only knows what happened in it
+  const activity = useMemo(
+    () =>
+      quack.activity
+        ? quack.activity.map((d) => ({ date: new Date(`${d.day}T00:00:00`), count: d.count, level: d.level, parts: d.parts }))
+        : localActivity,
+    [quack.activity, localActivity]
+  );
 
   if (!programs.length) {
     return (
@@ -181,6 +194,7 @@ export function Dashboard({ tab, onTab, saved, profile, chatDays, onUnsave, onOp
               }}
               resolved={resolved}
               onUnresolve={(id) => resolveConflict(id, null)}
+              onDecide={decide ? (id, decision) => (decision === "accept" ? decide.accept(id) : decide.decline(id)) : undefined}
             />
             <ActivityGrid days={activity} />
           </div>

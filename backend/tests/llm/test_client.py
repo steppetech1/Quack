@@ -277,3 +277,72 @@ async def test_complete_passes_tools_through_and_uses_model_for_slot(
 
     assert transport.calls[0]["tools"] == tools
     assert transport.calls[0]["model"] == "bulk-model"
+
+
+async def test_a_refused_key_trips_the_breaker(redis, monkeypatch):
+    """401 is the provider unusable for everyone; /health must not keep saying ok."""
+    client = LLMClient(_settings(), redis)
+    _install(
+        monkeypatch,
+        client,
+        [_status_error(401), _status_error(401), _status_error(401)],
+    )
+
+    for _ in range(3):
+        with pytest.raises(openai.APIStatusError):
+            await client.complete([LLMMessage(role="user", content="hi")], "chat")
+
+    assert await client.status() == "down"
+
+
+async def test_without_a_key_the_client_starts_and_reports_down(redis):
+    client = LLMClient(
+        Settings(LLM_API_KEY=SecretStr(""), LLM_BASE_URL="http://test"), redis
+    )
+    assert await client.status() == "down"
+    with pytest.raises(LLMUnavailable):
+        await client.complete([LLMMessage(role="user", content="hi")], "chat")
+
+
+async def test_thinking_switch_goes_in_extra_body_per_slot(redis, monkeypatch):
+    client = LLMClient(
+        _settings(LLM_THINKING_CHAT="disabled", LLM_THINKING_BULK="enabled"), redis
+    )
+    transport = _install(
+        monkeypatch, client, [_completion_response(), _completion_response()]
+    )
+
+    await client.complete([LLMMessage(role="user", content="hi")], "chat")
+    await client.complete([LLMMessage(role="user", content="hi")], "bulk")
+
+    assert transport.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert transport.calls[1]["extra_body"] == {"thinking": {"type": "enabled"}}
+
+
+async def test_thinking_is_not_sent_when_unset(redis, monkeypatch):
+    client = LLMClient(_settings(LLM_THINKING_CHAT=None, LLM_THINKING_BULK=None), redis)
+    transport = _install(monkeypatch, client, [_completion_response()])
+    await client.complete([LLMMessage(role="user", content="hi")], "chat")
+    assert "extra_body" not in transport.calls[0]
+
+
+async def test_json_object_mode_puts_the_schema_in_the_prompt(redis, monkeypatch):
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        word: str
+
+    client = LLMClient(_settings(LLM_STRUCTURED_MODE="json_object"), redis)
+    transport = _install(
+        monkeypatch, client, [_completion_response('{"word": "quack"}')]
+    )
+
+    out = await client.structured(
+        [LLMMessage(role="user", content="say a word")], Answer, "bulk"
+    )
+
+    assert out.word == "quack"
+    call = transport.calls[0]
+    assert call["response_format"] == {"type": "json_object"}
+    assert "json" in call["messages"][-1]["content"].lower()
+    assert '"word"' in call["messages"][-1]["content"]

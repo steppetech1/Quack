@@ -74,3 +74,12 @@ public/assets/                иконки и графика из Figma
 - 761–1100px (в том числе ноутбуки с масштабом 125–175%) — тот же вид с уменьшенным текстом; если панели профиля не хватает места, она открывается поверх чата;
 - до 760px — телефон: одна колонка, левая колонка открывается кнопкой в хэдере.
 
+
+### Windows / Git Bash
+
+Git Bash переписывает значения вида `/api` в путь MSYS (`C:/Program Files/Git/api`). Для сборки прод-варианта
+задавайте `MSYS_NO_PATHCONV=1`:
+
+```bash
+MSYS_NO_PATHCONV=1 NEXT_PUBLIC_API_URL=/api NEXT_PUBLIC_DATA_SOURCE=remote npm run build
+```

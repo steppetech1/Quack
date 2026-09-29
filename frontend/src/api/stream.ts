@@ -44,6 +44,14 @@ export function createFrameParser(onData: (data: string) => void) {
  * Failures before the stream starts (401, 503 `llm_unavailable`, 409 chat busy) reject with ApiError.
  * Abort through `signal`; an abort rejects with an AbortError.
  */
+/**
+ * POSTs and feeds the stream to `onEvent`.
+ *
+ * Reading the body can fail after the headers were fine — the server went away mid-answer. `request`
+ * only wraps the connect, so that failure arrived as a bare TypeError and the screens above could
+ * not tell it from an ordinary refusal. It is reported here the same way as a dropped connect:
+ * `ApiError(0, "network")`.
+ */
 export async function postSSE(
   path: string,
   body: unknown,
@@ -68,11 +76,21 @@ export async function postSSE(
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   try {
     while (!finished) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      feed(value);
+      let chunk: ReadableStreamReadResult<string>;
+      try {
+        chunk = await reader.read();
+      } catch (err) {
+        // The connection died mid-answer. An abort is the student's own doing.
+        if (err instanceof DOMException && err.name === "AbortError") throw err;
+        throw new ApiError(0, "network", "Stream interrupted");
+      }
+      if (chunk.done) break;
+      feed(chunk.value);
     }
   } finally {
     reader.cancel().catch(() => undefined);
   }
+  // A body that simply ends before the closing frame is the same cut, quietly:
+  // some drops close the stream instead of erroring.
+  if (!finished) throw new ApiError(0, "network", "Stream ended before the answer did");
 }

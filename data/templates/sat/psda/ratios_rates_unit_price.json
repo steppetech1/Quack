@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "Eight apples cost 12 units. What is the price of one apple?",
+  "stem": "Восемь яблок стоят 12 единиц. Сколько стоит одно яблоко?",
   "correct": "3/2",
   "distractors": [],
   "solution": [
-    "Use the ratios rates rule.",
-    "The value is {answer}."
+    "Цена одного = общая цена / количество.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

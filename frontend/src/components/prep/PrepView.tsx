@@ -7,9 +7,11 @@ import { FirstHint } from "@/components/hints/FirstHint";
 import { useEffect, useRef, useState } from "react";
 import { morph } from "@/components/transition/morph";
 import { Overview } from "./Overview";
-import { prefetchRemoteOverview } from "./remotePrep";
+import { fetchRemoteOverview, prefetchRemoteOverview } from "./remotePrep";
 import {
+  applyRemoteSetsToModel,
   fetchRemoteSets,
+  openFirstRemoteSet,
   openRemoteSet,
   prefetchRemoteSets,
   REMOTE_PREP,
@@ -37,9 +39,7 @@ import { quackSource } from "../quack/source";
 import { SetsView } from "./SetsView";
 import type { DiagnosticResultSummary } from "./diagnosticData";
 import styles from "./prep.module.css";
-import { store } from "../account/store";
-
-const STORAGE_KEY = "quack-prep";
+import { loadPrepModel, savePrepModel } from "./prepStore";
 
 /** One first-visit note per part of the section: what it shows and what to press. The ids are kept once seen. */
 const INTROS: Record<PrepSub, { id: string; title: string; text: string }> = {
@@ -89,7 +89,7 @@ export function PrepView({
   onDiagnosticStatusChange,
 }: Props) {
   // Rendered only after the student switches to the section, so storage can be read right away
-  const [model, setModel] = useState<PrepModel>(() => reviveModel(store.get(STORAGE_KEY)) ?? initialModel());
+  const [model, setModel] = useState<PrepModel>(() => loadPrepModel());
   const [toast, setToast] = useState<string | null>(null);
   // Which exam the route, the map and the set list show; starts on the exam of the set in work
   const [exam, setExam] = useState<ExamId>(() => (model.currentSet ? setById(model.currentSet).exam : "sat"));
@@ -98,6 +98,8 @@ export function PrepView({
   // Another set asked for from elsewhere: «Маршрут» shows its card open
   const [routeFocus, setRouteFocus] = useState<string | null>(null);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
+  // Set once the student picks an exam themself, so a late server answer does not move them
+  const examPickedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const isDiagPending = !model.diagnosticDone;
@@ -119,7 +121,7 @@ export function PrepView({
   }, [model.diagnosticDone, onDiagnosticStatusChange]);
 
   useEffect(() => {
-    store.set(STORAGE_KEY, model);
+    savePrepModel(model);
     // Preparation is a source of truth for Quack: an answer, a passed set or a ticked date is recomputed at once
     quackSource().report({ prep: model });
   }, [model]);
@@ -136,7 +138,24 @@ export function PrepView({
   const programs = savedPrograms(saved, model.demo);
 
   useEffect(() => {
-    prefetchRemoteOverview(programs);
+    if (!REMOTE_PREP) {
+      prefetchRemoteOverview(programs);
+      return;
+    }
+    // Without a set in work the section has no exam of its own to open on: the one the student's saved
+    // programs ask for is the server's answer, not «sat» by default. A pick the student already made wins.
+    let active = true;
+    fetchRemoteOverview(programs)
+      .then((overview) => {
+        if (!active || examPickedRef.current || model.currentSet) return;
+        const asked = overview.requirements.find((r) => r.id === "ent" || r.id === "sat")?.id as ExamId | undefined;
+        if (asked) setExam(asked);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [programs.length]);
 
   useEffect(() => {
@@ -144,15 +163,7 @@ export function PrepView({
       // The server's plan is the truth: a current set remembered from before a rebuild (or from the
       // demo data) that the server no longer has is replaced by the server's current one
       fetchRemoteSets(exam, true)
-        .then((data) => {
-          const ids = [data.current, ...data.upcoming, ...data.done].filter(Boolean).map((s) => s!.id);
-          if (!ids.length) return;
-          setModel((prev) =>
-            prev.currentSet && !ids.includes(prev.currentSet) && setById(prev.currentSet).exam === exam
-              ? { ...prev, currentSet: data.current?.id ?? null }
-              : prev
-          );
-        })
+        .then((data) => setModel((prev) => applyRemoteSetsToModel(prev, data)))
         .catch(() => {});
       fetchRemoteKnowledge(exam).then((data) => {
         if (data) {
@@ -174,7 +185,8 @@ export function PrepView({
         if (!active) return;
         if (force || lastVersionRef.current === null || v > lastVersionRef.current) {
           lastVersionRef.current = v;
-          prefetchRemoteSets(exam);
+          const setsData = await fetchRemoteSets(exam, true).catch(() => null);
+          if (active && setsData) setModel((prev) => applyRemoteSetsToModel(prev, setsData));
           const data = await fetchRemoteKnowledge(exam, true);
           if (active && data) {
             setModel((prev) => applyRemoteKnowledgeToModel(prev, data, exam));
@@ -252,7 +264,7 @@ export function PrepView({
   };
 
   /** From «Маршрут»: the set becomes the active one, the previous one is put aside; the student stays */
-  const choose = (id: string) => {
+  const choose = async (id: string): Promise<void> => {
     const prev = model.currentSet;
     setModel((m) => makeCurrent(m, id));
     setFocus(null);
@@ -263,9 +275,19 @@ export function PrepView({
         : `Сет ${setById(id).number} теперь актуальный · занятия — во вкладке «Сейчас»`
     );
     if (REMOTE_PREP) {
-      switchRemoteSet(id, exam).catch((err) => {
-        console.error("Failed to switch remote set:", err);
-      });
+      try {
+        await switchRemoteSet(id, exam);
+      } catch {
+        // The server did not take the choice (the plan moved under it): what it holds is the truth,
+        // so the screen is put back on it instead of keeping a set that is not current there
+        try {
+          const data = await fetchRemoteSets(exam, true);
+          setModel((m) => applyRemoteSetsToModel(m, data));
+          setToast("План обновился, пока ты выбирал — выбери сет ещё раз");
+        } catch {
+          setToast("Не получилось переключить сет — попробуй ещё раз");
+        }
+      }
     }
   };
 
@@ -275,6 +297,11 @@ export function PrepView({
     setFocus(null);
     onDiagnosticStatusChange?.(true);
     setToast("Первый сет собран по твоему профилю. Замер можно пройти позже — ссылка над графом");
+    if (REMOTE_PREP) {
+      openFirstRemoteSet(exam)
+        .then((sets) => setModel((m) => applyRemoteSetsToModel(m, sets)))
+        .catch(() => {});
+    }
   };
 
   const completeDiagnostic = (summary: DiagnosticResultSummary) => {
@@ -282,6 +309,7 @@ export function PrepView({
       const next = { ...m, diagnosticDone: true, diagnosticSkipped: false, states: { ...m.states, ...summary.statesUpdate } };
       // The first test builds the route: its top set becomes the first one in work. A retake leaves the choice alone.
       if (m.diagnosticDone && m.currentSet) return next;
+      if (REMOTE_PREP) return next;
       const top = rankSets(next, exam)[0]?.set;
       return top ? acceptSet(next, top.id) : next;
     });
@@ -296,7 +324,10 @@ export function PrepView({
           setModel((prev) => applyRemoteKnowledgeToModel(prev, data, exam));
         }
       });
-      fetchRemoteSets(exam, true).catch(() => {});
+      // Замер закончен — сет должен открыться на сервере, а не только в локальной модели
+      openFirstRemoteSet(exam)
+        .then((sets) => setModel((m) => applyRemoteSetsToModel(m, sets)))
+        .catch(() => {});
     }
   };
 
@@ -359,7 +390,10 @@ export function PrepView({
                   model={model}
                   sub={current}
                   exam={exam}
-                  onExam={setExam}
+                  onExam={(next) => {
+                    examPickedRef.current = true;
+                    setExam(next);
+                  }}
                   onMakeCurrent={choose}
                   focus={routeFocus}
                   onOpenSet={openSetAt}

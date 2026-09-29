@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "For x = 1, 2, 3, y = 4, 7, 10. What is the y-intercept of the line?",
+  "stem": "При x = 1, 2, 3 значения y = 4, 7, 10. В какой точке эта прямая пересекает ось y?",
   "correct": "1",
   "distractors": [],
   "solution": [
-    "Use the two var data rule.",
-    "The value is {answer}."
+    "y растёт на 3 при росте x на 1; при x = 0 получаем 4 − 3.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

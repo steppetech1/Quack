@@ -27,7 +27,7 @@
     }
   },
   "constraints": [],
-  "stem": "What is {p} percent of {n}?",
+  "stem": "Сколько составляет {p}% от {n}?",
   "correct": "n*p/100",
   "distractors": [
     {
@@ -44,8 +44,8 @@
     }
   ],
   "solution": [
-    "Use the percent rule.",
-    "The value is {answer}."
+    "p% от n = n × p / 100.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

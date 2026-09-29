@@ -265,3 +265,46 @@ def test_skip_and_timeout_are_dispatched_once(task_app, reason, event_type):
     assert solution.json() == {"solution": ["step 1", "step 2"]}
     assert [event["type"] for event in session.events] == [event_type]
     assert skip_mock.await_count == 1
+
+
+def test_answer_survives_a_deferred_projection(task_app, monkeypatch):
+    """§11 A2: проекция отложена — ученик всё равно получает оценку.
+
+    `grade` читает у вариантов поля (`opt.key`), а в строке БД они лежат
+    словарями из JSON-колонки. Пока их никто не разбирал, этот путь отвечал
+    500 при каждой деградации — то есть ровно тогда, когда он и нужен.
+    """
+    app, session, student_id, instance_id, _, answer_mock, _ = task_app
+    session.row.template_id = "template-a"
+    session.row.seed = 1
+    session.row.type = "mcq4"
+    session.row.stem_rendered = "Question?"
+    session.row.options = [
+        {"key": "A", "text": "one", "correct": True},
+        {"key": "B", "text": "two", "correct": False, "misconception_id": "m1"},
+    ]
+    session.row.answer = "A"
+    session.row.trap_answers = []
+    session.row.figure_url = None
+    session.row.time_reference_sec = 60
+    session.row.difficulty = 1
+    session.row.tags = []
+
+    async def refused(received_session, event, received_deps):
+        # Диспетчер отказался проецировать: граф лёг или ждёт своей очереди.
+        return {}
+
+    monkeypatch.setattr("app.api._answer.dispatch.dispatch", refused)
+
+    with TestClient(app) as client:
+        client.cookies.set("quack_token", issue_token(student_id, "s@quack.kz"))
+        answered = client.post(
+            f"/tasks/{instance_id}/answer", json=_answer_body(instance_id)
+        )
+
+    assert answered.status_code == 200
+    body = answered.json()
+    assert body["grade"]["correct"] is True
+    assert body["projection_status"] == "pending"
+    assert body["solution"] == ["step 1", "step 2"]
+    assert answer_mock.await_count == 0

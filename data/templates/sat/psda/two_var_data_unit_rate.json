@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "Five hours of work earn 40 units. At the same rate, how much is earned in one hour?",
+  "stem": "За пять часов работы платят 40 единиц. Сколько платят за один час при той же ставке?",
   "correct": "8",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the two var data rule.",
-    "The value is {answer}."
+    "Ставка за час = оплата / число часов.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

@@ -92,7 +92,7 @@ async def start(
     row = await diag_repo.create_run(session, student_id, exam_id, state)
     run_id = row.id
 
-    next_task = await _issue_next(session, deps, student_id, exam_id, state)
+    next_task = await _issue_next(session, deps, student_id, run_id, exam_id, state)
 
     return DiagnosticOut(
         run_id=run_id,
@@ -143,7 +143,12 @@ async def answer(
         deps.redis,
         EventIn(
             type=EventType.diagnostic_progress,
-            payload={"run_id": str(run_id)},
+            # DiagnosticProgressPayload требует и состояние: без него
+            # events.store отвергает событие и ответ ученика теряется.
+            payload={
+                "run_id": str(run_id),
+                "state": new_state.model_dump(mode="json"),
+            },
             student_id=student_id,
             exam_id=instance.exam_id,
             set_id=None,
@@ -166,7 +171,7 @@ async def answer(
     await diag_repo.save_state(session, student_id, run_id, new_state)
 
     next_task = await _issue_next(
-        session, deps, student_id, instance.exam_id, new_state
+        session, deps, student_id, run_id, instance.exam_id, new_state
     )
 
     return DiagnosticOut(
@@ -201,7 +206,8 @@ async def finish(
         deps.redis,
         EventIn(
             type=EventType.diagnostic_completed,
-            payload={"run_id": str(run_id)},
+            # DiagnosticCompletedPayload требует и результат замера.
+            payload={"run_id": str(run_id), "result": result.model_dump(mode="json")},
             student_id=student_id,
             exam_id=state.exam_id,
             set_id=None,
@@ -236,10 +242,16 @@ async def _issue_next(
     session: AsyncSession,
     deps: RuleDeps,
     student_id: UUID,
+    run_id: UUID,
     exam_id: ExamId,
     state: DiagnosticState,
 ) -> TaskInstanceOut | None:
-    """Найти следующий навык и выдать задачу; None если замер завершён."""
+    """Найти следующий навык и выдать задачу; None если замер завершён.
+
+    Выданная задача попадает в `state.asked` и сохраняется здесь же: только
+    этот слой знает настоящий `task_instance.id`, а `answer` опознаёт ответ
+    именно по нему (`state.asked[-1]`, проверка в `api/diagnostic.py`).
+    """
     prereqs: list = []
     if deps.graph is not None:
         try:
@@ -266,9 +278,13 @@ async def _issue_next(
         exclude_seen=False,
     )
     try:
-        return await apply_tasks.issue(session, deps, student_id, req)
+        instance = await apply_tasks.issue(session, deps, student_id, req)
     except (NotFound, ValidationFailed):
         return None
+
+    state.asked.append(instance.id)
+    await diag_repo.save_state(session, student_id, run_id, state)
+    return instance
 
 
 async def _persist_indirect(

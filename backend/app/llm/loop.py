@@ -121,9 +121,16 @@ async def run_tool_loop(
 
         tools = registry.schemas() or None
         step_calls: list[ToolCall] = []
+        step_text = ""
         try:
             async for event in client.stream(local_messages, slot, tools=tools):
                 if isinstance(event, TextDelta):
+                    if not step_text and text_full and not text_full[-1].isspace():
+                        # A new round after a tool call is a new paragraph; glued to the
+                        # last one it reads «Записываю.Записал».
+                        gap = chr(10) * 2
+                        event = event.model_copy(update={"text": gap + event.text})
+                    step_text += event.text
                     text_full += event.text
                     yield event
                 elif isinstance(event, ToolCall):
@@ -132,7 +139,16 @@ async def run_tool_loop(
                 else:
                     yield event
         except (LLMUnavailable, openai.APIError, httpx.HTTPError) as exc:
-            yield StreamError(type="error", code="llm_unavailable", message=str(exc))
+            # The provider's words carry dashboard links and request ids: log them, and
+            # give the student a sentence that is ours.
+            _logger.warning(
+                "llm_stream_failed", error=str(exc), kind=type(exc).__name__
+            )
+            yield StreamError(
+                type="error",
+                code="llm_unavailable",
+                message="Ассистент сейчас недоступен",
+            )
             return
 
         if not step_calls:
@@ -148,7 +164,9 @@ async def run_tool_loop(
         local_messages.append(
             LLMMessage(
                 role="assistant",
-                content=None,
+                # What the model said before the call stays in its history, or the next
+                # round does not know it already spoke and says the same again.
+                content=step_text.strip() or None,
                 tool_calls=[
                     ToolCallOut(call_id=call.call_id, name=call.tool, args=call.args)
                     for call in step_calls

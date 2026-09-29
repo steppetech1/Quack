@@ -49,6 +49,17 @@ export type BackendObserveRequestIn = Schemas["ObserveRequestIn"];
 export type BackendObserveRequestedOut = Schemas["ObserveRequestedOut"];
 export type BackendObservationsDiffOut = Schemas["ObservationsDiffOut"];
 export type BackendObservationView = Schemas["ObservationView"];
+export type BackendQuack = Schemas["QuackOut"];
+export type BackendPace = Schemas["PaceOut"];
+export type BackendExamPace = Schemas["ExamPaceOut"];
+export type BackendPaceVariant = Schemas["PaceVariantOut"];
+export type BackendActivity = Schemas["ActivityOut"];
+export type BackendActivityDay = Schemas["ActivityDay"];
+export type BackendRecommendation = Schemas["RecommendationOut"];
+export type BackendRecommendationAction = Schemas["RecommendationAction"];
+export type BackendForecast = Schemas["ForecastOut"];
+/** `ExamId` is an inline literal in the schema, so it is read off a model that uses it */
+export type BackendExamId = BackendExamPace["exam_id"];
 
 export const backend = {
   profile: {
@@ -60,6 +71,16 @@ export const backend = {
   matching: {
     get: (limit = 50) => api.get<BackendMatching>(`/matching?limit=${limit}`),
     compare: (ids: string[]) => api.get<Schemas["CompareOut"]>(`/matching/compare?ids=${encodeURIComponent(ids.join(","))}`),
+  },
+  programs: {
+    get: (programId: string) => api.get<BackendProgram>(`/programs/${encodeURIComponent(programId)}`),
+    /** 202 and a search_id; nothing is searched inside the request (§1.1) */
+    search: (query: string) => api.post<Schemas["SearchStartedOut"]>("/programs/search", { query }),
+    searchStatus: (searchId: string) =>
+      api.get<Schemas["SearchStatusOut"]>(`/programs/search/${encodeURIComponent(searchId)}`),
+    /** «Данные неверны» hides an automatically extracted record; a verified one answers 409 */
+    flag: (programId: string, reason: string) =>
+      api.post<BackendProgram>(`/programs/${encodeURIComponent(programId)}/flag`, { reason }),
   },
   saved: {
     list: () => api.get<Schemas["Page_SavedProgramWithProgram_"]>("/saved"),
@@ -78,6 +99,9 @@ export const backend = {
       api.post<BackendSetsByExam>("/sets/switch", { set_id: setId }),
     get: (setId: string) =>
       api.get<BackendSetOut>(`/sets/${encodeURIComponent(setId)}`),
+    /** The report on a finished set: numbers now, the words about them when the job is done */
+    summary: (setId: string) =>
+      api.get<Schemas["SetSummaryOut"]>(`/sets/${encodeURIComponent(setId)}/summary`),
     open: (setId: string) =>
       api.post<BackendSetOut>(`/sets/${encodeURIComponent(setId)}/open`),
     patch: (setId: string, body: { skill_ids?: string[]; deadline?: string }) =>
@@ -141,6 +165,34 @@ export const backend = {
   },
   prep: {
     version: () => api.get<BackendKnowledgeVersion>("/prep/knowledge/version"),
+  },
+  texts: {
+    /** Never generates and never writes; it reports the cache and queues what is missing */
+    get: (setId: string, skillId: string, kind: "guideline" | "explanation") =>
+      api.get<Schemas["GeneratedTextOut"]>(
+        `/texts/${encodeURIComponent(setId)}/${encodeURIComponent(skillId)}?kind=${kind}`
+      ),
+    opened: (setId: string, skillId: string, kind: "guideline" | "explanation") =>
+      api.post<void>(`/texts/${encodeURIComponent(setId)}/${encodeURIComponent(skillId)}/opened`, { kind }),
+    regenerate: (setId: string, skillId: string, kind: "guideline" | "explanation") =>
+      api.post<{ status: string; job_id?: string }>(
+        `/texts/${encodeURIComponent(setId)}/${encodeURIComponent(skillId)}/regenerate?kind=${kind}`
+      ),
+  },
+  quack: {
+    /** Feed, pace and activity in one read — what the Quack screen and the dashboard need */
+    get: () => api.get<BackendQuack>("/quack"),
+    pace: () => api.get<BackendPace>("/quack/pace"),
+    activity: (days = 14) => api.get<BackendActivity>(`/quack/activity?days=${days}`),
+    history: (limit = 50) =>
+      api.get<Schemas["Page_RecommendationOut_"]>(`/quack/history?limit=${limit}`),
+    /** Opening the screen: pending recommendations become shown and stop the button glowing */
+    seen: (recommendationIds?: string[]) =>
+      api.post<{ shown: number }>("/quack/seen", { recommendation_ids: recommendationIds ?? null }),
+    accept: (id: string) =>
+      api.post<BackendRecommendation>(`/quack/${encodeURIComponent(id)}/accept`),
+    decline: (id: string, reason?: string) =>
+      api.post<BackendRecommendation>(`/quack/${encodeURIComponent(id)}/decline`, { reason: reason ?? null }),
   },
   chat: {
     messages: (

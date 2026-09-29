@@ -8,12 +8,63 @@
 // tab is hidden or closed. Continuous gestures (panning, dragging, resizing) call `set` only when they
 // end — the screens keep the in-between state to themselves.
 
+import { ApiError, api } from "@/api/client";
+import { REMOTE_PREP } from "../prep/remoteFlag";
 import type { StateBackend, User } from "./contract";
 
 const REMOTE = process.env.NEXT_PUBLIC_DATA_SOURCE === "remote";
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/** Quack recomputed on the server: then the local source's baseline and history have nothing to hold */
+const REMOTE_QUACK = (process.env.NEXT_PUBLIC_QUACK_SOURCE ?? process.env.NEXT_PUBLIC_DATA_SOURCE) === "remote";
 /** Local storage is cheap; the network gets a longer pause to gather more into one request */
 const FLUSH_MS = REMOTE ? 1200 : 250;
+
+/* ---------- What is allowed to live here ---------- */
+
+/**
+ * `/state` is a bridge for what belongs to this browser, not a second database (ТЗ §5.6). Every key
+ * is listed here with the reason it is allowed to stay; anything else is dropped rather than quietly
+ * synced, so a domain slice cannot creep back in without someone editing this list.
+ */
+const ALLOWED: Record<string, string> = {
+  // UI-настройки — целиком наши
+  "quack-choice-layout": "ширины и свёрнутость панелей «Выбора»",
+  "quack-hints-seen": "какие подсказки ученик уже видел",
+  "quack-dashboard-watch": "что ученик добавил в «Слежу» на дашборде",
+  "quack-advice-dismissed": "какие советы ученик убрал с глаз",
+
+  // Экранные выборы: что открыто и что сравнивается — это не домен
+  "quack-choice-workspace": "выбранные к показу и сравнению программы, состояние анкеты-интро",
+
+  // «Подготовка» (prep/prepStore.ts). При remote домен приходит с сервера и здесь не хранится:
+  // остаются выбор ученика, которому бэк ещё не даёт ручки, и материалы, сгенерированные в браузере
+  "quack-prep-ui": "отметки вех, выбранные даты и цели, решения по конфликтам, пройден ли замер",
+  "quack-prep-materials": "конспекты и карточки, сделанные ассистентом по просьбе ученика (ТЗ §5.7)",
+
+  // Ключи демо-режима: при remote их писать нечему — источник тех же данных на сервере.
+  // Перечислены отдельно, потому что список разрешённого зависит от того, кто считает.
+  ...(REMOTE_PREP ? {} : { "quack-prep": "модель подготовки целиком — источник правды, пока нет бэкенда" }),
+  ...(REMOTE_QUACK
+    ? {}
+    : {
+        "quack-baseline": "база сравнения локального Quack",
+        "quack-history": "лента локального Quack",
+        "quack-known": "когда локальный Quack впервые заметил сигнал",
+      }),
+};
+
+const refused = new Set<string>();
+
+function allowed(key: string): boolean {
+  if (key in ALLOWED) return true;
+  if (!refused.has(key)) {
+    refused.add(key);
+    console.warn(
+      `store: ключ «${key}» не в списке разрешённых (components/account/store.ts). ` +
+        "Доменные данные живут в своих ручках; если ключ правда про UI — добавь его в список с обоснованием."
+    );
+  }
+  return false;
+}
 
 /* ---------- Backends ---------- */
 
@@ -77,34 +128,40 @@ function adoptLegacy(userId: string, into: Record<string, unknown>) {
   }
 }
 
+/** `PATCH /state` refuses more than 200 keys at a time (backend/app/api/state.py) */
+const MAX_KEYS_PER_PATCH = 200;
+
+function batches(entries: Record<string, unknown>) {
+  const keys = Object.keys(entries);
+  if (keys.length <= MAX_KEYS_PER_PATCH) return [entries];
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < keys.length; i += MAX_KEYS_PER_PATCH) {
+    out.push(Object.fromEntries(keys.slice(i, i + MAX_KEYS_PER_PATCH).map((k) => [k, entries[k]])));
+  }
+  return out;
+}
+
 const remoteBackend: StateBackend = {
   async load() {
-    const res = await fetch(`${API}/state`, { credentials: "include" });
-    if (!res.ok) throw new Error(`state ${res.status}`);
-    return res.json();
+    try {
+      return await api.get<Record<string, unknown>>("/state");
+    } catch (e) {
+      // No row yet for this student: an empty slate, not a failure
+      if (e instanceof ApiError && e.status === 404) return {};
+      throw e;
+    }
   },
   async save(_userId, entries) {
-    const res = await fetch(`${API}/state`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(entries),
-    });
-    if (!res.ok) throw new Error(`state patch ${res.status}`);
+    for (const batch of batches(entries)) await api.patch("/state", batch);
   },
   saveOnExit(_userId, entries) {
-    // keepalive lets the request finish after the page is gone
-    void fetch(`${API}/state`, {
-      method: "PATCH",
-      credentials: "include",
-      keepalive: true,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(entries),
-    }).catch(() => undefined);
+    // keepalive lets the request finish after the page is gone; a redirect would not, so no 401 hop
+    for (const batch of batches(entries)) {
+      void api.patch("/state", batch, { keepalive: true, noAuthRedirect: true }).catch(() => undefined);
+    }
   },
   async clear() {
-    const res = await fetch(`${API}/state`, { method: "DELETE", credentials: "include" });
-    if (!res.ok) throw new Error(`state delete ${res.status}`);
+    await api.delete("/state");
   },
 };
 
@@ -165,6 +222,9 @@ export const store = {
 
   /** null removes the key */
   set(key: string, value: unknown) {
+    const removing = value === null || value === undefined;
+    // Dropping a key is always allowed: that is how a key that left the list is cleaned up
+    if (!removing && !allowed(key)) return;
     if (value === null || value === undefined) delete cache[key];
     else cache[key] = value;
     pending[key] = value ?? null;

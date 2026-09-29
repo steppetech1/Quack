@@ -8,6 +8,7 @@ import { useVertical } from "./GraphCanvas";
 import { NodeMark, StateGlyph } from "./SkillGraph";
 import { TopicWorkspace } from "./TopicWorkspace";
 import { FinalMockTest } from "./FinalMockTest";
+import { SetReport } from "./SetReport";
 import styles from "./prep.module.css";
 
 type Props = {
@@ -109,6 +110,9 @@ export function SetDetail({ model, set, topic, onBack, onMakeCurrent, onModel, o
           )}
         </div>
       </header>
+
+      {/* Сет пройден — первым делом отчёт о нём, а не снова его граф */}
+      {status === "done" && <SetReport setId={set.rawId} />}
 
       <div className={styles.setStage}>
         <section className={`${styles.canvas} ${styles.setGraphCard}`} aria-label="Темы сета">

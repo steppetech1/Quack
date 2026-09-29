@@ -3,7 +3,7 @@
 // with. A request to explain material is turned back to planning and to «Проверь себя».
 // Pure functions over the prep model; stands in for the backend until there is one.
 
-import { allSkills, daysBetween, EXAMS, formatDate, formatShort, parseDeadline, SETS, skillById, SKILLS, TODAY, type ExamId, type StudySet } from "./prepData";
+import { allSets, allSkills, daysBetween, EXAMS, formatDate, formatShort, parseDeadline, skillById, SKILLS, TODAY, type ExamId, type StudySet } from "./prepData";
 import type { PrepModel } from "./prepModel";
 import type { TopicContent } from "./topicContent";
 
@@ -73,7 +73,7 @@ function plan(model: PrepModel, exam: ExamId, deadline: Date): string {
   const days = daysBetween(TODAY, deadline);
   if (days <= 0) return `${formatDate(deadline)} уже прошло — напиши новую дату, и я пересоберу план.`;
 
-  const sets = SETS.filter((s) => s.exam === exam && !model.doneSets.includes(s.id));
+  const sets = allSets().filter((s) => s.exam === exam && !model.doneSets.includes(s.id));
   const open = openSkills(model, exam);
   if (!sets.length || !open.length) {
     return `По ${name} всё уже держится. До ${formatDate(deadline)} хватит «Проверь себя» раз в пару дней и одного пробного теста за неделю до срока.`;

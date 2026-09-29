@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 from uuid import UUID
 
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import keys
@@ -61,14 +62,14 @@ async def _inputs(
         if requirement.exam_id is not None
     }
     # Граф недоступен — подборка без фактора сроков (тест-дат нет).
-    test_dates = (
-        {
-            exam_id: await kb.list_test_dates(deps.graph, exam_id)
-            for exam_id in all_exam_ids
-        }
-        if deps.graph is not None
-        else {}
-    )
+    test_dates: dict[ExamId, list[TestDate]] = {}
+    if deps.graph is not None:
+        try:
+            for exam_id in all_exam_ids:
+                test_dates[exam_id] = await kb.list_test_dates(deps.graph, exam_id)
+        except (ServiceUnavailable, SessionExpired):
+            # Driver exists, graph is down: same answer as no graph.
+            test_dates = {}
     return profile, programs, forecasts, test_dates
 
 
@@ -334,3 +335,14 @@ def compare_hash(
         prompt_version,
         model,
     )
+
+
+async def graph_reachable(deps: RuleDeps) -> bool:
+    """Whether the graph answers now; a driver that exists may still be down."""
+    if deps.graph is None:
+        return False
+    try:
+        await deps.graph.verify_connectivity()
+    except Exception:  # noqa: BLE001 — any failure means "not answering"
+        return False
+    return True

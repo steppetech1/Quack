@@ -45,7 +45,11 @@ export type ExamPace = {
 export type ConflictOption = { label: string; action?: AdviceAction };
 
 export type ChanceFact = {
-  key: "sat" | "sat-forecast" | "ielts" | "budget";
+  /**
+   * `factor` is a hard factor as the backend words it (`FactorOut.text`): it carries its own
+   * sentence instead of a have/need pair, so those two are empty and the label says everything.
+   */
+  key: "sat" | "sat-forecast" | "ielts" | "budget" | "factor";
   label: string;
   have: string;
   need: string;
@@ -116,10 +120,35 @@ export type Signal = {
   at: string;
   /** Where to go to deal with it */
   target?: "prep" | "calendar" | "programs" | "profile";
+  /**
+   * A backend recommendation behind the signal (phase 4). Accepting it changes the plan on the server,
+   * the way the student would have changed it by hand; declining keeps it out of the feed. Absent for
+   * signals the browser derived on its own.
+   */
+  recommendation?: {
+    id: string;
+    /** What accepting does, in the backend's own words ("Перенести тест на 5 декабря") */
+    actionText: string;
+    status: "pending" | "shown" | "accepted" | "declined" | "expired";
+  };
+};
+
+/** One day of the activity calendar, JSON-safe like the rest of this file (the grid makes the Date) */
+export type ActivityDay = {
+  /** ISO day, `2026-09-20` */
+  day: string;
+  count: number;
+  level: 0 | 1 | 2 | 3;
+  parts: string[];
 };
 
 export type QuackState = {
   standing: Standing | null;
+  /**
+   * The activity calendar as the backend counted it (`GET /quack`). Absent while the browser counts
+   * it from its own evidence, and while the aggregates have not been computed yet.
+   */
+  activity?: ActivityDay[];
   /** Not seen yet: these make the Quack! button glow */
   fresh: Signal[];
   /** Seen on earlier visits, newest first */

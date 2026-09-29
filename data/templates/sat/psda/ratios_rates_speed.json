@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A train travels 90 km in 1.5 hours. What is its speed in km/h?",
+  "stem": "Поезд проехал 90 км за 1,5 часа. Какова его скорость в км/ч?",
   "correct": "60",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the ratios rates rule.",
-    "The value is {answer}."
+    "Скорость = расстояние / время.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

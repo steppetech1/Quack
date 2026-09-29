@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "Two vertical angles meet at a crossing. One is 38 degrees. What is the other?",
+  "stem": "Две прямые пересекаются, образуя вертикальные углы. Один из них 38°. Чему равен вертикальный ему угол?",
   "correct": "38",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the lines angles rule.",
-    "The value is {answer}."
+    "Вертикальные углы равны.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

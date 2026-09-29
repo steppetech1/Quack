@@ -443,3 +443,20 @@ async def test_a_stale_version_row_is_recomputed(soft):
         "program-1",
         "program-2",
     ]
+
+
+async def test_a_refused_key_fails_the_text_instead_of_leaving_it_generating(pregen):
+    import httpx
+    import openai
+
+    request = httpx.Request("POST", "http://test")
+    refused = openai.AuthenticationError(
+        "bad key, see https://provider.example/keys",
+        response=httpx.Response(401, request=request),
+        body=None,
+    )
+    llm = FakeLLMClient([refused] * 6)
+    with pytest.raises(RuntimeError):
+        await jobs.pregenerate_set(_ctx(llm), "req", SET_ID, STUDENT)
+    statuses = {digest: status for _kind, digest, status in pregen.marks}
+    assert statuses["hash:guideline:a"] == "failed"

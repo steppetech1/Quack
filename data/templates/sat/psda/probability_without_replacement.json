@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A bag has 2 red and 3 blue balls. Without replacement, what is P(red then blue)?",
+  "stem": "В мешке 2 красных и 3 синих шара. Шары достают без возвращения. Какова вероятность достать сначала красный, потом синий?",
   "correct": "3/10",
   "distractors": [],
   "solution": [
-    "Use the probability rule.",
-    "The value is {answer}."
+    "Без возвращения: 2/5 × 3/4 — после первого шара их остаётся 4.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

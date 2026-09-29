@@ -77,6 +77,35 @@ async def get_profile(session: AsyncSession, student_id: UUID) -> Profile:
     )
 
 
+# What a number in a slot can honestly be. A model that hears «100 тыс в месяц» and
+# writes it into a score is not caught by the type: the range is the check.
+# Outside it the value is refused, with a message that says what to do.
+NUMBER_BOUNDS: dict[str, tuple[float, float]] = {
+    "academics.ent_trial_score": (0, 140),
+    "academics.ent_target": (0, 140),
+    "academics.sat_score": (0, 1600),
+    "academics.sat_target": (0, 1600),
+    "academics.ielts_score": (0, 9),
+    "academics.ielts_target": (0, 9),
+    "level.grade": (1, 12),
+    "level.admission_year": (2000, 2100),
+    "pace.hours_per_week": (0, 100),
+    "preferences.budget_per_year": (0, 10**9),
+}
+
+
+def check_number_bounds(path: str, value: object) -> None:
+    bounds = NUMBER_BOUNDS.get(path)
+    if bounds is None or isinstance(value, bool) or not isinstance(value, int | float):
+        return
+    low, high = bounds
+    if not low <= value <= high:
+        raise ValidationFailed(
+            f"{path}: {value} is outside {low:g}..{high:g}; probably another fact "
+            "(money, hours, a year). Do not store it here: ask the student."
+        )
+
+
 async def apply_profile_update(
     session: AsyncSession, student_id: UUID, upd: ProfileUpdateIn
 ) -> Profile:
@@ -119,6 +148,7 @@ async def apply_profile_update(
                 digits = re.findall(r"\d+", raw_val)
                 if digits:
                     raw_val = int(digits[0])
+            check_number_bounds(upd.path, raw_val)
             value = TypeAdapter(
                 field.__class__.model_fields["value"].annotation
             ).validate_python(raw_val)

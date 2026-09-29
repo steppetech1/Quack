@@ -581,6 +581,7 @@ def _coerce(profile: Profile, path: str, value: Any) -> tuple[Any, Any]:
         elif path == "academics.sat_score" and isinstance(value, int | float | str):
             try:
                 num = int(value)
+                profiles_repo.check_number_bounds(path, num)
                 if num > 800:
                     value = round(num / 2 / 10) * 10
                 else:
@@ -588,6 +589,7 @@ def _coerce(profile: Profile, path: str, value: Any) -> tuple[Any, Any]:
             except (ValueError, TypeError):
                 pass
         section, leaf = path.split(".")
+        profiles_repo.check_number_bounds(path, value)
         field = getattr(getattr(profile.questionnaire, section), leaf)
         annotation = field.__class__.model_fields["value"].annotation
         return TypeAdapter(annotation).validate_python(value), field.value
@@ -607,7 +609,12 @@ def _coerce(profile: Profile, path: str, value: Any) -> tuple[Any, Any]:
         "feeds matching, comparison and the prep side. Call it as soon as "
         "a message states a concrete fact about the student (a number, a "
         "country, a preference), not for facts that only matter within "
-        "this reply."
+        "this reply. Match the fact to the field it belongs to: a sum of money "
+        "is never a score. Money goes in preferences.budget_per_year and is per "
+        "YEAR (a monthly figure is multiplied by 12). Living costs are not the "
+        "tuition budget: keep them as traits.verbatim. Scores are exam points "
+        "(ENT trial 0-140, SAT 400-1600, IELTS 0-9). If the message does not clearly "
+        "answer the question you asked, write nothing and ask again."
     ),
     read_only=False,
 )

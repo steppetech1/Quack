@@ -283,3 +283,43 @@ def test_returns_list_of_queue_items():
     )
     assert isinstance(queue, list)
     assert isinstance(queue[0], QueueItem)
+
+
+# --- низкая цель и непроверенные навыки ---
+
+
+def test_unseen_skill_survives_a_target_below_the_prior():
+    """Программа с низким порогом не должна оставлять ученика без плана.
+
+    ЕНТ-порог 12 из 50 даёт p_target 0.24 — ниже приора 0.5. Навык, который мы
+    ни разу не видели, обязан остаться в очереди как проверка: приор — это не
+    знание. Иначе «Подготовка» пуста у человека, который ещё ничего не решал.
+    """
+    weights = [_weight("a", 3.0), _weight("b", 3.0)]
+    queue = build_queue(
+        [],
+        weights,
+        [],
+        days_to_test=120,
+        p_target=0.24,
+        root_causes=[],
+        params=PARAMS,
+    )
+    assert [item.skill_id for item in queue] == ["a", "b"]
+    assert all(item.is_check for item in queue)
+    assert all(item.gap > 0 and item.need > 0 for item in queue)
+
+
+def test_a_seen_skill_above_the_target_stays_out():
+    """Обратная сторона: там, где знание настоящее, учить действительно нечего."""
+    states = [_state("a", p_recall=0.9, confidence=0.8)]
+    queue = build_queue(
+        states,
+        [_weight("a", 3.0)],
+        [],
+        days_to_test=120,
+        p_target=0.24,
+        root_causes=[],
+        params=PARAMS,
+    )
+    assert queue == []

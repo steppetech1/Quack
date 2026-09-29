@@ -26,7 +26,7 @@
     }
   },
   "constraints": [],
-  "stem": "In a right triangle, opposite = {o} and hypotenuse = {h}. What is sin(theta)?",
+  "stem": "В прямоугольном треугольнике противолежащий катет {o}, гипотенуза {h}. Чему равен sin(θ)?",
   "correct": "o/h",
   "distractors": [
     {
@@ -43,8 +43,8 @@
     }
   ],
   "solution": [
-    "Use the trig right rule.",
-    "The value is {answer}."
+    "sin(θ) = противолежащий катет / гипотенуза.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

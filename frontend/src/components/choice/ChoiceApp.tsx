@@ -33,11 +33,22 @@ import { CompareView } from "./CompareView";
 import { CustomScrollbar } from "./CustomScrollbar";
 import { milestoneIntent } from "./milestoneIntent";
 import { chosenTestDates, doneMilestones, markMilestone, pickTestDate, skipEntranceTest } from "../prep/milestoneMarks";
+import { readPrepUi } from "../prep/prepStore";
 import { EXAMS, formatDate, plannedTest, registrationBy } from "../prep/prepData";
 import { ProfilePanel } from "./ProfilePanel";
 import { ProgramCards, ProgramDrawer, type ProgramActions } from "./ProgramUi";
 import { catalog, recommend } from "./programs";
-import { REMOTE, forgetSynced, loadCatalog, loadSaved, prioritize, primeSynced, syncFields } from "./catalog";
+import {
+  REMOTE,
+  clearProfileOnBackend,
+  forgetSynced,
+  loadCatalog,
+  loadSaved,
+  prioritize,
+  primeSynced,
+  searchPrograms,
+  syncFields,
+} from "./catalog";
 import { loadHistory, loadProfile, sendSelectionMessage, type HistoryItem } from "./remoteChat";
 import { ApiError } from "@/api/client";
 import { backend } from "@/api/backend";
@@ -107,8 +118,7 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
   const [prepSub, setPrepSub] = useState<PrepSub>("now");
   const [dashTab, setDashTab] = useState<DashTab>("overview");
   const [diagDone, setDiagDone] = useState<boolean>(() => {
-    const m = store.get<{ diagnosticDone?: boolean }>("quack-prep");
-    return Boolean(m?.diagnosticDone);
+    return Boolean(readPrepUi().diagnosticDone);
   });
   const [launchDiag, setLaunchDiag] = useState(false);
   // The source's functions are stable, so effects can depend on them
@@ -156,6 +166,8 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
   const busyRef = useRef(false);
   const idRef = useRef(0);
   const mounted = useRef(true);
+  /** Последний вопрос — чтобы «повторить» после обрыва отправило именно его */
+  const lastAskedRef = useRef<string>("");
   // Effects, not refs: writing must wait until the loaded state has actually been applied,
   // otherwise React's double mount in development saves the empty state over the stored one
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
@@ -229,8 +241,16 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
 
   useEffect(() => {
     if (!workspaceLoaded) return;
-    // The store gathers a burst (a reply typing out) into one write
-    store.set(WORKSPACE_KEY, { profile, confirmed, picks, saved, compare, sessions } satisfies Workspace);
+    // The store gathers a burst (a reply typing out) into one write.
+    // With a backend the questionnaire, the saved list and the conversation are read from it on
+    // every load and overwrite whatever was here, so keeping a copy is duplication, not a cache
+    // (ТЗ §5.6). What stays is the screen's own: which programs are shown and compared.
+    store.set(
+      WORKSPACE_KEY,
+      REMOTE
+        ? ({ profile: EMPTY_PROFILE, confirmed, picks, saved: [], compare, sessions: [] } satisfies Workspace)
+        : ({ profile, confirmed, picks, saved, compare, sessions } satisfies Workspace)
+    );
   }, [workspaceLoaded, profile, confirmed, picks, saved, compare, sessions]);
 
   /* ---------- Backend: catalog, saved programs, profile ---------- */
@@ -436,6 +456,14 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
       setMobileProgramsOpen(false);
       setDetailId(id);
     },
+    // Помеченная программа уходит из подборки на сервере — перечитываем каталог, а не прячем её тут
+    onFlagged: (id) => {
+      setDetailId(null);
+      setPicks((list) => list.filter((pick) => pick !== id));
+      setCompare((list) => list.filter((pick) => pick !== id));
+      setToast("Спасибо — программа убрана из подборки");
+      if (REMOTE) loadCatalog().then(() => bumpCatalog((n) => n + 1)).catch(() => undefined);
+    },
   };
 
   const openCompare = () => {
@@ -607,6 +635,17 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
     inputRef.current?.focus();
   }
 
+  /** «Повторить» под оборванным ответом: тот же вопрос, обрубок убираем */
+  async function retryTruncated(id: number) {
+    const text = lastAskedRef.current;
+    if (!text || busyRef.current) return;
+    setMessages((list) => list.filter((m) => m.id !== id));
+    setBusyState(true);
+    await remoteRespond(text);
+    if (!mounted.current) return;
+    setBusyState(false);
+  }
+
   /** One turn with the backend agent: the answer streams in, cards and comparison arrive as tool results */
   async function remoteRespond(text: string) {
     const id = ++idRef.current;
@@ -616,9 +655,10 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
     let compareIds: string[] = [];
     const changed = { profile: false, saved: false };
     let failed: string | null = null;
+    let truncated = false;
 
     try {
-      await sendSelectionMessage(text, {
+      const turn = await sendSelectionMessage(text, {
         onText: (delta) => {
           answer += delta;
           if (mounted.current) updateMsg(id, { typing: false, text: answer });
@@ -630,8 +670,15 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
           changed.saved ||= Boolean(what.saved);
         },
       });
+      // Стрим закончился без кадра `done` — связь оборвалась на полуслове.
+      // Обрыв не бросает исключение: тело просто кончается.
+      truncated = !turn.complete;
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "";
+      // Связь оборвалась посреди ответа: иногда тело просто кончается (ловится
+      // выше по отсутствию `done`), иногда fetch бросает. Оба случая — не отказ
+      // сервера, а обрыв, и лечатся одним и тем же: повторить вопрос.
+      truncated = err instanceof ApiError && err.status === 0;
       failed =
         code === "llm_unavailable"
           ? "Ассистент сейчас недоступен. Программы и профиль слева по-прежнему можно смотреть — попробуй написать позже."
@@ -656,7 +703,16 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
       updateMsg(id, { typing: false, text: answer });
     }
 
-    if (failed) {
+    if (truncated) {
+      // Часть ответа уже на экране: её оставляем, но говорим, что это не весь
+      // ответ, и даём повторить тот же вопрос (ТЗ §7.3 п.7).
+      lastAskedRef.current = text;
+      updateMsg(id, {
+        typing: false,
+        text: answer || "Связь пропала, ответ не дошёл.",
+        truncated: true,
+      });
+    } else if (failed) {
       updateMsg(id, {
         typing: false,
         text: answer ? `${answer}\n\n⚠️ ${failed}` : failed,
@@ -724,8 +780,29 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
         bumpCatalog((n) => n + 1);
         ids = prioritize(loaded.ids, profileRef.current.priorities).slice(0, 5);
         if (!ids.length) {
-          await assistantSay(loaded.emptyReason ?? "Пока не нашёл подходящих программ. Расскажи, что для тебя важно, — и я поищу ещё.");
-          return;
+          // Каталог пуст не потому, что программ нет, а потому что их туда ещё не клали:
+          // просим поиск по тому, что ученик уже сказал, и возвращаемся с результатом.
+          const p = profileRef.current;
+          const query = [p.direction, p.location].filter(Boolean).join(" ").trim();
+          if (query) {
+            await assistantSay("Поищу программы по твоему запросу — это займёт около минуты.");
+            const found = await searchPrograms(query);
+            if (found.status === "done" && found.found.length) {
+              const again = await loadCatalog();
+              bumpCatalog((n) => n + 1);
+              ids = prioritize(again.ids, p.priorities).slice(0, 5);
+            } else {
+              await assistantSay(
+                found.status === "unavailable"
+                  ? "Поиск сейчас недоступен — показываю то, что уже есть в каталоге."
+                  : "Поиск ещё идёт — загляни чуть позже, программы появятся сами."
+              );
+            }
+          }
+          if (!ids.length) {
+            await assistantSay(loaded.emptyReason ?? "Пока не нашёл подходящих программ. Расскажи, что для тебя важно, — и я поищу ещё.");
+            return;
+          }
         }
       } catch {
         // §6.3 «поиск недоступен»: подбор продолжает работать на кэше и полу проверенных программ,
@@ -841,8 +918,12 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
   // Everything of this student goes (chats, programs, preparation, the map), the account stays
   const restart = async () => {
     await store.reset();
-    // Saved programs live on the server: "начать заново" empties them too
-    if (REMOTE) await Promise.all(saved.map((id) => backend.saved.remove(id).catch(() => undefined)));
+    // The questionnaire and the saved programs live on the server, so «начать заново» empties them
+    // there as well — otherwise the student starts over and the old answers come straight back.
+    if (REMOTE) {
+      await Promise.all(saved.map((id) => backend.saved.remove(id).catch(() => undefined)));
+      await clearProfileOnBackend().catch(() => undefined);
+    }
     forgetSynced();
     resetQuack();
     onRestart();
@@ -1076,6 +1157,7 @@ export function ChoiceApp({ onRestart }: { onRestart: () => void }) {
                         onUndoMilestone={undoMilestone}
                         onUndoTestDate={undoTestDate}
                         onOffer={diagDone ? undefined : answerOffer}
+                        onRetry={retryTruncated}
                       />
                     )
                   )}

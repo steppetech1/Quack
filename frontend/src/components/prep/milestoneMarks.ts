@@ -9,9 +9,10 @@ import { useSyncExternalStore } from "react";
 import { store } from "../account/store";
 import { quackSource } from "../quack/source";
 import type { DatedExam, TestDates } from "./prepData";
-import { chooseTestDate, initialModel, reviveModel, skipTest, type PrepModel } from "./prepModel";
-
-const PREP_KEY = "quack-prep";
+import { chooseTestDate, skipTest, type PrepModel } from "./prepModel";
+import { markRemoteMilestone } from "./remotePrep";
+import { rawPrepUi, readPrepUi, updatePrepModel } from "./prepStore";
+import { REMOTE_PREP } from "./remoteFlag";
 const NO_MARKS: string[] = [];
 const NO_DATES: TestDates = {};
 type Targets = NonNullable<PrepModel["targets"]>;
@@ -27,13 +28,14 @@ const NO_RESOLVED: Record<string, string> = {};
 let resolved: Record<string, string> = NO_RESOLVED;
 
 function refresh() {
-  const raw = store.get<PrepModel>(PREP_KEY);
+  const raw = rawPrepUi();
   if (raw === lastRaw) return;
   lastRaw = raw;
-  marks = raw?.milestonesDone ?? NO_MARKS;
-  dates = raw?.testDates ?? NO_DATES;
-  targets = raw?.targets ?? NO_TARGETS;
-  resolved = raw?.resolvedConflicts ?? NO_RESOLVED;
+  const ui = readPrepUi();
+  marks = ui.milestonesDone ?? NO_MARKS;
+  dates = ui.testDates ?? NO_DATES;
+  targets = ui.targets ?? NO_TARGETS;
+  resolved = ui.resolvedConflicts ?? NO_RESOLVED;
 }
 
 /** Conflicts the student settled with a way out, as stored now: id → the way chosen. */
@@ -70,8 +72,7 @@ export function chosenTestDates(): TestDates {
 }
 
 function update(change: (model: PrepModel) => PrepModel) {
-  const next = change(reviveModel(store.get(PREP_KEY)) ?? initialModel());
-  store.set(PREP_KEY, next);
+  const next = updatePrepModel(change);
   quackSource().report({ prep: next });
   listeners.forEach((listener) => listener());
 }
@@ -85,6 +86,13 @@ export function markMilestone(id: string, done?: boolean): boolean {
       ...model,
       milestonesDone: want ? [...model.milestonesDone, id] : model.milestonesDone.filter((m) => m !== id),
     }));
+    // A tick made outside «Подготовки» (the dashboard, the choice chat) is the same tick: it has to
+    // reach `POST /overview/milestones/{key}`, or the next load reads the server and undoes it.
+    if (REMOTE_PREP) {
+      markRemoteMilestone(id, want).catch((err) => {
+        console.warn(`Не удалось сохранить отметку вехи «${id}» на сервере:`, err);
+      });
+    }
   }
   return want;
 }

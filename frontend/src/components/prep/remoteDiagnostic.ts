@@ -11,6 +11,7 @@ import { skillById, type ExamId, type SkillState } from "./prepData";
 import { type DiagnosticQuestion, type DiagnosticResultSummary } from "./diagnosticData";
 import { toBackendExamId } from "./remotePrep";
 import { REMOTE_PREP } from "./remoteSets";
+import { isUuid } from "@/api/client";
 
 export async function fetchActiveOrStartDiagnostic(
   exam: ExamId,
@@ -60,7 +61,7 @@ export async function submitDiagnosticAnswer(
   answerKey: string,
   timeSpentSec: number
 ): Promise<BackendDiagnosticOut | null> {
-  if (!REMOTE_PREP) return null;
+  if (!REMOTE_PREP || !isUuid(runId) || !isUuid(instanceId)) return null;
 
   try {
     const body: BackendAnswerIn = {
@@ -81,7 +82,7 @@ export async function submitDiagnosticAnswer(
 export async function finishDiagnosticRun(
   runId: string
 ): Promise<BackendDiagnosticResult | null> {
-  if (!REMOTE_PREP) return null;
+  if (!REMOTE_PREP || !isUuid(runId)) return null;
 
   try {
     return await backend.diagnostic.finish(runId);
@@ -109,10 +110,14 @@ export function adaptBackendTaskToDiagnosticQuestion(
   };
 }
 
+/**
+ * The counts come from the run the server closed, never from React state: a reload or a second
+ * device mid-diagnostic leaves the component with a fraction of the answers, and the screen would
+ * then report a score about questions the server graded differently.
+ */
 export function adaptDiagnosticResult(
   result: BackendDiagnosticResult,
-  totalAsked: number,
-  score: number
+  answeredOnServer: number
 ): DiagnosticResultSummary {
   const statesUpdate: Record<string, SkillState> = {};
   for (const id of result.firm) {
@@ -130,8 +135,9 @@ export function adaptDiagnosticResult(
   ];
 
   return {
-    score,
-    total: Math.max(totalAsked, result.firm.length + result.shaky.length, 1),
+    // «Верно» — это навыки, которые замер признал твёрдыми; всего — сколько ответов он засчитал
+    score: result.firm.length,
+    total: Math.max(answeredOnServer, result.firm.length + result.shaky.length, 1),
     solidSkills,
     attentionSkills,
     trapsCaught,

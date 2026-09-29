@@ -46,11 +46,12 @@ _JOBS: tuple[tuple[str, str, float, float | None, int], ...] = (
     ("canonize_misconception", "interactive", settings.CANON_JOB_TIMEOUT_S, None, 3),
     # Phase 4.
     ("set_summary", "interactive", 30, _KEEP, 3),
-    ("pregenerate_set", "bulk", 90, _KEEP, 3),
+    # A guideline and an explanation per topic, one model call after another.
+    ("pregenerate_set", "bulk", 240, _KEEP, 3),
     ("soft_match", "bulk", 90, _KEEP, 3),
     ("extract_program", "bulk", 60, _KEEP, 2),
     ("search_programs", "bulk", 30, _KEEP, 2),
-    ("realism_texts", "bulk", 90, _KEEP, 2),
+    ("realism_texts", "bulk", 180, _KEEP, 2),
     ("compare_text", "bulk", 60, _KEEP, 2),
 )
 

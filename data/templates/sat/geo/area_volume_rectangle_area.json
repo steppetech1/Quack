@@ -26,7 +26,7 @@
     }
   },
   "constraints": [],
-  "stem": "A rectangle is {a} by {b}. What is its area?",
+  "stem": "Стороны прямоугольника {a} и {b}. Какова его площадь?",
   "correct": "a*b",
   "distractors": [
     {
@@ -43,8 +43,8 @@
     }
   ],
   "solution": [
-    "Use the area volume rule.",
-    "The value is {answer}."
+    "Площадь прямоугольника = длина × ширина.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

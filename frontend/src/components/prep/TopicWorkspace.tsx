@@ -8,12 +8,14 @@ import { addMaterial, answerTask, MOCK_SOLID, removeMaterial, settleMock, type M
 import { downloadMarkdown, generateCards, generateNotes, materialAsked, printPdf, renderMarkdown, type MaterialKind } from "./materials";
 import { StateGlyph } from "./SkillGraph";
 import { checksFor, TOPICS, type TopicContent } from "./topicContent";
+import { TopicTheory } from "./TopicTheory";
 import {
   completeRemoteTopic,
   fetchRemoteTopicTasks,
   openRemoteTopic,
   submitRemoteAnswer,
 } from "./remoteTasks";
+import { ApiError, isUuid } from "@/api/client";
 import { fetchRemoteSets, REMOTE_PREP } from "./remoteSets";
 import { applyRemoteKnowledgeToModel, explainRemoteNode, fetchRemoteKnowledge, refreshRemoteKnowledge } from "./remoteKnowledge";
 import type { ExamId } from "./prepData";
@@ -58,6 +60,8 @@ type Line = {
   instanceId?: string;
   hintLevel?: number;
   referencedSkills?: string[];
+  /** Стрим кончился без кадра `done` — связь оборвалась, ответ неполный */
+  truncated?: boolean;
 };
 /** What the «Материалы» column shows: the list, the mock test or one material */
 type Open = null | "mock" | string;
@@ -71,7 +75,7 @@ const KIND_LABEL: Record<MaterialKind, string> = { notes: "конспект", ca
  */
 export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, onTopic, onModel, onToast }: Props) {
   useEffect(() => {
-    if (set.rawId && REMOTE_PREP) {
+    if (set.rawId && isUuid(set.rawId) && REMOTE_PREP) {
       openRemoteTopic(set.rawId, skillId);
     }
   }, [set.rawId, skillId]);
@@ -104,7 +108,7 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
   }, [skillId]);
 
   useEffect(() => {
-    if (!REMOTE_PREP || !set.rawId) return;
+    if (!REMOTE_PREP || !set.rawId || !isUuid(set.rawId)) return;
     loadPrepMessages(set.rawId, skillId).then((history) => {
       if (history && history.length > 0) {
         setLines(
@@ -127,7 +131,7 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
     if (refreshing) return;
     setRefreshing(true);
     try {
-      if (REMOTE_PREP && set.rawId) {
+      if (REMOTE_PREP && set.rawId && isUuid(set.rawId)) {
         let observeRes = null;
         try {
           observeRes = await requestChatObservation(set.rawId, skillId);
@@ -224,6 +228,8 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
   const [lines, setLines] = useState<Line[]>([]);
   const [typing, setTyping] = useState(false);
   const idRef = useRef(0);
+  /** Последний вопрос — чтобы «повторить» после обрыва отправило именно его */
+  const lastAskedRef = useRef<string>("");
   // The latest model: a reply lands a moment later and must not undo an answer given meanwhile
   const modelRef = useRef(model);
   modelRef.current = model;
@@ -243,10 +249,22 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
     const count = materials.filter((m) => m.kind === kind).length;
     const material = kind === "notes" ? generateNotes(model, skillId, count) : generateCards(model, skillId, count);
     say(question, () => {
+      // A topic without questions, content or traps yet gives nothing to put on a card
+      if (material.kind === "cards" && !material.cards.length) {
+        return { text: "Карточки пока не из чего собрать: в теме ещё нет вопросов и твоих ловушек. Порешай задачи — и попроси снова." };
+      }
       onModel(addMaterial(modelRef.current, skillId, material));
       const size = material.kind === "cards" ? ` · ${material.cards.length} карточек` : "";
       return { text: `Готово: «${material.title}»${size}. Лежит в «Материалах» — открой, когда удобно.`, material: material.id };
     });
+  };
+
+  /** «Повторить» под оборванным ответом: обрубок убираем, вопрос шлём заново */
+  const retryTruncated = (lineId: number | string) => {
+    const again = lastAskedRef.current;
+    if (!again || typing) return;
+    setLines((prev) => prev.filter((l) => l.id !== lineId));
+    void ask(again);
   };
 
   const ask = async (text: string) => {
@@ -255,7 +273,7 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
     const kind = materialAsked(q);
     if (kind) return make(kind, q);
 
-    if (REMOTE_PREP && set.rawId) {
+    if (REMOTE_PREP && set.rawId && isUuid(set.rawId)) {
       const studentLineId = ++idRef.current;
       const assistantLineId = ++idRef.current;
       setLines((prev) => [
@@ -264,6 +282,7 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
         { id: assistantLineId, role: "assistant", text: "" },
       ]);
       setTyping(true);
+      let finished = false;
 
       try {
         await sendPrepMessage(
@@ -277,6 +296,7 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
               );
             },
             onDone: (done) => {
+              finished = true;
               setTyping(false);
               setLines((prev) =>
                 prev.map((l) =>
@@ -294,6 +314,7 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
             },
             onError: (err) => {
               console.warn("Tutor stream error:", err);
+              finished = true;
               setTyping(false);
               setLines((prev) =>
                 prev.map((l) =>
@@ -305,14 +326,39 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
             },
           }
         );
+        // Обрыв связи не бросает исключение — тело стрима просто кончается, и
+        // без кадра `done` «печатает…» висело бы вечно поверх полуответа.
+        if (!finished) {
+          setTyping(false);
+          setLines((prev) =>
+            prev.map((l) =>
+              l.id === assistantLineId
+                ? {
+                    ...l,
+                    text: l.text || "Связь пропала, ответ не дошёл.",
+                    truncated: true,
+                  }
+                : l
+            )
+          );
+          lastAskedRef.current = q;
+        }
       } catch (err: unknown) {
         console.warn("Tutor chat request failed, fallback to local:", err);
         setTyping(false);
+        // Обрыв связи (status 0) — не отказ репетитора, а половина ответа.
+        // Подменять её локальным текстом значило бы выдать чужой ответ за его.
+        const dropped =
+          err instanceof ApiError && err.status === 0 ? (lastAskedRef.current = q) : null;
         setLines((prev) =>
           prev.map((l) =>
-            l.id === assistantLineId && !l.text
-              ? { ...l, text: topicReply(q, model, skillId, set, content) }
-              : l
+            l.id !== assistantLineId
+              ? l
+              : dropped
+                ? { ...l, text: l.text || "Связь пропала, ответ не дошёл.", truncated: true }
+                : l.text
+                  ? l
+                  : { ...l, text: topicReply(q, model, skillId, set, content) }
           )
         );
       }
@@ -390,7 +436,14 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
 
       <div className={styles.topicWorkStage} data-pane={pane === "chat" ? "chat" : "side"}>
         <section className={`${styles.canvas} ${styles.chatPane}`} aria-label="Чат по теме">
-          <Chat skill={skill.name} lines={lines} typing={typing} onAsk={ask} onOpen={openMaterial} />
+          <Chat
+            skill={skill.name}
+            lines={lines}
+            typing={typing}
+            onAsk={ask}
+            onOpen={openMaterial}
+            onRetry={retryTruncated}
+          />
         </section>
 
         <aside className={`${styles.canvas} ${styles.sidePane}`} aria-label="Материалы">
@@ -398,6 +451,7 @@ export function TopicWorkspace({ model, set, skillId, order, plannedBy, onBack, 
             <MaterialList
               model={model}
               skillId={skillId}
+              setRawId={set.rawId}
               materials={materials}
               busy={typing}
               onOpen={openMaterial}
@@ -450,12 +504,15 @@ function Chat({
   typing,
   onAsk,
   onOpen,
+  onRetry,
 }: {
   skill: string;
   lines: Line[];
   typing: boolean;
   onAsk: (text: string) => void;
   onOpen: (id: string) => void;
+  /** Спросить то же самое ещё раз после оборванного ответа */
+  onRetry: (lineId: number | string) => void;
 }) {
   const [input, setInput] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -486,6 +543,17 @@ function Chat({
               <p className={styles.chatLine} data-role={l.role}>
                 {l.text || (typing && l.role === "assistant" ? "…" : "")}
               </p>
+              {l.truncated && (
+                <div style={{ alignSelf: "flex-start", marginTop: 2 }}>
+                  <button
+                    type="button"
+                    className={styles.pinButton}
+                    onClick={() => onRetry(l.id)}
+                  >
+                    <Icon name="sparkles" size={13} /> Ответ оборвался — повторить
+                  </button>
+                </div>
+              )}
               {l.instanceId && (
                 <div style={{ alignSelf: "flex-start", marginTop: 2 }}>
                   <button
@@ -536,6 +604,7 @@ function Chat({
 function MaterialList({
   model,
   skillId,
+  setRawId,
   materials,
   busy,
   onOpen,
@@ -544,6 +613,8 @@ function MaterialList({
 }: {
   model: PrepModel;
   skillId: string;
+  /** The backend's set id, when the set came from there */
+  setRawId?: string;
   materials: Material[];
   busy: boolean;
   onOpen: (id: Open) => void;
@@ -551,7 +622,7 @@ function MaterialList({
   onRemove: (id: string) => void;
 }) {
   const total = checksFor(skillId).length;
-  const last = model.evidence[skillId].find((e) => e.source === "мок");
+  const last = (model.evidence[skillId] ?? []).find((e) => e.source === "мок");
 
   return (
     <div className={styles.materials}>
@@ -559,6 +630,9 @@ function MaterialList({
         <h3>Материалы</h3>
         <span className={styles.muted}>всё, что ты попросил сделать по теме</span>
       </header>
+
+      {/* Теория идёт первой: с неё начинают тему, и от её открытия зависит after_guideline */}
+      <TopicTheory setId={setRawId} skillId={skillId} />
 
       <button type="button" className={`${styles.materialRow} ${styles.materialMock}`} onClick={() => onOpen("mock")}>
         <span className={styles.materialIcon} data-kind="mock">
@@ -667,6 +741,8 @@ function Flashcards({ cards: initial }: { cards: { front: string; back: string }
   const [at, setAt] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const card = cards[at];
+
+  if (!card) return <p className={styles.muted}>В этом наборе нет карточек.</p>;
 
   const go = (step: number) => {
     setFlipped(false);
@@ -778,7 +854,7 @@ function MockTest({
     let active = true;
     if (REMOTE_PREP) {
       setLoadingTasks(true);
-      fetchRemoteTopicTasks(skillId, set.rawId).then((remote) => {
+      fetchRemoteTopicTasks(skillId, set.rawId && isUuid(set.rawId) ? set.rawId : null).then((remote) => {
         if (!active) return;
         setLoadingTasks(false);
         if (remote && remote.length > 0) {
@@ -855,7 +931,7 @@ function MockTest({
     if (r.setPassed) onToast(`Сет ${r.setPassed.number} доказан целиком — отчёт в «Обзоре»`);
     pullKnowledge(r.model, set.exam).then((m) => m && onModel(m));
 
-    if (r.to === "solid" && set.rawId && REMOTE_PREP) {
+    if (r.to === "solid" && set.rawId && isUuid(set.rawId) && REMOTE_PREP) {
       try {
         const updated = await completeRemoteTopic(set.rawId, skillId);
         if (updated) {

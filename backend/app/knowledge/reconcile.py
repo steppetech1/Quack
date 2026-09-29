@@ -546,6 +546,12 @@ def _prior_from_trial_score(
     total_weight = sum(sw.weight for sw in exam_skills)
     if total_weight <= 0:
         return []
+    if float(value) > total_weight:
+        # Балл вне шкалы секции: «пробный ЕНТ 95» — это сумма по пяти
+        # предметам, а не математика из 50. Раньше такое значение обрезалось
+        # до 1.0, то есть анкета заявляла идеальное знание всех навыков и
+        # выносила их из плана. Молчать честнее, чем выдумать приор.
+        return []
     p_at_obs = max(0.0, min(1.0, float(value) / total_weight))
 
     out: list[tuple[EvidenceIn, KnowledgeStateOut]] = []

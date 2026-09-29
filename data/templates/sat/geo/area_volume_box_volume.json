@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A rectangular prism measures 3 by 4 by 5. What is its volume?",
+  "stem": "Размеры прямоугольного параллелепипеда 3 × 4 × 5. Каков его объём?",
   "correct": "60",
   "distractors": [],
   "solution": [
-    "Use the area volume rule.",
-    "The value is {answer}."
+    "Объём параллелепипеда = длина × ширина × высота.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

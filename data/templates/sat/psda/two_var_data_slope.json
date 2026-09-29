@@ -25,7 +25,7 @@
     }
   },
   "constraints": [],
-  "stem": "A line rises {rise} units for a run of {run} units. What is its slope?",
+  "stem": "Прямая поднимается на {rise} единиц при сдвиге вправо на {run} единиц. Каков её угловой коэффициент?",
   "correct": "rise/run",
   "distractors": [
     {
@@ -42,8 +42,8 @@
     }
   ],
   "solution": [
-    "Use the two var data rule.",
-    "The value is {answer}."
+    "Угловой коэффициент = подъём / сдвиг по горизонтали.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

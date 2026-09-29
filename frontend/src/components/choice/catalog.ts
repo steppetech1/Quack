@@ -46,7 +46,15 @@ const CITY: Record<string, string> = {
 const DIRECTION: Record<string, string> = { Mathematics: "Математика", Engineering: "Инженерия", Economics: "Экономика" };
 const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 
-const LEVEL: Record<BackendMatch["realism"], Level> = { possible: "realistic", try: "try", impossible: "unlikely" };
+/**
+ * The one place the two realism scales meet. Typed over the backend's own union, so a new verdict
+ * there fails the build here instead of quietly becoming `undefined` on a card (ТЗ §7.1).
+ */
+export const REALISM_LEVEL: Record<BackendMatch["realism"], Level> = {
+  possible: "realistic",
+  try: "try",
+  impossible: "unlikely",
+};
 const STATUS: Record<string, Factor["status"]> = { below: "below", in_range: "ok", above: "ok", unknown: "unknown" };
 const EXAM_NAME: Record<string, string> = { SAT_MATH: "SAT (математика)", ENT_MATH: "ЕНТ (математика)" };
 
@@ -90,6 +98,10 @@ function toProgram(b: BackendProgram): Program {
     research: "средняя",
     exchange: "",
     remote: true,
+    isDemo: b.is_demo,
+    extractedAuto: b.extracted_auto,
+    sourceUrl: b.source_url,
+    checkedAt: b.checked_at,
   };
 }
 
@@ -116,11 +128,14 @@ function toEvaluation(m: BackendMatch, program: Program): Evaluation {
     note: f.text,
   }));
   return {
-    level: LEVEL[m.realism],
+    level: REALISM_LEVEL[m.realism],
     factors,
     fits: m.fits_text ? [m.fits_text] : [],
     misfits: [],
     score: m.score,
+    realismText: m.realism_text ?? null,
+    realismTextStatus: m.realism_text_status,
+    softPending: m.soft_pending,
   };
 }
 
@@ -307,3 +322,105 @@ export const primeSynced = (p: Profile) => {
 export const forgetSynced = () => {
   sent = new Map();
 };
+
+/**
+ * «Начать заново»: the questionnaire goes on the server too, not only in this browser.
+ *
+ * There is no endpoint that empties a profile, so each filled slot is cleared with the same PATCH
+ * that fills it — a null value the server validates as "no answer". Only slots that actually hold
+ * something are sent: an empty profile costs no requests, and the agent does not get a burst of
+ * `profile.updated` events about fields nobody ever set.
+ */
+export async function clearProfileOnBackend(): Promise<void> {
+  const profile = await backend.profile.get();
+  const q = profile.questionnaire as unknown as Record<string, Record<string, { value: unknown } | undefined>>;
+  const filled = Object.values(FIELD_PATHS)
+    .flat()
+    .filter((path) => {
+      const [section, leaf] = path.split(".");
+      const value = q?.[section]?.[leaf]?.value;
+      return value !== null && value !== undefined;
+    });
+  for (const path of filled) {
+    await backend.profile.patch(path, null);
+  }
+  forgetSynced();
+}
+
+export type CompareView = {
+  /** Program ids in the order the backend answered, which is the order asked */
+  ids: string[];
+  rows: { param: string; values: string[]; differs: boolean; relevant: boolean }[];
+  /** Parameters where every program says the same: shown folded away */
+  collapsedSame: string[];
+  conclusion: string | null;
+  conclusionStatus: "ready" | "generating" | "stale" | "failed";
+};
+
+/**
+ * The comparison as the backend makes it (§3.4). The table is arithmetic and is ready at once; the
+ * takeaway under it is generated, so it can still be on its way — the table does not wait for it.
+ */
+export async function loadCompare(ids: string[]): Promise<CompareView | null> {
+  if (!REMOTE || ids.length < 2) return null;
+  try {
+    const out = await backend.matching.compare(ids);
+    const order = out.program_ids?.length ? out.program_ids : ids;
+    return {
+      ids: order,
+      rows: (out.rows ?? []).map((r) => ({
+        param: r.param,
+        values: order.map((id) => r.values?.[id] ?? "—"),
+        differs: r.differs,
+        relevant: r.relevant_to_student,
+      })),
+      collapsedSame: out.collapsed_same ?? [],
+      conclusion: out.conclusion ?? null,
+      conclusionStatus: out.conclusion_status ?? "generating",
+    };
+  } catch (err) {
+    console.warn("Failed to read the comparison:", ids, err);
+    return null;
+  }
+}
+
+export type SearchOutcome =
+  | { status: "done"; found: string[] }
+  | { status: "unavailable" }
+  | { status: "timeout" };
+
+/** 2s, 4, 8, 16, then every 30 — a search is a background job, not a request */
+const SEARCH_RETRY_MS = [2_000, 4_000, 8_000, 16_000, 30_000];
+/** Past this the student is told, rather than left watching */
+const SEARCH_GIVE_UP_MS = 90_000;
+
+/**
+ * Looks for programs nobody has put in the catalogue yet (§1.1). Nothing is searched inside the
+ * request: the POST answers 202 with an id, and the job's status is read until it settles. The id is
+ * a hash of the query, so the same question from two students is one search and one budget spend.
+ */
+export async function searchPrograms(query: string): Promise<SearchOutcome> {
+  if (!REMOTE) return { status: "unavailable" };
+  const started = Date.now();
+  let searchId: string;
+  try {
+    searchId = (await backend.programs.search(query)).search_id;
+  } catch (err) {
+    console.warn("Failed to start the program search:", query, err);
+    return { status: "unavailable" };
+  }
+
+  for (let attempt = 0; Date.now() - started < SEARCH_GIVE_UP_MS; attempt++) {
+    await new Promise((done) => setTimeout(done, SEARCH_RETRY_MS[Math.min(attempt, SEARCH_RETRY_MS.length - 1)]));
+    let status;
+    try {
+      status = await backend.programs.searchStatus(searchId);
+    } catch (err) {
+      console.warn("Failed to read the search status:", searchId, err);
+      return { status: "unavailable" };
+    }
+    if (status.status === "done") return { status: "done", found: status.found ?? [] };
+    if (status.status === "unavailable") return { status: "unavailable" };
+  }
+  return { status: "timeout" };
+}

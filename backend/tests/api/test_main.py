@@ -133,3 +133,19 @@ def test_unhandled_exception_hides_details_and_returns_request_id(app, request_i
         assert response.headers["X-Request-Id"] == request_id
     else:
         assert re.fullmatch(r"[0-9a-f]{16}", response.headers["X-Request-Id"])
+
+
+def test_unhandled_exception_carries_cors_headers(app):
+    """A 500 must be readable by the browser, not look like a dropped connection."""
+
+    @app.get("/test-unhandled-cors")
+    async def fail():
+        raise RuntimeError("private exception details")
+
+    origin = "http://localhost:3000"
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/test-unhandled-cors", headers={"Origin": origin})
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == origin
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert response.headers["X-Request-Id"] == response.json()["request_id"]

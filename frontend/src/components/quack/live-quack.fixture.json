@@ -1,0 +1,144 @@
+{
+  "_recorded": "GET /quack, local stack, 2026-09-20, account right after the questionnaire and two saved programs. Activity trimmed to two days; nothing else touched.",
+  "pace": {
+    "exams": [
+      {
+        "exam_id": "ENT_MATH",
+        "forecast": {
+          "exam_id": "ENT_MATH",
+          "predicted_raw": 25,
+          "predicted_scaled": null,
+          "coverage": 0,
+          "hours_needed": 0,
+          "ready_by": null,
+          "test_date": "2027-05-20",
+          "on_track": null,
+          "as_of_event_id": 0,
+          "note": "по твоей оценке"
+        },
+        "on_track": null,
+        "test_date": "2027-05-20",
+        "hours_declared": null,
+        "hours_actual": null,
+        "variants": [
+          {
+            "kind": "more_hours",
+            "text": "1 ч/нед → готов 20 сентября",
+            "params": { "hours_per_week": 1 },
+            "forecast": {
+              "exam_id": "ENT_MATH",
+              "predicted_raw": 25,
+              "predicted_scaled": null,
+              "coverage": 0,
+              "hours_needed": 0,
+              "ready_by": "2026-09-20",
+              "test_date": "2027-05-20",
+              "on_track": true,
+              "as_of_event_id": 0,
+              "note": "по твоей оценке"
+            },
+            "available": true,
+            "unavailable_reason": null,
+            "affected_program_ids": [],
+            "recommendation_id": null
+          },
+          {
+            "kind": "move_date",
+            "text": "перенести тест на 20 мая (регистрация до 20 апреля)",
+            "params": { "test_date": "2027-05-20", "registration_deadline": "2027-04-20" },
+            "forecast": {
+              "exam_id": "ENT_MATH",
+              "predicted_raw": 25,
+              "predicted_scaled": null,
+              "coverage": 0,
+              "hours_needed": 0,
+              "ready_by": null,
+              "test_date": "2027-05-20",
+              "on_track": null,
+              "as_of_event_id": 0,
+              "note": "по твоей оценке"
+            },
+            "available": true,
+            "unavailable_reason": null,
+            "affected_program_ids": [],
+            "recommendation_id": null
+          },
+          {
+            "kind": "remove_program",
+            "text": "убрать E.A. Buketov Karaganda University (порог 18 остаётся максимальным) → готов к сроку",
+            "params": { "program_id": "demo-kz-04", "new_target": 18 },
+            "forecast": {
+              "exam_id": "ENT_MATH",
+              "predicted_raw": 25,
+              "predicted_scaled": null,
+              "coverage": 0,
+              "hours_needed": 0,
+              "ready_by": null,
+              "test_date": "2027-05-20",
+              "on_track": null,
+              "as_of_event_id": 0,
+              "note": "по твоей оценке"
+            },
+            "available": false,
+            "unavailable_reason": "still_late",
+            "affected_program_ids": ["demo-kz-04"],
+            "recommendation_id": null
+          },
+          {
+            "kind": "lower_target",
+            "text": "снижение цели до 12 не помогает — ниже опускать не станем",
+            "params": {},
+            "forecast": {
+              "exam_id": "ENT_MATH",
+              "predicted_raw": 25,
+              "predicted_scaled": null,
+              "coverage": 0,
+              "hours_needed": 0,
+              "ready_by": null,
+              "test_date": "2027-05-20",
+              "on_track": null,
+              "as_of_event_id": 0,
+              "note": "по твоей оценке"
+            },
+            "available": false,
+            "unavailable_reason": "floor_reached",
+            "affected_program_ids": [],
+            "recommendation_id": null
+          }
+        ],
+        "words": "ЕНТ математика: готовность не посчитать — часы не указаны, тест 20 мая"
+      }
+    ],
+    "as_of": "2026-09-20T08:06:52.367317Z"
+  },
+  "items": [],
+  "activity": {
+    "days": [
+      {
+        "day": "2026-09-19",
+        "active": false,
+        "tasks_answered": 0,
+        "mocks_completed": 0,
+        "chat_messages": 0,
+        "active_minutes": 0
+      },
+      {
+        "day": "2026-09-20",
+        "active": false,
+        "tasks_answered": 0,
+        "mocks_completed": 0,
+        "chat_messages": 0,
+        "active_minutes": 0
+      }
+    ],
+    "window_days": 14,
+    "active_days": 0,
+    "hours_per_week_actual": null,
+    "hours_per_week_declared": null,
+    "computed_at": null,
+    "tz": "Asia/Almaty"
+  },
+  "new_batch": false,
+  "batch_at": null,
+  "n_new": 0
+}

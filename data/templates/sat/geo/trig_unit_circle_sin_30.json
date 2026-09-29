@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "On the unit circle, what is sin(pi/6)?",
+  "stem": "По единичной окружности: чему равен sin(π/6)?",
   "correct": "1/2",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the trig unit circle rule.",
-    "The value is {answer}."
+    "π/6 — это 30°, sin 30° = 1/2.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

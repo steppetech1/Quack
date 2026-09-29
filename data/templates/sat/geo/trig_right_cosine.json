@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "In a right triangle, adjacent = 4 and hypotenuse = 5. What is cos(theta)?",
+  "stem": "В прямоугольном треугольнике прилежащий катет 4, гипотенуза 5. Чему равен cos(θ)?",
   "correct": "4/5",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the trig right rule.",
-    "The value is {answer}."
+    "cos(θ) = прилежащий катет / гипотенуза.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

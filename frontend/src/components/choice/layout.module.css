@@ -1114,3 +1114,14 @@
 .railSub[aria-pressed="true"] {
   opacity: 1;
 }
+
+/* Свёрнутое «одинаково» в сравнении: ссылка внутри строки текста */
+.inlineLink {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  border-bottom: 1px dashed currentColor;
+  cursor: pointer;
+}

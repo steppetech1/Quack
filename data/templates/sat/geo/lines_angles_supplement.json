@@ -21,7 +21,7 @@
     }
   },
   "constraints": [],
-  "stem": "Two angles form a straight line. One is {a} degrees. What is the other?",
+  "stem": "Два угла вместе образуют развёрнутый угол. Один из них {a}°. Чему равен другой?",
   "correct": "180-a",
   "distractors": [
     {
@@ -38,8 +38,8 @@
     }
   ],
   "solution": [
-    "Use the lines angles rule.",
-    "The value is {answer}."
+    "Смежные углы в сумме дают 180°.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

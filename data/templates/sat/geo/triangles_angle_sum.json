@@ -26,7 +26,7 @@
     }
   },
   "constraints": [],
-  "stem": "Two angles of a triangle are {a} and {b} degrees. What is the third?",
+  "stem": "Два угла треугольника равны {a}° и {b}°. Чему равен третий?",
   "correct": "180-a-b",
   "distractors": [
     {
@@ -43,8 +43,8 @@
     }
   ],
   "solution": [
-    "Use the triangles rule.",
-    "The value is {answer}."
+    "Сумма углов треугольника — 180°.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

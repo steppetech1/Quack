@@ -146,7 +146,9 @@ def apply_answer(
             "budget_left": state.budget_left - 1,
             "reserve_left": max(0, state.reserve_left - (1 if on_descent else 0)),
             "answered": state.answered + 1,
-            "asked": [*state.asked, _make_uuid()],
+            # `asked` — настоящие task_instance.id, чистый слой их не знает:
+            # список ведёт apply.diagnostic._issue_next при выдаче задачи.
+            # Здесь стояла uuid4()-заглушка, и asked[-1] указывал в никуда.
             "firm": new_firm,
             "shaky": new_shaky,
             "pending_descent": new_pending,
@@ -165,17 +167,23 @@ def finish(
     params: KnowledgeParams,
 ) -> DiagnosticResult:
     """Final result: firm / shaky / roots / suspected / start_from + words."""
+    # Навык, спрошенный повторно (ловушка), успевает побывать и там и там.
+    # Последнее слово за shaky: это более осторожный и более поздний вывод.
+    shaky = _unique(state.shaky)
+    firm = [skill_id for skill_id in _unique(state.firm) if skill_id not in shaky]
+
     # start_from — самые нижние shaky, у которых нет shaky-предпосылок.
     # Без карты зависимостей считаем, что shaky — это стартовые точки.
-    start_from = list(state.shaky)
+    start_from = list(shaky)
 
     words = _words(state)
 
     return DiagnosticResult(
-        firm=list(state.firm),
-        shaky=list(state.shaky),
+        firm=firm,
+        shaky=shaky,
         roots=list(state.roots_found),
-        suspected=list(state.trap_hits),
+        # trap_hits — журнал попаданий, в итоге же нужен список самих ловушек
+        suspected=_unique(state.trap_hits),
         start_from=start_from,
         words=words,
     )
@@ -184,10 +192,9 @@ def finish(
 # --- helpers ---
 
 
-def _make_uuid():
-    from uuid import uuid4
-
-    return uuid4()
+def _unique(values: list[str]) -> list[str]:
+    """Без повторов, порядок первого появления."""
+    return list(dict.fromkeys(values))
 
 
 def _words(state: DiagnosticState) -> str:

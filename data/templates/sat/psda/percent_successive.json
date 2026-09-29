@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A value of 100 increases by 20 percent and then decreases by 10 percent. What is the result?",
+  "stem": "Величину 100 увеличили на 20%, а затем уменьшили на 10%. Что получилось?",
   "correct": "108",
   "distractors": [],
   "solution": [
-    "Use the percent rule.",
-    "The value is {answer}."
+    "Изменения применяются по очереди: 100 × 1,2 × 0,9.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

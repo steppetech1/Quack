@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A right triangle has legs 6 and 8. What is its hypotenuse?",
+  "stem": "Катеты прямоугольного треугольника 6 и 8. Чему равна гипотенуза?",
   "correct": "10",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the triangles rule.",
-    "The value is {answer}."
+    "По теореме Пифагора: c² = a² + b².",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

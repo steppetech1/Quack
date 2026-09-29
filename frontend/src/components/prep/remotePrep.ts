@@ -17,9 +17,9 @@ import {
 } from "./prepData";
 import { programById, type Program } from "../choice/programs";
 
-export const REMOTE_PREP =
-  process.env.NEXT_PUBLIC_SRC_PREP === "remote" ||
-  process.env.NEXT_PUBLIC_DATA_SOURCE === "remote";
+import { REMOTE_PREP } from "./remoteFlag";
+
+export { REMOTE_PREP };
 
 export function parseIsoDate(iso: string): Date {
   if (!iso) return new Date();

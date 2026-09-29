@@ -20,7 +20,7 @@ import {
   formatDate,
   plannedTest,
   registrationBy,
-  SETS,
+  allSets,
   setById,
   TODAY,
   type DatedExam,
@@ -54,7 +54,7 @@ export const forecastScore = (percent: number) => Math.round((400 + percent * 4)
  * number of days — preparation never blocks or scolds, it recounts (product-logic §4.3).
  */
 export function routeDelay(prep: PrepModel, today = TODAY): { set: StudySet; days: number } | null {
-  const open = SETS.find((s) => !prep.doneSets.includes(s.id));
+  const open = allSets().find((s) => !prep.doneSets.includes(s.id));
   if (!open) return null;
   const days = daysBetween(open.deadline, today);
   return days > 0 ? { set: open, days } : null;

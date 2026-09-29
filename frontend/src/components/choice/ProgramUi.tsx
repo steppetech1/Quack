@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { backend } from "@/api/backend";
+import { ApiError } from "@/api/client";
 import type { Profile } from "./assistant";
 import { Icon } from "./Icon";
 import { LEVEL_LABEL, evaluate, formatEur, programById, type Level } from "./programs";
@@ -12,7 +14,58 @@ export type ProgramActions = {
   onToggleSave: (id: string) => void;
   onToggleCompare: (id: string) => void;
   onOpen: (id: string) => void;
+  /** A flagged program leaves the matching: the screen reloads the catalogue */
+  onFlagged?: (id: string) => void;
 };
+
+/**
+ * «Данные неверны» on an automatically extracted record. The backend hides it from matching; a
+ * hand-verified record cannot be flagged and answers 409, so the button is only shown for the
+ * extracted ones and says so when the server refuses anyway.
+ */
+function ProgramFlag({ id, onFlagged }: { id: string; onFlagged?: (id: string) => void }) {
+  const [state, setState] = useState<"idle" | "asking" | "done" | "refused">("idle");
+  const [reason, setReason] = useState("");
+
+  if (state === "done") return <p className={styles.factorNote}>Спасибо — программа убрана из подборки.</p>;
+  if (state === "refused") return <p className={styles.factorNote}>Эта запись выверена вручную, её не помечают.</p>;
+
+  if (state === "idle") {
+    return (
+      <button type="button" className={styles.pillButton} onClick={() => setState("asking")}>
+        Данные неверны
+      </button>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!reason.trim()) return;
+        try {
+          await backend.programs.flag(id, reason.trim());
+          setState("done");
+          onFlagged?.(id);
+        } catch (err: unknown) {
+          setState(err instanceof ApiError && err.status === 409 ? "refused" : "idle");
+        }
+      }}
+    >
+      <input
+        autoFocus
+        aria-label="Что не так"
+        placeholder="Что именно неверно?"
+        value={reason}
+        maxLength={300}
+        onChange={(e) => setReason(e.target.value)}
+      />{" "}
+      <button type="submit" className={styles.pillButton} disabled={!reason.trim()}>
+        Отправить
+      </button>
+    </form>
+  );
+}
 
 export function LevelBadge({ level }: { level: Level }) {
   return <span className={`${styles.level} ${styles[level]}`}>{LEVEL_LABEL[level]}</span>;
@@ -113,14 +166,27 @@ export function ProgramCards({ ids, profile, actions }: { ids: string[]; profile
             <article key={id} className={styles.card} style={{ animationDelay: `${i * 90}ms` }}>
               <div className={styles.cardTop}>
                 <LevelBadge level={evaluation.level} />
-                <span className={styles.demo}>демо</span>
+                {/* Откуда запись: выдуманная демо-программа и автоматически извлечённая — не одно и то же */}
+                {program.isDemo !== false && <span className={styles.demo}>демо</span>}
+                {program.extractedAuto && (
+                  <span className={styles.demo} title="Данные сняты со страницы вуза автоматически и не выверены вручную">
+                    извлечено автоматически
+                  </span>
+                )}
               </div>
               <h3 className={styles.cardUni}>{program.university}</h3>
               <p className={styles.cardProgram}>{program.program}</p>
               <p className={styles.cardMeta}>
                 {program.city}, {program.country} · {formatEur(program.costEur)}
               </p>
+              {/* Почему так: слова бэка о реалистичности; пока их нет — прямо об этом */}
+              {evaluation.realismText ? (
+                <p className={styles.cardFit}>{evaluation.realismText}</p>
+              ) : evaluation.realismTextStatus === "generating" ? (
+                <p className={styles.cardFit}>Готовим объяснение…</p>
+              ) : null}
               <p className={styles.cardFit}>
+                {evaluation.softPending && <>Уточняем соответствие… </>}
                 {evaluation.fits.length > 0 && (
                   <>
                     <span className={styles.fitLabel}>Подходит тебе:</span> {evaluation.fits.join(", ")}
@@ -202,7 +268,7 @@ export function ProgramDrawer({
               <h3 className={styles.sectionTitle}>Реалистичность — из чего складывается</h3>
               <ul className={styles.factors}>
                 {evaluation.factors.map((f, i) => (
-                  <li key={f.label} className={styles.factor} style={{ animationDelay: `${i * 60}ms` }}>
+                  <li key={`${i}-${f.label}`} className={styles.factor} style={{ animationDelay: `${i * 60}ms` }}>
                     <span
                       className={`${styles.factorMark} ${
                         f.status === "ok" ? styles.factorOk : f.status === "below" ? styles.factorBelow : styles.factorUnknown
@@ -234,6 +300,21 @@ export function ProgramDrawer({
               <p className={styles.factorNote}>
                 {program.remote ? "" : `Наука: ${program.research}. Обмен: ${program.exchange}. `}Язык: {program.language}.
               </p>
+
+              {/* Откуда запись и что делать, если она врёт. Выверенный вручную «пол» пометить
+                  нельзя — бэк отвечает 409, поэтому кнопки там и нет. */}
+              {program.sourceUrl && (
+                <>
+                  <h3 className={styles.sectionTitle}>Источник</h3>
+                  <p className={styles.factorNote}>
+                    <a href={program.sourceUrl} target="_blank" rel="noreferrer noopener">
+                      Страница вуза
+                    </a>
+                    {program.checkedAt && <> · проверено {program.checkedAt}</>}
+                  </p>
+                  {program.extractedAuto && <ProgramFlag id={program.id} onFlagged={actions.onFlagged} />}
+                </>
+              )}
             </div>
             <div className={styles.drawerActions}>
               <button

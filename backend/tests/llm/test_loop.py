@@ -203,3 +203,32 @@ async def test_tool_payload_sends_the_compact_projection_to_the_model():
     )
     assert '"ids"' in (tool_message.content or "")
     assert "xxxx" not in (tool_message.content or "")
+
+
+async def test_text_before_a_tool_call_is_kept_and_the_next_round_is_a_new_paragraph():
+    """«Записываю.Записал»: two rounds glued into one line, the second repeating."""
+    client = FakeLLMClient(
+        [
+            [
+                TextDelta(text="Записываю."),
+                ToolCall(tool="echo", args={"text": "hi"}, call_id="c1"),
+            ],
+            [TextDelta(text="Записал.")],
+        ]
+    )
+
+    events = [
+        event
+        async for event in run_tool_loop(
+            client, _registry(), [LLMMessage(role="user", content="go")], "chat", _ctx()
+        )
+    ]
+
+    end = events[-1]
+    assert isinstance(end, LoopEnd)
+    assert end.text_full == "Записываю." + chr(10) * 2 + "Записал."
+    # The model sees what it already said before the tool call
+    said = [
+        m for m in client.calls[1].messages if m.role == "assistant" and m.tool_calls
+    ]
+    assert said[0].content == "Записываю."

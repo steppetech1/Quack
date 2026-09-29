@@ -21,6 +21,12 @@ type Props = {
   /** Conflicts settled on earlier visits: id → the way out chosen, and taking it back */
   resolved: Record<string, string>;
   onUnresolve: (conflictId: string) => void;
+  /**
+   * Deciding a backend recommendation (phase 4). Accepting changes the plan on the server; declining
+   * keeps it out of the feed. Absent while the browser computes the feed itself — then there is
+   * nothing to post and the signal is shown as words only.
+   */
+  onDecide?: (id: string, decision: "accept" | "decline") => Promise<void>;
 };
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -44,12 +50,19 @@ function ago(iso: string) {
 }
 
 /** Why the Quack! button glowed: every change since the last visit, then the ones already seen. */
-export function ChangesFeed({ fresh, history, isNew, onTarget, done, onMark, onConflict, resolved, onUnresolve }: Props) {
+export function ChangesFeed({ fresh, history, isNew, onTarget, done, onMark, onConflict, resolved, onUnresolve, onDecide }: Props) {
   const key = (s: Signal) => `${s.id}@${s.at}`;
   // A signal ticked on this visit goes out of the standing at once; it stays here, ticked, so it can be undone
   const [ticked, setTicked] = useState<Signal[]>([]);
   // A conflict settled on this visit: which way out, and how to take it back
   const [settled, setSettled] = useState<Record<string, { label: string; undo: () => void }>>({});
+  // A recommendation decided on this visit: the buttons go at once, the next read confirms it
+  const [decided, setDecided] = useState<Record<string, "accept" | "decline" | "failed">>({});
+
+  const decide = (id: string, decision: "accept" | "decline") => {
+    setDecided((all) => ({ ...all, [id]: decision }));
+    onDecide?.(id, decision).catch(() => setDecided((all) => ({ ...all, [id]: "failed" })));
+  };
 
   const settle = (s: Signal, option: ConflictOption) => {
     const undo = onConflict(s.conflict!.id, option);
@@ -130,6 +143,26 @@ export function ChangesFeed({ fresh, history, isNew, onTarget, done, onMark, onC
                           {o.label}
                         </button>
                       ))}
+                    </div>
+                  ))}
+                {/* A backend recommendation: taking it changes the plan server-side (product-logic §3.6) */}
+                {s.recommendation &&
+                  onDecide &&
+                  (decided[s.id] === "accept" || s.recommendation.status === "accepted" ? (
+                    <p className={styles.markDone}>
+                      <Icon name="check" size={14} /> Принято
+                    </p>
+                  ) : decided[s.id] === "decline" || s.recommendation.status === "declined" ? (
+                    <p className={styles.markDone}>Отложено</p>
+                  ) : (
+                    <div className={styles.feedOptions}>
+                      <button type="button" className={styles.markButton} onClick={() => decide(s.id, "accept")}>
+                        {s.recommendation.actionText}
+                      </button>
+                      <button type="button" className={styles.markButton} onClick={() => decide(s.id, "decline")}>
+                        Не сейчас
+                      </button>
+                      {decided[s.id] === "failed" && <span className={styles.feedMeta}>Не получилось — попробуй ещё раз</span>}
                     </div>
                   ))}
               </div>

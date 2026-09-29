@@ -361,3 +361,30 @@ def test_cors_preflight_allows_frontend_origin_with_credentials(auth_app):
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
     assert response.headers["access-control-allow-credentials"] == "true"
     assert "access-control-allow-origin" not in other.headers
+
+
+def test_me_answers_when_neo4j_goes_down(auth_app, monkeypatch):
+    """Личность не зависит от графа (product-logic §6.3).
+
+    Драйвер есть — значит Neo4j был жив на старте; упасть он может позже, и
+    тогда MERGE бросает. Без обработки на этом падал весь вход, а браузер не
+    мог даже прочитать причину: у необработанной ошибки нет CORS-заголовков.
+    """
+    from neo4j.exceptions import ServiceUnavailable
+
+    app, user, _, _ = auth_app
+
+    async def down(_driver, _student_id):
+        raise ServiceUnavailable("neo4j is down")
+
+    monkeypatch.setattr(auth, "_ensure_student", down)
+    app.dependency_overrides[deps.get_graph] = lambda: object()
+
+    with TestClient(app) as client:
+        client.post(
+            "/auth/login", json={"email": user.email, "password": "correct-password"}
+        )
+        response = client.get("/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["student_id"] == str(user.id)

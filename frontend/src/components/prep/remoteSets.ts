@@ -9,16 +9,18 @@ import {
 import {
   registerRemoteSets,
   registerRemoteSkills,
+  setById,
   TODAY,
   type ExamId,
   type Skill,
   type StudySet,
 } from "./prepData";
+import { isUuid } from "@/api/client";
 import { parseIsoDate, toBackendExamId } from "./remotePrep";
 
-export const REMOTE_PREP =
-  process.env.NEXT_PUBLIC_SRC_PREP === "remote" ||
-  process.env.NEXT_PUBLIC_DATA_SOURCE === "remote";
+import { REMOTE_PREP } from "./remoteFlag";
+
+export { REMOTE_PREP };
 
 export type RemoteSetsData = {
   current: StudySet | null;
@@ -153,6 +155,27 @@ export function saveCachedRemoteSets(exam: ExamId, data: RemoteSetsData) {
   }
 }
 
+/**
+ * The server's plan for one exam against the model the screen holds. Inside that plan the server
+ * decides: which set is in work and which are passed. Ids outside it — the other exam's plan — are
+ * left where they are, so reading one exam does not forget the other.
+ */
+export function applyRemoteSetsToModel<M extends { currentSet: string | null; doneSets: string[] }>(
+  model: M,
+  data: RemoteSetsData
+): M {
+  const plan = new Set(
+    [...(data.current ? [data.current] : []), ...data.upcoming, ...data.done].map((s) => s.id)
+  );
+  const done = data.done.map((s) => s.id);
+  const elsewhere = model.currentSet && !plan.has(model.currentSet) ? model.currentSet : null;
+  return {
+    ...model,
+    currentSet: elsewhere ?? data.current?.id ?? null,
+    doneSets: [...model.doneSets.filter((id) => !plan.has(id)), ...done],
+  };
+}
+
 export async function fetchRemoteSets(exam: ExamId, forceRefresh = false): Promise<RemoteSetsData> {
   if (!forceRefresh) {
     const cached = getCachedRemoteSets(exam);
@@ -200,6 +223,10 @@ export function prefetchRemoteSets(exam: ExamId) {
 }
 
 export async function switchRemoteSet(setId: string, exam: ExamId): Promise<RemoteSetsData> {
+  if (!isUuid(setId)) {
+    console.warn("switchRemoteSet called with non-UUID set id:", setId);
+    return getCachedRemoteSets(exam) ?? { current: null, upcoming: [], done: [] };
+  }
   const res = await backend.sets.switch(setId);
   const current = res.current ? adaptBackendSet(res.current, exam) : null;
   const upcoming = (res.upcoming || []).map((s) => adaptBackendSet(s, exam));
@@ -220,10 +247,40 @@ export async function switchRemoteSet(setId: string, exam: ExamId): Promise<Remo
 }
 
 export async function openRemoteSet(setId: string, exam: ExamId): Promise<StudySet> {
+  if (!isUuid(setId)) {
+    console.warn("openRemoteSet called with non-UUID set id:", setId);
+    const cached = getCachedRemoteSets(exam);
+    const candidate = cached?.upcoming?.[0] ?? cached?.current;
+    if (candidate && isUuid(candidate.id)) {
+      setId = candidate.id;
+    } else {
+      return setById(setId);
+    }
+  }
   const res = await backend.sets.open(setId);
   const adapted = adaptBackendSet(res, exam);
   registerRemoteSets([adapted]);
   // Refetch exam sets to update active state
   fetchRemoteSets(exam, true).catch(() => {});
   return adapted;
+}
+
+/**
+ * The route right after the diagnostic. The server plans the sets but leaves them `upcoming`, so
+ * without this the student finishes the test and the preparation screen still has no set in work —
+ * and falls back to the local route, which is a different exam's. Already has one in work: nothing
+ * to do, a retake must not move the student off the set they are on.
+ */
+export async function openFirstRemoteSet(exam: ExamId): Promise<RemoteSetsData> {
+  const sets = await fetchRemoteSets(exam, true);
+  if (sets.current || !sets.upcoming.length) return sets;
+  const first = sets.upcoming[0];
+  if (!first.rawId || !isUuid(first.rawId)) return sets;
+  try {
+    await backend.sets.open(first.rawId);
+  } catch (err) {
+    console.warn("Failed to open the first set after the diagnostic:", first.rawId, err);
+    return sets;
+  }
+  return fetchRemoteSets(exam, true);
 }

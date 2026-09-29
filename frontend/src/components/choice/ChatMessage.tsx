@@ -20,6 +20,8 @@ export type ChatMsg = {
   offer?: { kind: "diagnostic"; answered?: "start" | "later" };
   /** A test date this reply picked, with the one it replaced to go back to */
   testDate?: { exam: "sat" | "ent"; label: string; prev: string | null; prevLabel: string; undone?: boolean };
+  /** The stream stopped before the answer ended — the text above is half an answer, not a short one */
+  truncated?: boolean;
 };
 
 type ChatMessageProps = {
@@ -32,9 +34,11 @@ type ChatMessageProps = {
   onUndoTestDate?: (id: number) => void;
   /** Absent once the test is done or put off elsewhere: the offer then has nothing left to ask */
   onOffer?: (id: number, answer: "start" | "later") => void;
+  /** Ask the same question again after a cut-off answer */
+  onRetry?: (id: number) => void;
 };
 
-export function ChatMessage({ msg, onConfirm, onEditStart, onEditCancel, onEditSave, onUndoMilestone, onUndoTestDate, onOffer }: ChatMessageProps) {
+export function ChatMessage({ msg, onConfirm, onEditStart, onEditCancel, onEditSave, onUndoMilestone, onUndoTestDate, onOffer, onRetry }: ChatMessageProps) {
   const editRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState(msg.text);
 
@@ -112,6 +116,16 @@ export function ChatMessage({ msg, onConfirm, onEditStart, onEditCancel, onEditS
                 </button>
               </>
             )}
+          </p>
+        )}
+        {/* Связь оборвалась на полуслове. Молча оставить обрубок — значит выдать
+            половину ответа за целый: ученик поверит, что это всё. */}
+        {msg.truncated && !msg.typing && (
+          <p className={styles.msgMilestone}>
+            Ответ оборвался — связь пропала.{" "}
+            <button type="button" className={styles.msgMilestoneUndo} onClick={() => onRetry?.(msg.id)}>
+              повторить
+            </button>
           </p>
         )}
         {msg.milestone && !msg.typing && (

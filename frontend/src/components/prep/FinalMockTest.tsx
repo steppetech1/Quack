@@ -11,6 +11,7 @@ import { skillById, type StudySet, type Task } from "./prepData";
 import { checksFor } from "./topicContent";
 import { adaptBackendTask, answerRemoteMock, finishRemoteMock, startRemoteSetMock } from "./remoteTasks";
 import { REMOTE_PREP } from "./remoteSets";
+import { isUuid } from "@/api/client";
 import styles from "./prep.module.css";
 
 type Props = {
@@ -46,7 +47,7 @@ export function FinalMockTest({ set, onToast, onBack }: Props) {
 
   useEffect(() => {
     let active = true;
-    if (REMOTE_PREP && set.rawId) {
+    if (REMOTE_PREP && set.rawId && isUuid(set.rawId)) {
       startRemoteSetMock(set.exam, set.rawId).then((run) => {
         if (!active) return;
         setLoading(false);

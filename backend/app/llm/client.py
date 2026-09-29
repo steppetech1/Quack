@@ -75,10 +75,17 @@ class LLMClient:
         self._redis = redis
         self._client = AsyncOpenAI(
             base_url=settings.LLM_BASE_URL,
-            api_key=settings.LLM_API_KEY.get_secret_value(),
+            # The SDK refuses an empty key at construction; the app must still
+            # start and say "assistant down" (§6.3), so the placeholder is
+            # never sent: `_keyless` stops every call first.
+            api_key=settings.LLM_API_KEY.get_secret_value() or "unset",
             max_retries=0,
         )
         self._last_usage: LLMUsage | None = None
+
+    @property
+    def _keyless(self) -> bool:
+        return not self._settings.LLM_API_KEY.get_secret_value()
 
     def last_usage(self) -> LLMUsage | None:
         """Tokens of the most recent call on this client.
@@ -117,6 +124,11 @@ class LLMClient:
         if slot == "chat":
             return self._settings.LLM_REASONING_CHAT
         return self._settings.LLM_REASONING_BULK
+
+    def _thinking_for(self, slot: ModelSlot) -> str | None:
+        if slot == "chat":
+            return self._settings.LLM_THINKING_CHAT
+        return self._settings.LLM_THINKING_BULK
 
     def _rate_limit_wait_s(self, slot: ModelSlot) -> float:
         return 5.0 if slot == "chat" else 30.0
@@ -210,7 +222,11 @@ class LLMClient:
         )
         if isinstance(exc, connection_errors):
             return True
-        return isinstance(exc, openai.APIStatusError) and exc.status_code >= 500
+        # A refused key leaves the provider unusable for everyone: it must
+        # open the breaker, or /health says ok where nothing answers.
+        return isinstance(exc, openai.APIStatusError) and (
+            exc.status_code >= 500 or exc.status_code in (401, 403)
+        )
 
     def _is_retryable_error(self, exc: Exception) -> bool:
         if isinstance(exc, openai.APITimeoutError | openai.RateLimitError):
@@ -218,7 +234,7 @@ class LLMClient:
         return isinstance(exc, openai.APIStatusError) and exc.status_code >= 500
 
     async def _check_breaker(self) -> None:
-        if self._settings.LLM_FORCE_DOWN:
+        if self._settings.LLM_FORCE_DOWN or self._keyless:
             raise LLMUnavailable("llm unavailable (forced down)")
         try:
             status = await self._redis.get(keys.llm_status())
@@ -314,6 +330,9 @@ class LLMClient:
         reasoning_effort = self._reasoning_for(slot)
         if reasoning_effort is not None:
             kwargs["reasoning_effort"] = reasoning_effort
+        thinking = self._thinking_for(slot)
+        if thinking is not None:
+            kwargs["extra_body"] = {"thinking": {"type": thinking}}
         return kwargs
 
     async def complete(
@@ -482,6 +501,21 @@ class LLMClient:
             ]
             tool_choice = {"type": "function", "function": {"name": "emit"}}
             response_format = None
+        elif mode == "json_object":
+            tools = None
+            tool_choice = None
+            response_format = {"type": "json_object"}
+            # The provider takes no schema here, only the word "json" and an example.
+            messages = [
+                *messages,
+                LLMMessage(
+                    role="system",
+                    content=(
+                        "Answer with one JSON object and nothing else, valid for this "
+                        f"JSON schema: {json.dumps(schema.model_json_schema())}"
+                    ),
+                ),
+            ]
         else:
             tools = None
             tool_choice = None
@@ -534,7 +568,7 @@ class LLMClient:
         raise LLMUnavailable("structured output failed")
 
     async def status(self) -> LLMStatus:
-        if self._settings.LLM_FORCE_DOWN:
+        if self._settings.LLM_FORCE_DOWN or self._keyless:
             return "down"
         try:
             status_value = _decode(await self._redis.get(keys.llm_status()))

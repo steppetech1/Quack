@@ -21,7 +21,7 @@
     }
   },
   "constraints": [],
-  "stem": "A circle has radius {r}. What is its circumference?",
+  "stem": "Радиус окружности {r}. Какова её длина?",
   "correct": "2*pi*r",
   "distractors": [
     {
@@ -38,8 +38,8 @@
     }
   ],
   "solution": [
-    "Use the circle rule.",
-    "The value is {answer}."
+    "Длина окружности = 2 × π × r.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

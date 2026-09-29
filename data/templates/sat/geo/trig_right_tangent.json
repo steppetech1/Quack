@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "In a right triangle, opposite = 5 and adjacent = 12. What is tan(theta)?",
+  "stem": "В прямоугольном треугольнике противолежащий катет 5, прилежащий 12. Чему равен tg(θ)?",
   "correct": "5/12",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the trig right rule.",
-    "The value is {answer}."
+    "tg(θ) = противолежащий катет / прилежащий катет.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

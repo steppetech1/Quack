@@ -35,6 +35,13 @@ export type Program = {
   remote?: boolean;
   /** Minimum ENT math score, for programs that ask for it */
   entMin?: number;
+  /** Demo data, said so on the card rather than passed off as checked */
+  isDemo?: boolean;
+  /** Pulled off the university's page by the extractor, not verified by hand */
+  extractedAuto?: boolean;
+  /** Where the record came from, and when it was last checked */
+  sourceUrl?: string;
+  checkedAt?: string;
 };
 
 export const PROGRAMS: Program[] = [
@@ -199,6 +206,11 @@ export type Evaluation = {
   fits: string[];
   misfits: string[];
   score: number;
+  /** Why the backend calls it realistic, in its own words; generated, so it has a status */
+  realismText?: string | null;
+  realismTextStatus?: "ready" | "generating" | "stale" | "failed";
+  /** The soft match is computed in the background: true while it is not ready */
+  softPending?: boolean;
 };
 
 const formatEur = (n: number) => `€${n.toLocaleString("ru-RU")}/год`;

@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "On the unit circle, what is cos(pi/3)?",
+  "stem": "По единичной окружности: чему равен cos(π/3)?",
   "correct": "1/2",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the trig unit circle rule.",
-    "The value is {answer}."
+    "π/3 — это 60°, cos 60° = 1/2.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

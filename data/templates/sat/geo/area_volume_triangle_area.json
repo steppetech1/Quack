@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A triangle has base 10 and height 6. What is its area?",
+  "stem": "Основание треугольника 10, высота 6. Какова его площадь?",
   "correct": "30",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the area volume rule.",
-    "The value is {answer}."
+    "Площадь треугольника = ½ × основание × высота.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

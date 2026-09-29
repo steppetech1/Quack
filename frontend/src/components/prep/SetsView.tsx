@@ -3,13 +3,12 @@
 import { PixelDuck } from "../duck/PixelDuck";
 import { useLayoutEffect, useRef, useState, useEffect } from "react";
 import { Icon } from "../choice/Icon";
-import { EXAM_IDS, EXAMS, formatShort, SETS, setById, skillById, STATE_LABEL, type ExamId, type StudySet } from "./prepData";
+import { EXAM_IDS, EXAMS, formatShort, setById, skillById, STATE_LABEL, type ExamId, type StudySet } from "./prepData";
 import { closed, proposals, type PrepModel, type PrepSub } from "./prepModel";
 import {
   REMOTE_PREP,
   fetchRemoteSets,
   getCachedRemoteSets,
-  switchRemoteSet,
   type RemoteSetsData,
 } from "./remoteSets";
 import { RouteView } from "./RouteView";
@@ -24,7 +23,7 @@ type Props = {
   exam: ExamId;
   onExam: (exam: ExamId) => void;
   /** Takes a set into work, replacing the one in work */
-  onMakeCurrent: (setId: string) => void;
+  onMakeCurrent: (setId: string) => void | Promise<void>;
   /** A set asked for from elsewhere: its card in «Маршрут» is shown open */
   focus: string | null;
   /** The active set opens in «Сейчас», any other in «Маршрут» */
@@ -70,14 +69,11 @@ export function SetsView({ model, sub, exam, onExam, onMakeCurrent, focus, onOpe
   }, [exam]);
 
   const handleMakeCurrent = async (setId: string) => {
-    onMakeCurrent(setId);
+    // The parent does the switch and, when the server refuses it, the re-read; here only the local copy follows
+    await onMakeCurrent(setId);
     if (REMOTE_PREP) {
-      try {
-        const updated = await switchRemoteSet(setId, exam);
-        setRemoteData(updated);
-      } catch (err) {
-        console.error("Failed to switch remote set:", err);
-      }
+      const fresh = getCachedRemoteSets(exam);
+      if (fresh) setRemoteData(fresh);
     }
   };
 
@@ -340,7 +336,7 @@ function MapCard({
         {set.skills.map((id) => {
           const skill = skillById(id);
           const state = model.states[id];
-          const trap = model.misconceptions[id].some((m) => m.status === "confirmed");
+          const trap = (model.misconceptions[id] ?? []).some((m) => m.status === "confirmed");
           return (
             <li key={id}>
               <button type="button" onClick={() => onOpen(set.id, id)} title="Открыть тему">

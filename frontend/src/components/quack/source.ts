@@ -6,6 +6,7 @@
 // Switch with NEXT_PUBLIC_QUACK_SOURCE=remote and NEXT_PUBLIC_API_URL=<api base>.
 
 import { useSyncExternalStore } from "react";
+import { store } from "../account/store";
 import { EMPTY_STATE, type QuackState } from "./contract";
 import { localSource } from "./localSource";
 import { remoteSource } from "./remoteSource";
@@ -20,19 +21,32 @@ export interface QuackSource {
   markSeen(): void;
   /** «Начать заново»: forget the baseline and the history. */
   reset(): void;
+  /** Take a backend recommendation: the plan changes server-side. Absent for the local source. */
+  accept?(id: string): Promise<void>;
+  /** Turn one down, with the student's reason when they gave one. */
+  decline?(id: string, reason?: string): Promise<void>;
 }
 
 let instance: QuackSource | null = null;
 
+/**
+ * What the browser computed back when it was the one computing. The server keeps its own baseline and
+ * its own history, so these are not a fallback — they are last year's numbers waiting to be mistaken
+ * for this year's. Dropped once, on the first read with the backend behind us.
+ */
+const LOCAL_ONLY_KEYS = ["quack-baseline", "quack-history", "quack-known"];
+
 export function quackSource(): QuackSource {
   if (!instance) {
-    // Only an explicit switch: the backend's /quack API (phase 4) does not speak remoteSource's contract
-    // yet (/quack/state + SSE), so with DATA_SOURCE=remote the browser still recomputes — from the
-    // profile, saved programs and realism that now come from the backend.
-    const isRemote = process.env.NEXT_PUBLIC_QUACK_SOURCE === "remote";
-    instance = isRemote
-      ? remoteSource(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
-      : localSource();
+    // The domain flag wins over the general one, as it does in prep/remoteFlag.ts; without either the
+    // browser recomputes, so the app still builds and runs with no backend at all.
+    const flag = process.env.NEXT_PUBLIC_QUACK_SOURCE ?? process.env.NEXT_PUBLIC_DATA_SOURCE;
+    if (flag === "remote") {
+      for (const key of LOCAL_ONLY_KEYS) if (store.get(key) !== null) store.set(key, null);
+      instance = remoteSource();
+    } else {
+      instance = localSource();
+    }
   }
   return instance;
 }
@@ -43,5 +57,12 @@ const serverSnapshot = () => EMPTY_STATE;
 export function useQuack() {
   const source = quackSource();
   const state = useSyncExternalStore(source.subscribe, source.getSnapshot, serverSnapshot);
-  return { state, report: source.report, markSeen: source.markSeen, reset: source.reset };
+  return {
+    state,
+    report: source.report,
+    markSeen: source.markSeen,
+    reset: source.reset,
+    /** Only the remote source can decide a recommendation; local signals have nothing to post */
+    decide: source.accept && source.decline ? { accept: source.accept, decline: source.decline } : null,
+  };
 }

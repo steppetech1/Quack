@@ -4,9 +4,13 @@ WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
+# One origin: the API lives under /api, so the session cookie needs no CORS.
+# Every domain reads from the backend — Quack and the dashboard included,
+# since F3.3 put readiness, chances and activity behind `GET /quack`
+# (docs/sync-log.md, 2026-09-20 14:35). A per-domain flag here would show the
+# jury local demo data next to live data on one screen.
 ENV NEXT_PUBLIC_DATA_SOURCE=remote \
     NEXT_PUBLIC_API_URL=/api \
-    NEXT_PUBLIC_QUACK_SOURCE=local \
     NEXT_TELEMETRY_DISABLED=1
 RUN rm -f .env.local && npm run build
 

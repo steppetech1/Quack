@@ -4,6 +4,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 from pydantic import BaseModel
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,7 @@ from app.api.deps import (
     get_session,
 )
 from app.apply import knowledge as apply_knowledge
+from app.apply import matching as apply_matching
 from app.events import dispatch, handlers, recovery, store, version  # noqa: F401
 from app.events.dispatch import RuleDeps
 from app.graph.queries import personal
@@ -101,13 +103,14 @@ async def get_knowledge(
     misconceptions = await apply_knowledge.misconceptions_view(
         deps, student.student_id, exam_id
     )
-    roots = (
-        await personal.list_root_causes(
-            deps.graph, student.student_id, deps.params.root_window_days
-        )
-        if deps.graph is not None
-        else []
-    )
+    roots: list[RootCauseOut] = []
+    if deps.graph is not None:
+        try:
+            roots = await personal.list_root_causes(
+                deps.graph, student.student_id, deps.params.root_window_days
+            )
+        except (ServiceUnavailable, SessionExpired):
+            roots = []
     await _version(response, deps, student)
     pending = await recovery.is_pending(session, student.student_id)
     return KnowledgeOut(
@@ -115,7 +118,8 @@ async def get_knowledge(
         misconceptions=misconceptions,
         roots=roots,
         availability=fallbacks.availability(
-            graph_ok=deps.graph is not None, projection_pending=pending
+            graph_ok=await apply_matching.graph_reachable(deps),
+            projection_pending=pending,
         ),
     )
 

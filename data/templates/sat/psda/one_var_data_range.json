@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "What is the range of 4, 7, 13, and 19?",
+  "stem": "Чему равен размах чисел 4, 7, 13 и 19?",
   "correct": "15",
   "distractors": [],
   "solution": [
-    "Use the one var data rule.",
-    "The value is {answer}."
+    "Размах = наибольшее число − наименьшее.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

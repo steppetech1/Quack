@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A price of 50 increases by 10 percent. What is the new price?",
+  "stem": "Цена 50 выросла на 10%. Какой стала цена?",
   "correct": "55",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the percent rule.",
-    "The value is {answer}."
+    "Рост на p% — умножение на (1 + p/100).",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

@@ -26,7 +26,7 @@
     }
   },
   "constraints": [],
-  "stem": "What is the mean of {a}, {b}, {a}, and {b}?",
+  "stem": "Чему равно среднее арифметическое чисел {a}, {b}, {a} и {b}?",
   "correct": "(a+b)/2",
   "distractors": [
     {
@@ -43,8 +43,8 @@
     }
   ],
   "solution": [
-    "Use the one var data rule.",
-    "The value is {answer}."
+    "Среднее = сумма чисел / их количество.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

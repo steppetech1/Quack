@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "Two fair coins are tossed. What is P(exactly one head)?",
+  "stem": "Подбрасывают две честные монеты. Какова вероятность, что выпадет ровно один орёл?",
   "correct": "1/2",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the probability rule.",
-    "The value is {answer}."
+    "Из 4 равновероятных исходов подходят 2: ОР и РО.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

@@ -28,6 +28,9 @@ type Props = {
   exam?: ExamId;
 };
 
+/** `selectedOption` for a typed answer: matches no option index, so nothing lights up */
+const NUMERIC_ANSWER = -1;
+
 type AnswerRecord = {
   optionIndex: number;
   correct: boolean;
@@ -49,6 +52,13 @@ export function DiagnosticMock({ onComplete, onClose, onSkip, exam = "sat" }: Pr
   const [remoteSummary, setRemoteSummary] = useState<DiagnosticResultSummary | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingNextTask, setPendingNextTask] = useState<BackendTaskInstanceOut | null>(null);
+  /**
+   * The server refused something. A question the server issued is the server's to grade, so when it
+   * will not, the student hears that instead of a verdict the browser made up (ТЗ §6, X10).
+   */
+  const [remoteFailure, setRemoteFailure] = useState<string | null>(null);
+  /** What the student typed for a numeric task, before they send it */
+  const [typedAnswer, setTypedAnswer] = useState("");
   const startTimeRef = useRef<number>(Date.now());
 
   // Initialize remote diagnostic run if REMOTE_PREP is active
@@ -79,13 +89,22 @@ export function DiagnosticMock({ onComplete, onClose, onSkip, exam = "sat" }: Pr
   const total = run ? 8 : questions.length;
   const currentQ = questions[currentIndex] || DIAGNOSTIC_8_QUESTIONS[0];
 
-  const handleSelect = async (optionIndex: number) => {
+  /**
+   * The backend issues numeric tasks in a diagnostic too (`type: "numeric"`), and those come with no
+   * options at all. They are answered by typing, and marked as answered with NUMERIC_ANSWER — a
+   * sentinel that matches no option index, so nothing highlights and the feedback still opens.
+   */
+  const isNumeric = currentQ.options.length === 0;
+
+  const handleSelect = async (optionIndex: number, typed?: string) => {
     if (selectedOption !== null || submitting) return;
+    setRemoteFailure(null);
     setSelectedOption(optionIndex);
 
     if (REMOTE_PREP && run) {
       setSubmitting(true);
-      const answerKey = currentQ.options[optionIndex]?.key || String.fromCharCode(65 + optionIndex);
+      const answerKey =
+        typed ?? (currentQ.options[optionIndex]?.key || String.fromCharCode(65 + optionIndex));
       const timeSpentSec = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
       const updatedRun = await submitDiagnosticAnswer(run.run_id, currentQ.id, answerKey, timeSpentSec);
       setSubmitting(false);
@@ -109,6 +128,12 @@ export function DiagnosticMock({ onComplete, onClose, onSkip, exam = "sat" }: Pr
         setPendingNextTask(updatedRun.next_task);
         return;
       }
+
+      // The task came from the server; grading it here would be a different answer from the one that
+      // counts, and nothing would be recorded. Say so and let the student try again.
+      setSelectedOption(null);
+      setRemoteFailure("Не удалось записать ответ — сервер не принял его. Попробуй ещё раз.");
+      return;
     }
 
     // Local fallback evaluation
@@ -133,6 +158,7 @@ export function DiagnosticMock({ onComplete, onClose, onSkip, exam = "sat" }: Pr
         });
         setCurrentIndex((prev) => prev + 1);
         setSelectedOption(null);
+        setTypedAnswer("");
         setPendingNextTask(null);
         startTimeRef.current = Date.now();
         return;
@@ -143,11 +169,13 @@ export function DiagnosticMock({ onComplete, onClose, onSkip, exam = "sat" }: Pr
       const result = await finishDiagnosticRun(run.run_id);
       setSubmitting(false);
 
-      if (result) {
-        const score = Object.values(answers).filter((a) => a.correct).length;
-        const summary = adaptDiagnosticResult(result, currentIndex + 1, score);
-        setRemoteSummary(summary);
+      if (!result) {
+        // Without the server's result there is no result: a locally counted score would be about
+        // questions the server never recorded an answer for.
+        setRemoteFailure("Не удалось подвести итог замера — сервер не ответил. Попробуй ещё раз.");
+        return;
       }
+      setRemoteSummary(adaptDiagnosticResult(result, run.state.answered));
       setIsFinished(true);
       return;
     }
@@ -235,6 +263,13 @@ export function DiagnosticMock({ onComplete, onClose, onSkip, exam = "sat" }: Pr
           </div>
         </header>
 
+        {/* Сервер не принял ответ или итог: говорим об этом, а не рисуем выдуманный результат */}
+        {remoteFailure && (
+          <p className={styles.warn} role="status">
+            {remoteFailure}
+          </p>
+        )}
+
         {/* Индикатор прогресса */}
         {!isFinished && (
           <div className={styles.diagnosticDots} aria-label="Прогресс по вопросам">
@@ -274,6 +309,35 @@ export function DiagnosticMock({ onComplete, onClose, onSkip, exam = "sat" }: Pr
               <p className={styles.diagnosticQuestionText}>{currentQ.question}</p>
 
               {/* Варианты ответа */}
+              {/* Задача без вариантов — числовая: ответ вводится, а не выбирается */}
+              {isNumeric ? (
+                <form
+                  className={styles.diagnosticNumeric}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (typedAnswer.trim()) handleSelect(NUMERIC_ANSWER, typedAnswer.trim());
+                  }}
+                >
+                  <input
+                    autoFocus
+                    className={styles.diagnosticNumericInput}
+                    inputMode="decimal"
+                    aria-label="Ответ"
+                    placeholder="Ответ"
+                    value={typedAnswer}
+                    disabled={selectedOption !== null || submitting}
+                    onChange={(e) => setTypedAnswer(e.target.value)}
+                  />
+                  <button
+                    type="submit"
+                    className={styles.diagnosticNumericBtn}
+                    disabled={!typedAnswer.trim() || selectedOption !== null || submitting}
+                  >
+                    Ответить
+                  </button>
+                </form>
+              ) : null}
+
               <div className={styles.diagnosticOptionsGrid}>
                 {currentQ.options.map((opt, oIdx) => {
                   const isPicked = selectedOption === oIdx;

@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "What is the median of 3, 8, 10, 15, and 20?",
+  "stem": "Чему равна медиана чисел 3, 8, 10, 15 и 20?",
   "correct": "10",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the one var data rule.",
-    "The value is {answer}."
+    "Медиана — среднее число в упорядоченном ряду.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

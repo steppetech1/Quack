@@ -34,7 +34,7 @@
   "constraints": [
     "a < b"
   ],
-  "stem": "A class has boys:girls = {a}:{b}. Each ratio part represents {k} students. How many boys?",
+  "stem": "В классе мальчики и девочки относятся как {a}:{b}. Одна часть — это {k} учеников. Сколько мальчиков?",
   "correct": "a*k",
   "distractors": [
     {
@@ -51,8 +51,8 @@
     }
   ],
   "solution": [
-    "Use the ratios rates rule.",
-    "The value is {answer}."
+    "Число мальчиков = их части × учеников в одной части.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

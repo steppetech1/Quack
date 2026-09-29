@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "On the unit circle, what is cos(pi)?",
+  "stem": "По единичной окружности: чему равен cos(π)?",
   "correct": "-1",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the trig unit circle rule.",
-    "The value is {answer}."
+    "Угол π — точка (-1, 0) на единичной окружности; косинус — её x-координата.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

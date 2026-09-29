@@ -6,7 +6,8 @@
 import { FIELDS, fieldValue } from "../choice/assistant";
 import { programById } from "../choice/programs";
 import { EXAMS, formatDate, milestones, plannedTest, setById, skillById, STATE_LABEL, type TestDates } from "../prep/prepData";
-import { initialModel, reviveModel, type PrepModel } from "../prep/prepModel";
+import { initialModel, type PrepModel } from "../prep/prepModel";
+import { loadPrepModel } from "../prep/prepStore";
 import { EMPTY_STATE, glowOf, type QuackState, type Signal, type Standing } from "./contract";
 import { firstBaseline, plan } from "./planner";
 import type { QuackSource } from "./source";
@@ -20,7 +21,6 @@ const KEYS = {
 };
 /** Device-level: a cause written right before a reload (the demo clock), picked up by the first recompute */
 const PENDING_CAUSE_KEY = "quack-pending-cause";
-const PREP_KEY = "quack-prep";
 const HISTORY_MAX = 12;
 
 type Known = Record<string, { at: string; cause?: string }>;
@@ -116,7 +116,7 @@ export function localSource(): QuackSource {
   const load = () => {
     if (loaded) return;
     loaded = true;
-    prep = reviveModel(store.get(PREP_KEY)) ?? initialModel();
+    prep = loadPrepModel();
     baseline = read<Standing | null>(KEYS.baseline, null);
     history = read<Signal[]>(KEYS.history, []);
     known = read<Known>(KEYS.known, {});

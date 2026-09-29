@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../choice/Icon";
-import { daysBetween, EXAMS, formatShort, SETS, setById, skillById, STATE_LABEL, TODAY, type ExamId, type StudySet } from "./prepData";
+import { allSets, daysBetween, EXAMS, formatShort, setById, skillById, STATE_LABEL, TODAY, type ExamId, type StudySet } from "./prepData";
 import { closed, MAX_PROPOSED, proposals, type PrepModel } from "./prepModel";
 import type { RemoteSetsData } from "./remoteSets";
 import { StateGlyph } from "./SkillGraph";
@@ -55,7 +55,7 @@ export function RouteView({
         ...remoteData.upcoming,
         ...remoteData.done,
       ]
-    : SETS.filter((s) => s.exam === exam);
+    : allSets().filter((s) => s.exam === exam);
 
   const current = remoteData
     ? remoteData.current ?? (model.currentSet ? setById(model.currentSet) : null)

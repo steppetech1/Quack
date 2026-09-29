@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A triangle with a side of 4 is enlarged by scale factor 2. What is that side now?",
+  "stem": "Треугольник со стороной 4 увеличили с коэффициентом подобия 2. Какой стала эта сторона?",
   "correct": "8",
   "distractors": [],
   "solution": [
-    "Use the triangles rule.",
-    "The value is {answer}."
+    "При подобии все стороны умножаются на коэффициент подобия.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

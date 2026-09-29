@@ -42,6 +42,8 @@ class _Redis:
 
 
 def _instance(instance_id, student_id):
+    """Строка `task_instances` целиком: деградация разбирает её в TaskInstance,
+    чтобы выставить оценку без графа, и неполная заглушка это скрывала."""
     return SimpleNamespace(
         id=instance_id,
         student_id=student_id,
@@ -51,6 +53,19 @@ def _instance(instance_id, student_id):
         answered_at=None,
         solution_rendered=["шаг 1"],
         template_id="t1",
+        seed=1,
+        type="mcq4",
+        stem_rendered="Сколько?",
+        options=[
+            {"key": "A", "text": "один", "correct": True},
+            {"key": "B", "text": "два", "correct": False},
+        ],
+        answer="A",
+        trap_answers=[],
+        figure_url=None,
+        time_reference_sec=60,
+        difficulty=1,
+        tags=[],
     )
 
 

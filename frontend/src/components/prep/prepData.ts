@@ -4,6 +4,7 @@
 
 import { PROGRAMS, programById, type Program } from "../choice/programs";
 import { ENT_AREAS, ENT_SETS, ENT_SKILLS } from "./entContent";
+import { REMOTE_PREP } from "./remoteFlag";
 
 /* ---------- Dates ---------- */
 
@@ -22,8 +23,15 @@ export const DEMO_SHIFT = (() => {
   }
 })();
 
-// The demo "today"; all timelines are laid out around it
-export const TODAY = new Date(2026, 8, 17 + DEMO_SHIFT);
+/**
+ * The day every timeline is laid out around. In the demo it is a fixed date, so the scenario looks
+ * the same on any machine and the clock can be moved from the account menu. With the backend behind
+ * us it has to be the real one: the server counts deadlines from today, and a browser three days
+ * behind would tell the student they have three days more than they do.
+ */
+export const TODAY = REMOTE_PREP
+  ? new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())
+  : new Date(2026, 8, 17 + DEMO_SHIFT);
 
 /** Moves the demo clock (null puts it back) and reloads, so every screen reads the same day. */
 export function shiftDemoClock(days: number | null, cause?: string) {
@@ -357,22 +365,30 @@ export function registerRemoteSkills(skills: Skill[]) {
   }
 }
 
+/**
+ * Every skill the screens may draw. With the backend behind them the demo map is not a fallback but a
+ * different student's map: mixing the two would show a skill nobody is learning, with a made-up state
+ * next to the real ones. So at `remote` the registered skills are the whole list, and while it is
+ * still empty the screens have nothing to draw — which is what «карта строится» is for.
+ */
 export function allSkills(): Skill[] {
   const map = new Map<string, Skill>();
-  for (const s of SKILLS) map.set(s.id, s);
+  if (!REMOTE_PREP) for (const s of SKILLS) map.set(s.id, s);
   for (const [id, s] of REMOTE_SKILLS) map.set(id, s);
   return Array.from(map.values());
 }
 
 export const skillById = (id: string): Skill => {
-  const found = REMOTE_SKILLS.get(id) ?? SKILLS.find((s) => s.id === id);
+  const found = REMOTE_SKILLS.get(id) ?? (REMOTE_PREP ? undefined : SKILLS.find((s) => s.id === id));
   if (found) return found;
+  // A skill the knowledge map has not brought yet: named by its id, weightless, so it cannot pass for
+  // a known one in readiness or in the queue.
   return {
     id,
     name: id,
     area: "Алгебра",
     exam: "sat",
-    weight: 5,
+    weight: REMOTE_PREP ? 0 : 5,
     state: "weak",
     recall: 0.5,
     requires: [],
@@ -508,14 +524,32 @@ export function registerRemoteSets(sets: StudySet[]) {
   }
 }
 
+/**
+ * The plan the screens rank, propose and pass. At `remote` it is the backend's plan alone: the demo
+ * sets are another student's route, and one of them shown among the real ones would be a set the
+ * server has never heard of — exactly the state that used to leave `currentSet: "s2"` in storage.
+ */
+export function allSets(): StudySet[] {
+  const map = new Map<string, StudySet>();
+  if (!REMOTE_PREP) for (const s of SETS) map.set(s.id, s);
+  for (const [id, s] of REMOTE_SETS) map.set(id, s);
+  return Array.from(map.values());
+}
+
+/** The set behind an id, or nothing when the plan has not brought it — `setById` names a placeholder. */
+export const knownSet = (id: string): StudySet | null =>
+  REMOTE_SETS.get(id) ?? (REMOTE_PREP ? null : SETS.find((s) => s.id === id) ?? null);
+
 export const setById = (id: string): StudySet => {
-  const found = REMOTE_SETS.get(id) ?? SETS.find((s) => s.id === id);
+  const found = REMOTE_SETS.get(id) ?? (REMOTE_PREP ? undefined : SETS.find((s) => s.id === id));
   if (found) return found;
+  // A set the plan has not brought yet. It is named so the screen says «сет загружается» instead of
+  // printing a uuid, and it carries no topics, so nothing counts progress against it.
   return {
     id,
     exam: "sat",
-    number: 1,
-    title: id,
+    number: REMOTE_PREP ? 0 : 1,
+    title: REMOTE_PREP ? "Сет загружается" : id,
     area: "Подготовка",
     skills: [],
     start: TODAY,

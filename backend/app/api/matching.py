@@ -35,7 +35,7 @@ async def get_matching(
     return result.model_copy(
         update={
             "availability": fallbacks.availability(
-                graph_ok=deps.graph is not None,
+                graph_ok=await apply_matching.graph_reachable(deps),
                 search_ok=await _search_ok(deps),
                 cached=not result.forecast_used,
             )

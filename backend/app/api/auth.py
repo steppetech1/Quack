@@ -7,6 +7,7 @@ from uuid import UUID
 import jwt
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, StringConstraints
 from redis.asyncio import Redis
@@ -149,6 +150,11 @@ async def me(
 ) -> AuthOut:
     # graph.client.create_driver returns None when Neo4j is unreachable; the
     # identity answer must not depend on the graph being up (product-logic §6.3).
+    #
+    # A driver that exists is not a graph that answers: Neo4j can go down after
+    # the app started, and then the MERGE raises. Without this the whole sign-in
+    # fails on a 500, and the browser cannot even read why — an unhandled error
+    # carries no CORS headers. The node is created by the next /auth/me instead.
     if graph is None:
         _logger.warning(
             "student_node_skipped",
@@ -156,7 +162,15 @@ async def me(
             student_id=str(student.student_id),
         )
     else:
-        await _ensure_student(graph, student.student_id)
+        try:
+            await _ensure_student(graph, student.student_id)
+        except (ServiceUnavailable, SessionExpired) as exc:
+            _logger.warning(
+                "student_node_skipped",
+                reason="neo4j_down",
+                student_id=str(student.student_id),
+                error=str(exc),
+            )
     # get_current_student has already verified the token; only read the claim.
     claims = jwt.decode(
         request.cookies["quack_token"],

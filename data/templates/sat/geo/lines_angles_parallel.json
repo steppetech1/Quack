@@ -13,12 +13,12 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "Parallel lines are cut by a transversal. An alternate interior angle is 72 degrees. What is its partner?",
+  "stem": "Параллельные прямые пересечены секущей. Один из накрест лежащих углов равен 72°. Чему равен второй?",
   "correct": "72",
   "distractors": [],
   "solution": [
-    "Use the lines angles rule.",
-    "The value is {answer}."
+    "Накрест лежащие углы при параллельных прямых равны.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null,

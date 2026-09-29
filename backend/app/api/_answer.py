@@ -14,7 +14,7 @@ from app.events.session import current_session_id, session_minute
 from app.schemas.auth import StudentCtx
 from app.schemas.common import TaskMode
 from app.schemas.events import EventIn, EventType, TaskAnsweredPayload
-from app.schemas.tasks import AnswerIn, AnswerResult
+from app.schemas.tasks import AnswerIn, AnswerResult, TaskInstance
 
 
 async def owned_instance(
@@ -108,8 +108,16 @@ async def record_answer(
         _queue_recovery(deps, student.student_id, event.id)
         from app.tasks.answer import grade as grade_fn
 
+        # `row` — строка SQLAlchemy: `options` и `trap_answers` лежат в ней
+        # словарями из JSON-колонки, а `grade` читает у них поля (`opt.key`).
+        # Без разбора этот путь падал с 500 ровно там, где §11 A2 обещает
+        # ученику сохранённую оценку — то есть при каждой деградации.
+        instance = TaskInstance.model_validate(
+            {name: getattr(row, name) for name in TaskInstance.model_fields}
+        )
+
         return AnswerResult(
-            grade=grade_fn(row, body.answer),
+            grade=grade_fn(instance, body.answer),
             solution=row.solution_rendered,
             state_after=None,
             misconception_change=None,

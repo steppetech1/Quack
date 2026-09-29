@@ -162,8 +162,14 @@ export function applyRemoteKnowledgeToModel(
     }
   }
 
+  // The entrance test is a fact the server can prove: once any skill has left «low_data», the student
+  // has been measured — here, on another device, or by the chat. The flag kept in the browser alone
+  // would keep offering the test to someone who took it.
+  const measured = data.skills.some((s) => s.level !== "low_data");
+
   return {
     ...model,
+    diagnosticDone: model.diagnosticDone || measured,
     states: newStates,
     recall: newRecall,
     misconceptions: newMisconceptions,

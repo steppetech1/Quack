@@ -13,7 +13,7 @@
   "kind": "template",
   "params": {},
   "constraints": [],
-  "stem": "A circle has radius 3. What is its area?",
+  "stem": "Радиус круга 3. Какова его площадь?",
   "correct": "9*pi",
   "distractors": [
     {
@@ -30,8 +30,8 @@
     }
   ],
   "solution": [
-    "Use the circle rule.",
-    "The value is {answer}."
+    "Площадь круга = π × r².",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

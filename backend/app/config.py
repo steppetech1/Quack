@@ -169,10 +169,17 @@ class Settings(BaseSettings):
     LLM_API_KEY: SecretStr = SecretStr("")
     MODEL_CHAT: str = ""
     MODEL_BULK: str = ""
-    LLM_STRUCTURED_MODE: Literal["response_format", "tool"] = "response_format"
+    # response_format = json_schema (Together, OpenAI); json_object = schema in the
+    # prompt (DeepSeek own API has no json_schema); tool = a forced function call.
+    LLM_STRUCTURED_MODE: Literal["response_format", "json_object", "tool"] = (
+        "response_format"
+    )
     LLM_STRICT_SCHEMA: bool = False
     LLM_REASONING_CHAT: str | None = "low"
     LLM_REASONING_BULK: str | None = "high"
+    # DeepSeek's own API: `thinking` goes in extra_body. Unset = do not send it.
+    LLM_THINKING_CHAT: Literal["enabled", "disabled"] | None = None
+    LLM_THINKING_BULK: Literal["enabled", "disabled"] | None = None
     LLM_TIMEOUT_CHAT_S: float = 30
     LLM_TIMEOUT_BULK_S: float = 90
     # Local starting limits; configure these for the selected provider.
@@ -205,7 +212,13 @@ class Settings(BaseSettings):
         """Задача с одним вызовом LLM на слоте bulk плюс запас на I/O."""
         return self.LLM_TIMEOUT_BULK_S + 15
 
-    @field_validator("LLM_REASONING_CHAT", "LLM_REASONING_BULK", mode="before")
+    @field_validator(
+        "LLM_REASONING_CHAT",
+        "LLM_REASONING_BULK",
+        "LLM_THINKING_CHAT",
+        "LLM_THINKING_BULK",
+        mode="before",
+    )
     @classmethod
     def _empty_reasoning_means_unset(cls, value: object) -> object:
         """An empty env value means "don't pass reasoning_effort at all",

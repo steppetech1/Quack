@@ -26,7 +26,7 @@
     }
   },
   "constraints": [],
-  "stem": "A bag contains {r} red and {b} blue balls. What is P(red)?",
+  "stem": "В мешке {r} красных и {b} синих шаров. Какова вероятность достать красный?",
   "correct": "r/(r+b)",
   "distractors": [
     {
@@ -43,8 +43,8 @@
     }
   ],
   "solution": [
-    "Use the probability rule.",
-    "The value is {answer}."
+    "Вероятность = подходящие исходы / все исходы.",
+    "Ответ: {answer}."
   ],
   "generator": null,
   "figure": null

@@ -3452,6 +3452,44 @@
 }
 
 /* Варианты ответов */
+/* Числовая задача замера: вариантов нет, ответ вводится */
+.diagnosticNumeric {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.diagnosticNumericInput {
+  flex: 1;
+  padding: 11px 14px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+}
+
+.diagnosticNumericInput:disabled {
+  opacity: 0.6;
+}
+
+.diagnosticNumericBtn {
+  padding: 11px 16px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.diagnosticNumericBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .diagnosticOptionsGrid {
   display: grid;
   grid-template-columns: 1fr;
@@ -3948,4 +3986,58 @@
 .setsLoadingDuck {
   width: 64px;
   margin-top: 64px;
+}
+
+/* Теория темы: текст с бэка (или локальный, пока его нет) */
+.theory {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.theoryHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.theoryHead h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.theoryBody {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.theoryBody p {
+  margin: 0;
+}
+
+.theoryRetry {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.theoryRetry:disabled {
+  opacity: 0.55;
+  cursor: default;
 }

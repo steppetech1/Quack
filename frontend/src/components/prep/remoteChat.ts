@@ -1,7 +1,7 @@
 // Phase I5 Step 6 Tutor Chat Adapter: connects TopicWorkspace chat to backend
 // /chat/prep/messages (SSE), /chat/prep/observe, and /chat/prep/observations.
 
-import { api, ApiError } from "@/api/client";
+import { api, ApiError, isUuid } from "@/api/client";
 import {
   backend,
   type BackendMessageOut,
@@ -31,7 +31,7 @@ export async function loadPrepMessages(
   topicSkillId?: string | null,
   limit = 50
 ): Promise<BackendMessageOut[] | null> {
-  if (!REMOTE_PREP) return null;
+  if (!REMOTE_PREP || !isUuid(setId)) return null;
   try {
     return await backend.chat.messages("prep", {
       set_id: setId,
@@ -52,6 +52,9 @@ export async function sendPrepMessage(
   handlers: PrepTurnHandlers,
   signal?: AbortSignal
 ): Promise<void> {
+  if (!isUuid(params.setId)) {
+    throw new ApiError(400, "invalid_id", "Invalid set ID for prep chat");
+  }
   const failure: { code?: string; message?: string } = {};
 
   await postSSE(
@@ -93,7 +96,7 @@ export async function requestChatObservation(
   setId: string,
   topicSkillId?: string | null
 ): Promise<BackendObserveRequestedOut | null> {
-  if (!REMOTE_PREP) return null;
+  if (!REMOTE_PREP || !isUuid(setId)) return null;
   try {
     return await backend.chat.observe({
       set_id: setId,
@@ -118,7 +121,7 @@ export async function pollObservationsDiff(
   maxAttempts = 10,
   intervalMs = 1500
 ): Promise<BackendObservationsDiffOut | null> {
-  if (!REMOTE_PREP) return null;
+  if (!REMOTE_PREP || !isUuid(setId)) return null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {

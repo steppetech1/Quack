@@ -138,7 +138,23 @@ def create_app() -> FastAPI:
                     content={"error": {"code": error.code, "message": error.message}},
                 )
             else:
-                response = await call_next(request)
+                try:
+                    response = await call_next(request)
+                except Exception:  # noqa: BLE001
+                    # Handled here, inside CORSMiddleware: the `Exception`
+                    # handler below runs in ServerErrorMiddleware, outside
+                    # CORS, and a browser would read that 500 as a network error.
+                    logger.exception("unhandled_request_error", request_id=request_id)
+                    response = JSONResponse(
+                        status_code=500,
+                        content={
+                            "error": {
+                                "code": "internal",
+                                "message": "Internal server error",
+                            },
+                            "request_id": request_id,
+                        },
+                    )
             # Фаза 5 (§10): коммит здесь, а не в teardown зависимости.
             # `call_next` уже вернул ответ обработчика, но наружу он ещё не
             # ушёл, поэтому «принято» и «долговечно» совпадают по порядку.

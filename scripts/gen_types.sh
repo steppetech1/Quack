@@ -2,10 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-generator="$repo_root/frontend/node_modules/.bin/openapi-typescript"
+generator="$repo_root/frontend/node_modules/openapi-typescript/bin/cli.js"
 output="$repo_root/frontend/src/api/schema.d.ts"
 
-if [[ ! -x "$generator" ]]; then
+if [[ ! -f "$generator" ]]; then
   echo "Missing frontend openapi-typescript dependency: $generator" >&2
   exit 1
 fi
@@ -28,4 +28,4 @@ trap 'rm -f "$schema"' EXIT
     exit 1
   fi
 )
-"$generator" "$schema" -o "$output"
+node "$generator" "$schema" -o "$output"

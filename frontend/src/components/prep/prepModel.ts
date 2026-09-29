@@ -2,11 +2,10 @@
 // a self-check answer is evidence, evidence moves skill state, a set is passed when all its skills are solid.
 
 import {
+  allSets,
   allSkills,
-  SETS,
   setById,
   skillById,
-  SKILLS,
   TODAY,
   type Evidence,
   type ExamId,
@@ -20,6 +19,7 @@ import {
 } from "./prepData";
 
 import type { IconName } from "../choice/Icon";
+import { REMOTE_PREP as REMOTE } from "./remoteFlag";
 
 export type PrepTab = "overview" | "sets";
 
@@ -93,18 +93,21 @@ export type Material =
 export const MOCK_SOLID = 5;
 
 export function initialModel(): PrepModel {
+  // At `remote` there is nothing to start from: the skills, their states and their evidence come from
+  // `GET /knowledge`. Starting from the demo map would show another student's knowledge as this one's.
+  const skills = allSkills();
   return {
-    states: Object.fromEntries(SKILLS.map((s) => [s.id, s.state])),
-    recall: Object.fromEntries(SKILLS.map((s) => [s.id, s.recall])),
-    misconceptions: Object.fromEntries(SKILLS.map((s) => [s.id, s.misconceptions])),
-    evidence: Object.fromEntries(SKILLS.map((s) => [s.id, s.evidence])),
-    doneSets: ["s1", "e1"],
-    currentSet: "s2",
+    states: Object.fromEntries(skills.map((s) => [s.id, s.state])),
+    recall: Object.fromEntries(skills.map((s) => [s.id, s.recall])),
+    misconceptions: Object.fromEntries(skills.map((s) => [s.id, s.misconceptions])),
+    evidence: Object.fromEntries(skills.map((s) => [s.id, s.evidence])),
+    doneSets: REMOTE ? [] : ["s1", "e1"],
+    currentSet: REMOTE ? null : "s2",
     extraDays: 0,
     milestonesDone: [],
     resolvedConflicts: {},
     demo: false,
-    reportFor: "s1",
+    reportFor: REMOTE ? null : "s1",
     materials: {},
     diagnosticDone: false,
     diagnosticSkipped: false,
@@ -151,7 +154,8 @@ export type Recommendation = { set: StudySet; score: number; reasons: string[] }
 const GAP: Record<SkillState, number> = { weak: 1, lowData: 0.6, shaky: 0.5, solid: 0 };
 
 export function rankSets(model: PrepModel, exam: ExamId): Recommendation[] {
-  return SETS.filter((s) => s.exam === exam && !model.doneSets.includes(s.id))
+  return allSets()
+    .filter((s) => s.exam === exam && !model.doneSets.includes(s.id))
     .map((set) => {
       const reasons: string[] = [];
       let score = 0;
@@ -204,7 +208,7 @@ export function proposals(model: PrepModel, exam: ExamId): Recommendation[] {
 
 /** The next set the system recommends: the first one in the route that isn't passed. */
 export function proposedSet(model: PrepModel): StudySet | undefined {
-  return SETS.find((s) => !model.doneSets.includes(s.id) && s.id !== model.currentSet);
+  return allSets().find((s) => !model.doneSets.includes(s.id) && s.id !== model.currentSet);
 }
 
 export const closed = (model: PrepModel, set: StudySet) =>
@@ -243,6 +247,7 @@ export function acceptSet(model: PrepModel, id: string): PrepModel {
 export function skipTest(model: PrepModel): PrepModel {
   const next = { ...model, diagnosticDone: true, diagnosticSkipped: true };
   if (next.currentSet) return next;
+  if (REMOTE) return next;
   const top = rankSets(next, "sat")[0]?.set;
   return top ? acceptSet(next, top.id) : next;
 }
@@ -268,7 +273,9 @@ export function setReport(model: PrepModel): SetReport | null {
     stronger: set.skills
       .filter((id) => start[id] && rank[model.states[id]] > rank[start[id]])
       .map((id) => ({ id, from: start[id], to: model.states[id] })),
-    fixed: set.skills.flatMap((id) => model.misconceptions[id].filter((m) => m.status === "resolved").map((m) => ({ skill: id, text: m.text }))),
+    fixed: set.skills.flatMap((id) =>
+      (model.misconceptions[id] ?? []).filter((m) => m.status === "resolved").map((m) => ({ skill: id, text: m.text }))
+    ),
   };
 }
 
@@ -316,7 +323,7 @@ export function answerTask(
     date: TODAY,
   };
 
-  let misconceptions = model.misconceptions[skillId];
+  let misconceptions = model.misconceptions[skillId] ?? [];
   if (!option.correct && option.trap) {
     const existing = misconceptions.find((m) => m.text.toLowerCase().includes(option.trap!.toLowerCase().slice(0, 12)));
     if (existing) {
@@ -336,14 +343,15 @@ export function answerTask(
     );
   }
 
-  const recall = option.correct ? Math.min(0.95, model.recall[skillId] + 0.2) : Math.max(0.2, model.recall[skillId] - 0.1);
+  const now = model.recall[skillId] ?? 0.5;
+  const recall = option.correct ? Math.min(0.95, now + 0.2) : Math.max(0.2, now - 0.1);
 
   const next: PrepModel = {
     ...model,
     states: { ...model.states, [skillId]: to },
     recall: { ...model.recall, [skillId]: recall },
     misconceptions: { ...model.misconceptions, [skillId]: misconceptions },
-    evidence: { ...model.evidence, [skillId]: [evidence, ...model.evidence[skillId]] },
+    evidence: { ...model.evidence, [skillId]: [evidence, ...(model.evidence[skillId] ?? [])] },
   };
 
   const passed = passSets(next, skillId);
@@ -354,7 +362,7 @@ export function answerTask(
 function passSets(model: PrepModel, skillId: string): { model: PrepModel; set?: StudySet } {
   let next = model;
   let setPassed: StudySet | undefined;
-  for (const set of SETS.filter((s) => s.skills.includes(skillId) && !next.doneSets.includes(s.id))) {
+  for (const set of allSets().filter((s) => s.skills.includes(skillId) && !next.doneSets.includes(s.id))) {
     if (closed(next, set) === set.skills.length) {
       setPassed = set;
       next = {
@@ -381,10 +389,9 @@ export function settleMock(
   const from = model.states[skillId];
   const need = Math.min(MOCK_SOLID, total);
   const to: SkillState = correct >= need ? "solid" : correct >= Math.ceil(need / 2) + 1 ? "shaky" : "weak";
+  const known = model.misconceptions[skillId] ?? [];
   const misconceptions =
-    to === "solid"
-      ? model.misconceptions[skillId].map((m) => (m.status === "confirmed" ? { ...m, status: "resolved" as const } : m))
-      : model.misconceptions[skillId];
+    to === "solid" ? known.map((m) => (m.status === "confirmed" ? { ...m, status: "resolved" as const } : m)) : known;
   const next: PrepModel = {
     ...model,
     states: { ...model.states, [skillId]: to },

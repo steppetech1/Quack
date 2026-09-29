@@ -89,3 +89,36 @@ async def test_profile_path_and_value_validation_and_trait_append():
         )
     assert profile.traits.verbatim == ["люблю бананы", "хочу тепло"]
     assert session.commits == 0
+
+
+async def test_a_sum_of_money_is_not_a_score():
+    """«100 тыс в месяц на жизнь» once landed in ent_trial_score as 100000."""
+    session = ProfileSession()
+    student_id = uuid4()
+    for path, value in (
+        ("academics.ent_trial_score", 100000),
+        ("academics.ielts_score", 65),
+        ("level.grade", 100),
+        ("pace.hours_per_week", 400),
+    ):
+        with pytest.raises(ValidationFailed, match="outside"):
+            await apply_profile_update(
+                session, student_id, ProfileUpdateIn(path=path, value=value, by="user")
+            )
+    assert session.row is None
+
+    profile = await apply_profile_update(
+        session,
+        student_id,
+        ProfileUpdateIn(path="academics.ent_trial_score", value=95, by="user"),
+    )
+    assert profile.questionnaire.academics.ent_trial_score.value == 95
+
+
+def test_bounds_ignore_what_is_not_a_plain_number():
+    from app.db.repo.profiles import check_number_bounds
+
+    check_number_bounds("academics.ent_trial_score", True)  # a bool is not a score
+    check_number_bounds("academics.ent_trial_score", "many")
+    check_number_bounds("preferences.countries", 100000)  # a slot without bounds
+    check_number_bounds("preferences.budget_per_year", 1_500_000)

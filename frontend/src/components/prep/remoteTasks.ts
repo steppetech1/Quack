@@ -9,11 +9,15 @@ import {
   type BackendTaskInstanceOut,
   type BackendTopicOut,
 } from "@/api/backend";
+import { isUuid } from "@/api/client";
 import { type ExamId, type Task } from "./prepData";
 import { toBackendExamId } from "./remotePrep";
 import { REMOTE_PREP } from "./remoteSets";
 
 const tasksCache = new Map<string, Task[]>();
+// A second mount while the first request is out (Strict Mode, a quick re-render) shares it instead of
+// issuing its own tasks: every issued task is recorded on the server as given to the student.
+const tasksInFlight = new Map<string, Promise<Task[] | null>>();
 
 export function adaptBackendTask(instance: BackendTaskInstanceOut): Task {
   return {
@@ -35,22 +39,35 @@ export async function fetchRemoteTopicTasks(
 ): Promise<Task[] | null> {
   if (!REMOTE_PREP) return null;
 
-  const cacheKey = `${skillId}:${setId ?? ""}`;
+  const validSetId = setId && isUuid(setId) ? setId : null;
+  const cacheKey = `${skillId}:${validSetId ?? ""}`;
   if (tasksCache.has(cacheKey)) {
     return tasksCache.get(cacheKey)!;
   }
+  const pending = tasksInFlight.get(cacheKey);
+  if (pending) return pending;
+  const request = issueTopicTasks(skillId, validSetId, cacheKey, count).finally(() => tasksInFlight.delete(cacheKey));
+  tasksInFlight.set(cacheKey, request);
+  return request;
+}
 
+async function issueTopicTasks(skillId: string, validSetId: string | null, cacheKey: string, count: number): Promise<Task[] | null> {
   try {
     const tasks: Task[] = [];
-    for (let i = 0; i < count; i++) {
+    // A topic with a single fixed template answers the same question every time; a mock of three
+    // identical questions tests nothing, so repeats are dropped and a short mock is kept instead.
+    const stems = new Set<string>();
+    for (let attempt = 0; attempt < count * 2 && tasks.length < count; attempt++) {
       try {
         const instance = await backend.tasks.issue({
           skill_id: skillId,
-          set_id: setId ?? null,
+          set_id: validSetId,
           mode: "topic",
           with_trap: null,
           exclude_seen: false,
         });
+        if (stems.has(instance.stem_rendered)) continue;
+        stems.add(instance.stem_rendered);
         tasks.push(adaptBackendTask(instance));
       } catch (err: unknown) {
         // If 404 on the first task, skill has no backend templates; fallback to local
@@ -78,6 +95,9 @@ export async function submitRemoteAnswer(
   timeSpentSec: number,
   mode = "topic"
 ): Promise<BackendAnswerResult> {
+  if (!isUuid(instanceId)) {
+    throw new Error(`Invalid instanceId for submitRemoteAnswer: ${instanceId}`);
+  }
   return await backend.tasks.answer(instanceId, {
     answer: answerKey,
     time_spent_sec: Math.max(1, timeSpentSec),
@@ -91,6 +111,7 @@ export async function completeRemoteTopic(
   setId: string,
   skillId: string
 ): Promise<BackendSetOut | null> {
+  if (!isUuid(setId)) return null;
   try {
     return await backend.sets.topic.complete(setId, skillId);
   } catch (err) {
@@ -103,6 +124,7 @@ export async function openRemoteTopic(
   setId: string,
   skillId: string
 ): Promise<BackendTopicOut | null> {
+  if (!isUuid(setId)) return null;
   try {
     return await backend.sets.topic.open(setId, skillId);
   } catch (err) {
@@ -116,6 +138,7 @@ export async function skipRemoteTask(
   timeSpentSec: number,
   reason: "skipped" | "timed_out" = "skipped"
 ): Promise<void> {
+  if (!isUuid(instanceId)) return;
   try {
     await backend.tasks.skip(instanceId, reason, Math.max(1, timeSpentSec));
   } catch (err) {
@@ -135,7 +158,7 @@ export function clearTasksCache(skillId?: string, setId?: string) {
 
 /** Starts (or resumes, if the backend returns the same run) the set's final mock. */
 export async function startRemoteSetMock(exam: ExamId, setId: string): Promise<BackendMockOut | null> {
-  if (!REMOTE_PREP) return null;
+  if (!REMOTE_PREP || !isUuid(setId)) return null;
   try {
     return await backend.mocks.start({
       kind: "mock_set",
@@ -156,6 +179,7 @@ export async function answerRemoteMock(
   answerKey: string,
   timeSpentSec: number
 ): Promise<BackendMockOut | null> {
+  if (!isUuid(runId) || !isUuid(instanceId)) return null;
   try {
     return await backend.mocks.answer(runId, {
       instance_id: instanceId,
@@ -172,6 +196,7 @@ export async function answerRemoteMock(
 }
 
 export async function finishRemoteMock(runId: string): Promise<BackendMockResultOut | null> {
+  if (!isUuid(runId)) return null;
   try {
     return await backend.mocks.finish(runId);
   } catch (err) {

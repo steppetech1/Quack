@@ -2,6 +2,7 @@
 
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -242,6 +243,26 @@ def test_empty_sets_rebuild_once_and_nonempty_read(transport):
     assert nonempty.headers["X-Knowledge-Version"] == "9"
     assert transport.rebuild.await_count == 1
     assert transport.calls.forecast == 2
+
+
+def test_a_plan_of_one_consolidation_set_is_not_rebuilt(transport):
+    """Сеты — read-модель в Postgres, и чтение их не пересобирает.
+
+    A plan can legitimately hold nothing but the consolidation set — a student
+    who has closed every skill before the test. Rebuilding that on every read
+    would hand out new set ids each time, and the links, the generated texts
+    and the opened forecast are all keyed by set id.
+    """
+    only = _set(transport.student_id).model_copy(update={"kind": "consolidation"})
+    transport.rows[(transport.student_id, only.id)] = only
+
+    with _client(transport) as client:
+        first = client.get("/sets?exam_id=SAT_MATH")
+        second = client.get("/sets?exam_id=SAT_MATH")
+
+    assert transport.rebuild.await_count == 0
+    assert [row["id"] for row in first.json()["upcoming"]] == [str(only.id)]
+    assert first.json()["upcoming"] == second.json()["upcoming"]
 
 
 def test_set_ownership_switch_and_deadline_validation(transport):
@@ -509,3 +530,50 @@ def test_refresh_requires_a_prep_chat_target(transport):
     with _client(transport) as client:
         response = client.post("/knowledge/refresh", json={"kind": "prep"})
     assert response.status_code == 400
+
+
+def test_knowledge_answers_when_the_graph_goes_down_after_start(transport, monkeypatch):
+    """A driver that exists is not a graph that is up: 200 and «static», never a 500."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    transport.fake_apply("app.apply.knowledge.states_view", [])
+    transport.fake_apply("app.apply.knowledge.misconceptions_view", [])
+
+    async def down(*args, **kwargs):
+        raise ServiceUnavailable("neo4j is down")
+
+    class DeadGraph:
+        verify_connectivity = staticmethod(down)
+
+    monkeypatch.setattr(knowledge_api.personal, "list_root_causes", down)
+    transport.deps.graph = DeadGraph()
+    with _client(transport) as client:
+        response = client.get("/knowledge?exam_id=SAT_MATH")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["roots"] == []
+    assert body["availability"] == {
+        "mode": "static",
+        "reason": "graph_unavailable",
+        "as_of_event_id": None,
+    }
+
+
+def test_switch_answers_409_when_the_plan_moved_under_it(transport):
+    """A rebuild between reading the sets and switching is a conflict, not a 500."""
+    from sqlalchemy.orm.exc import StaleDataError
+
+    current = _set(transport.student_id, status="current")
+    upcoming = _set(transport.student_id, position=1)
+    for item in (current, upcoming):
+        transport.rows[(transport.student_id, item.id)] = item
+    transport.switched.side_effect = StaleDataError("0 rows matched")
+    transport.session.rollback = AsyncMock()
+
+    with _client(transport) as client:
+        response = client.post("/sets/switch", json={"set_id": str(upcoming.id)})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conflict"
+    transport.session.rollback.assert_awaited()

@@ -415,7 +415,12 @@
 }
 
 @keyframes hooked {
+  /* Hidden under water until the bite, so nothing shows while it is reset. */
   0%,
+  3% {
+    transform: translate(0, 0) rotate(0) scale(1);
+    opacity: 0;
+  }
   3.1% {
     transform: translate(0, 0) rotate(0) scale(1);
     opacity: 1;
@@ -445,11 +450,11 @@
     transform: translate(var(--bx), var(--by)) rotate(20deg) scale(0.35);
     opacity: 0;
   }
-  /* Back under the water, out of sight, ready for the next cast. */
+  /* Back under the water while still invisible, ready for the next cast. */
   41.7%,
   100% {
     transform: translate(0, 0) rotate(0) scale(1);
-    opacity: 1;
+    opacity: 0;
   }
 }
 
@@ -491,22 +496,92 @@
 
 /* The flyer's own cycle: 0% is the moment it leaves the button. */
 @keyframes flyer {
+  /* Leaves the button as a speck hidden inside it, grows only once it is clear of the
+     edge, on one continuous eased path (sampled, linear between samples). */
   0% {
-    transform: translate(var(--fx), var(--fy)) scale(0.3);
+    transform: translate(calc(var(--fx) * 1), calc(var(--fy) * 1 - var(--u) * 0)) scale(0.08);
     opacity: 0;
     animation-timing-function: linear;
   }
-  2.5% {
-    transform: translate(var(--fx), var(--fy)) scale(0.35);
+  0.9% {
+    transform: translate(calc(var(--fx) * 0.9938), calc(var(--fy) * 0.9938 - var(--u) * 0.116)) scale(0.0802);
+    opacity: 0;
+  }
+  1.8% {
+    transform: translate(calc(var(--fx) * 0.9755), calc(var(--fy) * 0.9755 - var(--u) * 0.461)) scale(0.0817);
+    opacity: 0.25;
+  }
+  2.7% {
+    transform: translate(calc(var(--fx) * 0.9455), calc(var(--fy) * 0.9455 - var(--u) * 1.022)) scale(0.0865);
+    opacity: 0.5;
+  }
+  3.6% {
+    transform: translate(calc(var(--fx) * 0.9045), calc(var(--fy) * 0.9045 - var(--u) * 1.773)) scale(0.097);
+    opacity: 0.75;
+  }
+  4.5% {
+    transform: translate(calc(var(--fx) * 0.8536), calc(var(--fy) * 0.8536 - var(--u) * 2.664)) scale(0.1151);
     opacity: 1;
-    animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1);
   }
-  8% {
-    transform: translate(calc(var(--fx) * 0.35), calc(var(--fy) * 0.35 - var(--u) * 6)) scale(0.85);
-    animation-timing-function: cubic-bezier(0.3, 0.3, 0.3, 1);
+  5.4% {
+    transform: translate(calc(var(--fx) * 0.7939), calc(var(--fy) * 0.7939 - var(--u) * 3.619)) scale(0.1428);
+    opacity: 1;
   }
-  15% {
-    transform: translate(0, 0) scale(1);
+  6.3% {
+    transform: translate(calc(var(--fx) * 0.727), calc(var(--fy) * 0.727 - var(--u) * 4.538)) scale(0.1812);
+    opacity: 1;
+  }
+  7.2% {
+    transform: translate(calc(var(--fx) * 0.6545), calc(var(--fy) * 0.6545 - var(--u) * 5.307)) scale(0.2311);
+    opacity: 1;
+  }
+  8.1% {
+    transform: translate(calc(var(--fx) * 0.5782), calc(var(--fy) * 0.5782 - var(--u) * 5.82)) scale(0.2921);
+    opacity: 1;
+  }
+  9% {
+    transform: translate(calc(var(--fx) * 0.5), calc(var(--fy) * 0.5 - var(--u) * 6)) scale(0.3632);
+    opacity: 1;
+  }
+  9.9% {
+    transform: translate(calc(var(--fx) * 0.4218), calc(var(--fy) * 0.4218 - var(--u) * 5.82)) scale(0.4425);
+    opacity: 1;
+  }
+  10.8% {
+    transform: translate(calc(var(--fx) * 0.3455), calc(var(--fy) * 0.3455 - var(--u) * 5.307)) scale(0.5276);
+    opacity: 1;
+  }
+  11.7% {
+    transform: translate(calc(var(--fx) * 0.273), calc(var(--fy) * 0.273 - var(--u) * 4.538)) scale(0.615);
+    opacity: 1;
+  }
+  12.6% {
+    transform: translate(calc(var(--fx) * 0.2061), calc(var(--fy) * 0.2061 - var(--u) * 3.619)) scale(0.7014);
+    opacity: 1;
+  }
+  13.5% {
+    transform: translate(calc(var(--fx) * 0.1464), calc(var(--fy) * 0.1464 - var(--u) * 2.664)) scale(0.7829);
+    opacity: 1;
+  }
+  14.4% {
+    transform: translate(calc(var(--fx) * 0.0955), calc(var(--fy) * 0.0955 - var(--u) * 1.773)) scale(0.8557);
+    opacity: 1;
+  }
+  15.3% {
+    transform: translate(calc(var(--fx) * 0.0545), calc(var(--fy) * 0.0545 - var(--u) * 1.022)) scale(0.9164);
+    opacity: 1;
+  }
+  16.2% {
+    transform: translate(calc(var(--fx) * 0.0245), calc(var(--fy) * 0.0245 - var(--u) * 0.461)) scale(0.9621);
+    opacity: 1;
+  }
+  17.1% {
+    transform: translate(calc(var(--fx) * 0.0062), calc(var(--fy) * 0.0062 - var(--u) * 0.116)) scale(0.9904);
+    opacity: 1;
+  }
+  18% {
+    transform: translate(calc(var(--fx) * 0), calc(var(--fy) * 0 - var(--u) * 0)) scale(1);
+    opacity: 1;
     animation-timing-function: ease-in-out;
   }
   38% {

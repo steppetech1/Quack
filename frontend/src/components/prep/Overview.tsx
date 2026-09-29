@@ -21,6 +21,7 @@ import {
   milestones,
   requirements,
   SETS,
+  knownSet,
   setById,
   skillById,
   SKILLS,
@@ -41,7 +42,7 @@ import {
 } from "./prepData";
 import { chooseTestDate, disputeMisconception, proposedSet, readiness, setReport, type PrepModel, type PrepSub, type PrepTab, type SetReport } from "./prepModel";
 import { disputeRemoteMisconception } from "./remoteKnowledge";
-import { getCachedRemoteSets } from "./remoteSets";
+import { fetchRemoteSets, getCachedRemoteSets, type RemoteSetsData } from "./remoteSets";
 import { StateGlyph } from "./SkillGraph";
 import { SetDetail } from "./SetDetail";
 import { DiagnosticMock } from "./DiagnosticMock";
@@ -231,7 +232,26 @@ function Now({
   diagnostic: Props["diagnostic"];
 }) {
   const { state } = useQuack();
-  const current = model.currentSet ? setById(model.currentSet) : null;
+  const targetExam: ExamId = (exams.find((e) => e.id === "ent" || e.id === "sat")?.id as ExamId) ?? "sat";
+  const [remoteSets, setRemoteSets] = useState<RemoteSetsData | null>(() => {
+    if (!REMOTE_PREP) return null;
+    return getCachedRemoteSets(targetExam);
+  });
+
+  useEffect(() => {
+    if (!REMOTE_PREP) return;
+    let active = true;
+    fetchRemoteSets(targetExam).then((data) => {
+      if (active) setRemoteSets(data);
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [targetExam]);
+
+  const current = REMOTE_PREP
+    ? (model.currentSet ? knownSet(model.currentSet) : null) ?? remoteSets?.current ?? null
+    : model.currentSet ? setById(model.currentSet) : null;
   const isDiagPending = !model.diagnosticDone;
 
   // Quack's verdict per exam — strictly filtered to exams that are actually required
@@ -260,7 +280,6 @@ function Now({
   });
 
   // The test itself, in place: its result builds the route and the first set opens on the same spot
-  const targetExam: ExamId = (exams.find((e) => e.id === "ent" || e.id === "sat")?.id as ExamId) ?? "sat";
   if (diagnostic.open)
     return (
       <DiagnosticMock
@@ -311,10 +330,20 @@ function Now({
       </div>
     );
 
-  const proposed = isDiagPending ? null : proposedSet(model);
+  const proposed = isDiagPending
+    ? null
+    : REMOTE_PREP
+      ? (remoteSets?.upcoming?.[0] ?? null)
+      : (proposedSet(model) ?? null);
   const topicId = proposed?.skills.find((id) => model.states[id] !== "solid") ?? proposed?.skills[0];
   const topic = topicId ? skillById(topicId) : null;
   const report = isDiagPending ? null : setReport(model);
+  // Nothing to study can mean two different things, and they must not share a sentence: either the
+  // route is behind the student, or the plan came back with no topics in it at all.
+  const passedSomething = REMOTE_PREP ? Boolean(remoteSets?.done?.length) : model.doneSets.length > 0;
+  const nothingToStudy = passedSomething
+    ? "Все сеты пройдены — осталось закрепление и тест"
+    : "Тем пока нет: в плане только закрепление перед тестом";
 
   return (
     <div className={styles.nowScreen}>
@@ -342,7 +371,7 @@ function Now({
             </p>
           </>
         ) : (
-          <h2 className={styles.nowSet}>Все сеты пройдены — осталось закрепление и тест</h2>
+          <h2 className={styles.nowSet}>{nothingToStudy}</h2>
         )}
 
         {paces.length > 0 && (
@@ -463,7 +492,9 @@ function Important({
     ...getSetsFromCache("sat"),
     ...getSetsFromCache("ent"),
   ];
-  const allAvailableSets = [...SETS, ...remoteSets];
+  // With the backend behind us the plan is the backend's alone: a demo set among the real ones would
+  // send the student to a topic the server has never heard of.
+  const allAvailableSets = REMOTE_PREP ? remoteSets : [...SETS, ...remoteSets];
   const setWith = (skillId: string) =>
     allAvailableSets.find((s) => s.id === model.currentSet && s.skills.includes(skillId)) ??
     allAvailableSets.find((s) => s.skills.includes(skillId) && !model.doneSets.includes(s.id)) ??
