@@ -1,1 +1,5 @@
-{}
+{
+  "teacher@1": "5b60f9ce9f723d1dd612ad49fee3428c600a991ddd0aeb185796e7fa72858f8a",
+  "extractor@1": "d821ff5bbc89b3fa382342be15c41f4fbf6447e09be2d374e9e6e9ccaa24dba5",
+  "checkpointer@1": "178779bb107bf0c415149361877e197ce1e1ee93929263b3490101c77d46d0c8"
+}
