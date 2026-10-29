@@ -218,3 +218,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# nightrun / OS / editors (nightrun)
+.nightrun/
+.orchestrator/
+host.db*
+Thumbs.db
+desktop.ini
+.DS_Store
+.env.*
+!.env.example
+.idea/
+
+# python (nightrun)
+*.py[cod]
+.venv/
+
+# test reports (nightrun)
+reports/
+
+PLAN.md
+
+nightrun.toml
+
+.devcontainer
