@@ -17,7 +17,8 @@ from quack.db.neo4j import cypher
 from quack.db.redis import presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
-from quack.jobs.queue import ClaimedJob
+from quack.jobs import kinds
+from quack.jobs.queue import ClaimedJob, enqueue_job
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.session.context import TURN_EVENT_TYPES, last_checkpoint
 from quack.session.schemas import (
@@ -303,9 +304,138 @@ async def heartbeat(
 async def finish_session(
     resources: AppResources, learner_id: UUID, session_id: UUID, body: FinishSessionRequest
 ) -> FinishResponse:
-    raise NotImplementedError
+    async with resources.session_factory() as session, session.begin():
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, domain_id, topic_id, status, tokens_used, "
+                    "EXTRACT(EPOCH FROM (now() - started_at)) AS duration_sec "
+                    "FROM core.sessions WHERE id = :id AND learner_id = :l FOR UPDATE"
+                ),
+                {"id": session_id, "l": learner_id},
+            )
+        ).one_or_none()
+        if row is None:
+            raise ApiError("NOT_FOUND", "session not found", status_code=404)
+        if row.status == "completed":
+            completed_row = (
+                await session.execute(
+                    text(
+                        "SELECT seq, payload FROM core.events WHERE learner_id = :l "
+                        "AND session_id = :s AND type = 'session.completed' "
+                        "ORDER BY seq DESC LIMIT 1"
+                    ),
+                    {"l": learner_id, "s": session_id},
+                )
+            ).one_or_none()
+            if completed_row is None:
+                raise ApiError("NOT_FOUND", "session not found", status_code=404)
+            return FinishResponse(
+                session_id=session_id,
+                status="completed",
+                summary_stats=dict(completed_row.payload["summary_stats"]),
+                end_seq=int(completed_row.seq),
+            )
+        if row.status != "active":
+            raise ApiError("NOT_FOUND", "session not found", status_code=404)
+
+        turns_count = int(
+            (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM core.events WHERE learner_id = :l "
+                        "AND session_id = :s AND type = ANY(:types)"
+                    ),
+                    {"l": learner_id, "s": session_id, "types": list(TURN_EVENT_TYPES)},
+                )
+            ).scalar_one()
+        )
+        summary_stats: dict[str, Any] = {
+            "turns_count": turns_count,
+            "tokens_used": int(row.tokens_used),
+            "duration_sec": max(0, round(float(row.duration_sec))),
+        }
+        domain_id: UUID = row.domain_id
+        topic_id: UUID | None = row.topic_id
+        stored = await append_events(
+            session,
+            learner_id,
+            [
+                NewEvent(
+                    type="session.completed",
+                    payload={
+                        "session_id": str(session_id),
+                        "domain_id": str(domain_id),
+                        "summary_stats": summary_stats,
+                    },
+                    actor="learner",
+                    idempotency_key=f"session.finish:{body.idempotency_key}",
+                )
+            ],
+            redis=resources.redis,
+        )
+        end_seq = stored[-1].seq
+        await enqueue_job(
+            session,
+            kinds.session_finish_artifacts(
+                learner_id,
+                session_id,
+                {
+                    "domain_id": str(domain_id),
+                    "topic_id": str(topic_id) if topic_id else None,
+                },
+            ),
+        )
+        await enqueue_job(
+            session,
+            kinds.graph_curate(
+                learner_id,
+                domain_id,
+                {"domain_id": str(domain_id)},
+            ),
+        )
+
+    with contextlib.suppress(RedisError, OSError):
+        await resources.redis.delete(presence_key(learner_id))
+    return FinishResponse(
+        session_id=session_id,
+        status="completed",
+        summary_stats=summary_stats,
+        end_seq=end_seq,
+    )
 
 
 @register_job_handler("session.sweep_inactive")
 async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
-    raise NotImplementedError
+    _ = job
+    timeout_min = ctx.settings.session_inactivity_timeout_min
+    async with ctx.session_factory() as session, session.begin():
+        stale_rows = (
+            await session.execute(
+                text(
+                    "SELECT id, learner_id, domain_id FROM core.sessions "
+                    "WHERE status = 'active' "
+                    "AND last_activity_at < now() - make_interval(mins => :mins) "
+                    "ORDER BY learner_id, id"
+                ),
+                {"mins": timeout_min},
+            )
+        ).all()
+        for row in stale_rows:
+            await append_events(
+                session,
+                row.learner_id,
+                [
+                    NewEvent(
+                        type="session.abandoned",
+                        payload={
+                            "session_id": str(row.id),
+                            "domain_id": str(row.domain_id),
+                            "reason": "inactivity_timeout",
+                        },
+                        actor="system",
+                        idempotency_key=f"sweep:{row.id}",
+                    )
+                ],
+                publish_wakeup=False,
+            )
