@@ -237,7 +237,6 @@ desktop.ini
 # test reports (nightrun)
 reports/
 
-PLAN.md
 
 nightrun.toml
 
