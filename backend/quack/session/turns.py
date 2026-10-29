@@ -22,7 +22,16 @@ from quack.llm.gateway import LLMGateway
 from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
 from quack.session.schemas import TeacherOutput, TurnRequest
-from quack.session.tasks import _TB_COLUMNS, TaskBankRow, _row, pick_task
+from quack.session.tasks import (
+    _TB_COLUMNS,
+    SubmissionOutcome,
+    TaskBankRow,
+    _row,
+    evaluate_submission,
+    hint_penalties,
+    load_task,
+    pick_task,
+)
 
 
 async def get_available_tasks(
@@ -114,8 +123,39 @@ async def open_turn(
             for t in available_tasks
         ]
 
-        # 4. Teacher call via LLMGateway
+        # 4. In-turn task evaluation (ТЗ §2.3.4) and Teacher call via LLMGateway
         turn_id = uuid4()
+        submission_outcome: SubmissionOutcome | None = None
+        task_evaluation_json = "null"
+        if body.related_task_id is not None:
+            async with resources.session_factory() as session:
+                submitted_task = await load_task(session, learner_id, body.related_task_id)
+            if submitted_task is not None:
+                penalties = hint_penalties(context.overlay, submitted_task.id)
+                submission_outcome = await evaluate_submission(
+                    compute,
+                    submitted_task,
+                    body.text,
+                    session_id,
+                    turn_id,
+                    body.hints_used,
+                    penalties,
+                )
+                if submission_outcome.evaluated is not None:
+                    ev = submission_outcome.evaluated
+                    task_evaluation_json = json.dumps(
+                        {
+                            "task_id": str(ev.task_id),
+                            "evaluator": ev.evaluator,
+                            "is_correct": ev.is_correct,
+                            "score": ev.score,
+                            "independence": ev.independence,
+                            "feedback": ev.feedback,
+                            "skill_scores": [s.model_dump(mode="json") for s in ev.skill_scores],
+                        },
+                        ensure_ascii=False,
+                    )
+
         variables = {
             "mode": context.mode,
             "topic_name": context.topic_name,
@@ -124,7 +164,7 @@ async def open_turn(
             "skills_slice_json": json.dumps(context.skills_slice, ensure_ascii=False),
             "misconceptions_json": json.dumps(context.misconceptions, ensure_ascii=False),
             "available_tasks_json": json.dumps(available_tasks_data, ensure_ascii=False),
-            "task_evaluation_json": "null",
+            "task_evaluation_json": task_evaluation_json,
             "student_text": body.text,
         }
 
@@ -161,6 +201,31 @@ async def open_turn(
                 domain_id=domain_id,
             )
         ]
+
+        if submission_outcome is not None:
+            events.append(
+                NewEvent(
+                    type="task.submitted",
+                    payload=submission_outcome.submitted,
+                    actor="learner",
+                    idempotency_key=f"{body.idempotency_key}:submitted",
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    domain_id=domain_id,
+                )
+            )
+            if submission_outcome.evaluated is not None:
+                events.append(
+                    NewEvent(
+                        type="task.evaluated",
+                        payload=submission_outcome.evaluated,
+                        actor="code",
+                        idempotency_key=f"{body.idempotency_key}:evaluated",
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        domain_id=domain_id,
+                    )
+                )
 
         # Optional concept_explained
         if teacher_output.concept_explained is not None:
@@ -285,6 +350,19 @@ async def open_turn(
                 {"delta": teacher_output.reply_text},
             ),
         ]
+        if submission_outcome is not None and submission_outcome.evaluated is not None:
+            ev = submission_outcome.evaluated
+            sse_events.append(
+                (
+                    "task_evaluated",
+                    {
+                        "task_id": str(ev.task_id),
+                        "is_correct": ev.is_correct,
+                        "score": ev.score,
+                        "feedback": ev.feedback,
+                    },
+                )
+            )
         if assigned_task is not None:
             sse_events.append(
                 (
