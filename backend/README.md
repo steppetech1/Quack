@@ -44,7 +44,8 @@ the `auth`, `core`, `ops` schemas through the Alembic migration.
 | `quack/compute_client/` | client of `POST /v1/check/math` |
 | `quack/api/` | app factory, ErrorResponse, request/trace ids, SSE helpers, `/health/*` |
 | `quack/ops/` | `migrate`, `replay-dlq`, `purge-deleted` |
-| `quack/domains/`, `quack/session/`, `quack/artifacts/` | empty, Phase 2 streams |
+| `quack/session/` | Phase 2 stream 2: sessions, teacher turn (SSE), degradation, `turn.extract` / `session.checkpoint` / `session.sweep_inactive` workers; decisions in [PHASE2_STREAM2_NOTES.md](PHASE2_STREAM2_NOTES.md) |
+| `quack/domains/`, `quack/artifacts/` | empty, Phase 2 streams |
 
 Adding a prompt: put `quack/prompts/{role}/v{N}.md` and add `"{role}@{N}": "<sha256>"` to
 `quack/prompts/manifest.json`; a released version is never edited in place.
