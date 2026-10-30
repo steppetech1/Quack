@@ -22,8 +22,8 @@ from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.llm.gateway import LLMGateway
 from quack.llm.provider import HttpLLMProvider
-from quack.session.context import _topic_slice
-from quack.session.schemas import ExtractorOutput
+from quack.session.context import TURN_EVENT_TYPES, _topic_slice, last_checkpoint
+from quack.session.schemas import CheckpointerOutput, ExtractorOutput
 
 
 async def _read_topic_context(
@@ -223,6 +223,119 @@ async def handle_turn_extract(job: ClaimedJob, ctx: JobContext) -> None:
             await redis.aclose()
 
 
+async def run_session_checkpoint(
+    job: ClaimedJob,
+    ctx: JobContext,
+    *,
+    gateway: LLMGateway,
+    redis: Redis | None = None,
+) -> int | None:
+    """Execute `session.checkpoint` for `job`; returns the `seq` of `session.checkpointed`.
+
+    Returns None when a checkpoint covering `up_to_turn_index` already exists.
+    """
+    payload = job.payload
+    session_id = UUID(str(payload["session_id"]))
+    up_to_turn_index = int(payload["up_to_turn_index"])
+
+    async with ctx.session_factory() as session:
+        sess_row = (
+            await session.execute(
+                text("SELECT learner_id, domain_id FROM core.sessions WHERE id = :s"),
+                {"s": session_id},
+            )
+        ).one()
+        learner_id: UUID = job.learner_id if job.learner_id is not None else sess_row.learner_id
+        domain_id: UUID = sess_row.domain_id
+
+        previous = await last_checkpoint(session, learner_id, session_id)
+        prev_payload = previous.payload if previous is not None else {}
+        prev_up_to = int(prev_payload.get("up_to_turn_index", -1))
+        if prev_up_to >= up_to_turn_index:
+            return None
+
+        reply_rows = (
+            await session.execute(
+                text(
+                    "SELECT type, payload FROM core.events WHERE learner_id = :l "
+                    "AND session_id = :s AND type = ANY(:types) "
+                    "AND (payload->>'turn_index')::int > :after "
+                    "AND (payload->>'turn_index')::int <= :up_to ORDER BY seq"
+                ),
+                {
+                    "l": learner_id,
+                    "s": session_id,
+                    "types": list(TURN_EVENT_TYPES),
+                    "after": prev_up_to,
+                    "up_to": up_to_turn_index,
+                },
+            )
+        ).all()
+
+    turns_to_fold = [
+        {
+            "role": "student" if r.type == "turn.student_replied" else "teacher",
+            "turn_index": int(r.payload["turn_index"]),
+            "text": str(r.payload.get("text", "")),
+        }
+        for r in reply_rows
+    ]
+    variables = {
+        "previous_summary": str(prev_payload.get("rolling_summary", "")),
+        "previous_open_threads_json": json.dumps(
+            prev_payload.get("open_threads", []), ensure_ascii=False
+        ),
+        "turns_to_fold_json": json.dumps(turns_to_fold, ensure_ascii=False),
+    }
+
+    llm_result = await gateway.generate_structured(
+        role="checkpointer",
+        prompt_version=1,
+        response_model=CheckpointerOutput,
+        variables=variables,
+        learner_id=learner_id,
+        session_id=session_id,
+        turn_id=None,
+        idempotency_key=f"checkpoint:{session_id}:{up_to_turn_index}",
+    )
+    output = llm_result.value
+
+    async with ctx.session_factory() as session, session.begin():
+        stored = await append_events(
+            session,
+            learner_id,
+            [
+                NewEvent(
+                    type="session.checkpointed",
+                    payload={
+                        "session_id": str(session_id),
+                        "up_to_turn_index": up_to_turn_index,
+                        "rolling_summary": output.rolling_summary,
+                        "open_threads": list(output.open_threads),
+                        "key_observations": list(output.key_observations),
+                    },
+                    actor="checkpointer@1",
+                    idempotency_key=f"session.checkpointed:{session_id}:{up_to_turn_index}",
+                    session_id=session_id,
+                    domain_id=domain_id,
+                )
+            ],
+            publish_wakeup=True,
+            redis=redis,
+        )
+    return stored[-1].seq
+
+
 @register_job_handler("session.checkpoint")
 async def handle_session_checkpoint(job: ClaimedJob, ctx: JobContext) -> None:
-    raise NotImplementedError
+    redis = create_redis(ctx.settings)
+    provider = HttpLLMProvider(
+        ctx.settings.llm_api_base_url,
+        ctx.settings.llm_api_key.get_secret_value(),
+    )
+    gateway = LLMGateway(ctx.session_factory, provider, ctx.settings)
+    try:
+        await run_session_checkpoint(job, ctx, gateway=gateway, redis=redis)
+    finally:
+        with contextlib.suppress(Exception):
+            await redis.aclose()
