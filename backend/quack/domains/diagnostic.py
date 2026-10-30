@@ -4,16 +4,15 @@ upward and downward along prerequisite edges (ТЗ §2.3, §3, §4; Т-§3.3).
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
-
-import orjson
 
 from quack.api.app import AppResources
 from quack.api.errors import ApiError
 from quack.config import Settings
+from quack.db.postgres import SessionFactory
 from quack.domains.schemas import (
     AnswerDiagnosticRequest,
     AnswerDiagnosticResponse,
@@ -28,8 +27,8 @@ from quack.domains.schemas import (
     TopicPriorItem,
 )
 from quack.events.append import append_events
-from quack.events.models import NewEvent
-from quack.events.reader import read_learner_events
+from quack.events.models import NewEvent, StoredEvent
+from quack.events.reader import read_session_tail
 from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.llm.gateway import LLMGateway
@@ -294,67 +293,65 @@ def _topological_candidate_topics(
     return candidates
 
 
-async def _save_session_state(redis: Any, session_id: UUID, state: dict[str, Any]) -> None:
-    if redis is not None:
-        with contextlib.suppress(Exception):
-            await redis.set(
-                f"diagnostic:session:{session_id}",
-                orjson.dumps(state).decode(),
-                ex=86400,
-            )
+@dataclass(frozen=True)
+class _DiagnosticState:
+    candidate_topic_ids: list[UUID]
+    tested_topic_ids: list[UUID]
+    tested_scores: dict[UUID, float]
+    current_question: dict[str, Any] | None
+    completed: StoredEvent | None
+
+    @property
+    def step_count(self) -> int:
+        return len(self.tested_topic_ids)
 
 
-async def _load_session_state(
-    resources: AppResources, learner_id: UUID, session_id: UUID
-) -> dict[str, Any] | None:
-    if resources.redis is not None:
-        with contextlib.suppress(Exception):
-            data = await resources.redis.get(f"diagnostic:session:{session_id}")
-            if data:
-                return orjson.loads(data)
+def _reference_solution(correct_answer: str, options: list[str]) -> dict[str, Any]:
+    return {"option": correct_answer, "answer": correct_answer, "options": list(options)}
 
-    async with resources.session_factory() as session:
-        events = await read_learner_events(session, learner_id)
 
-    diag_events = [e for e in events if e.session_id == session_id]
-    if not diag_events:
-        return None
+async def _reconstruct_state_from_events(
+    db: SessionFactory, learner_id: UUID, domain_id: UUID, session_id: UUID
+) -> _DiagnosticState:
+    """The only loader of diagnostic session state: replays the session events of `core.events`
+    (T-016 D-1). `NOT_FOUND` when this learner has no `diagnostic.started` for the session in
+    this domain.
+    """
+    async with db() as session:
+        events = await read_session_tail(session, learner_id, session_id, after_seq=0)
 
+    diag_events = [e for e in events if e.domain_id == domain_id]
     started = next((e for e in diag_events if e.type == "diagnostic.started"), None)
-    if not started:
-        return None
-
-    candidate_ids = started.payload.get("candidate_topic_ids", [])
-    domain_id = started.domain_id
+    if started is None:
+        raise ApiError("NOT_FOUND", "Diagnostic session not found", status_code=404)
 
     answered = [e for e in diag_events if e.type == "diagnostic.question_answered"]
-    tested_topics = [UUID(e.payload["topic_id"]) for e in answered]
-    tested_scores = {e.payload["skill_id"]: float(e.payload["score"]) for e in answered}
-
     generated = [e for e in diag_events if e.type == "task.generated"]
-    current_q: dict[str, Any] = {}
+    completed = next((e for e in diag_events if e.type == "diagnostic.completed"), None)
+
+    current_question: dict[str, Any] | None = None
     if generated:
-        last_gen = generated[-1].payload
-        current_q = {
-            "task_id": last_gen["task_id"],
-            "topic_id": last_gen["topic_id"],
-            "skill_id": last_gen["target_skills"][0]["skill"]["skill_id"]
-            if last_gen.get("target_skills")
-            else "",
-            "correct_answer": last_gen.get("reference_solution", {}).get("answer", "A"),
-            "prompt_text": last_gen.get("prompt_text", ""),
-            "options": last_gen.get("options", []),
+        last = generated[-1].payload
+        reference = last.get("reference_solution") or {}
+        options = reference.get("options") or last.get("options") or []
+        targets = last.get("target_skills") or []
+        current_question = {
+            "task_id": last["task_id"],
+            "topic_id": last["topic_id"],
+            "skill_id": targets[0]["skill"]["skill_id"] if targets else "",
+            "kind": last.get("kind", "choice"),
+            "prompt_text": last.get("prompt_text", ""),
+            "options": list(options),
+            "correct_answer": reference.get("option") or reference.get("answer") or "",
         }
 
-    return {
-        "domain_id": str(domain_id),
-        "session_id": str(session_id),
-        "candidate_topic_ids": candidate_ids,
-        "tested_topic_ids": [str(t) for t in tested_topics],
-        "tested_scores": tested_scores,
-        "current_question": current_q,
-        "step_count": len(answered),
-    }
+    return _DiagnosticState(
+        candidate_topic_ids=[UUID(t) for t in started.payload.get("candidate_topic_ids", [])],
+        tested_topic_ids=[UUID(e.payload["topic_id"]) for e in answered],
+        tested_scores={UUID(e.payload["skill_id"]): float(e.payload["score"]) for e in answered},
+        current_question=current_question,
+        completed=completed,
+    )
 
 
 async def start_diagnostic(
@@ -419,6 +416,7 @@ async def start_diagnostic(
         type="task.generated",
         actor="code",
         domain_id=domain_id,
+        session_id=session_id,
         idempotency_key=f"tgen:{task_id}",
         payload={
             "task_id": str(task_id),
@@ -428,7 +426,7 @@ async def start_diagnostic(
             "difficulty": 0.5,
             "kind": "choice",
             "prompt_text": diag_out.prompt_text or "Diagnostic check",
-            "reference_solution": {"answer": correct_ans},
+            "reference_solution": _reference_solution(correct_ans, options),
             "target_skills": [{"skill": {"skill_id": str(first_skill_id)}, "weight": 1.0}],
             "target_misconceptions": [],
         },
@@ -449,24 +447,6 @@ async def start_diagnostic(
 
     async with resources.session_factory() as session, session.begin():
         await append_events(session, learner_id, [task_event, started_event], publish_wakeup=False)
-
-    state = {
-        "domain_id": str(domain_id),
-        "session_id": str(session_id),
-        "candidate_topic_ids": [str(tid) for tid in candidate_topic_ids],
-        "tested_topic_ids": [],
-        "tested_scores": {},
-        "current_question": {
-            "task_id": str(task_id),
-            "topic_id": str(first_topic_id),
-            "skill_id": str(first_skill_id),
-            "correct_answer": correct_ans,
-            "prompt_text": diag_out.prompt_text,
-            "options": options,
-        },
-        "step_count": 0,
-    }
-    await _save_session_state(resources.redis, session_id, state)
 
     first_question = DiagnosticQuestion(
         task_id=task_id,
@@ -495,12 +475,17 @@ async def answer_diagnostic(
     the next question upward (if correct) or downward (if incorrect) along the DAG up to
     `DIAGNOSTIC_MAX_QUESTIONS` (ТЗ §2.3, §3; Т-§3.3).
     """
-    state = await _load_session_state(resources, learner_id, req.session_id)
-    if not state:
-        raise ApiError("NOT_FOUND", "Diagnostic session not found", status_code=404)
-
-    curr_q = state.get("current_question", {})
-    correct_ans = curr_q.get("correct_answer", "A")
+    state = await _reconstruct_state_from_events(
+        resources.session_factory, learner_id, domain_id, req.session_id
+    )
+    if state.completed is not None:
+        raise ApiError(
+            "IDEMPOTENCY_CONFLICT", "Diagnostic session is already finished", status_code=409
+        )
+    curr_q = state.current_question
+    if curr_q is None:
+        raise ApiError("NOT_FOUND", "Diagnostic session has no question", status_code=404)
+    correct_ans = curr_q["correct_answer"]
     curr_topic_id = UUID(curr_q["topic_id"])
     curr_skill_id = UUID(curr_q["skill_id"])
 
@@ -531,11 +516,8 @@ async def answer_diagnostic(
         },
     )
 
-    tested_topic_ids = [UUID(tid) for tid in state.get("tested_topic_ids", [])]
-    tested_topic_ids.append(curr_topic_id)
-    tested_scores = state.get("tested_scores", {})
-    tested_scores[str(curr_skill_id)] = score
-    step_count = state.get("step_count", 0) + 1
+    tested_topic_ids = [*state.tested_topic_ids, curr_topic_id]
+    step_count = state.step_count + 1
 
     topics, skills, topic_prereqs, _ = await _load_domain_dag(resources, learner_id, domain_id)
     tested_set = set(tested_topic_ids)
@@ -574,7 +556,7 @@ async def answer_diagnostic(
                         queue.append(nxt)
 
         if next_topic is None:
-            cand_order = [UUID(t) for t in state.get("candidate_topic_ids", [])]
+            cand_order = state.candidate_topic_ids
             for cand in cand_order:
                 if cand not in tested_set:
                     next_topic = cand
@@ -627,6 +609,7 @@ async def answer_diagnostic(
             type="task.generated",
             actor="code",
             domain_id=domain_id,
+            session_id=req.session_id,
             idempotency_key=f"tgen:{next_task_id}",
             payload={
                 "task_id": str(next_task_id),
@@ -636,21 +619,13 @@ async def answer_diagnostic(
                 "difficulty": 0.5,
                 "kind": "choice",
                 "prompt_text": next_diag_out.prompt_text or "Diagnostic question",
-                "reference_solution": {"answer": next_correct},
+                "reference_solution": _reference_solution(next_correct, next_opts),
                 "target_skills": [{"skill": {"skill_id": str(next_sk_id)}, "weight": 1.0}],
                 "target_misconceptions": [],
             },
         )
         events_to_append.append(next_task_event)
 
-        state["current_question"] = {
-            "task_id": str(next_task_id),
-            "topic_id": str(next_topic),
-            "skill_id": str(next_sk_id),
-            "correct_answer": next_correct,
-            "prompt_text": next_diag_out.prompt_text,
-            "options": next_opts,
-        }
         next_question = DiagnosticQuestion(
             task_id=next_task_id,
             topic_id=next_topic,
@@ -660,14 +635,8 @@ async def answer_diagnostic(
             options=next_opts,
         )
 
-    state["tested_topic_ids"] = [str(t) for t in tested_topic_ids]
-    state["tested_scores"] = tested_scores
-    state["step_count"] = step_count
-
     async with resources.session_factory() as session, session.begin():
         await append_events(session, learner_id, events_to_append, publish_wakeup=False)
-
-    await _save_session_state(resources.redis, req.session_id, state)
 
     return AnswerDiagnosticResponse(
         is_correct=is_correct,
@@ -687,11 +656,20 @@ async def finish_diagnostic(
     """Compute `inferred_priors` across the DAG and emit `diagnostic.completed`
     (ТЗ §2.3, §3; Т-§3.3).
     """
-    state = await _load_session_state(resources, learner_id, req.session_id)
-    tested_topic_ids = [UUID(tid) for tid in state.get("tested_topic_ids", [])] if state else []
-    tested_scores = (
-        {UUID(sid): score for sid, score in state.get("tested_scores", {}).items()} if state else {}
+    state = await _reconstruct_state_from_events(
+        resources.session_factory, learner_id, domain_id, req.session_id
     )
+    if state.completed is not None:
+        stored_payload = state.completed.payload
+        return FinishDiagnosticResponse(
+            tested_topic_ids=[UUID(t) for t in stored_payload["tested_topic_ids"]],
+            inferred_priors=[
+                TopicPriorItem.model_validate(p) for p in stored_payload["inferred_priors"]
+            ],
+            seq=state.completed.seq,
+        )
+    tested_topic_ids = state.tested_topic_ids
+    tested_scores = state.tested_scores
 
     _, skills, topic_prereqs, skill_deps = await _load_domain_dag(resources, learner_id, domain_id)
     skill_tuples = [(s[0], s[1]) for s in skills]
