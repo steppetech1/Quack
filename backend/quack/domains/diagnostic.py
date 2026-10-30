@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID, uuid4, uuid5
 
+import neo4j
 from sqlalchemy import text
 
 from quack.api.app import AppResources
@@ -211,7 +212,7 @@ async def _load_domain_dag(
         list[PrereqEdge],
         list[SkillDepEdge],
     ]:
-        async with resources.neo4j.session() as s:
+        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as s:
             t_res = await s.run(
                 "MATCH (d:Domain {id: $d, learnerId: $l})-[:HAS_TOPIC]->(t:Topic) "
                 "WHERE t.status = 'active' "
@@ -757,7 +758,13 @@ async def start_diagnostic(
     )
 
     async with resources.session_factory() as session, session.begin():
-        await append_events(session, learner_id, [task_event, started_event], publish_wakeup=False)
+        await append_events(
+            session,
+            learner_id,
+            [task_event, started_event],
+            redis=resources.redis,
+            publish_wakeup=True,
+        )
 
     return StartDiagnosticResponse(
         session_id=session_id,
@@ -1027,7 +1034,9 @@ async def answer_diagnostic(
         events_to_append.append(next_task_event)
 
     async with resources.session_factory() as session, session.begin():
-        await append_events(session, learner_id, events_to_append, publish_wakeup=False)
+        await append_events(
+            session, learner_id, events_to_append, redis=resources.redis, publish_wakeup=True
+        )
 
     return AnswerDiagnosticResponse(
         is_correct=is_correct,
@@ -1088,7 +1097,9 @@ async def finish_diagnostic(
     )
 
     async with resources.session_factory() as session, session.begin():
-        stored = await append_events(session, learner_id, [completed_event], publish_wakeup=False)
+        stored = await append_events(
+            session, learner_id, [completed_event], redis=resources.redis, publish_wakeup=True
+        )
 
     seq = stored[0].seq if stored else 0
     return FinishDiagnosticResponse(
