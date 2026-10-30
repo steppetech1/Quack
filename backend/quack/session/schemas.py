@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from quack.events.payloads import (
     ExtractedMisconception,
@@ -28,6 +28,7 @@ class StartSessionRequest(StrictModel):
     topic_id: UUID | None = None
     mode: Literal["learn", "practice", "review"] = "learn"
     goal: str | None = None
+    plan: list[dict[str, Any]] | None = None
     idempotency_key: str
 
 
@@ -39,6 +40,7 @@ class TurnRequest(StrictModel):
     text: str
     related_task_id: UUID | None = None
     hints_used: int = 0
+    response_time_sec: float | None = Field(default=None, ge=0.0)
     idempotency_key: str
 
 
@@ -120,6 +122,9 @@ class TeacherOutput(StrictModel):
     focus_skill_ids: list[UUID] = []
     concept_explained: ConceptExplainedDraft | None = None
     assign_task_id: UUID | None = None
+    evaluated_is_correct: bool | None = None
+    evaluated_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    evaluated_feedback: str | None = None
 
 
 class ExtractorOutput(StrictModel):
