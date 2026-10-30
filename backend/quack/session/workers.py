@@ -22,8 +22,11 @@ from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.llm.gateway import LLMGateway
 from quack.llm.provider import HttpLLMProvider
+from quack.logging import get_logger
 from quack.session.context import TURN_EVENT_TYPES, _topic_slice, last_checkpoint
 from quack.session.schemas import CheckpointerOutput, ExtractorOutput
+
+log = get_logger(__name__)
 
 
 async def _read_topic_context(
@@ -134,6 +137,21 @@ async def run_turn_extract(
     )
     output = llm_result.value
 
+    # Law 4 (Т-§7.5-7.6): keep only items whose quote is literally in the student's reply.
+    student_lower = student_text.lower()
+
+    def _grounded(evidence_text: str) -> bool:
+        quote = evidence_text.strip().lower()
+        if quote in student_lower or quote == "".join(student_lower.split()):
+            return True
+        log.warning(
+            "extractor_ungrounded_quote_dropped", turn_id=str(turn_id), evidence_text=evidence_text
+        )
+        return False
+
+    observations = [o for o in output.observations if _grounded(o.evidence_text)]
+    misconceptions_out = [m for m in output.misconceptions if _grounded(m.evidence_text)]
+
     async with ctx.session_factory() as session, session.begin():
         old_rows = (
             await session.execute(
@@ -174,8 +192,8 @@ async def run_turn_extract(
                 payload={
                     "session_id": str(session_id),
                     "turn_id": str(turn_id),
-                    "observations": [o.model_dump(mode="json") for o in output.observations],
-                    "misconceptions": [m.model_dump(mode="json") for m in output.misconceptions],
+                    "observations": [o.model_dump(mode="json") for o in observations],
+                    "misconceptions": [m.model_dump(mode="json") for m in misconceptions_out],
                 },
                 actor="extractor@1",
                 idempotency_key=extract_event_key,
