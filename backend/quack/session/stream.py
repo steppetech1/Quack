@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
 import anyio
 import orjson
+from redis.exceptions import RedisError
 from sqlalchemy import text
 
 from quack.api.app import AppResources
 from quack.api.errors import ApiError
 from quack.db.redis import session_events_channel
+from quack.logging import get_logger
+
+log = get_logger(__name__)
 
 # How long one `get_message` waits before looping; bounds nothing but idle wake-ups.
 _POLL_TIMEOUT_SEC = 1.0
@@ -41,7 +46,10 @@ async def stream_session_events(
 async def _relay(
     resources: AppResources, session_id: UUID
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    pubsub = resources.redis.pubsub()
+    redis = resources.redis
+    if redis is None:
+        return
+    pubsub = redis.pubsub()
     try:
         await pubsub.subscribe(session_events_channel(session_id))
         while True:
@@ -57,7 +65,10 @@ async def _relay(
                 continue
             if isinstance(data, dict):
                 yield event, data
+    except (RedisError, OSError) as exc:
+        log.warning("session_events_stream_ended", session_id=str(session_id), error=repr(exc))
     finally:
         # The client disconnect cancels the stream; shield so the unsubscribe still runs.
         with anyio.CancelScope(shield=True):
-            await pubsub.aclose()
+            with contextlib.suppress(RedisError, OSError):
+                await pubsub.aclose()
