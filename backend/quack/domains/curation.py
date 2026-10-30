@@ -6,7 +6,8 @@ model-assisted merges (ТЗ §2.5, §4; spec §7; Т-§10).
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from hashlib import sha256
+from uuid import UUID
 
 import orjson
 from neo4j import AsyncDriver
@@ -163,6 +164,10 @@ async def curate_domain_graph(
             s["id"]: s["props"] for s in skills if s["props"].get("status") == "provisional"
         }
 
+        candidates_hash = sha256(
+            orjson.dumps({"prov": sorted(provisional_skills), "act": sorted(active_skills)})
+        ).hexdigest()[:16]
+
         handled_skill_ids: set[str] = set()
         events_to_append: list[NewEvent] = []
 
@@ -180,7 +185,7 @@ async def curate_domain_graph(
                 events_to_append.append(
                     NewEvent(
                         type="skill.merged",
-                        actor="curator@1",
+                        actor="code",
                         domain_id=domain_id,
                         idempotency_key=f"curate:smerge:{pid}:{target_id}",
                         payload={
@@ -202,7 +207,7 @@ async def curate_domain_graph(
                 events_to_append.append(
                     NewEvent(
                         type="skill.promoted",
-                        actor="curator@1",
+                        actor="code",
                         domain_id=domain_id,
                         idempotency_key=f"curate:spromote:{pid}",
                         payload={
@@ -236,7 +241,7 @@ async def curate_domain_graph(
                 events_to_append.append(
                     NewEvent(
                         type="misconception.merged",
-                        actor="curator@1",
+                        actor="code",
                         domain_id=domain_id,
                         idempotency_key=f"curate:mmerge:{mid}:{target_mid}",
                         payload={
@@ -308,7 +313,7 @@ async def curate_domain_graph(
                 learner_id=learner_id,
                 session_id=None,
                 turn_id=None,
-                idempotency_key=f"curator:{domain_id}:{uuid4().hex[:8]}",
+                idempotency_key=f"curator:{domain_id}:{candidates_hash}",
             )
             cur_out = res.value
 
@@ -422,7 +427,13 @@ async def curate_domain_graph(
 
         if events_to_append:
             async with ctx.session_factory() as session, session.begin():
-                await append_events(session, learner_id, events_to_append, publish_wakeup=False)
+                await append_events(
+                    session,
+                    learner_id,
+                    events_to_append,
+                    publish_wakeup=True,
+                    redis=redis,
+                )
 
     finally:
         if own_driver:
