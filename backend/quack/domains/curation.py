@@ -5,25 +5,30 @@ model-assisted merges (ТЗ §2.5, §4; spec §7; Т-§10).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import Any
 from uuid import UUID
 
+import neo4j
 import orjson
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
 
+from quack.config import Settings
 from quack.db.neo4j import create_driver
 from quack.db.redis import create_redis, presence_key
 from quack.domains.schemas import CuratorOutput
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.graph.phase_a import normalize_name
+from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.llm.gateway import LLMGateway
-from quack.llm.provider import HttpLLMProvider, LLMProvider
+from quack.llm.provider import HttpLLMProvider, LLMProvider, ProviderRequest, ProviderResponse
 from quack.logging import get_logger
 
 log = get_logger(__name__)
@@ -55,6 +60,110 @@ def _has_cycle(edges: set[tuple[str, str]]) -> bool:
         return False
 
     return any(visited.get(node, 0) == 0 and dfs(node) for node in nodes)
+
+
+@dataclass(frozen=True)
+class _DomainGraph:
+    domain_name: str
+    topics: list[dict[str, Any]]
+    skills: list[dict[str, Any]]
+    misconceptions: list[dict[str, Any]]
+    prereq_edges: list[dict[str, Any]]
+
+
+def _read_session(driver: AsyncDriver) -> Any:
+    try:
+        return driver.session(default_access_mode=neo4j.READ_ACCESS)
+    except TypeError:  # minimal driver doubles without the `default_access_mode` keyword
+        return driver.session()
+
+
+async def _load_domain_graph(
+    driver: AsyncDriver, learner_id: UUID, domain_id: UUID
+) -> _DomainGraph:
+    params = {"d": str(domain_id), "l": str(learner_id)}
+    async with _read_session(driver) as s:
+        d_res = await s.run(
+            "MATCH (d:Domain {id: $d, learnerId: $l}) RETURN d.name AS name", params
+        )
+        d_rec = await d_res.single()
+        domain_name = str(d_rec["name"]) if d_rec else "Domain"
+
+        t_res = await s.run(
+            "MATCH (t:Topic {domainId: $d, learnerId: $l}) "
+            "WHERE t.status <> 'merged' "
+            "RETURN t.id AS id, properties(t) AS props",
+            params,
+        )
+        topics = [rec.data() async for rec in t_res]
+
+        sk_res = await s.run(
+            "MATCH (sk:Skill {domainId: $d, learnerId: $l}) "
+            "WHERE sk.status <> 'merged' "
+            "RETURN sk.id AS id, properties(sk) AS props",
+            params,
+        )
+        skills = [rec.data() async for rec in sk_res]
+
+        m_res = await s.run(
+            "MATCH (m:Misconception {domainId: $d, learnerId: $l}) "
+            "WHERE m.status <> 'merged' "
+            "RETURN m.id AS id, properties(m) AS props",
+            params,
+        )
+        misconceptions = [rec.data() async for rec in m_res]
+
+        p_res = await s.run(
+            "MATCH (a:Topic)-[:PREREQ_OF]->(b:Topic) "
+            "WHERE a.domainId = $d AND b.domainId = $d AND a.learnerId = $l "
+            "AND a.status <> 'merged' AND b.status <> 'merged' "
+            "RETURN a.id AS from_id, b.id AS to_id",
+            params,
+        )
+        prereq_edges = [rec.data() async for rec in p_res]
+    return _DomainGraph(domain_name, topics, skills, misconceptions, prereq_edges)
+
+
+async def _read_domain_graph(
+    driver: AsyncDriver,
+    redis: Redis | None,
+    ctx: JobContext,
+    learner_id: UUID,
+    domain_id: UUID,
+) -> _DomainGraph:
+    """Read the domain graph through `read_consistent_slice` (spec §8.2): `min_seq` is the
+    learner's last event seq, waiting at most `projector_lag_timeout_ms`; direct read without Redis.
+    """
+
+    async def _loader() -> _DomainGraph:
+        return await _load_domain_graph(driver, learner_id, domain_id)
+
+    if redis is None:
+        return await _loader()
+
+    async def _applied_seq(learner: UUID) -> int:
+        async with _read_session(driver) as s:
+            res = await s.run(
+                "MATCH (l:Learner {id: $id}) RETURN l.appliedSeq AS seq", {"id": str(learner)}
+            )
+            rec = await res.single()
+        seq = rec["seq"] if rec else None
+        return seq if isinstance(seq, int) else 0
+
+    deps = SliceDeps(
+        session_factory=ctx.session_factory,
+        redis=redis,
+        applied_seq_reader=_applied_seq,
+        snapshot_read_retries=ctx.settings.snapshot_read_retries,
+    )
+    result = await read_consistent_slice(
+        learner_id,
+        None,
+        _loader,
+        ctx.settings.projector_lag_timeout_ms,
+        deps=deps,
+    )
+    return result.data
 
 
 async def curate_domain_graph(
@@ -116,46 +225,12 @@ async def curate_domain_graph(
                 )
             return
 
-        async with driver.session() as s:
-            d_res = await s.run(
-                "MATCH (d:Domain {id: $d, learnerId: $l}) RETURN d.name AS name",
-                {"d": str(domain_id), "l": str(learner_id)},
-            )
-            d_rec = await d_res.single()
-            domain_name = str(d_rec["name"]) if d_rec else "Domain"
-
-            t_res = await s.run(
-                "MATCH (t:Topic {domainId: $d, learnerId: $l}) "
-                "WHERE t.status <> 'merged' "
-                "RETURN t.id AS id, properties(t) AS props",
-                {"d": str(domain_id), "l": str(learner_id)},
-            )
-            topics = [rec.data() async for rec in t_res]
-
-            sk_res = await s.run(
-                "MATCH (sk:Skill {domainId: $d, learnerId: $l}) "
-                "WHERE sk.status <> 'merged' "
-                "RETURN sk.id AS id, properties(sk) AS props",
-                {"d": str(domain_id), "l": str(learner_id)},
-            )
-            skills = [rec.data() async for rec in sk_res]
-
-            m_res = await s.run(
-                "MATCH (m:Misconception {domainId: $d, learnerId: $l}) "
-                "WHERE m.status <> 'merged' "
-                "RETURN m.id AS id, properties(m) AS props",
-                {"d": str(domain_id), "l": str(learner_id)},
-            )
-            misconceptions = [rec.data() async for rec in m_res]
-
-            p_res = await s.run(
-                "MATCH (a:Topic)-[:PREREQ_OF]->(b:Topic) "
-                "WHERE a.domainId = $d AND b.domainId = $d AND a.learnerId = $l "
-                "AND a.status <> 'merged' AND b.status <> 'merged' "
-                "RETURN a.id AS from_id, b.id AS to_id",
-                {"d": str(domain_id), "l": str(learner_id)},
-            )
-            prereq_edges = [rec.data() async for rec in p_res]
+        graph = await _read_domain_graph(driver, redis, ctx, learner_id, domain_id)
+        domain_name = graph.domain_name
+        topics = graph.topics
+        skills = graph.skills
+        misconceptions = graph.misconceptions
+        prereq_edges = graph.prereq_edges
 
         active_skills: dict[str, dict] = {
             s["id"]: s["props"] for s in skills if s["props"].get("status") == "active"
@@ -442,9 +517,59 @@ async def curate_domain_graph(
             await redis.aclose()
 
 
+class _ProviderProxy:
+    """Resolves the provider per call so that `llm_provider_override` set later is honoured by
+    the cached `LLMGateway`.
+    """
+
+    def __init__(self, http: LLMProvider) -> None:
+        self._http = http
+
+    async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
+        provider = llm_provider_override or self._http
+        return await provider.complete_structured(request)
+
+
+@dataclass(frozen=True)
+class _CuratorResources:
+    settings: Settings  # strong reference keeps `id(settings)` unique for the cache lifetime
+    driver: AsyncDriver
+    redis: Redis
+    llm: LLMGateway
+
+
+# Long-lived clients shared by all `graph.curate` jobs of a worker, keyed by `id(ctx.settings)`.
+_RESOURCES: dict[int, _CuratorResources] = {}
+
+
+def _curator_resources(ctx: JobContext) -> _CuratorResources:
+    key = id(ctx.settings)
+    cached = _RESOURCES.get(key)
+    if cached is None or cached.settings is not ctx.settings:
+        cached = _CuratorResources(
+            settings=ctx.settings,
+            driver=create_driver(ctx.settings),
+            redis=create_redis(ctx.settings),
+            llm=LLMGateway(
+                session_factory=ctx.session_factory,
+                provider=_ProviderProxy(
+                    HttpLLMProvider(
+                        ctx.settings.llm_api_base_url,
+                        ctx.settings.llm_api_key.get_secret_value(),
+                    )
+                ),
+                settings=ctx.settings,
+            ),
+        )
+        _RESOURCES[key] = cached
+    return cached
+
+
 @register_job_handler("graph.curate")
 async def handle_graph_curate(job: ClaimedJob, ctx: JobContext) -> None:
     """Registered `ops.jobs` handler for `graph.curate` delegating to `curate_domain_graph`
+    with the driver, Redis client and `LLMGateway` cached per settings object, not per job
     (ТЗ §2.5, spec §7, Т-§10).
     """
-    await curate_domain_graph(job, ctx)
+    res = _curator_resources(ctx)
+    await curate_domain_graph(job, ctx, driver=res.driver, redis=res.redis, llm=res.llm)
