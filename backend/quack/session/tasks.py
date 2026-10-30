@@ -173,9 +173,14 @@ def hint_penalties(overlay: SessionOverlay, task_id: UUID) -> list[float]:
     ]
 
 
-def compute_independence(penalties: Iterable[float]) -> float:
-    """`max(0.1, 1.0 - sum(independence_penalty))`."""
-    return max(MIN_INDEPENDENCE, min(1.0, round(1.0 - sum(penalties), 4)))
+def compute_independence(penalties: Iterable[float], hints_used: int = 0) -> float:
+    """`max(0.1, 1.0 - sum(independence_penalty) - 0.25 * hints beyond the logged ones)`.
+
+    `hints_used` is the client's count; hints without a `task.hint_given` event cost 0.25 each.
+    """
+    penalties = list(penalties)
+    unlogged = max(0, hints_used - len(penalties))
+    return max(MIN_INDEPENDENCE, round(1.0 - (sum(penalties) + unlogged * 0.25), 6))
 
 
 def _skill_scores(task: TaskBankRow, score: float) -> list[SkillEvalScore]:
@@ -234,6 +239,7 @@ async def evaluate_submission(
     turn_id: UUID,
     hints_used: int,
     penalties: Iterable[float],
+    response_time_sec: float | None = None,
 ) -> SubmissionOutcome:
     """Compute check for math/choice; `evaluated=None` for open tasks and on
     parse_error/compute outage. `answer` is the turn text, `penalties` come from
@@ -244,6 +250,7 @@ async def evaluate_submission(
         task_id=task.id,
         answer=answer,
         hints_used=max(0, hints_used),
+        response_time_sec=response_time_sec,
     )
     verdict = await _check(compute, task, answer)
     if verdict is None:
@@ -257,7 +264,7 @@ async def evaluate_submission(
         evaluator="compute",
         is_correct=is_correct,
         score=score,
-        independence=compute_independence(penalties),
+        independence=compute_independence(penalties, hints_used),
         feedback=feedback,
         skill_scores=_skill_scores(task, score),
     )

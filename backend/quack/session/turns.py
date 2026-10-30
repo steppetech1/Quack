@@ -132,6 +132,7 @@ async def open_turn(
                 learner_id,
                 topic_id,
                 assigned_task_ids,
+                session_id=session_id,
             )
 
         available_tasks_data = [
@@ -162,6 +163,7 @@ async def open_turn(
                     turn_id,
                     body.hints_used,
                     penalties,
+                    body.response_time_sec,
                 )
                 if submission_outcome.evaluated is not None:
                     ev = submission_outcome.evaluated
@@ -218,6 +220,7 @@ async def open_turn(
                         exclude_task_ids=assigned_task_ids,
                         solved_family_ids=solved_family_ids,
                         kinds=("math", "choice"),
+                        session_id=session_id,
                     )
             teacher_output = TeacherOutput(
                 reply_text=degraded_reply_text(fallback_task),
@@ -316,6 +319,7 @@ async def open_turn(
                         topic_id,
                         exclude_task_ids=assigned_task_ids,
                         solved_family_ids=solved_family_ids,
+                        session_id=session_id,
                     )
         if assigned_task is not None:
             events.append(
