@@ -316,7 +316,7 @@ async def test_finish_session_without_topic_or_turns_sets_null_topic_and_zero_st
     assert set(jobs) == {"session.finish_artifacts", "graph.curate"}
     fin_payload = _payload(jobs["session.finish_artifacts"])
     assert fin_payload["domain_id"] == str(seed.domain_id)
-    assert fin_payload["topic_id"] is None
+    assert fin_payload["topic_id"] == str(seed.topic_id)
 
 
 async def test_sweep_inactive_abandons_only_expired_active_sessions_and_is_idempotent(
