@@ -27,10 +27,12 @@ from quack.session.tasks import (
     SubmissionOutcome,
     TaskBankRow,
     _row,
+    assigned_task_ids_from_overlay,
     evaluate_submission,
     hint_penalties,
     load_task,
     pick_task,
+    solved_families_from_overlay,
 )
 
 
@@ -46,14 +48,15 @@ async def get_available_tasks(
     if topic_id is None:
         return []
     sql = (
-        f"SELECT {_TB_COLUMNS} FROM core.task_bank tb "
-        "WHERE tb.learner_id = :l AND tb.topic_id = :t AND NOT (tb.id = ANY(:exclude))"
+        f"SELECT {_TB_COLUMNS} FROM core.task_bank tb WHERE tb.learner_id = :l AND tb.topic_id = :t"
     )
     params: dict[str, Any] = {
         "l": learner_id,
         "t": topic_id,
-        "exclude": sorted(set(exclude_task_ids), key=str),
     }
+    if exclude_task_ids:
+        sql += " AND NOT (tb.id = ANY(:exclude))"
+        params["exclude"] = sorted(set(exclude_task_ids), key=str)
     if session_id is not None:
         sql += (
             " AND NOT EXISTS (SELECT 1 FROM core.events a WHERE a.learner_id = :l "
@@ -86,7 +89,8 @@ async def open_turn(
             row = (
                 await session.execute(
                     text(
-                        "SELECT id, domain_id, topic_id, mode, status, last_turn_index "
+                        "SELECT id, domain_id, topic_id, mode, status, "
+                        "last_turn_index, last_checkpoint_turn "
                         "FROM core.sessions WHERE id = :id AND learner_id = :l"
                     ),
                     {"id": session_id, "l": learner_id},
@@ -98,18 +102,22 @@ async def open_turn(
             domain_id: UUID = row.domain_id
             topic_id: UUID | None = row.topic_id
             mode: str = str(row.mode)
+            session_last_checkpoint_turn = int(row.last_checkpoint_turn)
 
         # 2. Build turn context
         context = await build_turn_context(resources, settings, learner_id, session_id)
+        last_checkpoint_turn = max(context.last_checkpoint_turn, session_last_checkpoint_turn)
 
-        # 3. Available tasks for prompt
+        # 3. Available tasks for prompt (using overlay.assigned_task_ids and overlay.graph)
+        assigned_task_ids = assigned_task_ids_from_overlay(context.overlay)
+        solved_family_ids = solved_families_from_overlay(context.overlay)
+
         async with resources.session_factory() as session:
             available_tasks = await get_available_tasks(
                 session,
                 learner_id,
                 topic_id,
-                context.overlay.assigned_task_ids,
-                session_id=session_id,
+                assigned_task_ids,
             )
 
         available_tasks_data = [
@@ -256,7 +264,7 @@ async def open_turn(
             if (
                 teacher_output.assign_task_id is not None
                 and teacher_output.assign_task_id in avail_ids
-                and teacher_output.assign_task_id not in context.overlay.assigned_task_ids
+                and teacher_output.assign_task_id not in assigned_task_ids
             ):
                 assigned_task = next(
                     (t for t in available_tasks if t.id == teacher_output.assign_task_id), None
@@ -267,8 +275,8 @@ async def open_turn(
                         session,
                         learner_id,
                         topic_id,
-                        exclude_task_ids=context.overlay.assigned_task_ids,
-                        session_id=session_id,
+                        exclude_task_ids=assigned_task_ids,
+                        solved_family_ids=solved_family_ids,
                     )
             if assigned_task is not None:
                 events.append(
@@ -309,7 +317,7 @@ async def open_turn(
             )
         )
 
-        # 6. Single transaction: append events & enqueue kinds.turn_extract
+        # 6. Single transaction: append events, enqueue turn.extract & session.checkpoint
         async with resources.session_factory() as session, session.begin():
             stored_events = await append_events(
                 session,
@@ -334,6 +342,19 @@ async def open_turn(
                     },
                 ),
             )
+
+            if (teacher_turn_index - last_checkpoint_turn) >= settings.checkpoint_every_turns:
+                await enqueue_job(
+                    session,
+                    kinds.session_checkpoint(
+                        learner_id,
+                        session_id,
+                        {
+                            "session_id": str(session_id),
+                            "up_to_turn_index": teacher_turn_index,
+                        },
+                    ),
+                )
 
         # 7. Prepare SSE event sequence
         sse_events: list[tuple[str, dict[str, Any]]] = [

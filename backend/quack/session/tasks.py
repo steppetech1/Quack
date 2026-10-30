@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -62,6 +63,38 @@ def _row(row: Any) -> TaskBankRow:
     )
 
 
+def assigned_task_ids_from_overlay(overlay: SessionOverlay) -> set[UUID]:
+    """All task IDs assigned or evaluated in the session overlay or graph."""
+    assigned = set(overlay.assigned_task_ids)
+    for (label, nid), props in overlay.graph.nodes.items():
+        if label == "Task" and props.get("status") in ("assigned", "evaluated"):
+            with contextlib.suppress(ValueError, TypeError):
+                assigned.add(UUID(nid))
+    return assigned
+
+
+def solved_families_from_overlay(overlay: SessionOverlay) -> set[str]:
+    """All family IDs with a correct evaluation or positive evidence in overlay."""
+    solved: set[str] = set()
+    for (label, _), props in overlay.graph.nodes.items():
+        if (
+            label == "Evidence"
+            and props.get("direction") == "positive"
+            and not props.get("superseded", False)
+        ):
+            fam = props.get("familyId")
+            if fam and fam != "unknown":
+                solved.add(str(fam))
+    for tid, ev in overlay.evaluations.items():
+        if ev.is_correct:
+            task_props = overlay.graph.get("Task", str(tid))
+            if task_props:
+                fam = task_props.get("familyId")
+                if fam and fam != "unknown":
+                    solved.add(str(fam))
+    return solved
+
+
 async def pick_task(
     session: AsyncSession,
     learner_id: UUID,
@@ -78,21 +111,34 @@ async def pick_task(
     assigned in that session (projected or not) are excluded too. A family counts as solved
     if it is in `solved_family_ids` or the log has a correct `task.evaluated` of the family.
     """
-    sql = (
-        f"SELECT {_TB_COLUMNS}, (tb.family_id = ANY(:solved) OR EXISTS ("
-        "  SELECT 1 FROM core.events e JOIN core.task_bank t2 "
-        "    ON t2.learner_id = e.learner_id AND t2.id = (e.payload->>'task_id')::uuid "
-        "  WHERE e.learner_id = :l AND e.type = 'task.evaluated' "
-        "    AND (e.payload->>'is_correct')::boolean AND t2.family_id = tb.family_id"
-        ")) AS solved FROM core.task_bank tb "
-        "WHERE tb.learner_id = :l AND tb.topic_id = :t AND NOT (tb.id = ANY(:exclude))"
-    )
+    sql = f"SELECT {_TB_COLUMNS}"
     params: dict[str, Any] = {
         "l": learner_id,
         "t": topic_id,
-        "solved": sorted(set(solved_family_ids)),
-        "exclude": sorted(set(exclude_task_ids), key=str),
     }
+    if solved_family_ids:
+        sql += (
+            ", (tb.family_id = ANY(:solved) OR EXISTS ("
+            "  SELECT 1 FROM core.events e JOIN core.task_bank t2 "
+            "    ON t2.learner_id = e.learner_id AND t2.id = (e.payload->>'task_id')::uuid "
+            "  WHERE e.learner_id = :l AND e.type = 'task.evaluated' "
+            "    AND (e.payload->>'is_correct')::boolean AND t2.family_id = tb.family_id"
+            ")) AS solved"
+        )
+        params["solved"] = sorted(set(solved_family_ids))
+    else:
+        sql += (
+            ", EXISTS ("
+            "  SELECT 1 FROM core.events e JOIN core.task_bank t2 "
+            "    ON t2.learner_id = e.learner_id AND t2.id = (e.payload->>'task_id')::uuid "
+            "  WHERE e.learner_id = :l AND e.type = 'task.evaluated' "
+            "    AND (e.payload->>'is_correct')::boolean AND t2.family_id = tb.family_id"
+            ") AS solved"
+        )
+    sql += " FROM core.task_bank tb WHERE tb.learner_id = :l AND tb.topic_id = :t"
+    if exclude_task_ids:
+        sql += " AND NOT (tb.id = ANY(:exclude))"
+        params["exclude"] = sorted(set(exclude_task_ids), key=str)
     if kinds is not None:
         sql += " AND tb.kind = ANY(:kinds)"
         params["kinds"] = sorted(set(kinds))
