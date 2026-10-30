@@ -6,6 +6,7 @@ import contextlib
 from typing import Any
 from uuid import UUID, uuid4
 
+import neo4j
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
@@ -18,6 +19,8 @@ from quack.db.neo4j import cypher
 from quack.db.redis import create_redis, presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
+from quack.graph.neo4j_store import read_applied_seq
+from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.jobs import kinds
 from quack.jobs.queue import ClaimedJob, enqueue_job
 from quack.jobs.runner import JobContext, register_job_handler
@@ -53,35 +56,16 @@ end
 _TOPIC_QUERY = """
 MATCH (t:Topic) WHERE t.learnerId = $l AND t.domainId = $d
   AND ($t IS NULL OR t.id = $t) AND NOT t.status IN ['archived', 'merged', 'skipped']
-  AND ($t IS NOT NULL OR t.displayState IN $states)
 OPTIONAL MATCH (s:Skill)-[:PART_OF]->(t) WHERE NOT s.status IN ['archived', 'merged']
 WITH t, s ORDER BY s.id
 WITH t, collect(CASE WHEN s IS NULL THEN NULL ELSE {id: s.id, name: s.name} END) AS skills
 RETURN t.id AS id, t.name AS name, skills
-ORDER BY t.name, t.id LIMIT 1
+ORDER BY CASE WHEN t.displayState IN $states THEN 0 ELSE 1 END, t.name, t.id LIMIT 1
 """
 
 
-async def _default_plan(
-    resources: AppResources, learner_id: UUID, domain_id: UUID, topic_id: UUID | None
-) -> list[dict[str, Any]]:
-    """3-5 steps from the skills of the topic (or of the first open topic of the domain)."""
-    skills: list[dict[str, Any]] = []
-    topic_name = ""
-    async with resources.neo4j.session() as session:
-        result = await session.run(
-            cypher(_TOPIC_QUERY),
-            {
-                "l": str(learner_id),
-                "d": str(domain_id),
-                "t": str(topic_id) if topic_id else None,
-                "states": list(_PLAN_STATES),
-            },
-        )
-        record = await result.single()
-    if record is not None:
-        topic_name = str(record["name"] or "")
-        skills = [s for s in record["skills"] if s is not None]
+def _plan_from_skills(topic_name: str, skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """3-5 steps: learn each skill (at most 3), then practice and summary."""
     plan: list[dict[str, Any]] = [
         {"kind": "learn", "skill_id": s["id"], "title": s["name"]}
         for s in skills[: MAX_PLAN_STEPS - 2]
@@ -93,6 +77,58 @@ async def _default_plan(
     if len(plan) < MIN_PLAN_STEPS:
         plan.insert(1, {"kind": "learn", "title": f"Explore {topic_name}".strip()})
     return [{"step": i, **step} for i, step in enumerate(plan)]
+
+
+async def _resolve_topic_and_plan(
+    resources: AppResources,
+    settings: Settings,
+    learner_id: UUID,
+    domain_id: UUID,
+    topic_id: UUID | None,
+    explicit_plan: list[dict[str, Any]] | None,
+) -> tuple[UUID | None, list[dict[str, Any]]]:
+    """Resolve the session topic and its plan from a consistent Neo4j slice (РТЗ S-3).
+
+    Without `topic_id` the first topic of the domain with an open `displayState` wins, else
+    any active topic of the domain. `explicit_plan` is kept as is.
+    """
+
+    async def load_topic() -> Any:
+        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as session:
+            result = await session.run(
+                cypher(_TOPIC_QUERY),
+                {
+                    "l": str(learner_id),
+                    "d": str(domain_id),
+                    "t": str(topic_id) if topic_id else None,
+                    "states": list(_PLAN_STATES),
+                },
+            )
+            return await result.single()
+
+    async def applied_seq_reader(learner: UUID) -> int:
+        return await read_applied_seq(resources.neo4j, str(learner))
+
+    deps = SliceDeps(
+        session_factory=resources.session_factory,
+        redis=resources.redis,
+        applied_seq_reader=applied_seq_reader,
+        snapshot_read_retries=settings.snapshot_read_retries,
+    )
+    graph_slice = await read_consistent_slice(
+        learner_id, None, load_topic, settings.projector_lag_timeout_ms, deps=deps
+    )
+    record = graph_slice.data
+    resolved = topic_id
+    topic_name = ""
+    skills: list[dict[str, Any]] = []
+    if record is not None:
+        resolved = UUID(str(record["id"]))
+        topic_name = str(record["name"] or "")
+        skills = [s for s in record["skills"] if s is not None]
+    if explicit_plan is not None:
+        return resolved, explicit_plan
+    return resolved, _plan_from_skills(topic_name, skills)
 
 
 def _idempotency_conflict() -> ApiError:
@@ -175,7 +211,9 @@ async def start_session(
             await _set_presence(resources, settings, learner_id, existing.session_id)
         return existing
 
-    plan = await _default_plan(resources, learner_id, body.domain_id, body.topic_id)
+    topic_id, plan = await _resolve_topic_and_plan(
+        resources, settings, learner_id, body.domain_id, body.topic_id, body.plan
+    )
     session_id = uuid4()
     async with resources.session_factory() as session, session.begin():
         # Serialize with other writers of the learner, then re-check the key.
@@ -222,7 +260,7 @@ async def start_session(
                 payload={
                     "session_id": str(session_id),
                     "domain_id": str(body.domain_id),
-                    "topic_id": str(body.topic_id) if body.topic_id else None,
+                    "topic_id": str(topic_id) if topic_id else None,
                     "mode": body.mode,
                     "goal": body.goal,
                     "plan": plan,
@@ -237,7 +275,7 @@ async def start_session(
     return SessionStarted(
         session_id=session_id,
         domain_id=body.domain_id,
-        topic_id=body.topic_id,
+        topic_id=topic_id,
         mode=body.mode,
         status="active",
         plan=plan,
