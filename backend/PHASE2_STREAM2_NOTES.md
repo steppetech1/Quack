@@ -59,6 +59,16 @@
 | 4 | Регистр статуса сессии | Спецификация: `'Completed'` в `core.sessions.status` | Т-§0.4: snake_case, везде в коде `completed` | Нижний регистр, как в Фазе 1 (см. PHASE1_NOTES, п. 1.6) |
 | 5 | `HintView` | ТЗ §2.3.4: `independence = 1.0 − Σ hint.independence_penalty` | `HintView` не содержит `independence_penalty`, `quack/graph/overlay.py` защищён | Штрафы передаются в `evaluate_submission` отдельным аргументом (см. «Решения», п. 5) |
 
+## Решения при слиянии (интеграция)
+
+Приняты по Спецификации §7–§8 при сборке PR:
+
+- Порядок SSE оставлен как в ТЗ потока 2 (`task_evaluated` перед `task_assigned`).
+- `quack/api/app.py`: `create_app` подключает `quack.session.router` (импорт внутри функции из-за цикла `session.deps` → `api.app`).
+- `quack/cli.py`: воркер импортирует `quack.session.lifecycle` и `quack.session.workers` (регистрация `turn.extract`, `session.checkpoint`, `session.sweep_inactive`) и каждые `session_inactivity_timeout_min / 6` минут (не реже раза в минуту) ставит склеиваемую задачу `session.sweep_inactive`.
+- `JobContext` не расширялся: обработчики создают Redis и LLM-gateway сами; перенос в `JobContext` — отдельная задача Фазы 1.
+- Роутер `quack.domains` по-прежнему не подключён (зона потока 1).
+
 ## Вопросы
 
 1. Какой порядок SSE считать каноническим: `task_assigned` перед `task_evaluated` (Спецификация)
