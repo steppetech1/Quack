@@ -438,9 +438,11 @@ async def open_turn(
                 NewEvent(
                     type="task.evaluated",
                     payload=final_evaluated,
-                    actor=eval_actor
-                    if eval_actor == "code"
-                    else ("code" if llm_degraded_mode is not None else eval_actor),
+                    actor=(
+                        "code"
+                        if (eval_actor == "compute" or llm_degraded_mode is not None)
+                        else "teacher@1"
+                    ),
                     idempotency_key=f"{body.idempotency_key}:evaluated",
                     session_id=session_id,
                     turn_id=turn_id,

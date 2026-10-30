@@ -203,7 +203,7 @@ def _normalize(value: str) -> str:
 async def _check(compute: ComputeClient, task: TaskBankRow, answer: str) -> tuple[bool, str] | None:
     ref = task.reference_solution
     if task.kind == "choice":
-        option = ref.get("option")
+        option = ref.get("option") if "option" in ref else ref.get("answer")
         if option is None:
             return None
         ok = _normalize(answer) == _normalize(str(option))
