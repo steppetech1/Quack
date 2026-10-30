@@ -101,4 +101,4 @@ async def post_turn(
 async def session_events(
     session_id: UUID, learner_id: LearnerId, resources: Resources
 ) -> StreamingResponse:
-    return sse_response(stream.stream_session_events(resources, learner_id, session_id))
+    return sse_response(await stream.stream_session_events(resources, learner_id, session_id))
