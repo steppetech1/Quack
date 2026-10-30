@@ -18,6 +18,7 @@ from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.jobs import kinds
 from quack.jobs.queue import enqueue_job
+from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
 from quack.llm.gateway import LLMGateway
 from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
@@ -34,6 +35,19 @@ from quack.session.tasks import (
     pick_task,
     solved_families_from_overlay,
 )
+
+
+def degraded_reply_text(task: TaskBankRow | None) -> str:
+    """Template teacher reply used while the LLM is unavailable or over budget (Т-§17.1)."""
+    if task is None:
+        return (
+            "The tutor is temporarily limited right now. "
+            "Please try again in a little while or continue with your own notes."
+        )
+    return (
+        "The tutor is temporarily limited right now, so let's practise with a ready task:\n\n"
+        f"{task.prompt_text}"
+    )
 
 
 async def get_available_tasks(
@@ -176,17 +190,40 @@ async def open_turn(
             "student_text": body.text,
         }
 
-        teacher_result = await gateway.generate_structured(
-            role="teacher",
-            prompt_version=1,
-            response_model=TeacherOutput,
-            variables=variables,
-            learner_id=learner_id,
-            session_id=session_id,
-            turn_id=turn_id,
-            idempotency_key=f"teacher:{body.idempotency_key}",
-        )
-        teacher_output = teacher_result.value
+        # Deterministic degradation (Т-§17.1): the turn never fails with 503 on LLM errors.
+        llm_degraded_mode: str | None = None
+        fallback_task: TaskBankRow | None = None
+        try:
+            teacher_result = await gateway.generate_structured(
+                role="teacher",
+                prompt_version=1,
+                response_model=TeacherOutput,
+                variables=variables,
+                learner_id=learner_id,
+                session_id=session_id,
+                turn_id=turn_id,
+                idempotency_key=f"teacher:{body.idempotency_key}",
+            )
+            teacher_output = teacher_result.value
+        except (LLMBudgetExceededError, LLMUnavailableError, LLMSchemaError) as exc:
+            llm_degraded_mode = (
+                "budget_exceeded" if isinstance(exc, LLMBudgetExceededError) else "llm_unavailable"
+            )
+            if topic_id is not None:
+                async with resources.session_factory() as session:
+                    fallback_task = await pick_task(
+                        session,
+                        learner_id,
+                        topic_id,
+                        exclude_task_ids=assigned_task_ids,
+                        solved_family_ids=solved_family_ids,
+                        kinds=("math", "choice"),
+                    )
+            teacher_output = TeacherOutput(
+                reply_text=degraded_reply_text(fallback_task),
+                pedagogical_move="assign_task" if fallback_task is not None else "explain",
+                assign_task_id=fallback_task.id if fallback_task is not None else None,
+            )
 
         # 5. Events to commit
         student_turn_index = prev_turn_index + 1
@@ -258,8 +295,10 @@ async def open_turn(
             )
 
         # Task assignment when pedagogical_move is "assign_task" or mode is "practice"
-        assigned_task: TaskBankRow | None = None
-        if teacher_output.pedagogical_move == "assign_task" or mode == "practice":
+        assigned_task: TaskBankRow | None = fallback_task
+        if llm_degraded_mode is None and (
+            teacher_output.pedagogical_move == "assign_task" or mode == "practice"
+        ):
             avail_ids = {t.id for t in available_tasks}
             if (
                 teacher_output.assign_task_id is not None
@@ -278,25 +317,25 @@ async def open_turn(
                         exclude_task_ids=assigned_task_ids,
                         solved_family_ids=solved_family_ids,
                     )
-            if assigned_task is not None:
-                events.append(
-                    NewEvent(
-                        type="task.assigned",
-                        payload={
-                            "session_id": str(session_id),
-                            "turn_id": str(turn_id),
-                            "task_id": str(assigned_task.id),
-                            "topic_id": str(assigned_task.topic_id),
-                        },
-                        actor="teacher@1",
-                        idempotency_key=f"{body.idempotency_key}:task",
-                        session_id=session_id,
-                        turn_id=turn_id,
-                        domain_id=domain_id,
-                    )
+        if assigned_task is not None:
+            events.append(
+                NewEvent(
+                    type="task.assigned",
+                    payload={
+                        "session_id": str(session_id),
+                        "turn_id": str(turn_id),
+                        "task_id": str(assigned_task.id),
+                        "topic_id": str(assigned_task.topic_id),
+                    },
+                    actor="teacher@1",
+                    idempotency_key=f"{body.idempotency_key}:task",
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    domain_id=domain_id,
                 )
+            )
 
-        degraded_mode = "projector_lag" if context.lag_degraded else None
+        degraded_mode = llm_degraded_mode or ("projector_lag" if context.lag_degraded else None)
         events.append(
             NewEvent(
                 type="turn.teacher_replied",

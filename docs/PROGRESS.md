@@ -9,6 +9,11 @@ Entry format:
 
 <!-- entries go below this line -->
 
+## 2026-10-30 - T-011 - Implement deterministic LLM degradation in `quack/session/turns.py` (ТЗ §2.3.5, Т-§17.1): on `LLMUnavailableError`/`LLMSchemaError` -> `degraded_mode="llm_unavailable"`, on `LLMBudgetExceededError` -> `"budget_exceeded"`; the turn still returns 200 SSE, picks a `math`/`choice` task of the session topic from `core.task_bank`, writes a template teacher reply containing the task text and `task.assigned`. Done when: ТЗ degradation test 1 in `backend/tests/session/test_degradation_and_workers.py` passes for both a provider raising `ProviderUnavailableError` and an exceeded `session_token_limit`
+- Changed: Turn pipeline in quack/session/turns.py now catches LLMUnavailableError/LLMSchemaError (llm_unavailable) and LLMBudgetExceededError (budget_exceeded): it still returns 200 SSE, picks a math/choice task from the bank, writes a template reply with the task text and task.assigned. Added tests/session/test_llm_degradation.py (provider down and exceeded session_token_limit); the whole session suite, ruff and pyright pass.
+- Model: claude (claude-sonnet-5-5)
+- Review: skipped (no free reviewer)
+
 ## 2026-10-30 - T-014 - Implement `GET /v1/sessions/{id}/events` in `quack/session/stream.py`: check ownership, subscribe to `session_events_channel(session_id)` and forward each published `{"event", "data"}` message (`extractor_done`, `cheatsheet_ready`, as-is) as an SSE event via `sse_response`, unsubscribing when the client disconnects. Done when: an extra test (beyond the 5 of ТЗ §5, which stay unchanged) in `backend/tests/session/test_turns_and_sse.py` publishes `extractor_done` to the channel and reads it from the stream, and a foreign session returns 404
 - Changed: Implemented GET /v1/sessions/{id}/events in quack/session/stream.py: an awaited ownership check runs before the response starts (404 NOT_FOUND for a foreign or unknown session), then a Redis pubsub relay of session_events_channel forwards {event, data} messages as-is as SSE, and the pubsub is closed in a shielded finally when the client disconnects. router.py now awaits stream_session_events. The tests in tests/session/test_session_events_stream.py pass, as do the full suite (302), ruff and pyright; test_turns_and_sse.py was not touched.
 - Model: claude (claude-opus-5-5)
