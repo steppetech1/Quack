@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Collection
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid5
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,8 @@ from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.events.append import append_events
 from quack.events.models import NewEvent
+from quack.events.payloads import TaskEvaluated
+from quack.graph.ids import QUACK_UUID_NS
 from quack.jobs import kinds
 from quack.jobs.queue import enqueue_job
 from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
@@ -28,13 +30,32 @@ from quack.session.tasks import (
     SubmissionOutcome,
     TaskBankRow,
     _row,
+    _skill_scores,
     assigned_task_ids_from_overlay,
+    compute_independence,
     evaluate_submission,
     hint_penalties,
     load_task,
     pick_task,
     solved_families_from_overlay,
 )
+
+
+def _code_evaluation(
+    task: TaskBankRow, student_answer: str, pedagogical_move: str
+) -> tuple[bool, float, str]:
+    ref = task.reference_solution
+    option = ref.get("option") if "option" in ref else ref.get("answer")
+    if option is not None:
+        norm_student = "".join(student_answer.split()).casefold()
+        norm_ref = "".join(str(option).split()).casefold()
+        ok = norm_student == norm_ref
+        return ok, 1.0 if ok else 0.0, "correct" if ok else f"the correct option is {option}"
+    if pedagogical_move in ("give_feedback", "remedy_misconception", "praise"):
+        return True, 1.0, "correct"
+    if pedagogical_move in ("scaffold", "probe"):
+        return False, 0.5, "partially correct"
+    return False, 0.0, "incorrect"
 
 
 def degraded_reply_text(task: TaskBankRow | None) -> str:
@@ -118,6 +139,115 @@ async def open_turn(
             mode: str = str(row.mode)
             session_last_checkpoint_turn = int(row.last_checkpoint_turn)
 
+            # S-1: Check if this idempotency key was already used
+            existing_event_row = (
+                await session.execute(
+                    text(
+                        "SELECT seq, session_id, turn_id, type, payload "
+                        "FROM core.events "
+                        "WHERE learner_id = :l AND idempotency_key = :k"
+                    ),
+                    {"l": learner_id, "k": body.idempotency_key},
+                )
+            ).one_or_none()
+
+            if existing_event_row is not None:
+                exp_task_id = str(body.related_task_id) if body.related_task_id else None
+                if (
+                    existing_event_row.type != "turn.student_replied"
+                    or existing_event_row.session_id != session_id
+                    or existing_event_row.payload.get("text") != body.text
+                    or existing_event_row.payload.get("related_task_id") != exp_task_id
+                ):
+                    raise ApiError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "Idempotency key reused with different turn parameters",
+                        status_code=409,
+                    )
+
+                # Reconstruct stored turn events
+                existing_turn_id = existing_event_row.turn_id
+                turn_rows = (
+                    await session.execute(
+                        text(
+                            "SELECT seq, type, payload FROM core.events "
+                            "WHERE learner_id = :l AND session_id = :s AND turn_id = :t "
+                            "ORDER BY seq"
+                        ),
+                        {"l": learner_id, "s": session_id, "t": existing_turn_id},
+                    )
+                ).all()
+
+                stored_by_type = {r.type: r for r in turn_rows}
+                student_ev = stored_by_type.get("turn.student_replied")
+                teacher_ev = stored_by_type.get("turn.teacher_replied")
+                eval_ev = stored_by_type.get("task.evaluated")
+                assigned_ev = stored_by_type.get("task.assigned")
+
+                if student_ev is None or teacher_ev is None:
+                    raise ApiError("VALIDATION_ERROR", "incomplete stored turn", status_code=500)
+
+                cached_sse: list[tuple[str, dict[str, Any]]] = [
+                    (
+                        "turn_started",
+                        {
+                            "turn_id": str(existing_turn_id),
+                            "turn_index": student_ev.payload["turn_index"],
+                            "user_seq": student_ev.seq,
+                        },
+                    ),
+                    (
+                        "token",
+                        {"delta": teacher_ev.payload.get("text", "")},
+                    ),
+                ]
+                if eval_ev is not None:
+                    cached_sse.append(
+                        (
+                            "task_evaluated",
+                            {
+                                "task_id": eval_ev.payload["task_id"],
+                                "is_correct": eval_ev.payload["is_correct"],
+                                "score": eval_ev.payload["score"],
+                                "feedback": eval_ev.payload["feedback"],
+                            },
+                        )
+                    )
+                if assigned_ev is not None:
+                    assigned_t_row = await load_task(
+                        session, learner_id, UUID(assigned_ev.payload["task_id"])
+                    )
+                    cached_sse.append(
+                        (
+                            "task_assigned",
+                            {
+                                "task_id": assigned_ev.payload["task_id"],
+                                "kind": assigned_t_row.kind if assigned_t_row else "choice",
+                                "prompt_text": assigned_t_row.prompt_text if assigned_t_row else "",
+                            },
+                        )
+                    )
+                cached_sse.append(
+                    (
+                        "turn_completed",
+                        {
+                            "turn_id": str(existing_turn_id),
+                            "committed_seq": teacher_ev.seq,
+                            "degraded_mode": teacher_ev.payload.get("degraded_mode"),
+                        },
+                    )
+                )
+                cached_sse.append(("done", {}))
+
+                async def _cached_stream() -> AsyncIterator[tuple[str, dict[str, Any]]]:
+                    try:
+                        for itm in cached_sse:
+                            yield itm
+                    finally:
+                        await lock.__aexit__(None, None, None)
+
+                return _cached_stream()
+
         # 2. Build turn context
         context = await build_turn_context(resources, settings, learner_id, session_id)
         last_checkpoint_turn = max(context.last_checkpoint_turn, session_last_checkpoint_turn)
@@ -147,7 +277,8 @@ async def open_turn(
         ]
 
         # 4. In-turn task evaluation (ТЗ §2.3.4) and Teacher call via LLMGateway
-        turn_id = uuid4()
+        turn_id = uuid5(QUACK_UUID_NS, f"turn:{learner_id}:{session_id}:{body.idempotency_key}")
+        submitted_task: TaskBankRow | None = None
         submission_outcome: SubmissionOutcome | None = None
         task_evaluation_json = "null"
         if body.related_task_id is not None:
@@ -204,7 +335,7 @@ async def open_turn(
                 learner_id=learner_id,
                 session_id=session_id,
                 turn_id=turn_id,
-                idempotency_key=f"teacher:{body.idempotency_key}",
+                idempotency_key=f"turn:{session_id}:{body.idempotency_key}:teacher",
             )
             teacher_output = teacher_result.value
         except (LLMBudgetExceededError, LLMUnavailableError, LLMSchemaError) as exc:
@@ -262,18 +393,60 @@ async def open_turn(
                     domain_id=domain_id,
                 )
             )
+            # S-4.4: ensure task.evaluated is always produced
+            eval_actor = "code"
             if submission_outcome.evaluated is not None:
-                events.append(
-                    NewEvent(
-                        type="task.evaluated",
-                        payload=submission_outcome.evaluated,
-                        actor="code",
-                        idempotency_key=f"{body.idempotency_key}:evaluated",
-                        session_id=session_id,
-                        turn_id=turn_id,
-                        domain_id=domain_id,
+                final_evaluated = submission_outcome.evaluated
+                eval_actor = "compute" if llm_degraded_mode is not None else "code"
+            else:
+                assert submitted_task is not None
+                penalties = hint_penalties(context.overlay, submitted_task.id)
+                indep = compute_independence(penalties, body.hints_used)
+                if (
+                    llm_degraded_mode is None
+                    and teacher_output.evaluated_score is not None
+                    and teacher_output.evaluated_is_correct is not None
+                ):
+                    eval_actor = "llm"
+                    score = float(teacher_output.evaluated_score)
+                    is_corr = bool(teacher_output.evaluated_is_correct)
+                    fb = teacher_output.evaluated_feedback or (
+                        "correct" if is_corr else "incorrect"
                     )
+                else:
+                    eval_actor = "compute"
+                    is_corr, score, fb = _code_evaluation(
+                        submitted_task, body.text, teacher_output.pedagogical_move
+                    )
+
+                final_evaluated = TaskEvaluated(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    task_id=submitted_task.id,
+                    evaluator=eval_actor,
+                    is_correct=is_corr,
+                    score=score,
+                    independence=indep,
+                    feedback=fb,
+                    skill_scores=_skill_scores(submitted_task, score),
                 )
+                submission_outcome = SubmissionOutcome(
+                    submission_outcome.submitted, final_evaluated
+                )
+
+            events.append(
+                NewEvent(
+                    type="task.evaluated",
+                    payload=final_evaluated,
+                    actor=eval_actor
+                    if eval_actor == "code"
+                    else ("code" if llm_degraded_mode is not None else eval_actor),
+                    idempotency_key=f"{body.idempotency_key}:evaluated",
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    domain_id=domain_id,
+                )
+            )
 
         # Optional concept_explained
         if teacher_output.concept_explained is not None:
@@ -321,6 +494,11 @@ async def open_turn(
                         solved_family_ids=solved_family_ids,
                         session_id=session_id,
                     )
+        degraded_mode = llm_degraded_mode or ("projector_lag" if context.lag_degraded else None)
+        teacher_actor = (
+            "code" if llm_degraded_mode in ("llm_unavailable", "budget_exceeded") else "teacher@1"
+        )
+
         if assigned_task is not None:
             events.append(
                 NewEvent(
@@ -331,7 +509,7 @@ async def open_turn(
                         "task_id": str(assigned_task.id),
                         "topic_id": str(assigned_task.topic_id),
                     },
-                    actor="teacher@1",
+                    actor=teacher_actor,
                     idempotency_key=f"{body.idempotency_key}:task",
                     session_id=session_id,
                     turn_id=turn_id,
@@ -339,7 +517,6 @@ async def open_turn(
                 )
             )
 
-        degraded_mode = llm_degraded_mode or ("projector_lag" if context.lag_degraded else None)
         events.append(
             NewEvent(
                 type="turn.teacher_replied",
@@ -352,7 +529,7 @@ async def open_turn(
                     "focus_skill_ids": [str(s) for s in teacher_output.focus_skill_ids],
                     "degraded_mode": degraded_mode,
                 },
-                actor="teacher@1",
+                actor=teacher_actor,
                 idempotency_key=f"{body.idempotency_key}:teacher",
                 session_id=session_id,
                 turn_id=turn_id,
