@@ -7,7 +7,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
+
+from sqlalchemy import text
 
 from quack.api.app import AppResources
 from quack.api.errors import ApiError
@@ -28,7 +30,8 @@ from quack.domains.schemas import (
 )
 from quack.events.append import append_events
 from quack.events.models import NewEvent, StoredEvent
-from quack.events.reader import read_session_tail
+from quack.events.reader import EVENT_COLUMNS, read_session_tail, row_to_event
+from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.llm.gateway import LLMGateway
@@ -354,6 +357,38 @@ async def _reconstruct_state_from_events(
     )
 
 
+async def _find_event_by_key(
+    db: SessionFactory, learner_id: UUID, idempotency_key: str, event_type: str
+) -> StoredEvent | None:
+    async with db() as session:
+        result = await session.execute(
+            text(
+                f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :learner_id "
+                "AND idempotency_key = :key AND type = :type"
+            ),
+            {"learner_id": learner_id, "key": idempotency_key, "type": event_type},
+        )
+        row = result.first()
+    return row_to_event(row) if row is not None else None
+
+
+def _question_from_task_generated(payload: dict[str, Any]) -> DiagnosticQuestion:
+    reference = payload.get("reference_solution") or {}
+    targets = payload.get("target_skills") or []
+    return DiagnosticQuestion(
+        task_id=UUID(payload["task_id"]),
+        topic_id=UUID(payload["topic_id"]),
+        skill_id=UUID(targets[0]["skill"]["skill_id"]),
+        kind=payload.get("kind", "choice"),
+        prompt_text=payload.get("prompt_text", ""),
+        options=list(reference.get("options") or payload.get("options") or []),
+    )
+
+
+def _idempotency_conflict(message: str) -> ApiError:
+    return ApiError("IDEMPOTENCY_CONFLICT", message, status_code=409)
+
+
 async def start_diagnostic(
     resources: AppResources,
     settings: Settings,
@@ -365,6 +400,12 @@ async def start_diagnostic(
     """Select mid-DAG high-hub candidate topics, generate first diagnostic question
     (`task.generated`), and emit `diagnostic.started` (ТЗ §2.3, §3; Т-§3.3).
     """
+    existing = await _find_event_by_key(
+        resources.session_factory, learner_id, req.idempotency_key, "diagnostic.started"
+    )
+    if existing is not None:
+        return await _replay_start(resources, learner_id, domain_id, req, existing)
+
     topics, skills, topic_prereqs, _ = await _load_domain_dag(resources, learner_id, domain_id)
     if not topics:
         raise ApiError("NOT_FOUND", "No active topics found in domain", status_code=404)
@@ -378,8 +419,10 @@ async def start_diagnostic(
     )
     first_topic_name = next((t[1] for t in topics if t[0] == first_topic_id), "Core Topic")
 
-    session_id = uuid4()
-    task_id = uuid4()
+    session_id = uuid5(
+        QUACK_UUID_NS, f"diag_session:{learner_id}:{domain_id}:{req.idempotency_key}"
+    )
+    task_id = uuid5(QUACK_UUID_NS, f"diag_task:{learner_id}:{session_id}:0")
 
     try:
         res = await llm.generate_structured(
@@ -417,7 +460,7 @@ async def start_diagnostic(
         actor="code",
         domain_id=domain_id,
         session_id=session_id,
-        idempotency_key=f"tgen:{task_id}",
+        idempotency_key=f"{req.idempotency_key}:task",
         payload={
             "task_id": str(task_id),
             "domain_id": str(domain_id),
@@ -463,6 +506,66 @@ async def start_diagnostic(
     )
 
 
+async def _replay_start(
+    resources: AppResources,
+    learner_id: UUID,
+    domain_id: UUID,
+    req: StartDiagnosticRequest,
+    started: StoredEvent,
+) -> StartDiagnosticResponse:
+    """Retry of `start`: rebuild the response from the stored events, no LLM call, no append."""
+    if started.domain_id != domain_id:
+        raise _idempotency_conflict("Idempotency key was used to start another domain")
+    task_event = await _find_event_by_key(
+        resources.session_factory, learner_id, f"{req.idempotency_key}:task", "task.generated"
+    )
+    if task_event is None:
+        raise _idempotency_conflict("Stored diagnostic start has no generated task")
+    return StartDiagnosticResponse(
+        session_id=UUID(str(started.payload["session_id"])),
+        candidate_topic_ids=[UUID(t) for t in started.payload.get("candidate_topic_ids", [])],
+        next_question=_question_from_task_generated(task_event.payload),
+    )
+
+
+async def _replay_answer(
+    resources: AppResources,
+    learner_id: UUID,
+    domain_id: UUID,
+    req: AnswerDiagnosticRequest,
+    answered: StoredEvent,
+) -> AnswerDiagnosticResponse:
+    """Retry of `answer`: 409 when the request differs from the stored turn, otherwise rebuild
+    the response from the events of that turn (no LLM call, no append).
+    """
+    stored = answered.payload
+    if (
+        answered.domain_id != domain_id
+        or stored["session_id"] != str(req.session_id)
+        or stored["task_id"] != str(req.task_id)
+        or stored["answer"] != req.answer
+        or stored.get("confidence_self_report") != req.confidence_self_report
+    ):
+        raise _idempotency_conflict("Idempotency key was used for a different diagnostic answer")
+    next_task_id = _next_task_id(learner_id, req.session_id, req.idempotency_key)
+    next_task = await _find_event_by_key(
+        resources.session_factory, learner_id, f"tgen:{next_task_id}", "task.generated"
+    )
+    next_question = (
+        _question_from_task_generated(next_task.payload) if next_task is not None else None
+    )
+    return AnswerDiagnosticResponse(
+        is_correct=bool(stored["is_correct"]),
+        score=float(stored["score"]),
+        next_question=next_question,
+        should_finish=next_question is None,
+    )
+
+
+def _next_task_id(learner_id: UUID, session_id: UUID, idempotency_key: str) -> UUID:
+    return uuid5(QUACK_UUID_NS, f"diag_next_task:{learner_id}:{session_id}:{idempotency_key}")
+
+
 async def answer_diagnostic(
     resources: AppResources,
     settings: Settings,
@@ -475,6 +578,12 @@ async def answer_diagnostic(
     the next question upward (if correct) or downward (if incorrect) along the DAG up to
     `DIAGNOSTIC_MAX_QUESTIONS` (ТЗ §2.3, §3; Т-§3.3).
     """
+    previous = await _find_event_by_key(
+        resources.session_factory, learner_id, req.idempotency_key, "diagnostic.question_answered"
+    )
+    if previous is not None:
+        return await _replay_answer(resources, learner_id, domain_id, req, previous)
+
     state = await _reconstruct_state_from_events(
         resources.session_factory, learner_id, domain_id, req.session_id
     )
@@ -492,7 +601,7 @@ async def answer_diagnostic(
     is_correct = req.answer.strip().lower() == correct_ans.strip().lower()
     score = 1.0 if is_correct else 0.0
 
-    turn_id = uuid4()
+    turn_id = uuid5(QUACK_UUID_NS, f"diag_turn:{learner_id}:{req.session_id}:{req.idempotency_key}")
     answered_event = NewEvent(
         type="diagnostic.question_answered",
         actor="learner",
@@ -573,7 +682,7 @@ async def answer_diagnostic(
         )
         next_t_name = next((t[1] for t in topics if t[0] == next_topic), "Topic")
 
-        next_task_id = uuid4()
+        next_task_id = _next_task_id(learner_id, req.session_id, req.idempotency_key)
         try:
             res = await llm.generate_structured(
                 role="diagnostic",
