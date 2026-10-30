@@ -6,6 +6,7 @@ import contextlib
 from typing import Any
 from uuid import UUID, uuid4
 
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,7 @@ from quack.api.app import AppResources
 from quack.api.errors import ApiError
 from quack.config import Settings
 from quack.db.neo4j import cypher
-from quack.db.redis import presence_key
+from quack.db.redis import create_redis, presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.jobs import kinds
@@ -40,6 +41,14 @@ _SESSION_COLUMNS = (
     "id, domain_id, topic_id, mode, status, started_at, last_activity_at, "
     "last_turn_index, last_checkpoint_turn"
 )
+
+_RELEASE_PRESENCE_LUA = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
 
 _TOPIC_QUERY = """
 MATCH (t:Topic) WHERE t.learnerId = $l AND t.domainId = $d
@@ -86,8 +95,16 @@ async def _default_plan(
     return [{"step": i, **step} for i, step in enumerate(plan)]
 
 
+def _idempotency_conflict() -> ApiError:
+    return ApiError(
+        "IDEMPOTENCY_CONFLICT",
+        "idempotency_key was already used with different parameters",
+        status_code=409,
+    )
+
+
 async def _started_by_key(
-    session: AsyncSession, learner_id: UUID, key: str
+    session: AsyncSession, learner_id: UUID, key: str, body: StartSessionRequest
 ) -> SessionStarted | None:
     row = (
         await session.execute(
@@ -101,12 +118,27 @@ async def _started_by_key(
     if row is None:
         return None
     p = row.payload
+    stored_topic_id = UUID(p["topic_id"]) if p["topic_id"] else None
+    if (
+        UUID(p["domain_id"]) != body.domain_id
+        or p["mode"] != body.mode
+        or p.get("goal") != body.goal
+        or (body.topic_id is not None and stored_topic_id != body.topic_id)
+    ):
+        raise _idempotency_conflict()
+    session_id = UUID(p["session_id"])
+    status = (
+        await session.execute(
+            text("SELECT status FROM core.sessions WHERE id = :id AND learner_id = :l"),
+            {"id": session_id, "l": learner_id},
+        )
+    ).scalar_one_or_none()
     return SessionStarted(
-        session_id=UUID(p["session_id"]),
+        session_id=session_id,
         domain_id=UUID(p["domain_id"]),
-        topic_id=UUID(p["topic_id"]) if p["topic_id"] else None,
+        topic_id=stored_topic_id,
         mode=p["mode"],
-        status="active",
+        status=status or "active",
         plan=p["plan"],
         start_seq=int(row.seq),
     )
@@ -122,14 +154,25 @@ async def _set_presence(
         )
 
 
+async def _release_presence(redis: Redis | None, learner_id: UUID, session_id: UUID) -> None:
+    """Delete the presence key only if it still holds `session_id` (atomic compare-and-delete)."""
+    if redis is None:
+        return
+    with contextlib.suppress(RedisError, OSError):
+        await redis.eval(  # type: ignore[misc]
+            _RELEASE_PRESENCE_LUA, 1, presence_key(learner_id), str(session_id)
+        )
+
+
 async def start_session(
     resources: AppResources, settings: Settings, learner_id: UUID, body: StartSessionRequest
 ) -> SessionStarted:
     event_key = f"session.start:{body.idempotency_key}"
     async with resources.session_factory() as session:
-        existing = await _started_by_key(session, learner_id, event_key)
+        existing = await _started_by_key(session, learner_id, event_key, body)
     if existing is not None:
-        await _set_presence(resources, settings, learner_id, existing.session_id)
+        if existing.status == "active":
+            await _set_presence(resources, settings, learner_id, existing.session_id)
         return existing
 
     plan = await _default_plan(resources, learner_id, body.domain_id, body.topic_id)
@@ -147,7 +190,7 @@ async def start_session(
             text("SELECT 1 FROM core.learner_seq WHERE learner_id = :l FOR UPDATE"),
             {"l": learner_id},
         )
-        existing = await _started_by_key(session, learner_id, event_key)
+        existing = await _started_by_key(session, learner_id, event_key, body)
         if existing is not None:
             return existing
         old = (
@@ -344,9 +387,9 @@ async def finish_session(
                 await session.execute(
                     text(
                         "SELECT COUNT(*) FROM core.events WHERE learner_id = :l "
-                        "AND session_id = :s AND type = ANY(:types)"
+                        "AND session_id = :s AND type = 'turn.student_replied'"
                     ),
-                    {"l": learner_id, "s": session_id, "types": list(TURN_EVENT_TYPES)},
+                    {"l": learner_id, "s": session_id},
                 )
             ).scalar_one()
         )
@@ -395,8 +438,7 @@ async def finish_session(
             ),
         )
 
-    with contextlib.suppress(RedisError, OSError):
-        await resources.redis.delete(presence_key(learner_id))
+    await _release_presence(resources.redis, learner_id, session_id)
     return FinishResponse(
         session_id=session_id,
         status="completed",
@@ -421,7 +463,9 @@ async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
                 {"mins": timeout_min},
             )
         ).all()
+        abandoned: list[tuple[UUID, UUID]] = []
         for row in stale_rows:
+            abandoned.append((row.learner_id, row.id))
             await append_events(
                 session,
                 row.learner_id,
@@ -439,3 +483,13 @@ async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
                 ],
                 publish_wakeup=False,
             )
+
+    if not abandoned:
+        return
+    redis = create_redis(ctx.settings)
+    try:
+        for learner_id, session_id in abandoned:
+            await _release_presence(redis, learner_id, session_id)
+    finally:
+        with contextlib.suppress(RedisError, OSError):
+            await redis.aclose()

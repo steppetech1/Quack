@@ -52,7 +52,7 @@ class SessionStarted(StrictModel):
     domain_id: UUID
     topic_id: UUID | None
     mode: str
-    status: Literal["active"]
+    status: Literal["active", "completed", "abandoned"]
     plan: list[dict[str, Any]]
     start_seq: int
 
