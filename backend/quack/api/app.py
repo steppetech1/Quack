@@ -141,4 +141,7 @@ def create_app(settings: Settings | None = None, *, connect: bool = True) -> Fas
         return response
 
     app.include_router(_health_router())
+    from quack.session.router import router as session_router  # circular: session.deps -> api.app
+
+    app.include_router(session_router)
     return app
