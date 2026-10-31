@@ -117,6 +117,31 @@ class Settings(BaseSettings):
     # --- Compute client (spec §8.4) ---
     compute_timeout_sec: float = 5.0
 
+    # Phase 3 (ТЗ Фазы 3 §6.2, §0.5): each stream edits only its own block below.
+
+    # --- stream A ---
+
+    # --- stream B ---
+
+    # --- stream C ---
+    # WP8.3: probe timeout of /health/ready and /healthz (was HEALTH_CHECK_TIMEOUT_SEC).
+    health_check_timeout_s: float = 2.0
+    # WP1.5 (Т-§19.1, ТЗ-П1, ТЗ-П2): fixed 60 s windows, keys ratelimit:{scope}:{key}.
+    auth_requests_per_ip_per_min: int = 10
+    learner_actions_per_min: int = 60
+    turns_per_min: int = 20
+    # WP1.6: moved from quack/domains (JWT_TTL_DAYS, CURATION_DEFER_MINUTES).
+    jwt_ttl_days: int = 7
+    curation_defer_min: int = 10
+    # WP7: poll interval of GET /v1/learner/stream. Phase 3 decision (ТЗ §6.2).
+    learner_stream_poll_ms: int = 2000
+    # WP12 (Т-§7.4): evidence weight by tier, hint step penalty, hot window.
+    evidence_tier_weights: dict[str, float] = Field(
+        default_factory=lambda: {"T1": 1.0, "T2": 0.8, "T3": 0.4, "T4": 0.15}
+    )
+    hint_step_penalty: float = 0.25
+    hot_window_min: int = 10
+
     fold: FoldParams = Field(default_factory=FoldParams)
 
     @model_validator(mode="after")

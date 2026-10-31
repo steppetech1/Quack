@@ -6,18 +6,15 @@ with `ASGITransport` and attaching existing test pools directly to `app.state.re
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 import jwt
-import orjson
 import pytest
 from fastapi import FastAPI, Request
 from neo4j import AsyncDriver
-from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -31,45 +28,9 @@ from quack.domains.auth import DEV_JWT_SECRET, JWT_ALGORITHM, get_current_learne
 from quack.domains.router import router as domains_router
 from quack.events.append import append_events
 from quack.events.models import NewEvent
-from quack.llm.provider import ProviderRequest, ProviderResponse
+from tests.support.llm import FakeLLMProvider, QueuedLLMItem
 
-type QueuedLLMItem = dict[str, Any] | BaseModel | str | Exception
-
-
-class FakeLLMProvider:
-    """In-memory `LLMProvider` test double recording `ProviderRequest` calls and returning
-    queued structured responses (`dict`, `BaseModel`, JSON `str`, or raising `Exception`).
-    """
-
-    def __init__(self, responses: Sequence[QueuedLLMItem] | None = None) -> None:
-        self.responses: list[QueuedLLMItem] = list(responses or [])
-        self.calls: list[ProviderRequest] = []
-
-    def enqueue(self, *items: QueuedLLMItem) -> None:
-        self.responses.extend(items)
-
-    async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
-        self.calls.append(request)
-        if not self.responses:
-            raise AssertionError(
-                f"FakeLLMProvider queue is empty for schema {request.schema_name!r}"
-            )
-        item = self.responses.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        if isinstance(item, BaseModel):
-            content = item.model_dump_json()
-        elif isinstance(item, dict):
-            content = orjson.dumps(item).decode()
-        else:
-            content = item
-        return ProviderResponse(
-            content=content,
-            input_tokens=100,
-            output_tokens=40,
-            cached_tokens=0,
-            model=request.model,
-        )
+__all__ = ["FakeLLMProvider", "QueuedLLMItem"]
 
 
 def _decode_bearer_fallback(request: Request, settings: Settings) -> UUID:

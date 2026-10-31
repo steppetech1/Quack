@@ -33,3 +33,16 @@ def presence_key(learner_id: UUID) -> str:
 
 def ratelimit_key(scope: str, key: str) -> str:
     return f"ratelimit:{scope}:{key}"
+
+
+# --- stream C (Phase 3 §6.3, seam S8) ---
+
+
+def llm_pressure_key(model: str) -> str:
+    """Pressure flag of a model (Т-§22.5, WP5.3); `model` is the model ID."""
+    return f"llm:pressure:{model}"
+
+
+def llm_circuit_key(model: str) -> str:
+    """Circuit breaker of a model, visible to all processes (Т-§11.9, WP5.5)."""
+    return f"llm:circuit:{model}"
