@@ -488,7 +488,8 @@ async def test_gateway_daily_budget(db: SessionFactory, prompts: PromptRegistry)
 
 async def test_gateway_session_budget(db: SessionFactory, prompts: PromptRegistry) -> None:
     provider = FakeProvider()
-    gw = _gateway(db, provider, prompts, session_token_limit=500)
+    # WP5.6: `extractor` is exempt from the session budget; this test checks the budget itself.
+    gw = _gateway(db, provider, prompts, session_token_limit=500, session_budget_exempt_roles=())
     learner = uuid4()
     sid = await _session_row(db, learner, tokens=500)
     with pytest.raises(LLMBudgetExceededError) as exc:
@@ -509,7 +510,7 @@ async def test_gateway_cached_result_is_returned_even_over_budget(
 
 async def test_gateway_provider_unavailable(db: SessionFactory, prompts: PromptRegistry) -> None:
     provider = FakeProvider([ProviderUnavailableError("503")])
-    gw = _gateway(db, provider, prompts)
+    gw = _gateway(db, provider, prompts, llm_retry_attempts=0)  # one failure, no WP5.2 retry
     learner = uuid4()
     with pytest.raises(LLMUnavailableError):
         await _generate(gw, learner, None, "obs:7")
@@ -537,8 +538,17 @@ async def test_gateway_repairs_schema_once(db: SessionFactory, prompts: PromptRe
 async def test_gateway_semaphore_limits_concurrency(
     db: SessionFactory, prompts: PromptRegistry
 ) -> None:
+    # §8.9 п.4: semaphores per model (WP5.1), same point: concurrency is bounded by the limit.
     provider = FakeProvider(delay=0.05)
-    gw = _gateway(db, provider, prompts, llm_semaphore_limit=2)
+    limits = {"api": {"muse-spark": 2}}
+    gw = _gateway(
+        db,
+        provider,
+        prompts,
+        process_role="api",
+        llm_concurrency=limits,
+        llm_default_model="muse-spark",
+    )
     learner = uuid4()
     await asyncio.gather(*(_generate(gw, learner, None, f"par:{i}") for i in range(6)))
     assert len(provider.calls) == 6

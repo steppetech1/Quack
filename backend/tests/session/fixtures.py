@@ -51,6 +51,8 @@ SCHEMA_ROLES = {
     "TeacherOutput": "teacher",
     "ExtractorOutput": "extractor",
     "CheckpointerOutput": "checkpointer",
+    # WP6.2: the turn checks open answers and compute outages with `evaluator@1`.
+    "EvaluatorOutput": "evaluator",
 }
 
 

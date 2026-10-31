@@ -12,8 +12,8 @@ import orjson
 from redis.exceptions import RedisError
 from sqlalchemy import text
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.db.redis import session_events_channel
 from quack.logging import get_logger
 

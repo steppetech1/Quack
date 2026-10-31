@@ -20,10 +20,16 @@ class LLMError(Exception):
     """Base error of the LLM gateway."""
 
 
+type BudgetScope = Literal["daily", "session"]
+
+
 class LLMBudgetExceededError(LLMError):
-    def __init__(self, scope: str, used: int, limit: int) -> None:
+    """`scope` routes the job in the runner (seam S3): `session` → failed permanently,
+    `daily` → deferred to the next UTC day."""
+
+    def __init__(self, scope: BudgetScope, used: int, limit: int) -> None:
         super().__init__(f"{scope} token budget exceeded: {used} >= {limit}")
-        self.scope = scope
+        self.scope: BudgetScope = scope
         self.used = used
         self.limit = limit
 

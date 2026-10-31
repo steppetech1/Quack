@@ -16,9 +16,10 @@ from quack.events.models import NewEvent
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
+from quack.practice.schemas import EvaluatorOutput, RubricItemCheck
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain, _task_generated
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -83,16 +84,24 @@ async def test_open_task_evaluated_via_llm_teacher_fields(
     session_id = UUID(start_resp.json()["session_id"])
     await _project_all(neo4j, db, seeded_domain.learner_id)
 
-    # Teacher returns evaluated_score and evaluated_is_correct
+    # WP6.2 (D-B-006): the open answer is checked by `evaluator@1`, the same cascade as
+    # `POST .../submit`; the teacher only replies.
+    fake_llm.push(
+        "evaluator",
+        EvaluatorOutput(
+            items=[RubricItemCheck(item="R1", status="found", quote="the slope matches")],
+            verdict="correct",
+            confidence=0.9,
+            misconception=None,
+            note="Well reasoned answer",
+        ),
+    )
     fake_llm.push(
         "teacher",
         TeacherOutput(
             reply_text="Great explanation!",
             pedagogical_move="give_feedback",
-            evaluated_score=0.9,
-            evaluated_is_correct=True,
-            evaluated_feedback="Well reasoned answer",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 
@@ -113,7 +122,7 @@ async def test_open_task_evaluated_via_llm_teacher_fields(
     task_eval_sse = next(d for n, d in sse_events if n == "task_evaluated")
     assert task_eval_sse["task_id"] == str(open_task_id)
     assert task_eval_sse["is_correct"] is True
-    assert task_eval_sse["score"] == 0.9
+    assert task_eval_sse["score"] == 1.0  # D-B-009: "correct" → 1.0
 
     async with db() as session:
         eval_row = (
@@ -127,7 +136,7 @@ async def test_open_task_evaluated_via_llm_teacher_fields(
         ).one_or_none()
     assert eval_row is not None
     assert eval_row.payload["evaluator"] == "llm"
-    assert eval_row.payload["score"] == 0.9
+    assert eval_row.payload["score"] == 1.0
     assert eval_row.payload["is_correct"] is True
 
 
@@ -156,6 +165,17 @@ async def test_compute_outage_fallback_evaluates_task(
     await _project_all(neo4j, db, seeded_domain.learner_id)
 
     fake_compute.push(ComputeUnavailableError("compute server down"))
+    # WP6.2 (D-B-006): with compute down the cascade asks `evaluator@1` (ТЗ-П3 §2.2 п.3).
+    fake_llm.push(
+        "evaluator",
+        EvaluatorOutput(
+            items=[RubricItemCheck(item="R1", status="found", quote="3*x^2")],
+            verdict="correct",
+            confidence=1.0,
+            misconception=None,
+            note="Equivalent to the reference.",
+        ),
+    )
     fake_llm.push(
         "teacher",
         TeacherOutput(
@@ -191,7 +211,9 @@ async def test_compute_outage_fallback_evaluates_task(
             )
         ).all()
     assert len(eval_rows) == 1
-    assert eval_rows[0].payload["evaluator"] == "compute"
+    # D-B-006: compute gave no verdict, the model did → `hybrid` (cascade of ТЗ-П3).
+    assert eval_rows[0].payload["evaluator"] == "hybrid"
+    assert eval_rows[0].payload["is_correct"] is True
 
 
 async def test_diagnostic_shape_choice_task_evaluated_correct(
