@@ -1,15 +1,20 @@
 # AGENT.md - docs/
 
-This folder is the project's memory between agent runs. Keep it short, accurate and current.
+Эта папка — память проекта между запусками агентов. Держи её короткой, точной и актуальной.
+Актуальная копия контекста бэкенда — `backend/docs/`; правила — в корневом `AGENT.md`.
 
-## Files
-- CONTEXT.md   - what the project is, stack, structure, how to build/run/test, conventions, current state.
-- PROGRESS.md  - log of finished tasks, newest first.
-- DECISIONS.md - non-obvious decisions and their reasons.
-- agents/      - (optional) issue tracker / triage labels / domain docs config created by /setup-matt-pocock-skills.
+## Файлы
+- CONTEXT.md   — что за проект, стек, структура, как собрать/запустить/протестировать, текущее состояние.
+- PROGRESS.md  — журнал завершённых задач, новые сверху.
+- DECISIONS.md — неочевидные решения и причины (решения Фазы 3 — в `backend/PHASE3_NOTES.md`).
 
-## Update protocol (after EVERY task)
-1. Add ONE entry at the top of PROGRESS.md (right below the marker comment): date, task, what changed, notes for the next agent.
-2. Update CONTEXT.md only if structure, commands, dependencies or architecture changed. Replace stale text, do not pile up.
-3. Add to DECISIONS.md only decisions that a future agent could otherwise undo by mistake.
-4. Never paste long logs or code here; link to files instead.
+## Фаза 3
+- Журнал решений, «Красные прогоны», «Заблокировано», таблица DoD — только в `backend/PHASE3_NOTES.md`,
+  в **своём** разделе потока (A, B, C); общие разделы ведёт поток C.
+- Не правь файлы этой папки «заодно»: общие документы вызывают конфликты слияния между потоками.
+
+## Протокол обновления (после каждой задачи)
+1. Одна запись сверху PROGRESS.md: дата, задача/WP, что изменено, заметки следующему агенту.
+2. CONTEXT.md меняй, только если изменились структура, команды, зависимости или архитектура. Заменяй устаревший текст.
+3. В DECISIONS.md — только решения, которые будущий агент мог бы по ошибке отменить.
+4. Не вставляй длинные логи и код — давай ссылки на файлы.

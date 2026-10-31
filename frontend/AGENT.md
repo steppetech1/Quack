@@ -1,13 +1,27 @@
 # AGENT.md - frontend/
 
-Extra instructions for AI agents working inside `frontend/`.
-Read this before editing files here, together with the AGENT.md of every parent folder.
+Правила для ИИ-агентов внутри `frontend/`. Читать вместе с корневым `AGENT.md`.
 
-## Purpose
-<!-- One or two lines: what lives in this folder. -->
+## Что здесь
+Фронтенд Quack. Сейчас здесь только заглушка; продуктовая часть (интерфейс, дизайн, тексты для ученика)
+определяется продуктовым документом (`documentation/Продуктовая_логика_платформы_обучения_1.md`) и макетами.
 
-## Conventions
-<!-- Naming, structure and patterns specific to this folder. -->
+## Статус в Фазе 3
+Фронтенд **вне скоупа** Фазы 3 (ТЗ Ф3 §2.1 и §0.4.4 п.6: файлы вне `backend/` и списка §2.1 не менять).
+Не добавляй сюда код, зависимости и конфиги в рамках задач Фазы 3.
 
-## Do / Don't
-<!-- Things that are easy to get wrong here. Agents may append short, durable rules. -->
+## Контракт с бэкендом
+- Типы клиента генерируются из `backend/openapi.json`; снимок пересобирает поток C командой `ops openapi`
+  на гейтах (ТЗ Ф3 §7.2). Руками снимок не правь.
+- Вход — JWT (пароль + токен; осознанное отклонение R1). Действие ученика — `POST /v1/sessions/{id}/turns` (R7).
+- Ход отдаётся по SSE; событие `turn_completed` несёт `degraded_mode`
+  (`budget_exceeded | llm_unavailable | memory_unavailable | teacher_fallback | projector_lag | null`);
+  перед ответом приходит `status: thinking`, затем `token` (нарезка готового текста), keepalive.
+- Канал изменений ученика — `GET /v1/learner/stream`.
+- Ошибки API: код `SERVICE_UNAVAILABLE` (503) — зависимость недоступна; `LLM_DEGRADED` (503) — модель недоступна.
+
+## Если начнёшь работу над фронтендом
+- Только по прямой просьбе владельца, после согласования стека и структуры; тогда замени этот файл актуальным.
+- Бэкенд не правь из этой папки; нужен новый эндпоинт или поле — это запрос к потоку C (`quack/api/**`).
+- Не клади секреты и `.env` в репозиторий; адрес API — из переменной окружения.
+- Тексты для ученика берутся из продуктового документа, не придумываются.

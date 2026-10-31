@@ -1,28 +1,63 @@
 # AGENT.md
 
-Instructions for AI coding agents (Claude Code, Antigravity, ...) working in this repository.
-Read this file first. Before editing files in a folder, also read that folder's AGENT.md
-and the AGENT.md of its parent folders (if they exist).
+Инструкции для ИИ-агентов (Claude Code и др.) в этом репозитории. Читай этот файл первым.
+Перед правкой файлов в папке прочитай её AGENT.md и AGENT.md всех родительских папок.
 
-## Project
-Quack, an event-sourced AI tutor backend (FastAPI + Postgres event log + Neo4j projection + Redis) in `backend/`.
-Details live in docs/CONTEXT.md; backend rules in `backend/CLAUDE.md`.
+## Проект
+Quack — событийно-ориентированный ИИ-репетитор: FastAPI + журнал событий в Postgres + проекция в Neo4j + Redis.
+Код бэкенда — `backend/`, вычислительный сервис проверки — `compute/`, фронтенд-заглушка — `frontend/`,
+проектные документы — `documentation/`. Контекст и команды: `backend/docs/CONTEXT.md`.
 
-## How to work here
-- Work on ONE task at a time from PLAN.md. Keep commits small and focused.
-- Build / run / test commands live in docs/CONTEXT.md. Keep them up to date.
-- Outside PLAN.md tasks keep docs/ current (docs/CONTEXT.md, docs/DECISIONS.md). Inside a PLAN.md task report
-  decisions in the `summary` of `.nightrun-result.json` instead (see Project-specific rules).
-- Stay inside the task scope. Do not reformat or refactor unrelated code.
-- Never commit secrets (.env files, keys, tokens).
+## Текущая фаза: Фаза 3
+Единое ТЗ: `documentation/ТЗ Фаза 3 (единое).md` (далее «ТЗ Ф3»). Цель — собрать систему в работающее целое:
+все роутеры в `create_app`, процессы `api`/`projector`/`workers`/`ops`, диспетчер журнала, LLM-слой на Responses API,
+устойчивый горячий путь, законы ядра 4 и 10 в коде, эксплуатация (образы, compose, CI, `ops status`), сквозные тесты.
+Три исполнителя работают параллельно — потоки **A**, **B**, **C** (ТЗ Ф3 §7.1). Не знаешь свой поток — спроси.
 
-## Related files
-- docs/CONTEXT.md, docs/PROGRESS.md, docs/DECISIONS.md
-- docs/agents/*.md (issue tracker, triage labels, domain docs) - only if present
-- CLAUDE.md / AGENTS.md - only if present (may hold an "Agent skills" section)
+| Поток | Тема | Владеет (ТЗ Ф3 §7.3) |
+| :-: | :-- | :-- |
+| A | Очередь, процессы, эксплуатация | `quack/jobs/**`, `quack/runtime/**`, `quack/cli.py`, `quack/ops/**`, Dockerfile'ы, compose, `.github/**` |
+| B | LLM-слой и ход учителя | `quack/llm/**`, `quack/prompts/**`, `quack/session/**`, `quack/practice/**`, `backend/PROMPT_CONTRACTS.md` |
+| C | Каркас API, данные, сквозная проверка | `quack/api/**`, `quack/domains/**`, `quack/artifacts/**`, `quack/graph/**`, `quack/events/**`, `quack/db/**`, `quack/config.py`, `tests/e2e/**`, `tests/support/**`, `backend/openapi.json` |
 
-## Project-specific rules
-- During a PLAN.md task do not edit docs (`docs/**`, `backend/docs/**`, READMEs, notes files) unless the task's
-  `files:` names them: the orchestrator writes the progress log itself, and shared docs cause merge conflicts.
-- Stream 3 (`backend/quack/artifacts/**`, `compute/**`, its prompts) is developed in parallel by another team:
-  never touch it, and never touch Phase 1 core files.
+Подробные правила кода — в `backend/AGENT.md` и `backend/CLAUDE.md`.
+
+## Как работать
+- Выполняй ТЗ Ф3 «как написано»: пакеты WP по порядку потока (§7.1), ничего сверх скоупа (§2.1), ничего из §2.2.
+- TDD: Этап I — сигнатуры, схемы, параметры (`raise NotImplementedError`); II — красные тесты из §8;
+  III — реализация; IV — проверка и документация. Падает тест — чини код, а не тест (исключения — ТЗ Ф3 §8.9).
+- Источники истины по убыванию: законы ядра `Т-§1.1` → контракты ТЗ Ф3 и `С-§` → ТЗ Фазы 2 → `Т-§`/`Д-§` → образцы
+  в коде → инженерные критерии (§0.4.1). Пропускать уровни нельзя.
+- Решения классов B и C пиши в `backend/PHASE3_NOTES.md` в **свой** раздел потока, в момент решения (§0.4.5).
+  Класс C — сразу сообщи владельцу. Неуверен в классе — бери более строгий.
+- Не получилось после трёх разных подходов: откати, пометь тесты `xfail(strict=True, reason="BLOCKED-NNN: ...")`,
+  запиши в «Заблокировано», иди дальше (§0.4.6).
+- Один пакет за раз. Следующий начинай, когда `ruff check`, `ruff format --check`, `pyright`, `pytest` в зоне потока зелёные.
+- Не объявляй пункт DoD выполненным без проверки. Если проверить нельзя (нет Docker, нет живого LLM) — пиши
+  «Не проверено: причина, команда проверки».
+
+## Красные линии (ТЗ Ф3 §0.4.4) — решает только владелец
+- Нарушение законов ядра `Т-§1.1`; новые типы событий, правка схем/`schema_version`, формул проектора, `rules@N`
+  (кроме разрешённого WP12: `turn.extracted` v2 и `rules@2`).
+- Миграции: разрешена одна новая `0002_phase3`, только расширяющая; `0001` не менять.
+- Ослаблять тесты (удалять, `skip`, ослаблять утверждения, `xfail` вне §0.4.6); отключать `ruff`/`pyright` без причины.
+- Файлы вне `backend/`, кроме: `compute/Dockerfile`, `compute/.dockerignore`, `compose.yaml`, `compose.override.yaml`,
+  `.github/workflows/ci.yml`.
+- Править файл чужого потока без согласования с его владельцем (исключения — ТЗ Ф3 §7.3).
+- Слияние в `main`, `--force`, `reset --hard` по чужим коммитам, переписывание истории, удаление чужих веток.
+- Секреты в репозитории, логах, фикстурах; обращение к реальным внешним сервисам (LLM API и т. п.).
+- Новые зависимости (единственное разрешённое — `locust`, группа `loadtest`).
+
+## Git
+- Ветка `phase-3` всегда зелёная. Работай в `phase-3/<a|b|c>-<тема>`; слияние в `phase-3` — через PR,
+  ревью у исполнителя соседнего потока. `main` не трогай.
+- Коммиты на WP: `phase3(wpN): tests (red)` и `phase3(wpN): implementation (green)`.
+- Коммить и пушь только по просьбе пользователя. Перед коммитом — `git status`: без `.env`, кэшей, `.venv`.
+- Автор — пользователь git репозитория; без `Co-authored-by` и без упоминаний ИИ в коммитах (`backend/CLAUDE.md`).
+
+## Документы-ссылки
+- `Т-§N` — `documentation/Технический документ AI и архитектура памяти.md` (в репозитории файл с суффиксом `_1`).
+- `Д-§N` — документ DevOps; `П-N` — документ продуктовой логики; `С-§N` — Спецификация Фаз 1–2 (контракты и схемы).
+- Общие заметки Фазы 3: `backend/PHASE3_NOTES.md` (общие разделы ведёт поток C).
+- Работа по скиллам: `phase3-stream-sync` (границы потока, когда пушить), `tz-executor` — если установлены.
+- Отвечай кратко, по-русски.

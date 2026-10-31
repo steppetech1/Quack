@@ -1,13 +1,81 @@
 # AGENT.md - backend/
 
-Extra instructions for AI agents working inside `backend/`.
-Read this before editing files here, together with the AGENT.md of every parent folder.
+Правила для ИИ-агентов внутри `backend/`. Читать вместе с корневым `AGENT.md` и `backend/CLAUDE.md`
+(он действует целиком, кроме исключений ТЗ Ф3 §0.2 п.6: протокол решений §0.4, коммиты в `phase-3/*`, файлы §2.1).
 
-## Purpose
-<!-- One or two lines: what lives in this folder. -->
+## Что здесь
+Бэкенд Quack: `quack/` (код), `tests/`, `migrations/` (Alembic — источник истины по схеме), `PHASE*_NOTES.md`.
+Зона ТЗ Ф3 — `documentation/ТЗ Фаза 3 (единое).md`. Python 3.14, менеджер `uv`, pytest, ruff, pyright.
 
-## Conventions
-<!-- Naming, structure and patterns specific to this folder. -->
+## Команды (в `backend/`)
+- `uv sync`
+- Полная проверка: `uv run ruff check && uv run ruff format --check && uv run pyright && uv run pytest`
+- Интеграционные тесты идут на реальных Postgres 16, Neo4j, Redis (контейнеры — `README.md`).
+  `QUACK_TEST_REQUIRE_INFRA=1` — не пропускать тесты, а падать без инфраструктуры.
+- Процессы: `python -m quack.cli api | workers | projector | ops ...` (роль задаёт `Settings.process_role`).
+
+## Законы ядра (`Т-§1.1`) — нарушать нельзя
+1. Источник истины — журнал событий в Postgres; сначала событие, Neo4j можно пересобрать.
+2. Модель интерпретирует, код считает. Пересборка не вызывает модели.
+3. Один писатель в хранилище: в Neo4j пишет только проектор. Вне проектора — только сессии чтения (`read_session`).
+4. **Силу свидетельства назначает код** (источник, ярус, вес), не модель. Одно суждение модели не ухудшает состояние.
+5. Идемпотентность по детерминированным ключам; повтор заменяет запись.
+6. Происхождение: всё прослеживается до сырья (реплики, строки канваса, попытки).
+7. Упавший фоновый шаг ничего не коммитит и не влияет на ход учителя.
+8. Отсутствие — не ноль: «не проверено» — явное значение; в Neo4j вместо `null` — `'unknown'`.
+9. Горячий путь не ждёт фоновых процессов.
+10. **Нет накопления выводов**: сводка сессии строится кодом, модель не опирается на свои прошлые ответы.
+
+## Архитектура Фазы 3 (контракты ТЗ Ф3 §4)
+- **Слои импортов** (проверяет тест `T-A6` по AST):
+  ядро (`config`, `logging`, `db`, `events`, `graph`, `jobs`, `llm`, `prompts`, `compute_client`) → только ядро;
+  основание API (`quack.api`, кроме `api.app`) → ядро; продукт (`domains`, `session`, `artifacts`, `practice`) →
+  ядро + API + `practice`, **импорт между `domains`/`session`/`artifacts` запрещён**; сборка (`api.app`, `runtime`,
+  `cli`, `ops`) → всё. Общий код продукта — только в `quack.practice`.
+- **Ресурсы процесса** создаются один раз в `quack.runtime`: `settings`, `engine`, `session_factory`, `neo4j`, `redis`,
+  `llm`, `compute`. Это поля `AppResources` (`quack/api/resources.py`) и `JobContext`. Создавать драйвер, Redis или
+  `LLMGateway` внутри обработчика запроса или задачи запрещено. Модульные override'ы в тестах не используем —
+  тесты собирают ресурсы сборщиком из `tests/support/`.
+- **Диспетчер** (WP11) — второй потребитель журнала в процессе проектора; ставит задачи по правилам
+  «событие → задача» с `required_seq` = номер события-триггера. Прямые `enqueue_job` в продуктовом коде убираются.
+- **LLM**: Responses API со строгой JSON Schema (`to_strict_json_schema`: без свободных словарей), один шлюз на процесс,
+  семафоры по моделям, повторы, размыкатель, флаг давления по 429, роль `teacher_fallback`. Имена моделей — `Т-§1.3`
+  (`muse-wonder-1.0`, `muse-spark-1.3`).
+- **Метки в промптах**: модели видят `S1…`, `T1…`, `K1…`, `M1…`, не UUID; таблица «метка → id» пишется в
+  `ops.turn_manifests`.
+- **`degraded_mode`** хода — одно значение по приоритету: `budget_exceeded` > `llm_unavailable` > `memory_unavailable`
+  > `teacher_fallback` > `projector_lag` > `null`. Выбор — функция `resolve_degraded_mode` в `quack/session/`.
+- **Защита от спойлера** (WP15): проверка полного `reply_text` до первого SSE-токена; повтор до `guard_max_retries`,
+  затем код удаляет предложение с ответом.
+- **Ошибки API**: к `ErrorCode` добавлен `SERVICE_UNAVAILABLE` (503); старые коды не меняются.
+
+## Соглашения кода
+- Идентификаторы по-английски: `snake_case` в Python/Postgres, `camelCase` свойства Neo4j, `PascalCase` метки.
+- События `entity.action` в прошедшем времени; роли моделей — существительные; версии `name@N`.
+- Пороги и числа — только в `Settings` под именем (комментарий `# Phase 3 decision D-NNN` у решений вне документов);
+  числа в коде модулей запрещены. Блок своего потока в `config.py` — под комментарием `# --- stream X ---`.
+- Миграции только расширяющие; единственная новая — `0002_phase3` (`ops.jobs.required_seq BIGINT NULL`,
+  `ops.dispatcher_offsets`, `ops.turn_manifests`).
+- `# type: ignore` / `# noqa` — только с комментарием-причиной и только для ограничений библиотек.
+- Промпты — `quack/prompts/<роль>/v<N>.md`, на английском; `manifest.json` пересобирает скрипт, руками не править;
+  `backend/openapi.json` — только командой `ops openapi` (поток C на гейтах).
+
+## Владение файлами
+Поток A: `jobs`, `runtime`, `cli`, `ops`, Docker/compose/CI. Поток B: `llm`, `prompts`, `session`, `practice`.
+Поток C: `api`, `domains`, `artifacts`, `graph`, `events`, `db`, `config.py`, `tests/e2e`, `tests/support`.
+Чужое — только по исключениям ТЗ Ф3 §7.3 (один PR с уведомлением владельца). Общие файлы (`config.py`,
+`db/redis.py`, `jobs/kinds.py`, `api/errors.py`) правит владелец; остальные — свой блок.
+
+## Тесты
+- TDD по §8 ТЗ Ф3; тест чинят реализацией. Менять существующий тест можно только по §8.9.
+- Не `sleep` и не повторы для нестабильных тестов — искать гонку, ждать условие с таймаутом.
+- Внешние сервисы только подменами: `FakeLLMProvider`, `ScriptedLLMProvider` (ответ по `schema_name`),
+  `httpx.MockTransport` для compute, «сломанные» Redis и Neo4j из `tests/support/`.
 
 ## Do / Don't
-<!-- Things that are easy to get wrong here. Agents may append short, durable rules. -->
+- Не придумывай: ответ ищи по порядку источников §0.4.1; не нашёл — решение класса B/C с записью в журнал.
+- Не делай «заодно» и не реализуй §2.2 (вход по почте/OIDC, стриминг токенов провайдера, разметка заданий, канвас, голос).
+- Не трогай ядро Фазы 1 (формулы проектора, `rules@1`, схемы событий) вне WP12.
+- Не пиши в Neo4j вне проектора; не читай граф до применения события (`required_seq`).
+- Не коммить `.env`, ключи, кэши, отчёты нагрузки.
+- Перед работой назови разделы документов, на которые опираешься; ссылки — `§2.3` (техдок), `Д-§8.1`, `С-§8.5`.
