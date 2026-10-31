@@ -102,7 +102,8 @@ def minimal_instance(schema: dict[str, Any], *, text_chars: int | None = None) -
     """The minimal valid instance of a strict JSON Schema: required fields filled, nullable
     ones `null`, arrays empty (or `minItems` long), enum — the first value, numbers — the
     middle of the allowed interval, strings — short text (`text_chars` long when given).
-    Keys of every object are sorted."""
+    Keys of every object are sorted. `pattern` of a string is not followed: the nine output
+    schemas have none; a schema with one needs a rule here first."""
     if "anyOf" in schema:
         return minimal_instance(schema["anyOf"][0], text_chars=text_chars)
     kind = schema.get("type")
@@ -135,14 +136,22 @@ def minimal_instance(schema: dict[str, Any], *, text_chars: int | None = None) -
 
 
 def _middle(schema: dict[str, Any], *, integer: bool) -> int | float:
-    low = schema.get("minimum", schema.get("exclusiveMinimum"))
-    high = schema.get("maximum", schema.get("exclusiveMaximum"))
+    """The middle of the allowed interval; for an integer the excluded bounds are first moved
+    to the nearest allowed values, so `exclusiveMinimum: 1, exclusiveMaximum: 2.5` gives 2."""
+    low = schema.get("minimum")
+    high = schema.get("maximum")
+    if "exclusiveMinimum" in schema:
+        bound = schema["exclusiveMinimum"]
+        low = math.floor(bound) + 1 if integer else bound
+    if "exclusiveMaximum" in schema:
+        bound = schema["exclusiveMaximum"]
+        high = math.ceil(bound) - 1 if integer else bound
     if low is not None and high is not None:
         value = (low + high) / 2
     elif low is not None:
-        value = low + (1 if "exclusiveMinimum" in schema else 0)
+        value = low + (1 if "exclusiveMinimum" in schema and not integer else 0)
     elif high is not None:
-        value = high - (1 if "exclusiveMaximum" in schema else 0)
+        value = high - (1 if "exclusiveMaximum" in schema and not integer else 0)
     else:
         value = 0
     return math.floor(value) if integer else float(value)

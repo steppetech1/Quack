@@ -126,6 +126,21 @@ def test_minimal_instance_rules() -> None:
     assert minimal_instance(schema, text_chars=50)["text"] != instance["text"]
 
 
+@pytest.mark.parametrize(
+    ("node", "expected"),
+    [
+        ({"type": "integer", "exclusiveMinimum": 1, "exclusiveMaximum": 3}, 2),
+        ({"type": "integer", "exclusiveMinimum": 1, "maximum": 2}, 2),
+        ({"type": "integer", "minimum": 1, "exclusiveMaximum": 2}, 1),
+        ({"type": "integer", "exclusiveMinimum": 0}, 1),
+        ({"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0}, 0.5),
+    ],
+)
+def test_minimal_number_respects_excluded_bounds(node: dict[str, Any], expected: float) -> None:
+    """Review of B on #32: an integer between excluded bounds stays inside them."""
+    assert minimal_instance(node) == expected
+
+
 async def test_response_shape() -> None:
     """`output` = reasoning with `encrypted_content`, then the message; `usage` by kind; four
     `x-ratelimit-*` headers; keys of every object of the answer sorted."""
