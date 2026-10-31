@@ -30,9 +30,14 @@ dev = [
     "pytest-asyncio>=1.4.1",
     "ruff>=0.17.3",
 ]
+loadtest = [
+    "locust>=2.47.0",
+]
 
 [tool.uv]
 package = false
+# pyright checks loadtest/ (WP10.3); images install without these groups.
+default-groups = ["dev", "loadtest"]
 
 [tool.ruff]
 line-length = 100
