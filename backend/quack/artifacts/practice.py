@@ -11,7 +11,6 @@ from typing import Any, LiteralString
 from uuid import UUID, uuid5
 
 import orjson
-from neo4j import READ_ACCESS
 from sqlalchemy import text
 
 from quack.api.errors import ApiError
@@ -26,6 +25,7 @@ from quack.artifacts.schemas import (
 )
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
+from quack.db.neo4j import read_session
 from quack.events import NewEvent, StoredEvent, append_events
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.ids import QUACK_UUID_NS
@@ -165,7 +165,7 @@ async def _topic_skills(
     """Topic name and its live skills from Neo4j, read-only (A16)."""
 
     async def load() -> tuple[str, list[dict[str, Any]]] | None:
-        async with resources.neo4j.session(default_access_mode=READ_ACCESS) as session:
+        async with read_session(resources.neo4j) as session:
             result = await session.run(
                 _TOPIC_SKILLS,
                 {
