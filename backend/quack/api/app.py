@@ -17,13 +17,12 @@ from sqlalchemy import text
 from quack.api.errors import install_error_handlers
 from quack.api.openapi import install_openapi, render_openapi
 from quack.api.ratelimit import enforce_action_rate_limit
-from quack.api.resources import AppResources, create_app_resources, get_resources
+from quack.api.resources import AppResources, create_app_resources
+from quack.artifacts.router import router as artifacts_router
 from quack.config import Settings, get_settings
+from quack.domains.router import router as domains_router
 from quack.logging import configure_logging, get_logger, log_context
-
-# Re-exported for the files of stream B that still import them from here (D-C-014): the
-# imports move to `quack.api.resources` in B's PRs and this line then goes away.
-__all__ = ["AppResources", "create_app", "get_resources", "write_openapi"]
+from quack.session.router import router as session_router
 
 log = get_logger(__name__)
 
@@ -166,12 +165,6 @@ def create_app(
 
     app.include_router(_health_router())
     app.include_router(_healthz_router())
-    # Imported here: `quack.session.router` and `artifacts/practice.py` still import this
-    # module (D-C-014), so a module-level import would be a cycle.
-    from quack.artifacts.router import router as artifacts_router
-    from quack.domains.router import router as domains_router
-    from quack.session.router import router as session_router
-
     # Domains and artifacts attach authentication and the `actions` limit in their routers
     # (public `register`/`login` carry the `auth` limit); the session router is wrapped here.
     app.include_router(domains_router)
