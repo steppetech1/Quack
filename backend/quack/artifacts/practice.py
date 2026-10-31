@@ -224,6 +224,17 @@ def _bank_response(task: TaskToCheck, *, degraded: bool) -> NextTaskResponse:
     )
 
 
+def _check_replay(stored: dict[str, Any], request: dict[str, Any], endpoint: str) -> None:
+    """T-E2, D-C-027: a used key with another body is 409. `request` holds the fields of the
+    stored payload the request fixes."""
+    if any(stored.get(k) != v for k, v in request.items()):
+        raise ApiError(
+            "IDEMPOTENCY_CONFLICT",
+            f"Idempotency key was used for another {endpoint} request",
+            status_code=409,
+        )
+
+
 def _check_same_request(
     body: NextTaskRequest,
     session_id: UUID,
@@ -231,21 +242,19 @@ def _check_same_request(
     kind: str,
     topic_id: str | None,
 ) -> None:
-    """T-E2, D-C-027: a used key with another body is 409. Compared is what the stored events
-    fix: session, turn, kind, and the topic of a generated task (a bank task is picked by
-    skill, its topic need not be the requested one)."""
-    same = (
-        assigned["session_id"] == str(session_id)
-        and assigned["turn_id"] == str(body.turn_id)
-        and kind == body.kind
-        and (topic_id is None or topic_id == str(body.topic_id))
-    )
-    if not same:
-        raise ApiError(
-            "IDEMPOTENCY_CONFLICT",
-            "Idempotency key was used for another tasks/next request",
-            status_code=409,
-        )
+    """`tasks/next`: compared is what the stored events fix: session, turn, kind, and the topic
+    of a generated task (a bank task is picked by skill, its topic need not be the requested
+    one)."""
+    stored = {**assigned, "kind": kind}
+    request: dict[str, Any] = {
+        "session_id": str(session_id),
+        "turn_id": str(body.turn_id),
+        "kind": body.kind,
+    }
+    if topic_id is not None:
+        stored["topic_id"] = topic_id
+        request["topic_id"] = str(body.topic_id)
+    _check_replay(stored, request, "tasks/next")
 
 
 async def _replay_next_task(
@@ -420,6 +429,12 @@ async def give_hint(
     await _session_domain(resources, learner_id, session_id)
     replay = await _stored(resources, learner_id, _key(body.idempotency_key, "task.hint_given"))
     if replay is not None:
+        request = {
+            "session_id": str(session_id),
+            "turn_id": str(body.turn_id),
+            "task_id": str(task_id),
+        }
+        _check_replay(replay.payload, request, "hint")
         return _hint_response(replay)
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)
@@ -475,6 +490,17 @@ async def submit_answer(
     await _session_domain(resources, learner_id, session_id)
     replay = await _stored(resources, learner_id, _key(body.idempotency_key, "task.evaluated"))
     if replay is not None:
+        submitted = await _stored(
+            resources, learner_id, _key(body.idempotency_key, "task.submitted")
+        )
+        request = {
+            "session_id": str(session_id),
+            "turn_id": str(body.turn_id),
+            "task_id": str(task_id),
+            "answer": body.answer,
+            "response_time_sec": body.response_time_sec,
+        }
+        _check_replay(submitted.payload if submitted else {}, request, "submit")
         return _submit_response(replay)
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)
