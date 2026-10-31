@@ -838,6 +838,41 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   коммита: манифест равен `turn_completed.degraded_mode` (проверка не слабее — точное
   совпадение с итогом хода).
 - Тесты: `T-M4` (`tests/llm/test_labels.py`).
+### D-B-021. WP5.7: адаптер `ResponsesClient` на `AsyncOpenAI`
+- Класс: C
+- WP / место: WP5.7; `quack/llm/responses_client.py`, `quack/llm/provider.py`,
+  `quack/llm/gateway.py`, `pyproject.toml`
+- Решение:
+  1. Зависимости по D-B-004: `openai` (основные), `jsonschema` (`dev`). SDK 3.x работает на
+     `httpx2`, поэтому `http_client` адаптера — `httpx2.AsyncClient`, в тестах —
+     `httpx2.MockTransport` (`T-L8` называет `httpx.MockTransport` — тот же приём для этой
+     версии SDK).
+  2. Запрос — по таблице WP5.7; схема — `to_strict_json_schema` (шлюз строит её для каждого
+     вызова), `prompt_cache_key` = `{prompt_role или role}@{версия}`. Сообщение исправления
+     схемы — текст провайдера Фазы 1 без изменений.
+  3. Ответ читается сырым (`with_raw_response`): заголовки `retry-after` и `x-ratelimit-*` —
+     шлюзу; `reasoning` возвращается как есть в `output_items`; `message` с `phase:
+     commentary` — в лог `llm_commentary`, ответ — текст последнего `message` без этой фазы;
+     нет ответа → пустой текст → ошибка схемы и одно исправление (WP5.2). Ошибки: 429 →
+     `ProviderRateLimitedError`, 400 → `ProviderBadRequestError`, прочие статусы, таймаут,
+     соединение → `ProviderUnavailableError`, `status: incomplete` → `ProviderIncompleteError`.
+  4. Ledger: `cached_input_tokens` (= `cached_tokens`, D-B-003), `reasoning_tokens`,
+     `reasoning_effort` вызова.
+  5. `HttpLLMProvider` остаётся тонкой обёрткой над адаптером (импорт внутри конструктора —
+     без цикла модулей): его вызывают `quack/runtime` (A), `quack/api/resources`,
+     `quack/domains/curation`, `quack/artifacts/deps` (C); атрибут `client` с `aclose()`
+     сохранён для `artifacts/deps`. Убирается, когда A и C перейдут на `ResponsesClient(`
+     (`T-Q9`).
+  6. SDK не принимает пустой ключ; без ключа (dev, тесты) адаптер передаёт заглушку,
+     вызов получает 401 → «недоступен», как у провайдера Фазы 1.
+- Не сделано (зона C, `quack/config.py`): ID моделей по умолчанию `muse-wonder-1.0`,
+  `muse-spark-1.3` (§2.3 п.8) и имена `META_API_*` (реестр R4) — `llm_role_models` и
+  `llm_api_*` в общем блоке `Settings`.
+- Правки тестов (§8.9 п.11): `test_jobs_and_llm_gateway::test_gateway_call_writes_ledger_outbox_and_session_tokens`
+  — в запросе ждётся `to_strict_json_schema(Answer)` вместо `model_json_schema()`: запрос
+  по-прежнему несёт схему вывода, она строгая по контракту WP5.7.
+- Тесты: `T-L8` (9 ролей), `T-L9` (экземпляр через `minimal_instance` из `loadtest.meta_mock`
+  и `jsonschema`), `T-L10`.
 - Требует подтверждения владельцем: нет
 
 ### Поток C
@@ -1287,6 +1322,7 @@ _(пусто)_
 | WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
 | WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
 | WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
+| WP5.7 (адаптер) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py` (коммит `3d76160`) | 10 failed, 23 passed: `T-L8` ×9 и `T-L10` — `NotImplementedError` в `ResponsesClient`; `T-L9` (экземпляр, `jsonschema`) зелёный |
 
 ## Правки тестов
 
