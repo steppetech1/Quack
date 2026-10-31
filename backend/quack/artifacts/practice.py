@@ -224,17 +224,43 @@ def _bank_response(task: TaskToCheck, *, degraded: bool) -> NextTaskResponse:
     )
 
 
+def _check_same_request(
+    body: NextTaskRequest,
+    session_id: UUID,
+    assigned: dict[str, Any],
+    kind: str,
+    topic_id: str | None,
+) -> None:
+    """T-E2, D-C-027: a used key with another body is 409. Compared is what the stored events
+    fix: session, turn, kind, and the topic of a generated task (a bank task is picked by
+    skill, its topic need not be the requested one)."""
+    same = (
+        assigned["session_id"] == str(session_id)
+        and assigned["turn_id"] == str(body.turn_id)
+        and kind == body.kind
+        and (topic_id is None or topic_id == str(body.topic_id))
+    )
+    if not same:
+        raise ApiError(
+            "IDEMPOTENCY_CONFLICT",
+            "Idempotency key was used for another tasks/next request",
+            status_code=409,
+        )
+
+
 async def _replay_next_task(
-    resources: AppResources, learner_id: UUID, session_id: UUID, idempotency_key: str
+    resources: AppResources, learner_id: UUID, session_id: UUID, body: NextTaskRequest
 ) -> NextTaskResponse | None:
     """A10. `degraded` is not stored in events: a bank task assigned after a failed
     `task_gen@1` call is recognised by its non-completed `core.llm_outbox` row."""
+    idempotency_key = body.idempotency_key
     assigned = await _stored(resources, learner_id, _key(idempotency_key, "task.assigned"))
     if assigned is None:
         return None
     generated = await _stored(resources, learner_id, _key(idempotency_key, "task.generated"))
     if generated is not None:
         p = generated.payload
+        _check_same_request(body, session_id, assigned.payload, p["kind"], p["topic_id"])
         return NextTaskResponse(
             task_id=p["task_id"],
             family_id=p["family_id"],
@@ -246,6 +272,7 @@ async def _replay_next_task(
     async with resources.session_factory() as session:
         row = await load_task(session, learner_id, UUID(assigned.payload["task_id"]))
     assert row is not None, "task.assigned of a task missing from core.task_bank"
+    _check_same_request(body, session_id, assigned.payload, row.kind, None)
     failed = await _rows(
         resources,
         "SELECT 1 FROM core.llm_outbox WHERE learner_id = :l AND idempotency_key = :k "
@@ -267,7 +294,7 @@ async def next_task(
     """Bank task of a new family or `task_gen@1` (bank fallback); `task.generated` +
     `task.assigned` (ТЗ §2.2 п.1, A6–A8, A10–A12)."""
     domain_id = await _session_domain(resources, learner_id, session_id)
-    replay = await _replay_next_task(resources, learner_id, session_id, body.idempotency_key)
+    replay = await _replay_next_task(resources, learner_id, session_id, body)
     if replay is not None:
         return replay
 
