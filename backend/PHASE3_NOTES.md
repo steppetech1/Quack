@@ -293,6 +293,7 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 | :-- | :-- | :-- |
 | WP5.7 (препроцессор), WP14.1, §4.4 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py tests/llm/test_labels.py tests/session/test_phase3_hot_path.py` (ветка `phase-3-b-first-red`) | 46 failed, 0 passed: `T-L9` (11), `T-M1` (3), `T-H3` (32) — все `NotImplementedError` |
 | WP6.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py -k parity` (до переноса) | 2 failed: `T-H2[math]`, `T-H2[choice]` — `independence` ход 1.0 ≠ практика 0.5 |
+| WP6.1 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py -k outage` (до реализации) | 1 failed: `T-H1` — ход 2 падает с `ServiceUnavailable` из `read_consistent_slice` |
 
 `T-L9` здесь — только структура схемы. Часть «минимальный экземпляр проходит `jsonschema` и
 `model_validate_json`» ждёт генератора `meta-mock` (WP10.3, C) и D-B-004. `T-H2` (WP6.2)
@@ -303,8 +304,9 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 
 | WP | Статус | Тесты |
 | :-- | :-- | :-- |
-| WP5.7 | препроцессор `to_strict_json_schema` — выполнено; адаптер `ResponsesClient` — не начат (после G1, D-B-004) | `T-L9` структура: 10 зелёных, 1 красный — `TaskGenOutput.reference_solution` (свободный словарь, файл зоны C, D-B-001) |
+| WP5.7 | препроцессор `to_strict_json_schema` — выполнено; адаптер `ResponsesClient` — не начат (после G1, D-B-004) | `T-L9` структура: 11 зелёных (`TaskGenOutput` без свободного словаря — D-B-010) |
 | WP14.1 | `LabelMap` — выполнено; метки в контексте и выходах ролей — не начаты: имена полей связаны с текстом промптов (`teacher@1` называет `focus_skill_ids`, `assign_task_id`, `topic_id`), правятся вместе с промптами | `T-M1`: 3 зелёных |
+| WP6.1 | часть B выполнена: `resolve_degraded_mode`; ход при ошибке связи Neo4j строится на пустом срезе + оверлей сессии, `degraded_mode = "memory_unavailable"`, маркер в слоте памяти (D-B-008). Часть C (шов S7) — обработчик ошибок Neo4j → `503 SERVICE_UNAVAILABLE` в `quack/api` — не начата | `T-H3` (32) зелёные; `T-H1` — ход зелёный, красное только последнее утверждение (`GET /v1/domains/{id}/graph` → 500 вместо 503, ждёт C) |
 | WP6.2 | выполнено: выбор задачи и каскад проверки — в `quack/practice/` (`evaluation.py`, `selection.py`); ход и `submit` вызывают `evaluate_answer`; `TaskGenOutput`, `EvaluatorOutput` — в `quack/practice/schemas.py` (D-C-013 п.2); пороги практики — в блоке B `Settings` (п.3) | `T-H2` (2) зелёные; тесты `tests/session`, `tests/artifacts` — 102 passed |
 
 Договорённость с C по WP6.2 и S4 — D-C-013 (раздел C), со стороны B принята целиком:
@@ -395,6 +397,123 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Не блокирует: Этап I и `to_strict_json_schema` (до G1). Блокирует: адаптер WP5.7 после G1,
   часть `T-L9` про `jsonschema`. До ответа `ResponsesClient` — сигнатура без импорта SDK.
 - Требует решения владельца: да
+
+### D-B-008. Ход при недоступном Neo4j: какие ошибки ловятся и куда идёт маркер (WP6.1)
+- Класс: B
+- WP / место: WP6.1; `quack/session/context.py` (`NEO4J_CONNECTION_ERRORS`,
+  `build_turn_context`), `quack/session/turns.py` (переменные `teacher@1`)
+- Контекст: WP6.1 называет «ошибку связи драйвера Neo4j (недоступен сервер, истекла сессия,
+  таймаут)» и маркер `memory temporarily unavailable` в слоте памяти (`Т-§20.7`). Конкретные
+  классы драйвера и место маркера в шаблоне не названы; текст промпта ведёт владелец.
+- Решение: (1) ловятся `ServiceUnavailable` (с подклассами), `SessionExpired`,
+  `ConnectionAcquisitionTimeoutError` и `TimeoutError`; прочие ошибки Neo4j (синтаксис,
+  ограничения) по-прежнему роняют ход. Срез — пустой `InMemoryGraph` с `applied_seq = 0`,
+  поэтому оверлей накладывает все события сессии и инвариант «задача сессии не назначается
+  повторно» сохраняется. (2) Маркер подставляется кодом как значение обеих переменных слота
+  памяти — `skills_slice_json` и `misconceptions_json`; текст `teacher/v1.md` не меняется.
+  `teacher_fallback` в `resolve_degraded_mode` пока `False` (роль — WP5.4).
+- Почему: §0.4.3 п.1 — минимальная правка без изменения текста промпта; классы — те, что
+  драйвер 6.x бросает при потере связи (`ServiceUnavailable`, `SessionExpired` уже считаются
+  временными в `graph/worker.py::TRANSIENT_ERRORS`).
+- Обратимость: кортеж `NEO4J_CONNECTION_ERRORS`; две строки в `turns.py`.
+- Тесты: `T-H1`, `T-H3`.
+- Требует подтверждения владельцем: нет. Сообщить: маркер в слотах памяти — часть контракта
+  `teacher@1` (§7.6), войдёт в `PROMPT_CONTRACTS.md`.
+
+### D-B-009. Промпты из пакета владельца: как они ложатся в репозиторий; `evaluator@1`
+- Класс: B
+- WP / место: §7.6; `quack/prompts/*`, `quack/prompts/build_manifest.py`,
+  `quack/practice/schemas.py::EvaluatorOutput`, `quack/practice/evaluation.py`, `Settings`
+  (`evaluator_verdict_scores`)
+- Контекст: владелец передал промпты Фазы 3 (пакет `phase3_handover`, 31.10): слой 1
+  (доктрина) проверен на стенде, слой 2 — заглушки `⟦…⟧`, тестовые контракты выходов — в
+  `scenarios/<роль>/_test_contract.md`. Указание владельца: промпты подгоняются под код,
+  критичных правок в них не вносить; решения принимает B.
+- Решение:
+  1. Слой 1 переносится побайтно; заменяется только раздел `## Output contract` (по тестовому
+     контракту роли и схеме кода) и добавляется `## Input blocks` с переменными `{{ }}`
+     загрузчика. Имена файлов — роли кода: `teacher/v6` → `teacher/v1.md`,
+     `evaluator/v2` → `evaluator/v1.md`, `task_generator/v3` → `task_gen/v1.md`,
+     `extractor/v2` → `extractor/v2.md` (WP12.1). До первой выкатки `@1` правится на месте
+     (§7.6 п.3). `manifest.json` пересобирает `uv run python -m quack.prompts.build_manifest`
+     (прежние хеши скрипт воспроизводит).
+  2. Параметры вызова из README пакета (`temperature`, `muse-spark-1.0`, лимиты) не берутся:
+     действуют WP5.7 и `Т-§1.3`.
+  3. LaTeX в `reply_text`: `$…$` в строке, `$$…$$` отдельной строкой (в документах
+     разделители не названы).
+  4. `teacher@1`: пункт `task_markup` пакета не переносится (разметка заданий — §2.2).
+     Поля `evaluated_*` остаются в схеме, промпт требует `null`. Маркер памяти описан в
+     блоке «What we know about the learner».
+  5. `evaluator@1`: схема выхода — контракт промпта (`items`, `verdict`, `confidence`,
+     `misconception`, `note`). Код переводит вердикт в поля `task.evaluated` (payload не
+     меняется): `is_correct = verdict == "correct"`, `score` — по
+     `Settings.evaluator_verdict_scores` (1.0 / 0.5 / 0.0), `skill_scores` — всем целевым
+     навыкам с этим `score` и `compute_tested_depth` (как вердикт кода, решение 8 ТЗ-П3),
+     `feedback` — тексты кода. `unclear` — «не проверено» (закон 8): тот же
+     детерминированный fallback, что при сбое LLM. Рубрика — `key_points` эталона
+     (`R1…`), без них эталон — один пункт R1. Известные заблуждения — имена задачи с
+     метками `M1…`; `new: …` — новое имя; неизвестная метка отбрасывается с логом.
+- Почему: §0.4.3 п.1 и указание владельца; закон 4 — чисел от модели (`score`,
+  `skill_scores`) больше нет.
+- Правки тестов (ожидания по новому контракту; проверяемое свойство то же):
+  `tests/artifacts/test_practice_engine.py::test_submit_falls_back_to_evaluator_on_parse_error`
+  (вход — вердикт `incorrect` + `new:` заблуждение; ожидаются поля, переведённые кодом,
+  `misconception_id = null`), `tests/session/test_open_task_evaluation.py` (два входа;
+  `score` 0.9 → 1.0 для `correct`), ответчик по умолчанию в `tests/support/llm.py` (файл C,
+  исключение §7.3 — уведомить C).
+- Обратимость: схема и одна функция `evaluate_answer`.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-010. `task_gen@1`: схема — контракт промпта, строку банка собирает код
+- Класс: B (затрагивает файл C `quack/artifacts/practice.py::next_task` — исключение §7.3)
+- WP / место: `quack/practice/schemas.py::TaskGenOutput`, `quack/practice/generation.py`,
+  `Settings.task_gen_target_level`
+- Решение: выход — контракт промпта (`statement`, `options` с `catches`, `answer`,
+  `solution`, `tests`, `method_named`, `variant_of`, `form`, `pair_task`) плюс одно поле
+  слоя 2 `hints` (три ступени; без него не работает лестница подсказок практики). Код:
+  `family_id` — своё семейство `gen-<12 hex id>` на задачу (меток задач модель не видит,
+  `variant_of` не разрешить); `difficulty` — `default_target_difficulty`; целевой навык
+  выбирает код (A7), модель видит его как `S1: <имя>` (WP14.1); `reference_solution` — в
+  ключах, которые сейчас читают ход и практика (`sympy` + `check_mode` по типу ответа,
+  `option`/`answer`/`options`, `answer`), плюс `solution`, `units`, `hints`. Тип ответа не
+  подходит к виду задачи или у выбора не ровно один верный вариант → `GeneratedTaskError`
+  → тот же откат на банк, что при сбое LLM. `pair_task` пока не показывается.
+- Закрывает D-B-007: свободного словаря в `TaskGenOutput` больше нет, `T-L9` зелёный.
+  D-B-001 (ключи WP6.4) остаётся: переход — один модуль `generation.py` и читатели.
+- Правки тестов: `test_practice_engine::test_next_task_targets_new_family` — `family_id`
+  ждётся от кода, вместо UUID навыка в промпте — `S1: <имя>` и отсутствие UUID (WP14.1);
+  добавлены проверки `sympy` и `check_mode` в банке. Ответчик по умолчанию в
+  `tests/support/llm.py`.
+- Требует подтверждения владельцем: нет (делегировано). Уведомить C (файл `next_task`).
+
+### D-B-011. `extractor@2`: схема — контракт промпта, элемент WP12.1 строит код
+- Класс: B
+- WP / место: WP12.1; `quack/session/schemas.py::ExtractorOutputV2`,
+  `quack/session/extraction.py`, `prompts/extractor/v2.md`
+- Решение: модель отвечает плоским списком `entries` по контракту промпта; чистая функция
+  `to_extracted_items` даёт элементы WP12.1: `success/failure/bypass` →
+  `correct/incorrect/partial` (+ `shown_solution` у `bypass`), три вида подсказки →
+  `hint` + `hint_step` 1–3, `after_example` → `none` (окно свежести считает код, WP12.2
+  п.4), коды пробела переименованы один к одному, у положительного — `none`. У гипотезы
+  заблуждения добавлено поле `misconception_label` (в списке WP12.1 его нет, без него
+  гипотеза не указывает заблуждение) — сообщить C (S5, событие v2).
+- Не сделано: обработчик `turn.extract` остаётся на `extractor@1`, пока C не добавит
+  `turn.extracted` v2 в каталог (WP12).
+- Тесты: `tests/session/test_extraction_v2.py`.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-012. `structurer`, `curator`, `artifact_writer` из пакета в Фазе 3 не подключаются
+- Класс: B
+- Контекст: код `structurer` строит карту по названию домена, целям и фону — текста
+  материала нет, а слой 1 пакета требует «бери только то, что есть в тексте» и кандидатов с
+  метками. `curator` в коде получает весь граф домена и ведёт ещё `promotions`; промпт
+  пакета решает готовые пары. `artifact_writer` отдаёт блоки с источниками и карточки, код
+  ждёт `title` + Markdown; схема и вызов — файлы C.
+- Решение: `structurer@1` и `curator@1` остаются прежними; промпты пакета ждут функций, под
+  которые написаны (материалы и кандидаты, пары по сходству) — следующая фаза (§2.1).
+  `artifacts` — отдельным шагом по согласованию с C: схема `{blocks, cards, review}`,
+  Markdown собирает код.
+- Требует подтверждения владельцем: нет (делегировано).
 
 ### Поток C
 

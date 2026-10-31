@@ -14,7 +14,16 @@ from quack.db.postgres import SessionFactory
 from quack.events.payloads import MisconceptionEvalHit, SkillEvalScore
 from quack.graph.ids import QUACK_UUID_NS
 from quack.llm.errors import ProviderUnavailableError
-from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
+from quack.practice.evaluation import FEEDBACK_INCORRECT
+from quack.practice.generation import generated_family_id
+from quack.practice.schemas import (
+    EvaluatorMisconception,
+    EvaluatorOutput,
+    RubricItemCheck,
+    TaskAnswer,
+    TaskGenOutput,
+    TaskLevel,
+)
 
 if TYPE_CHECKING:
     from tests.artifacts.conftest import (
@@ -197,11 +206,16 @@ async def test_next_task_targets_new_family(
     fake_provider.respond(
         "TaskGenOutput",
         TaskGenOutput(
-            family_id="fam-b",
-            difficulty=0.5,
-            prompt_text="Differentiate $\\sin(x^2)$.",
-            reference_solution=CHAIN_REF,
-            target_misconceptions=[],
+            statement="Differentiate $\\sin(x^2)$.",
+            options=[],
+            answer=TaskAnswer(type="expression", value="2*x*cos(x**2)", units=None),
+            solution="By the chain rule the derivative is $2x\\cos(x^2)$.",
+            hints=HINTS,
+            tests=[TaskLevel(skill="S1", level=3)],
+            method_named=False,
+            variant_of=None,
+            form=None,
+            pair_task=None,
         ),
     )
     before = await _last_seq(db, learner)
@@ -216,14 +230,18 @@ async def test_next_task_targets_new_family(
     assert r.status_code == 200, r.text
     task = r.json()
     assert task["degraded"] is False
-    assert task["family_id"] == "fam-b"
     assert task["kind"] == "math"
     assert task["task_id"] == str(uuid5(QUACK_UUID_NS, f"task:{learner}:{sid}:next-1"))  # A11
+    # D-B-010: every generated task is its own family, derived by code from its id.
+    family = generated_family_id(UUID(task["task_id"]))
+    assert task["family_id"] == family
 
     # A7: skill A (distinctFamilies == 1) is the target; A8: its solved family is excluded.
     [call] = fake_provider.calls_for("TaskGenOutput")
-    assert str(s.skill_a) in call.prompt
-    assert str(s.skill_b) not in call.prompt
+    # WP14.1: the model sees the target skill as a label with its name, never its id.
+    assert f"S1: {skill_a['name']}" in call.prompt
+    assert str(s.skill_a) not in call.prompt
+    assert skill_b["name"] not in call.prompt
     assert "fam-a" in call.prompt
 
     new = await _events_after(db, learner, before)
@@ -233,7 +251,7 @@ async def test_next_task_targets_new_family(
     ]
     generated, assigned = new
     assert generated["payload"]["task_id"] == assigned["payload"]["task_id"] == task["task_id"]
-    assert generated["payload"]["family_id"] == "fam-b"
+    assert generated["payload"]["family_id"] == family
     assert [t["skill"]["skill_id"] for t in generated["payload"]["target_skills"]] == [
         str(s.skill_a)
     ]
@@ -245,8 +263,10 @@ async def test_next_task_targets_new_family(
         t=UUID(task["task_id"]),
         l=learner,
     )
-    assert (bank["family_id"], bank["kind"]) == ("fam-b", "math")
+    assert (bank["family_id"], bank["kind"]) == (family, "math")
     assert bank["reference_solution"]["hints"] == HINTS
+    assert bank["reference_solution"]["sympy"] == CHAIN_REF["sympy"]
+    assert bank["reference_solution"]["check_mode"] == CHAIN_REF["check_mode"]
 
     # A10: the same idempotency_key returns the stored answer without new events or LLM calls.
     again = await client.post(f"/v1/sessions/{sid}/tasks/next", json=body, headers=auth(learner))
@@ -396,24 +416,33 @@ async def test_submit_falls_back_to_evaluator_on_parse_error(
     learner, s, sid = await _open_session(seed)
     task = await _assigned_task(seed, learner, s, sid, CHAIN_REF)
     fake_compute.respond(_compute_answer("parse_error", None))
+    # D-B-009: the verdict of `evaluator@1` is mapped by code to the fields of `task.evaluated`.
     verdict = EvaluatorOutput(
-        is_correct=False,
-        score=0.3,
-        feedback="Check how you differentiated the inner function.",
-        skill_scores=[SkillEvalScore(skill_id=s.skill_a, score=0.3, tested_depth=0.7)],
-        triggered_misconceptions=[
-            MisconceptionEvalHit(
-                skill_id=s.skill_a,
-                name=s.misconception_a_name,
-                misconception_id=s.misconception_a,
-            )
-        ],
+        items=[RubricItemCheck(item="R1", status="wrong", quote="2x cos(x^2")],
+        verdict="incorrect",
+        confidence=0.8,
+        misconception=EvaluatorMisconception(
+            label=f"new: {s.misconception_a_name}", quote="2x cos(x^2"
+        ),
+        note="The inner derivative is applied to the wrong factor.",
     )
     fake_provider.respond("EvaluatorOutput", verdict)
     before = await _last_seq(db, learner)
 
     result = await _submit(client, auth(learner), sid, task, "2x cos(x^2", "submit-1")
-    expected = verdict.model_dump(mode="json")
+    expected = {
+        "is_correct": False,
+        "score": 0.0,
+        "feedback": FEEDBACK_INCORRECT,
+        "skill_scores": [
+            SkillEvalScore(skill_id=s.skill_a, score=0.0, tested_depth=0.5).model_dump(mode="json")
+        ],
+        "triggered_misconceptions": [
+            MisconceptionEvalHit(skill_id=s.skill_a, name=s.misconception_a_name).model_dump(
+                mode="json"
+            )
+        ],
+    }
     assert result["evaluator"] == "hybrid"
     for key in ("is_correct", "score", "feedback", "skill_scores", "triggered_misconceptions"):
         assert result[key] == expected[key], key

@@ -13,11 +13,10 @@ from quack.config import FoldParams
 from quack.db.postgres import SessionFactory
 from quack.events.append import append_events
 from quack.events.models import NewEvent
-from quack.events.payloads import SkillEvalScore
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
-from quack.practice.schemas import EvaluatorOutput
+from quack.practice.schemas import EvaluatorOutput, RubricItemCheck
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain, _task_generated
 from tests.session.helpers import parse_sse
@@ -90,12 +89,11 @@ async def test_open_task_evaluated_via_llm_teacher_fields(
     fake_llm.push(
         "evaluator",
         EvaluatorOutput(
-            is_correct=True,
-            score=0.9,
-            feedback="Well reasoned answer",
-            skill_scores=[
-                SkillEvalScore(skill_id=seeded_domain.skill_ids[0], score=0.9, tested_depth=0.5)
-            ],
+            items=[RubricItemCheck(item="R1", status="found", quote="the slope matches")],
+            verdict="correct",
+            confidence=0.9,
+            misconception=None,
+            note="Well reasoned answer",
         ),
     )
     fake_llm.push(
@@ -124,7 +122,7 @@ async def test_open_task_evaluated_via_llm_teacher_fields(
     task_eval_sse = next(d for n, d in sse_events if n == "task_evaluated")
     assert task_eval_sse["task_id"] == str(open_task_id)
     assert task_eval_sse["is_correct"] is True
-    assert task_eval_sse["score"] == 0.9
+    assert task_eval_sse["score"] == 1.0  # D-B-009: "correct" → 1.0
 
     async with db() as session:
         eval_row = (
@@ -138,7 +136,7 @@ async def test_open_task_evaluated_via_llm_teacher_fields(
         ).one_or_none()
     assert eval_row is not None
     assert eval_row.payload["evaluator"] == "llm"
-    assert eval_row.payload["score"] == 0.9
+    assert eval_row.payload["score"] == 1.0
     assert eval_row.payload["is_correct"] is True
 
 
@@ -171,12 +169,11 @@ async def test_compute_outage_fallback_evaluates_task(
     fake_llm.push(
         "evaluator",
         EvaluatorOutput(
-            is_correct=True,
-            score=1.0,
-            feedback="Equivalent to the reference.",
-            skill_scores=[
-                SkillEvalScore(skill_id=seeded_domain.skill_ids[0], score=1.0, tested_depth=0.5)
-            ],
+            items=[RubricItemCheck(item="R1", status="found", quote="3*x^2")],
+            verdict="correct",
+            confidence=1.0,
+            misconception=None,
+            note="Equivalent to the reference.",
         ),
     )
     fake_llm.push(

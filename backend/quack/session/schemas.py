@@ -132,6 +132,49 @@ class ExtractorOutput(StrictModel):
     misconceptions: list[ExtractedMisconception] = []
 
 
+class ExtractorEntry(StrictModel):
+    """One entry of `extractor@2` in the contract of its prompt (D-B-011): an observation
+    about a skill (`kind = "skill_observation"`) or a suspected misconception
+    (`kind = "misconception_suspicion"`); fields of the other kind are null. Code turns it
+    into the element of WP12.1 (`quack.session.extraction`)."""
+
+    kind: Literal["skill_observation", "misconception_suspicion"]
+    skill: str
+    misconception: str | None
+    level: int | None = Field(ge=1, le=6)
+    outcome: Literal["success", "failure", "bypass"] | None
+    help: (
+        Literal[
+            "none",
+            "hint_direction",
+            "hint_key_step",
+            "hint_near_solution",
+            "after_example",
+            "solution_shown",
+        ]
+        | None
+    )
+    gap_type: (
+        Literal[
+            "no_idea",
+            "not_recognizing_when",
+            "confuses_similar",
+            "execution_error",
+            "slip",
+            "misconception",
+        ]
+        | None
+    )
+    quote: str
+    events: list[int]
+
+
+class ExtractorOutputV2(StrictModel):
+    """extractor@2 (WP12.1, D-B-011)."""
+
+    entries: list[ExtractorEntry]
+
+
 class CheckpointerOutput(StrictModel):
     rolling_summary: str
     open_threads: list[str]

@@ -204,8 +204,15 @@ class Settings(BaseSettings):
     max_hint_level: int = 3
     # ТЗ-П3 decision 8: tested_depth of skill_scores when the verdict comes without the LLM.
     compute_tested_depth: float = 0.5
-    # ТЗ-П3 A6: target_difficulty passed to task_gen@1.
+    # Phase 3 decision D-B-009: `score` of `task.evaluated` for the verdict of evaluator@1
+    # (`unclear` is "not checked", law 8: it falls back to the code verdict).
+    evaluator_verdict_scores: dict[Literal["correct", "partial", "incorrect"], float] = Field(
+        default_factory=lambda: {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
+    )
+    # ТЗ-П3 A6: difficulty of a task written by task_gen@1.
     default_target_difficulty: float = 0.5
+    # Phase 3 decision D-B-010: level of understanding asked from task_gen@1 (3 = applies).
+    task_gen_target_level: int = 3
     # WP15 (Т-§12.1, Т-§12.4): spoiler guard retries; numbers with |x| below this are not checked.
     guard_max_retries: int = 2
     spoiler_ignore_abs_below: int = 10

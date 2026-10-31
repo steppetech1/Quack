@@ -28,7 +28,10 @@ from quack.compute_client.client import (
 from quack.config import Settings
 from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
 from quack.llm.gateway import LLMGateway
+from quack.logging import get_logger
 from quack.practice.schemas import EvaluatorOutput
+
+log = get_logger(__name__)
 
 # Errors after which practice switches to its deterministic fallbacks (Т-§22.7, decision 4).
 LLM_ERRORS = (LLMUnavailableError, LLMBudgetExceededError, LLMSchemaError)
@@ -38,6 +41,8 @@ FEEDBACK_CORRECT = "Correct: your answer matches the reference answer."
 FEEDBACK_INCORRECT = "Not quite: your answer does not match the reference answer."
 
 EVALUATOR_ACTOR = "evaluator@1"
+# evaluator@1 names a misconception that is not in the known list as "new: <belief>".
+NEW_LABEL_PREFIX = "new:"
 CODE_ACTOR = "code"
 
 TASK_COLUMNS = (
@@ -219,7 +224,7 @@ async def evaluate_answer(
     else:
         evaluator = "llm"
 
-    skill_ids = task.skill_ids
+    misconception_names = [str(m) for m in task.target_misconceptions]
     try:
         result = await gateway.generate_structured(
             role="evaluator",
@@ -227,10 +232,10 @@ async def evaluate_answer(
             response_model=EvaluatorOutput,
             variables={
                 "prompt_text": task.prompt_text,
+                "rubric": rubric_lines(reference),
                 "reference_solution_json": reference,
+                "known_misconceptions": misconception_lines(misconception_names),
                 "student_answer": answer,
-                "target_skills_json": [{"skill_id": s} for s in skill_ids],
-                "known_misconceptions_json": task.target_misconceptions,
             },
             learner_id=learner_id,
             session_id=session_id,
@@ -238,21 +243,69 @@ async def evaluate_answer(
             idempotency_key=idempotency_key,
         )
     except LLM_ERRORS:
-        expected = reference.get("answer") or reference.get("sympy")
-        return _code_verdict(task, "hybrid", _matches(answer, expected, _squash), **common)
+        return _fallback_verdict(task, reference, answer, **common)
 
     verdict = result.value
+    if verdict.verdict == "unclear":
+        # Law 8: "unclear" is "not checked", not a failure; the code verdict decides.
+        log.info("evaluator_unclear", task_id=str(task.task_id), note=verdict.note)
+        return _fallback_verdict(task, reference, answer, **common)
+    score = settings.evaluator_verdict_scores[verdict.verdict]
+    is_correct = verdict.verdict == "correct"
     return AnswerVerdict(
         evaluator=evaluator,
-        is_correct=verdict.is_correct,
-        score=verdict.score,
+        is_correct=is_correct,
+        score=score,
         independence=common["independence"],
-        feedback=verdict.feedback,
+        feedback=FEEDBACK_CORRECT if is_correct else FEEDBACK_INCORRECT,
         skill_scores=[
-            s.model_dump(mode="json") for s in verdict.skill_scores if str(s.skill_id) in skill_ids
+            {"skill_id": s, "score": score, "tested_depth": common["tested_depth"]}
+            for s in task.skill_ids
         ],
-        triggered_misconceptions=[
-            m.model_dump(mode="json") for m in verdict.triggered_misconceptions
-        ],
+        triggered_misconceptions=_misconception_hits(verdict, misconception_names, task.skill_ids),
         actor=EVALUATOR_ACTOR,
     )
+
+
+def _fallback_verdict(
+    task: TaskToCheck, reference: dict[str, Any], answer: str, **common: Any
+) -> AnswerVerdict:
+    expected = reference.get("answer") or reference.get("sympy")
+    return _code_verdict(task, "hybrid", _matches(answer, expected, _squash), **common)
+
+
+def rubric_lines(reference: dict[str, Any]) -> str:
+    """Rubric block of `evaluator@1`: `R1: ...` per key point of the reference (WP6.4
+    `key_points`); without key points the reference solution is the single item R1."""
+    points = [str(p) for p in reference.get("key_points") or []]
+    if not points:
+        return "R1: the answer reaches the reference solution."
+    return "\n".join(f"R{i}: {point}" for i, point in enumerate(points, start=1))
+
+
+def misconception_lines(names: Sequence[str]) -> str:
+    """Known misconceptions with short labels `M1`... in the order of the task."""
+    if not names:
+        return "none"
+    return "\n".join(f"M{i}: {name}" for i, name in enumerate(names, start=1))
+
+
+def _misconception_hits(
+    verdict: EvaluatorOutput, names: Sequence[str], skill_ids: Sequence[str]
+) -> list[dict[str, Any]]:
+    """`triggered_misconceptions` from the label of the verdict: `M<i>` → the known name,
+    `new: <belief>` → the belief; bound to the first target skill. Unknown labels and tasks
+    without a target skill give none (the element is dropped, WP14.1)."""
+    found = verdict.misconception
+    if found is None or not skill_ids:
+        return []
+    label = found.label.strip()
+    name: str | None = None
+    if label.lower().startswith(NEW_LABEL_PREFIX):
+        name = label[len(NEW_LABEL_PREFIX) :].strip() or None
+    elif label.startswith("M") and label[1:].isdigit() and 1 <= int(label[1:]) <= len(names):
+        name = names[int(label[1:]) - 1]
+    if name is None:
+        log.info("evaluator_unknown_misconception_label", label=label)
+        return []
+    return [{"skill_id": skill_ids[0], "name": name, "misconception_id": None}]

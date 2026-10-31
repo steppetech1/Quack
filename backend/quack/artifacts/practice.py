@@ -40,8 +40,10 @@ from quack.practice.evaluation import (
     evaluate_answer,
     hint_penalties,
     load_task,
+    misconception_lines,
     task_from_row,
 )
+from quack.practice.generation import GeneratedTaskError, build_generated_task
 from quack.practice.schemas import TaskGenOutput
 
 __all__ = ["LLM_ERRORS", "give_hint", "next_task", "submit_answer"]
@@ -288,6 +290,7 @@ async def next_task(
         )
         return _bank_response(bank, degraded=False)
 
+    task_id = uuid5(QUACK_UUID_NS, f"task:{learner_id}:{session_id}:{body.idempotency_key}")
     try:
         result = await gateway.generate_structured(
             role="task_gen",
@@ -295,17 +298,19 @@ async def next_task(
             response_model=TaskGenOutput,
             variables={
                 "topic_name": topic_name,
-                "target_skills_json": [{"skill_id": skill_id, "name": skill["name"]}],
-                "excluded_families_json": excluded,
+                "target_skill": f"S1: {skill['name']}",
+                "target_level": settings.task_gen_target_level,
                 "kind": body.kind,
-                "target_difficulty": settings.default_target_difficulty,
+                "known_misconceptions": misconception_lines([]),
+                "excluded_families": ", ".join(excluded) if excluded else "none",
             },
             learner_id=learner_id,
             session_id=session_id,
             turn_id=body.turn_id,
             idempotency_key=_task_gen_key(session_id, body.idempotency_key),
         )
-    except LLM_ERRORS:
+        task = build_generated_task(result.value, body.kind, task_id, [])
+    except (*LLM_ERRORS, GeneratedTaskError):
         async with resources.session_factory() as session:
             fallback = await selection.fallback_bank_task(
                 session, learner_id, session_id, body.topic_id, skill_id, body.kind, excluded
@@ -319,8 +324,7 @@ async def next_task(
         )
         return _bank_response(fallback, degraded=True)
 
-    task = result.value
-    task_id = uuid5(QUACK_UUID_NS, f"task:{learner_id}:{session_id}:{body.idempotency_key}")
+    difficulty = settings.default_target_difficulty
     generated = NewEvent(
         type="task.generated",
         payload={
@@ -328,7 +332,7 @@ async def next_task(
             "domain_id": str(domain_id),
             "topic_id": str(body.topic_id),
             "family_id": task.family_id,
-            "difficulty": task.difficulty,
+            "difficulty": difficulty,
             "kind": body.kind,
             "prompt_text": task.prompt_text,
             "reference_solution": task.reference_solution,
@@ -346,7 +350,7 @@ async def next_task(
     return NextTaskResponse(
         task_id=task_id,
         family_id=task.family_id,
-        difficulty=task.difficulty,
+        difficulty=difficulty,
         kind=body.kind,
         prompt_text=task.prompt_text,
         degraded=False,

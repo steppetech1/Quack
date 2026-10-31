@@ -8,34 +8,90 @@ checked.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from quack.compute_client.client import MathMode
-from quack.events.payloads import MisconceptionEvalHit, SkillEvalScore, Unit
+from quack.events.payloads import Unit
 
 # --- Prompt output schemas of practice (moved from quack/artifacts/schemas.py, D-C-013) ---
 
 
-class TaskGenOutput(BaseModel):
-    """task_gen@1. `reference_solution` becomes `ReferenceSolution` before G1 (D-B-001)."""
+class TaskOption(BaseModel):
+    """`catches`: null only for the correct option; a misconception label (`M1`...),
+    "neighbor_idea" or "slip" for a wrong one."""
 
-    family_id: str
-    difficulty: Unit
-    prompt_text: str
-    reference_solution: dict[str, Any]
-    target_misconceptions: list[str] = []
+    label: str
+    text: str
+    correct: bool
+    catches: str | None
+
+
+type AnswerType = Literal[
+    "choice", "number", "expression", "set", "vector", "quantity", "proof", "free_text"
+]
+
+
+class TaskAnswer(BaseModel):
+    """`value`: the option label for `choice`; SymPy syntax for math types."""
+
+    type: AnswerType
+    value: str
+    units: str | None
+
+
+class TaskLevel(BaseModel):
+    skill: str
+    level: int = Field(ge=1, le=6)
+
+
+class PairTask(BaseModel):
+    statement: str
+    answer: str
+    differs_by: str
+
+
+class TaskGenOutput(BaseModel):
+    """task_gen@1 (D-B-010): the contract of the prompt plus the hint ladder `hints`; code
+    builds the `core.task_bank` row from it (`quack.practice.generation`)."""
+
+    statement: str
+    options: list[TaskOption]
+    answer: TaskAnswer
+    solution: str
+    hints: list[str]
+    tests: list[TaskLevel]
+    method_named: bool
+    variant_of: str | None
+    form: Literal["multistep", "explain_why", "what_breaks"] | None
+    pair_task: PairTask | None
+
+
+class RubricItemCheck(BaseModel):
+    """One rubric item of `evaluator@1`: `item` is its label (`R1`...)."""
+
+    item: str
+    status: Literal["found", "missing", "wrong"]
+    quote: str | None
+
+
+class EvaluatorMisconception(BaseModel):
+    """`label`: a known label (`M1`...) or `new: <the wrong belief in plain words>`."""
+
+    label: str
+    quote: str
 
 
 class EvaluatorOutput(BaseModel):
-    """evaluator@1."""
+    """evaluator@1 (D-B-009): the contract of the prompt; code maps `verdict` to the fields
+    of `task.evaluated` (`quack.practice.evaluation`)."""
 
-    is_correct: bool
-    score: Unit
-    feedback: str
-    skill_scores: list[SkillEvalScore]
-    triggered_misconceptions: list[MisconceptionEvalHit] = []
+    items: list[RubricItemCheck]
+    verdict: Literal["correct", "partial", "incorrect", "unclear"]
+    confidence: Unit
+    misconception: EvaluatorMisconception | None
+    note: str
 
 
 # --- core.task_bank.reference_solution (WP6.4) ---
