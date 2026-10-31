@@ -67,11 +67,11 @@
 
 | Где | Что сделать | Зачем |
 | :--- | :--- | :--- |
-| `quack/api/app.py` | `from quack.artifacts.router import router as artifacts_router` и `app.include_router(artifacts_router)` в `create_app` | Без этого эндпоинты ТЗ §3 не смонтированы (тесты монтируют роутер локально, ТЗ §0.1) |
-| `quack/cli.py`, команда воркера | `import quack.artifacts.cheatsheets  # noqa: F401` до создания `JobRunner` | Импорт регистрирует обработчики `session.finish_artifacts` и `artifact.refresh_cheatsheet`. Иначе раннер их не забирает, и задачи остаются в `queued` |
+| `quack/api/app.py` | `from quack.artifacts.router import router as artifacts_router` и `app.include_router(artifacts_router)` в `create_app`, рядом с `session_router` Потока 2 | Без этого эндпоинты ТЗ §3 не смонтированы (тесты монтируют роутер локально, ТЗ §0.1). Маршруты Потоков 2 и 3 не пересекаются |
+| `quack/cli.py`, команда воркера | `from quack.artifacts import cheatsheets as _artifact_workers  # noqa: F401`, по образцу импортов `quack.session` | Импорт регистрирует обработчики `session.finish_artifacts` и `artifact.refresh_cheatsheet`. Иначе раннер их не забирает, и задачи, которые ставит `finish_session` Потока 2, остаются в `queued` |
 | `docker-compose` (в репозитории его пока нет) | Сервис `compute`: образ `quack-compute`, `uvicorn quack_compute.app:app --host 0.0.0.0 --port 8001`, только внутренняя сеть без выхода в интернет, непривилегированный пользователь, без секретов и `.env` (Д-§5.1, Т-§6.5, Д-§7). У `api` — `COMPUTE_URL=http://compute:8001` | Бэкенд по умолчанию ходит на `http://localhost:8001` (`Settings.compute_url`) |
 | `quack/config.py` | Перенести поля `PracticeParams` из `quack/artifacts/params.py` в `Settings` | Решение 2 |
-| Поток 2 | Ставить задачу так: `kinds.session_finish_artifacts(learner, sid, {"domain_id": …, "topic_id": …})`. `topic_id` может быть `None`, тогда шпаргалка не обновляется. SSE сессии должен слушать `session:events:{sid}` и передавать дальше `cheatsheet_ready` | Формат payload, который ждёт `run_finish_artifacts` |
+| Поток 2 (проверено по `main`) | `finish_session` ставит `kinds.session_finish_artifacts(learner, sid, {"domain_id": …, "topic_id": … \| None})`; при `topic_id = None` шпаргалка не обновляется. SSE `GET /v1/sessions/{id}/events` пересылает `cheatsheet_ready` из `session:events:{sid}` | Формат совпадает с тем, что ждёт `run_finish_artifacts`; правки не нужны |
 | Прод | Задать `JWT_SECRET` длиной не меньше 32 байт | Dev-секрет из контракта JWT короче (20 байт): PyJWT предупреждает `InsecureKeyLengthWarning`, RFC 7518 §3.2 |
 
 ## 3. Известные риски
@@ -90,6 +90,7 @@
 | 10 | Воркер шпаргалки и экспорт читают Neo4j без ожидания проектора | Если проектор отстаёт, в шпаргалке или экспорте может не хватать последних свидетельств | Допустимо для фона; для экспорта можно перейти на `read_consistent_slice` |
 | 11 | В дайджесте навыки указаны только id (промпт читает только `core.events`, имена навыков — в Neo4j) | Шаблонный дайджест показывает UUID; LLM получает id без имён | Решить, читать ли имена навыков из Neo4j |
 | 12 | Т-§17.2–17.6 (блоки, `owner = learner`, проверка «одна страница» через PDF) в срезе нет: артефакт — один `content_md` | Правки ученика не защищены от перегенерации, но шпаргалку пишет только система, а заметки — только ученик | Вне хакатонного среза |
+| 13 | **`independence` в `main` считается двумя способами.** Наш `submit` применяет решение 1 (Т-§7.4): `round(1 − max(штрафов), 4)`. Ход Потока 2 (`quack/session/tasks.py: compute_independence`) читает те же `task.hint_given`, но берёт `max(0.1, 1 − Σ штрафов − 0.25·(hints_used − записанные))`, где `hints_used` приходит от клиента. Без LLM `tested_depth` у нас 0.5 (решение 8), у них — `task.difficulty` | Одна и та же задача даёт разный вес свидетельства в зависимости от пути ответа: в чате или через практику. С подсказками 1 и 2 у нас 0.5, у них 0.25; со всеми тремя — 0.25 против 0.1. Клиент может занизить `independence` хода, прислав `hints_used` | Команда: выбрать одно правило (решение 1 или ТЗ §2.2) и вынести его в общий код |
 
 ## 4. Команды
 
