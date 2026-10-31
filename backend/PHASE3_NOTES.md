@@ -875,6 +875,37 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   и `jsonschema`), `T-L10`.
 - Требует подтверждения владельцем: нет
 
+### D-B-022. `turn.extract` на `extractor@2`: эпизод, окно и входные блоки
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP12 (сторона B, §7.3 п.5); `quack/session/workers.py::run_turn_extract`,
+  `quack/session/extraction.py`, `Settings.episode_context_turns`
+- Решение:
+  1. Эпизод. `episode.closed` в Фазе 3 нет (`Т-§7.5` — диспетчер следующей фазы), задача
+     ставится на ход. Эпизод — события сессии после предыдущего `turn.teacher_replied` до
+     `teacher_seq` хода включительно (реплика и ответ ученика, подсказки, проверки, ответ
+     учителя и выданная задача). Окно — `episode_context_turns` = 3 хода перед ним (`Т-§7.5`,
+     стартовое значение), только для понимания.
+  2. Строки событий собирает код (`Т-§10`, на английском): `[seq] learner: …`,
+     `[seq] learner's answer to the problem: …`, `[seq] teacher: …`, `[seq] problem given: …
+     (tests: S1)`, `[seq] automatic check of the learner's answer: correct|incorrect`,
+     `[seq] hint, step k of 3: …`; пусто — `(none)`. Кандидаты — навыки темы сессии
+     (`S1: <имя>`), заблуждения — `M1 (skill S1): <имя>`; ID в запрос не попадают (`Т-§4.5`).
+     «Ближайших по вектору» (`Т-§7.6`) в срезе нет.
+  3. Уровней разметки задач (1–6, `Т-§5.2`) в банке нет — `task_levels` пуст (R9).
+  4. Вызов: `extractor@2`, ключ `extract:{turn_id}:v2`; элементы — `extracted_elements`
+     (C, шов S6), отклонённые пишутся с причиной; событие `turn.extracted` `schema_version = 2`,
+     actor `extractor@2`; повтор — `evidence.superseded` прежнего, как раньше.
+- Правки тестов (§8.9 п.9): `test_turn_extract_worker` — ответ `ExtractorOutputV2`, проверки
+  v2 (элементы, `schema_version`, actor, ключ `…:v2`, строки промпта по меткам и отсутствие ID);
+  событие, публикация `extractor_done` и вытеснение при повторе — как раньше.
+  `test_extract_quote_grounding` (`…_are_dropped` → `…_are_not_applied`): цитата не из реплик
+  ученика и цитата из реплики учителя записываются с `quote_not_in_source` /
+  `source_outside_episode` и не применяются (`Т-§7.6`), обоснованный элемент применяется —
+  проверка строже прежней (причина видна). `test_worker_pool_and_slice` — ответ v2.
+  Фикстуры: `ExtractorOutputV2` в `SCHEMA_ROLES` (`tests/session/fixtures.py`) и ответ по
+  умолчанию `{"entries": []}` в `tests/support/llm.py` (S9).
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1323,6 +1354,7 @@ _(пусто)_
 | WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
 | WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
 | WP5.7 (адаптер) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py` (коммит `3d76160`) | 10 failed, 23 passed: `T-L8` ×9 и `T-L10` — `NotImplementedError` в `ResponsesClient`; `T-L9` (экземпляр, `jsonschema`) зелёный |
+| WP12 (обработчик B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_turn_extract_worker.py tests/session/test_extract_quote_grounding.py tests/session/test_worker_pool_and_slice.py` (коммит `539f863`) | 3 failed, 1 passed: обработчик пишет `turn.extracted` v1 через `extractor@1` |
 
 ## Правки тестов
 
