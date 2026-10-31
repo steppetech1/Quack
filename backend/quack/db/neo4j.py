@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import LiteralString, cast
 
-from neo4j import AsyncDriver, AsyncGraphDatabase, Query
+from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession, Query
 
 from quack.config import Settings
 
@@ -61,6 +63,14 @@ def schema_statements() -> list[str]:
         cols = ", ".join(f"n.{p}" for p in props)
         statements.append(f"CREATE INDEX {name} IF NOT EXISTS FOR (n:{label}) ON ({cols})")
     return statements
+
+
+@asynccontextmanager
+async def read_session(driver: AsyncDriver) -> AsyncIterator[AsyncSession]:
+    """A Neo4j session in READ access mode (law 3, ТЗ Фазы 3 WP4.1). Code outside the
+    projector, ops rebuild/purge and `verify_schema` opens Neo4j sessions only through this."""
+    raise NotImplementedError
+    yield  # pragma: no cover - makes this an async generator for the context manager
 
 
 async def verify_schema(driver: AsyncDriver) -> list[str]:
