@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import httpx
@@ -17,11 +17,16 @@ from quack.api.resources import AppResources, get_compute, get_llm
 from quack.config import FoldParams
 from quack.db.postgres import SessionFactory
 from quack.events import append_events
+from quack.events.payloads import SkillEvalScore, TaskEvaluated
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
 from quack.session.schemas import TeacherOutput
-from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER, resolve_degraded_mode
+from quack.session.turn_policy import (
+    MEMORY_UNAVAILABLE_MARKER,
+    resolve_degraded_mode,
+    teacher_reasoning_effort,
+)
 from tests.factories import new_event
 from tests.session.fixtures import FakeComputeClient, FakeLLMProvider, SeededDomain
 from tests.session.helpers import parse_sse, task_label
@@ -148,6 +153,76 @@ async def test_turn_survives_neo4j_outage(
     graph = await client.get(f"/v1/domains/{seeded_domain.domain_id}/graph", headers=auth_headers)
     assert graph.status_code == 503, graph.text
     assert graph.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
+
+
+# --- T-H9 (table part) -----------------------------------------------------------------
+
+_SKILL_A, _SKILL_B = uuid4(), uuid4()
+
+
+def _verdict(is_correct: bool, *skills: UUID) -> TaskEvaluated:
+    return TaskEvaluated(
+        session_id=uuid4(),
+        turn_id=uuid4(),
+        task_id=uuid4(),
+        evaluator="compute",
+        is_correct=is_correct,
+        score=1.0 if is_correct else 0.0,
+        independence=1.0,
+        feedback="",
+        skill_scores=[SkillEvalScore(skill_id=s, score=0.0, tested_depth=0.5) for s in skills],
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "is_first_turn", "evaluations", "expected"),
+    [
+        ("teacher", True, [], "high"),
+        ("teacher", False, [], "low"),
+        ("teacher", False, [_verdict(False, _SKILL_A)], "low"),
+        ("teacher", False, [_verdict(False, _SKILL_A), _verdict(False, _SKILL_A)], "high"),
+        ("teacher", False, [_verdict(False, _SKILL_A), _verdict(False, _SKILL_B)], "low"),
+        ("teacher", False, [_verdict(False, _SKILL_A), _verdict(True, _SKILL_A)], "low"),
+        (
+            "teacher",
+            False,
+            [_verdict(False, _SKILL_A), _verdict(False, _SKILL_A), _verdict(True, _SKILL_A)],
+            "low",
+        ),
+        (
+            "teacher",
+            False,
+            [
+                _verdict(True, _SKILL_B),
+                _verdict(False, _SKILL_A, _SKILL_B),
+                _verdict(False, _SKILL_B),
+            ],
+            "high",
+        ),
+        ("teacher_fallback", True, [], "low"),
+        (
+            "teacher_fallback",
+            False,
+            [_verdict(False, _SKILL_A), _verdict(False, _SKILL_A)],
+            "low",
+        ),
+    ],
+)
+def test_teacher_reasoning_effort_by_situation(
+    role: Literal["teacher", "teacher_fallback"],
+    is_first_turn: bool,
+    evaluations: list[TaskEvaluated],
+    expected: str,
+) -> None:
+    """T-H9, table part (WP6.5, Т-§12.9): `high` on the first turn and on the second failure
+    in a row on one skill; `low` otherwise; `teacher_fallback` always `low`. The turn part
+    (request, manifest, ledger) waits for the gateway parameter (WP5) and WP14.2."""
+    assert (
+        teacher_reasoning_effort(
+            role=role, is_first_turn=is_first_turn, session_evaluations=evaluations
+        )
+        == expected
+    )
 
 
 # --- T-H2 --------------------------------------------------------------------------------
