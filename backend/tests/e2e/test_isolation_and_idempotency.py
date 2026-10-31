@@ -135,6 +135,8 @@ async def _advance(system: System, ids: Ids, method: str, path: str, payload: An
     if (method, path) == ("POST", "/v1/sessions"):
         return replace(ids, session_id=UUID(payload["session_id"]))
     if path.endswith("/turns"):
+        # The turn's background jobs write events; the next step counts them.
+        await system.settle()
         started = first(payload, "turn_started")
         assert started is not None
         return replace(ids, turn_id=UUID(started["turn_id"]))
