@@ -572,3 +572,27 @@ async def test_answer_after_finish_conflicts_and_second_finish_replays_stored_re
 
     assert len(await _events(db, learner_id, "diagnostic.completed")) == 1
     assert len(await _events(db, learner_id)) == len(events_after_finish)
+
+
+async def test_finish_same_key_other_session_is_conflict(
+    api_client: httpx.AsyncClient,
+    seeded_learner: tuple[UUID, str],
+    diag_domain: DiagDomain,
+    fake_llm_provider: FakeLLMProvider,
+    db: SessionFactory,
+) -> None:
+    """T-E2: `finish` with a used key and another `session_id` is 409 `IDEMPOTENCY_CONFLICT`,
+    also when that session does not exist: the key is checked before the session."""
+    learner_id, token = seeded_learner
+    domain_id = diag_domain.domain_id
+    _queue_question(fake_llm_provider, "k1")
+    started = await _start(api_client, token, domain_id)
+    key = f"diag-finish-key:{started['session_id']}"
+    first = await _finish(api_client, token, domain_id, started["session_id"], key=key)
+    assert first.status_code == 200, first.text
+    events = len(await _events(db, learner_id))
+
+    other = await _finish(api_client, token, domain_id, uuid4(), key=key)
+    assert other.status_code == 409, other.text
+    assert other.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert len(await _events(db, learner_id)) == events
