@@ -156,7 +156,7 @@ class System:
             self.settings,
             self.session_factory,
             f"e2e-{uuid4().hex[:8]}",
-            handlers,
+            handlers=handlers,
             context=job_context(self.resources),
         )
         self._spawn(runner.run_forever)
