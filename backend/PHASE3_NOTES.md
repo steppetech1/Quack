@@ -62,7 +62,7 @@
 | WP5 | B | не начат | — |
 | WP6 | B | не начат | — |
 | WP7 | C | не начат | — |
-| WP8 | A, C | не начат | — |
+| WP8 | A, C | WP8.7 (C): выполнено — `ops openapi` (функция `write_openapi`), снимок `backend/openapi.json`, `ErrorResponse` и SSE в схеме (D-C-015); остальное — не начато | `T-A7` + 3 теста схемы зелёные; всего 456 passed |
 | WP9 | A | не начат | — |
 | WP10 | C | WP10.1 стенд `system` и WP10.2 `T-E1`…`T-E10` — написаны (красные, ветка `phase-3-c-e2e-red`); WP10.3 — не начат | 6 красных, 4 зелёных на текущем коде |
 | WP11 | A | не начат | — |
@@ -622,6 +622,32 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 - Тесты: `T-A1`, `T-A4`, `T-A5`, `T-A6`, `tests/test_ratelimit.py`, `tests/test_thresholds_in_settings.py` (все зелёные).
 - Требует подтверждения владельцем: нет
 
+### D-C-015. `ops openapi`: где живёт `write_openapi` и правила кодов ошибок (WP8.7)
+- Класс: B
+- WP / место: WP8.7, §4.1; `quack/api/openapi.py`, `quack/api/app.py::write_openapi`, `backend/openapi.json`
+- Контекст: (1) поток A подключил `ops openapi --out PATH` к `quack.api.openapi.write_openapi(path)`
+  (ветка `phase-3-a-wp2-pr`). Но `write_openapi` собирает приложение (`create_app`), а
+  `quack.api.openapi` — слой «основание API», которому импорт `quack.api.app` запрещён (§4.1, `T-A6`).
+  (2) WP8.7 требует `ErrorResponse` для 401, 404, 409, 422, 429, 503 «там, где они возможны»;
+  точного перечня по эндпоинтам ТЗ не даёт, а роутеры `session` — зона B.
+- Варианты: (1) `write_openapi(path: Path) -> None` в `quack.api.app` (сборка), сериализация и
+  правила — в `quack.api.openapi`; A меняет одну строку импорта; (2) оставить в `quack.api.openapi`
+  с импортом внутри функции — нарушает §4.1; (3) правила в каждом роутере — правка зоны B.
+- Решение: (1). Ошибки описываются одним местом, `install_openapi(app)`, по правилам для `/v1/*`:
+  503 — всегда (общие обработчики `LLM_DEGRADED` и шов S7 действуют на всё приложение); 401 —
+  кроме `register`/`login`; 404 — путь с параметром; 409 — POST/PATCH/DELETE (ключ идемпотентности,
+  `TURN_LOCKED`, конфликты состояния); 429 — POST/PATCH/DELETE, кроме heartbeat (WP1.5); 422 —
+  есть параметры или тело. Стандартные `HTTPValidationError`/`ValidationError` FastAPI заменены на
+  `ErrorResponse`: так приложение и отвечает (`VALIDATION_ERROR`). SSE-эндпоинты (`turns`, `events`,
+  далее `learner/stream` WP7) описаны как `text/event-stream`. `/health/live`, `/health/ready`
+  получили модели ответа (`HealthLive`, `HealthReady`), поведение не менялось.
+  Правила — верхняя граница: клиент обязан уметь обработать описанный код.
+- Почему: §0.4.4 п.11 и §4.1 (чужой файл и слои не нарушаются); §0.4.3 п.3 — одно место отката.
+- Обратимость: таблицы и `_error_statuses` в `quack/api/openapi.py`; перегенерировать снимок.
+- Тесты: `T-A7` `test_openapi_snapshot_is_current`, `test_write_openapi_is_deterministic`,
+  `test_openapi_documents_every_response`, `test_sse_endpoints_document_event_stream`.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -634,6 +660,7 @@ _(пусто)_
 | WP1.1, 1.4–1.6 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py tests/test_ratelimit.py tests/test_thresholds_in_settings.py tests/domains/test_curation_thresholds.py` (коммит `f00f41d`) | 20 failed, 5 errors, 6 passed (T-A1 route order/mount, T-A4/T-A5 ratelimit stub, T-A6 imports, local fallback, curation deferral, thresholds in Settings) |
 | WP10.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 6 failed, 4 passed. Падают: `T-E1` — нет колонки `ops.jobs.required_seq` (A, WP3.1/WP11); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200, ждали 409 (**дефект C**, `domains`); `T-E3` — `GET /v1/topics/{id}/cheatsheet` чужой темы → `200 null`, ждали 404 (**дефект C**, `artifacts`, STREAM3_NOTES риск 9); `T-E5` — обработчики задач не берут шлюз из `JobContext`, извлечение идёт мимо `ScriptedLLMProvider` (A, WP2.1); `T-E8` — ограничитель fail-open без Redis (C, WP1.5); `T-E10` — нет `purge_deleted_interval_s` и планировщика (A, WP3.3). Зелёные уже на текущем коде: `T-E4`, `T-E6`, `T-E7`, `T-E9` — проверяют поведение Фаз 1–2; DoD п.3 («были красными») для них не выполним, проверка «тест падает на заведомо неверной реализации» (§8.9) — не делалась |
 | WP2, WP3.1–3.2, WP3.4 (Этап II) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_jobs_phase3.py` | 7 failed, 0 passed: `T-Q1` (захват игнорирует `required_seq`), `T-Q2` (склейка не пишет `required_seq`), `T-Q3`/`T-Q4` (`JobDeferred` идёт по ветке повтора, `attempt` растёт), `T-Q7` (`register_all_handlers` — `NotImplementedError`), `T-Q8` (бюджет не маршрутизируется), `T-Q9` (нарушения в `domains`, `session`, `artifacts`). Остальной набор: 423 passed |
+| WP8.7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k "openapi or sse_endpoints"` (коммит `1eec6bd`) | 4 failed: `T-A7` — нет `backend/openapi.json`; `write_openapi` — `NotImplementedError`; схема — нет `ErrorResponse`, 422 описан `HTTPValidationError`; SSE-эндпоинты — `application/json` без модели |
 
 ## Правки тестов
 

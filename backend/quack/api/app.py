@@ -11,9 +11,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import text
 
 from quack.api.errors import install_error_handlers
+from quack.api.openapi import install_openapi, render_openapi
 from quack.api.ratelimit import enforce_action_rate_limit
 from quack.api.resources import AppResources, create_app_resources, get_resources
 from quack.config import Settings, get_settings
@@ -24,6 +26,15 @@ from quack.logging import configure_logging, get_logger, log_context
 __all__ = ["AppResources", "create_app", "get_resources", "write_openapi"]
 
 log = get_logger(__name__)
+
+
+class HealthLive(BaseModel):
+    status: str
+
+
+class HealthReady(BaseModel):
+    status: str
+    checks: dict[str, str]
 
 
 def _trace_id(request: Request) -> str:
@@ -46,11 +57,15 @@ async def _check(probe: Callable[[], Awaitable[object]], timeout_s: float) -> st
 def _health_router() -> APIRouter:
     router = APIRouter(prefix="/health", tags=["health"])
 
-    @router.get("/live")
+    @router.get("/live", response_model=HealthLive)
     async def live() -> dict[str, str]:
         return {"status": "ok"}
 
-    @router.get("/ready")
+    @router.get(
+        "/ready",
+        response_model=HealthReady,
+        responses={503: {"model": HealthReady, "description": "a dependency is down"}},
+    )
     async def ready(request: Request) -> JSONResponse:
         resources: AppResources | None = getattr(request.app.state, "resources", None)
         if resources is None:
@@ -104,6 +119,7 @@ def create_app(
     app.state.settings = settings
     app.state.resources = resources
     install_error_handlers(app)
+    install_openapi(app)
 
     @app.middleware("http")
     async def request_context(
@@ -137,4 +153,4 @@ def create_app(
 def write_openapi(path: Path) -> None:
     """`ops openapi --out PATH`: write the schema of `create_app` (WP8.7). Lives in the
     assembly layer because it builds the app (§4.1, PHASE3_NOTES D-C-015)."""
-    raise NotImplementedError
+    path.write_bytes(render_openapi(create_app()))

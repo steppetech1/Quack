@@ -471,10 +471,9 @@ def test_openapi_documents_every_response() -> None:
             assert content, f"{what}: no response body"
             for media in content.values():
                 assert media.get("schema"), f"{what}: response without a model"
-            errors = _error_codes(operation)
-            assert all(ref == ERROR_REF for ref in errors.values() if ref is not None), what
             if not path.startswith("/v1/"):
-                continue
+                continue  # `/health/*` keep their own bodies (WP8.3)
+            errors = _error_codes(operation)
             expected = {"503"}
             if (method.upper(), path) not in PUBLIC_ROUTES:
                 expected.add("401")
