@@ -6,8 +6,6 @@ from __future__ import annotations
 from typing import Literal, LiteralString
 from uuid import UUID
 
-from neo4j import READ_ACCESS
-
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources
 from quack.artifacts.schemas import (
@@ -22,6 +20,7 @@ from quack.artifacts.schemas import (
     SearchResponse,
 )
 from quack.artifacts.store import ARTIFACT_VIEW_COLUMNS, fetch_rows
+from quack.db.neo4j import read_session
 from quack.events.catalog import TEXT_EVENT_TYPES
 from quack.graph.topic_display import INACTIVE_SKILL_STATUSES, INACTIVE_TOPIC_STATUSES
 
@@ -128,7 +127,7 @@ async def export_domain(
     if not domains:
         raise ApiError("NOT_FOUND", "domain not found", status_code=404)
 
-    async with resources.neo4j.session(default_access_mode=READ_ACCESS) as session:
+    async with read_session(resources.neo4j) as session:
         result = await session.run(
             _DOMAIN_TOPICS,
             {

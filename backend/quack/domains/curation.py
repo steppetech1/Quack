@@ -11,14 +11,13 @@ from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
-import neo4j
 import orjson
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
 
 from quack.config import Settings
-from quack.db.neo4j import create_driver
+from quack.db.neo4j import create_driver, read_session
 from quack.db.redis import create_redis, presence_key
 from quack.domains.schemas import CuratorOutput
 from quack.events.append import append_events
@@ -69,18 +68,11 @@ class _DomainGraph:
     prereq_edges: list[dict[str, Any]]
 
 
-def _read_session(driver: AsyncDriver) -> Any:
-    try:
-        return driver.session(default_access_mode=neo4j.READ_ACCESS)
-    except TypeError:  # minimal driver doubles without the `default_access_mode` keyword
-        return driver.session()
-
-
 async def _load_domain_graph(
     driver: AsyncDriver, learner_id: UUID, domain_id: UUID
 ) -> _DomainGraph:
     params = {"d": str(domain_id), "l": str(learner_id)}
-    async with _read_session(driver) as s:
+    async with read_session(driver) as s:
         d_res = await s.run(
             "MATCH (d:Domain {id: $d, learnerId: $l}) RETURN d.name AS name", params
         )
@@ -140,7 +132,7 @@ async def _read_domain_graph(
         return await _loader()
 
     async def _applied_seq(learner: UUID) -> int:
-        async with _read_session(driver) as s:
+        async with read_session(driver) as s:
             res = await s.run(
                 "MATCH (l:Learner {id: $id}) RETURN l.appliedSeq AS seq", {"id": str(learner)}
             )
