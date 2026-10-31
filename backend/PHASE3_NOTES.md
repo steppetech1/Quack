@@ -703,6 +703,32 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-019. WP15: защита от спойлера — что считается активной задачей и как сравнивается ответ
+- Класс: C
+- WP / место: WP15; `quack/session/spoiler_guard.py`, `quack/session/turns.py::_guard_spoiler`
+- Решение:
+  1. Активная задача — выдана в этой сессии (`task.assigned`) до текущего хода, по ней нет
+     верного `task.evaluated` и нет подсказки ступени `max_hint_level` (признак просьбы
+     решения по аудиту WP0). Задача, которую этот ход проверил как верную, закрыта.
+  2. Ответ — из ключей банка D-B-010: `math` — `sympy`, `choice` — `answer` (текст верного
+     варианта; у задач банка без `answer` не проверяется), `open` — не проверяется.
+     Сравнение — локальная нормализация (без вызова `compute` на каждую попытку): регистр,
+     `**` → `^`, степени-индексы, пробелы у операторов, без `*`; число — по значению,
+     выражение и текст варианта — целым токеном. Целые с модулем меньше
+     `spoiler_ignore_abs_below` и однобуквенные ответы не проверяются.
+  3. Повтор — та же роль (`teacher` или `teacher_fallback`), тот же уровень рассуждения,
+     ключ `…:guard<N>`; до `guard_max_retries`, затем удаляется предложение с ответом.
+     `LLMBudgetExceededError` на повторе → `budget_exceeded`, недоступность → `llm_unavailable`
+     (общий обработчик хода). Лог `guard_violation`: правило, сессия, ход, задача, попытка,
+     действие; без текста ученика и ответа.
+  4. Причина повтора идёт модели данными в переменной `guard_reason` (JSON `{"rule":
+     "spoiler", "task_label": "K…"}`; метки нет, если задача вне таблицы вызова; пустая строка
+     на первой попытке). **В `teacher@1` места `{{ guard_reason }}` нет** — лишняя переменная
+     не подставляется, модель причину не видит. Добавить блок в промпт — работа владельца
+     (промпты).
+- Тесты: `T-G1`–`T-G4` (`tests/session/test_spoiler_guard.py`).
+- Требует подтверждения владельцем: да — п.1 (признак просьбы) и п.4 (блок в промпте).
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1061,6 +1087,7 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
 
 ## Правки тестов
 

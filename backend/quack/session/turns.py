@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from typing import Any, Literal
 from uuid import UUID, uuid5
 
@@ -43,6 +43,7 @@ from quack.practice.selection import pick_task
 from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
 from quack.session.schemas import TeacherOutput, TurnRequest
+from quack.session.spoiler_guard import find_spoiler, guarded_tasks, remove_spoiler_sentences
 from quack.session.tasks import assigned_task_ids_from_overlay, solved_families_from_overlay
 from quack.session.teacher_labels import (
     TeacherDecision,
@@ -158,6 +159,49 @@ async def _admit_teacher(resources: AppResources, settings: Settings) -> None:
     if left * 1000 > settings.teacher_admission_wait_ms:
         raise LLMRateLimitedError(f"teacher: {model} is under pressure", retry_after_sec=left)
     await asyncio.sleep(left)
+
+
+async def _guard_spoiler(
+    resources: AppResources,
+    settings: Settings,
+    learner_id: UUID,
+    session_id: UUID,
+    turn_id: UUID,
+    output: TeacherOutput,
+    *,
+    closed_now: UUID | None,
+    task_label: Callable[[UUID], str | None],
+    retry: Callable[[dict[str, Any], int], Awaitable[TeacherOutput]],
+) -> TeacherOutput:
+    """WP15 (Т-§12.1, Т-§12.4): the reply goes back to the model while it reveals the answer of
+    an active task, at most `guard_max_retries` times; then code removes the sentence. The
+    log record carries no text of the learner or of the reply."""
+    async with resources.session_factory() as session:
+        guarded = await guarded_tasks(
+            session, learner_id, session_id, settings, closed_now=closed_now
+        )
+    attempt = 0
+    while (spoiled := find_spoiler(output.reply_text, guarded, settings)) is not None:
+        final = attempt >= settings.guard_max_retries
+        log.warning(
+            "guard_violation",
+            rule="spoiler",
+            session_id=str(session_id),
+            turn_id=str(turn_id),
+            task_id=str(spoiled.task_id),
+            attempt=attempt,
+            action="sentence_removed" if final else "retry",
+        )
+        if final:
+            reply = remove_spoiler_sentences(output.reply_text, guarded, settings)
+            return output.model_copy(update={"reply_text": reply})
+        attempt += 1
+        reason: dict[str, Any] = {"rule": "spoiler"}
+        label = task_label(spoiled.task_id)
+        if label is not None:
+            reason["task_label"] = label
+        output = await retry(reason, attempt)
+    return output
 
 
 async def open_turn(
@@ -404,16 +448,26 @@ async def open_turn(
             evaluations.append(current_evaluation)
         teacher_key = f"turn:{session_id}:{body.idempotency_key}:teacher"
 
-        async def ask_teacher(role: Literal["teacher", "teacher_fallback"]) -> TeacherOutput:
+        async def ask_teacher(
+            role: Literal["teacher", "teacher_fallback"],
+            *,
+            guard_reason: dict[str, Any] | None = None,
+            attempt: int = 0,
+        ) -> TeacherOutput:
+            key = teacher_key if role == "teacher" else f"{teacher_key}:fallback"
             result = await gateway.generate_structured(
                 role=role,
                 prompt_version=1,
                 response_model=TeacherOutput,
-                variables=variables,
+                # WP15: a retry carries the reason of the guard as data.
+                variables={
+                    **variables,
+                    "guard_reason": "" if guard_reason is None else json.dumps(guard_reason),
+                },
                 learner_id=learner_id,
                 session_id=session_id,
                 turn_id=turn_id,
-                idempotency_key=teacher_key if role == "teacher" else f"{teacher_key}:fallback",
+                idempotency_key=key if attempt == 0 else f"{key}:guard{attempt}",
                 prompt_role="teacher" if role == "teacher_fallback" else None,
                 reasoning_effort=teacher_reasoning_effort(
                     role=role,
@@ -434,6 +488,25 @@ async def open_turn(
                 log.warning("teacher_fallback", reason=exc.reason, session_id=str(session_id))
                 teacher_output = await ask_teacher("teacher_fallback")
                 used_fallback = True
+            teacher_output = await _guard_spoiler(
+                resources,
+                settings,
+                learner_id,
+                session_id,
+                turn_id,
+                teacher_output,
+                closed_now=(
+                    submitted_task.task_id
+                    if submitted_task is not None and verdict is not None and verdict.is_correct
+                    else None
+                ),
+                task_label=lambda task_id: labels.label("task", task_id),
+                retry=lambda reason, attempt: ask_teacher(
+                    "teacher_fallback" if used_fallback else "teacher",
+                    guard_reason=reason,
+                    attempt=attempt,
+                ),
+            )
             decision = resolve_teacher_output(teacher_output, labels)
         except (LLMBudgetExceededError, LLMUnavailableError, LLMSchemaError) as exc:
             llm_degraded_mode = (
