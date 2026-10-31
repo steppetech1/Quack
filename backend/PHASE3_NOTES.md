@@ -1043,6 +1043,34 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/graph/test_evidence_law4.py` — `T-W1`…`T-W6` (27 тестов).
 - Требует подтверждения владельцем: нет
 
+### D-C-023. WP10.3: `meta-mock` — значения, которых нет в документах
+- Класс: C
+- WP / место: WP10.3, `Д-§11`, `Т-§11.8`; `backend/loadtest/meta_mock.py`, `tests/test_meta_mock.py`
+- Контекст: WP10.3 задаёт поведение подменного сервера, но не все значения: имя и значение
+  параметра длины ответа учителя, число токенов рассуждения, счёт токенов «по длине», вид
+  «короткого текста», выбор доли ответов, тела ошибок. Адаптер `ResponsesClient` (WP5.7, B) —
+  пока только сигнатура (D-B-004), поэтому формат на проводе берётся из контракта Responses API
+  (`Т-§11.1`, `T-L8`), а не из адаптера (по ответу B).
+- Варианты: (1) взять значения из кода стенда и записать здесь, менять без правки контракта;
+  (2) ждать владельца.
+- Решение: (1). `META_MOCK_TEACHER_CHARS` = 600 (длина `reply_text` в ответе на
+  `TeacherOutput`; относится ко всем свободным строкам этой схемы); токены рассуждения: `low` —
+  256, `high` — 1024; токены = ⌈символы / 4⌉ (вход — JSON поля `input`); короткий текст —
+  `text`; `boolean` — `false`; число без границ — 0, с одной границей — граница; `uuid`,
+  `date-time`, `date` — фиксированные значения; `minItems` соблюдается. Доля 429 и доля
+  обрывов — детерминированный счётчик (доля 0,5 — каждый второй), чтобы тесты не зависели от
+  случая. `retry-after` для доли 429 — 1 с, для пустого ведра — время до пополнения; формат
+  `mixed` идёт по кругу `seconds` → `http-date` → `none`. С `tools` шаги чередуют один и два
+  `function_call`, аргументы — минимальный экземпляр `parameters` инструмента. Уровень, кроме
+  `high`, считается `low` (в `Settings` других нет). Процесс — Starlette, запуск
+  `uvicorn --factory loadtest.meta_mock:app_from_env`; `loadtest` добавлен в `include` pyright.
+  `minimal_instance` — общий генератор для `T-L9` (B импортирует его из `loadtest.meta_mock`).
+- Почему: §0.4.3 п.2 (меньше нового); значения — стенда, не продукта; ни одно не влияет на
+  продуктовый код.
+- Обратимость: константы в одном модуле.
+- Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -1061,6 +1089,7 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
 
 ## Правки тестов
 
