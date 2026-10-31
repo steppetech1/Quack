@@ -1,6 +1,7 @@
 """Fixtures of Stream 3 tests (ТЗ §5 п.2–3).
 
-The router is mounted locally on `create_app(settings, connect=False)` (ТЗ §0.1).
+`create_app(settings, connect=False)` mounts every router; resources come from
+`tests.support.resources` (ТЗ Фазы 3 §8.1).
 `httpx.ASGITransport` does not run the lifespan, so the shared test pools are attached to
 `app.state.resources` by hand and are not closed here. The LLM provider and the compute
 service are in-memory doubles behind the real `LLMGateway` and `ComputeClient`.
@@ -25,9 +26,8 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from quack.api.app import AppResources, create_app
-from quack.artifacts.deps import WorkerDeps, get_compute_client, get_llm_gateway
-from quack.artifacts.router import router
+from quack.api.app import create_app
+from quack.artifacts.deps import WorkerDeps
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
@@ -37,6 +37,7 @@ from quack.graph.worker import ProjectorWorker
 from quack.llm.gateway import LLMGateway
 from quack.llm.provider import ProviderRequest, ProviderResponse
 from tests.factories import new_event
+from tests.support.resources import build_app_resources
 
 # ТЗ Потока 1 §2.1 п.2: HS256; with an empty `jwt_secret` in dev/test this constant signs.
 DEV_JWT_SECRET = "quack-dev-jwt-secret"
@@ -122,14 +123,15 @@ def app(
     fake_compute: FakeCompute,
 ) -> FastAPI:
     application = create_app(settings, connect=False)
-    application.include_router(router)
-    application.state.resources = AppResources(
-        engine=pg_engine, session_factory=db, neo4j=neo4j, redis=redis
+    application.state.resources = build_app_resources(
+        settings,
+        pg_engine,
+        neo4j,
+        redis,
+        session_factory=db,
+        provider=fake_provider,
+        compute=fake_compute,
     )
-    application.dependency_overrides[get_llm_gateway] = lambda: LLMGateway(
-        db, fake_provider, settings
-    )
-    application.dependency_overrides[get_compute_client] = lambda: fake_compute
     return application
 
 

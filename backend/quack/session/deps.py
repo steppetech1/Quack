@@ -1,28 +1,22 @@
-"""FastAPI dependencies: Bearer JWT, tombstone check and turn rate limit (ТЗ §2.1)."""
+"""FastAPI dependencies of the session stream: settings, Redis, auth and turn rate limit."""
 
 from __future__ import annotations
 
 from uuid import UUID
 
-import jwt
 from fastapi import Request
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import text
 
-from quack.api.app import AppResources, get_resources
+from quack.api.auth import get_current_learner_id
 from quack.api.errors import ApiError
-from quack.compute_client.client import ComputeClient
+from quack.api.resources import AppResources, get_compute, get_llm
 from quack.config import Settings, get_settings
 from quack.db.redis import ratelimit_key
-from quack.llm.gateway import LLMGateway
-from quack.llm.provider import HttpLLMProvider
 from quack.logging import get_logger
 
 log = get_logger(__name__)
 
-JWT_ALGORITHM = "HS256"
-DEV_JWT_SECRET = "quack-dev-jwt-secret"
 TURN_RATE_LIMIT_PER_MINUTE = 20
 TURN_RATE_LIMIT_WINDOW_SEC = 60
 
@@ -37,55 +31,12 @@ def get_redis(request: Request) -> Redis | None:
     return None if resources is None else resources.redis
 
 
-def get_llm_gateway(request: Request) -> LLMGateway:
-    gateway: LLMGateway | None = getattr(request.app.state, "llm_gateway", None)
-    if gateway is None:
-        settings = get_settings_dep(request)
-        provider = HttpLLMProvider(
-            settings.llm_api_base_url, settings.llm_api_key.get_secret_value()
-        )
-        gateway = LLMGateway(get_resources(request).session_factory, provider, settings)
-        request.app.state.llm_gateway = gateway
-    return gateway
-
-
-def get_compute_client(request: Request) -> ComputeClient:
-    compute: ComputeClient | None = getattr(request.app.state, "compute_client", None)
-    if compute is None:
-        settings = get_settings_dep(request)
-        compute = ComputeClient(settings.compute_url, settings.compute_timeout_sec)
-        request.app.state.compute_client = compute
-    return compute
-
-
-def _unauthorized(message: str) -> ApiError:
-    return ApiError("UNAUTHORIZED", message, status_code=401)
-
-
-async def current_learner_id(request: Request) -> UUID:
-    """Decode `Authorization: Bearer` (HS256, `sub` -> learner_id); 401 for deleted learners."""
-    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        raise _unauthorized("missing bearer token")
-    settings = get_settings_dep(request)
-    secret = settings.jwt_secret.get_secret_value() or DEV_JWT_SECRET
-    try:
-        payload = jwt.decode(token.strip(), secret, algorithms=[JWT_ALGORITHM])
-        learner_id = UUID(str(payload["sub"]))
-    except (jwt.InvalidTokenError, KeyError, ValueError) as exc:
-        raise _unauthorized("invalid token") from exc
-    async with get_resources(request).session_factory() as session:
-        revoked = await session.scalar(
-            text(
-                "SELECT 1 WHERE EXISTS"
-                " (SELECT 1 FROM ops.deletion_tombstones WHERE learner_id = :l)"
-                " OR EXISTS (SELECT 1 FROM auth.users WHERE id = :l AND deleted_at IS NOT NULL)"
-            ),
-            {"l": learner_id},
-        )
-    if revoked is not None:
-        raise _unauthorized("learner is deleted")
-    return learner_id
+# ТЗ Фазы 3 WP1.2, WP1.3 (§7.3 case 1): the stream's own JWT check and per-app gateway and
+# compute factories are replaced by the shared ones. The names stay as aliases of the same
+# functions, so `quack/session/router.py` and `app.dependency_overrides` keep working.
+current_learner_id = get_current_learner_id
+get_llm_gateway = get_llm
+get_compute_client = get_compute
 
 
 async def enforce_turn_rate_limit(

@@ -11,9 +11,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from quack.api.app import AppResources, get_resources
+from quack.api.auth import get_current_learner_id
+from quack.api.resources import AppResources, get_compute, get_llm, get_resources
 from quack.artifacts import cheatsheets, notes, practice, search
-from quack.artifacts.deps import get_compute_client, get_current_learner_id, get_llm_gateway
 from quack.artifacts.params import PARAMS
 from quack.artifacts.schemas import (
     ArtifactListResponse,
@@ -40,7 +40,8 @@ from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.llm.gateway import LLMGateway
 
-router = APIRouter(prefix="/v1", tags=["artifacts"])
+# Router-level auth: 401 before body validation (ТЗ Фазы 3 WP1.2, T-A2).
+router = APIRouter(prefix="/v1", tags=["artifacts"], dependencies=[Depends(get_current_learner_id)])
 
 
 def _settings(request: Request) -> Settings:
@@ -49,8 +50,8 @@ def _settings(request: Request) -> Settings:
 
 type CurrentLearnerId = Annotated[UUID, Depends(get_current_learner_id)]
 type Resources = Annotated[AppResources, Depends(get_resources)]
-type Gateway = Annotated[LLMGateway, Depends(get_llm_gateway)]
-type Compute = Annotated[ComputeClient, Depends(get_compute_client)]
+type Gateway = Annotated[LLMGateway, Depends(get_llm)]
+type Compute = Annotated[ComputeClient, Depends(get_compute)]
 type AppSettings = Annotated[Settings, Depends(_settings)]
 
 
