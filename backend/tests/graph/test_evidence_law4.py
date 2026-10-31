@@ -440,3 +440,14 @@ async def test_model_strength_does_not_change_the_state() -> None:
     assert weak_skill["pMastery"] == strong_skill["pMastery"]
     assert float(str(strong_skill["pMastery"])) > 0
     assert weak_skill["confidence"] == strong_skill["confidence"]
+
+
+async def test_v2_hint_penalty_is_counted_once() -> None:
+    """Review of B on #26: an `extractor@2` element with a hint carries no `independence` (the
+    trace keeps 1.0), so the hint penalty enters the weight once — through `hint_step`."""
+    h = _history()
+    seq, at, turn = _reply(h, "x = 4")
+    _extracted(h, turn, [_element(h, seq, at, assistance="hint", hint_step=2)], hours_later=0)
+    (evidence,) = _evidence(await _project(h))
+    assert evidence["independence"] == 1.0
+    assert evidence["hintStep"] == 2
