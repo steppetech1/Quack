@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
+import httpx2
 import jsonschema
 import orjson
 import pytest
@@ -614,14 +614,14 @@ def _responses_body(
 
 
 class _MockResponses:
-    """`httpx.MockTransport` handler: records requests, answers from a queue (the last
+    """`httpx2.MockTransport` handler: records requests, answers from a queue (the last
     answer repeats)."""
 
-    def __init__(self, *answers: httpx.Response) -> None:
+    def __init__(self, *answers: httpx2.Response) -> None:
         self.answers = list(answers)
-        self.requests: list[httpx.Request] = []
+        self.requests: list[httpx2.Request] = []
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
 
@@ -630,7 +630,7 @@ class _MockResponses:
 
 
 def _client(handler: _MockResponses) -> ResponsesClient:
-    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return ResponsesClient("http://meta.test/v1", "key", http_client=http)
 
 
@@ -666,7 +666,7 @@ async def test_responses_request_contract(
     `text.format` (strict JSON Schema of the output), `reasoning.effort` and
     `max_output_tokens` of the role, `prompt_cache_key` = `{role}@{version}` (`teacher@N` for
     `teacher_fallback`); none of the forbidden keys. A 500 → exactly one HTTP request."""
-    handler = _MockResponses(httpx.Response(200, json=_responses_body(_minimal_answer(model))))
+    handler = _MockResponses(httpx2.Response(200, json=_responses_body(_minimal_answer(model))))
     gateway = LLMGateway(db, _client(handler), settings, _OneTemplateRegistry())
     await gateway.generate_structured(
         role=role,
@@ -704,7 +704,7 @@ async def test_responses_request_contract(
     }
     assert forbidden.isdisjoint(body)
 
-    failing = _MockResponses(httpx.Response(500, json={"error": {"message": "boom"}}))
+    failing = _MockResponses(httpx2.Response(500, json={"error": {"message": "boom"}}))
     gateway = LLMGateway(db, _client(failing), settings, _OneTemplateRegistry())
     with pytest.raises(LLMUnavailableError):
         await gateway.generate_structured(
@@ -729,7 +729,7 @@ async def test_output_items_parsing(db: SessionFactory, settings: Settings) -> N
     learner = uuid4()
     reordered = '{"reply_text": "Hi.", "pedagogical_move": "explain"}'
     handler = _MockResponses(
-        httpx.Response(
+        httpx2.Response(
             200,
             json=_responses_body(reordered, commentary="Let me check…", cached=120, reasoning=300),
         )
@@ -762,8 +762,8 @@ async def test_output_items_parsing(db: SessionFactory, settings: Settings) -> N
     assert row.reasoning_effort == settings.llm_role_reasoning["teacher"]
 
     only_commentary = _MockResponses(
-        httpx.Response(200, json=_responses_body("", commentary="Thinking it over.")),
-        httpx.Response(200, json=_responses_body(reordered)),
+        httpx2.Response(200, json=_responses_body("", commentary="Thinking it over.")),
+        httpx2.Response(200, json=_responses_body(reordered)),
     )
     gateway = LLMGateway(db, _client(only_commentary), settings, _OneTemplateRegistry())
     result = await gateway.generate_structured(
