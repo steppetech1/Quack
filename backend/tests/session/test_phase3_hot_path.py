@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import itertools
+from collections.abc import AsyncIterator
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -11,16 +14,22 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from neo4j import AsyncDriver
+from redis.asyncio import Redis
 from sqlalchemy import text
 
 from quack.api.resources import AppResources, get_compute, get_llm
-from quack.config import FoldParams
+from quack.config import FoldParams, Settings
 from quack.db.postgres import SessionFactory
+from quack.db.redis import llm_pressure_key
 from quack.events import append_events
 from quack.events.payloads import SkillEvalScore, TaskEvaluated
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
+from quack.llm.errors import ProviderRateLimitedError
+from quack.llm.gateway import LLMGateway
+from quack.llm.pressure import set_pressure_flag
+from quack.session import turns
 from quack.session.schemas import TeacherOutput
 from quack.session.turn_policy import (
     MEMORY_UNAVAILABLE_MARKER,
@@ -30,7 +39,9 @@ from quack.session.turn_policy import (
 from tests.factories import new_event
 from tests.session.fixtures import FakeComputeClient, FakeLLMProvider, SeededDomain
 from tests.session.helpers import parse_sse, task_label
+from tests.session.test_session_events_stream import StreamingASGITransport
 from tests.support.broken import BrokenNeo4jDriver
+from tests.support.llm import ScriptedFailure, ScriptedLLMProvider
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -382,3 +393,251 @@ async def test_turn_and_submit_evaluation_parity(
     for name in PARITY_FIELDS:
         assert turn_eval[name] == submit_eval[name], name
     assert turn_eval["is_correct"] is True
+
+
+# --- T-H10 -------------------------------------------------------------------------------
+
+
+async def _read_event(lines: AsyncIterator[str]) -> tuple[str, dict[str, Any]]:
+    block: list[str] = []
+    async with asyncio.timeout(5.0):
+        async for line in lines:
+            if line.startswith(":"):
+                continue  # keepalive comment (WP6.3)
+            if line:
+                block.append(line)
+            elif block:
+                break
+    (event,) = parse_sse("\n".join(block) + "\n\n")
+    return event
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_turn_status_before_text(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    session_app: FastAPI,
+    seeded_domain: SeededDomain,
+    db: SessionFactory,
+    settings: Settings,
+    fallback: bool,
+) -> None:
+    """T-H10 (WP6.3, Т-§12.2 stage 1): `status` with `{"state": "thinking"}` is the first event
+    after `turn_started`, comes while the teacher call is still held by the provider (so before
+    it returned) and before the first `token`; exactly one `status` per turn, also when the
+    turn goes to `teacher_fallback`. The provider holds the answer instead of a fixed 0.5 s
+    delay: «before the provider returned» is then checked without timing."""
+    provider = ScriptedLLMProvider()
+    gate = provider.hold("TeacherOutput")
+    if fallback:
+        provider.fail(
+            ScriptedFailure(kind="rate_limited", model=settings.model_for_role("teacher"))
+        )
+    gateway = LLMGateway(db, provider, settings)
+    session_app.dependency_overrides[get_llm] = lambda: gateway
+    start = await client.post(
+        "/v1/sessions",
+        json={
+            "domain_id": str(seeded_domain.domain_id),
+            "topic_id": str(seeded_domain.topic_id),
+            "idempotency_key": f"status-start-{fallback}",
+        },
+        headers=auth_headers,
+    )
+    assert start.status_code == 201, start.text
+    session_id = UUID(start.json()["session_id"])
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    async with (
+        httpx.AsyncClient(
+            transport=StreamingASGITransport(session_app), base_url="http://test"
+        ) as stream_client,
+        stream_client.stream(
+            "POST",
+            f"/v1/sessions/{session_id}/turns",
+            json={"text": "Explain it", "idempotency_key": f"status-turn-{fallback}"},
+            headers=auth_headers,
+        ) as response,
+    ):
+        assert response.status_code == 200
+        lines = response.aiter_lines()
+        events.append(await _read_event(lines))
+        events.append(await _read_event(lines))
+        assert [name for name, _ in events] == ["turn_started", "status"]
+        assert events[1][1] == {"state": "thinking"}
+        async with asyncio.timeout(5.0):
+            await gate.arrived.wait()
+        assert not gate.release.is_set()  # the teacher call has not returned yet
+        gate.release.set()
+        while not events or events[-1][0] != "done":
+            events.append(await _read_event(lines))
+
+    names = [name for name, _ in events]
+    assert names.count("status") == 1
+    assert names.index("status") < names.index("token")
+    expected = "teacher_fallback" if fallback else None
+    assert dict(events)["turn_completed"]["degraded_mode"] in (expected, "projector_lag")
+    if fallback:
+        models = [c.model for c in provider.calls_for(schema_name="TeacherOutput")]
+        assert models == [
+            settings.model_for_role("teacher"),
+            settings.model_for_role("teacher_fallback"),
+        ]
+
+
+async def test_turn_resumes_on_the_stored_reply(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    seeded_domain: SeededDomain,
+    db: SessionFactory,
+    fake_llm: FakeLLMProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-B-018 (Т-§1.4, Т-§2.2): the reply is written before the teacher; a turn broken after
+    it leaves no teacher events, and the client's retry with the same key finishes the turn on
+    the stored reply — one `turn.student_replied`, the same `turn_id` and `user_seq`."""
+    learner = seeded_domain.learner_id
+    start = await client.post(
+        "/v1/sessions",
+        json={
+            "domain_id": str(seeded_domain.domain_id),
+            "topic_id": str(seeded_domain.topic_id),
+            "idempotency_key": "resume-start",
+        },
+        headers=auth_headers,
+    )
+    assert start.status_code == 201, start.text
+    session_id = UUID(start.json()["session_id"])
+
+    real_context = turns.build_turn_context
+
+    async def broken_context(*_a: Any, **_kw: Any) -> Any:
+        raise RuntimeError("worker died")
+
+    monkeypatch.setattr(turns, "build_turn_context", broken_context)
+    body = {"text": "Where were we?", "idempotency_key": "resume-turn"}
+    with pytest.raises(RuntimeError):
+        await client.post(f"/v1/sessions/{session_id}/turns", json=body, headers=auth_headers)
+    monkeypatch.setattr(turns, "build_turn_context", real_context)
+
+    fake_llm.push(
+        "teacher", TeacherOutput(reply_text="We were on powers.", pedagogical_move="explain")
+    )
+    response = await client.post(
+        f"/v1/sessions/{session_id}/turns", json=body, headers=auth_headers
+    )
+    assert response.status_code == 200, response.text
+    data = dict(parse_sse(response.text))
+
+    async with db() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT seq, type, turn_id FROM core.events WHERE learner_id = :l "
+                    "AND idempotency_key LIKE 'resume-turn%' ORDER BY seq"
+                ),
+                {"l": learner},
+            )
+        ).all()
+    student = [r for r in rows if r.type == "turn.student_replied"]
+    assert len(student) == 1
+    assert data["turn_started"]["user_seq"] == student[0].seq
+    assert UUID(data["turn_started"]["turn_id"]) == student[0].turn_id
+    assert [r.type for r in rows].count("turn.teacher_replied") == 1
+    assert data["token"]["delta"] == "We were on powers."
+
+
+# --- T-H6 --------------------------------------------------------------------------------
+
+
+async def test_teacher_fallback_on_pressure_and_429(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    session_app: FastAPI,
+    seeded_domain: SeededDomain,
+    db: SessionFactory,
+    redis: Redis,
+    settings: Settings,
+    fake_llm: FakeLLMProvider,
+) -> None:
+    """T-H6 (WP5.3, WP5.4): (а) the pressure flag of the teacher model is set and
+    `teacher_admission_wait_ms = 100` → the turn goes to `teacher_fallback` (ledger role,
+    `degraded_mode`); (б) no flag, the main call gets 429 → the same, the flag is set;
+    (в) the fallback is down too → `degraded_mode = "llm_unavailable"`, a bank task is
+    assigned (ТЗ-П2)."""
+    cfg = settings.model_copy(update={"teacher_admission_wait_ms": 100})
+    gateway = LLMGateway(db, fake_llm, cfg, redis=redis)
+    session_app.state.settings = cfg
+    session_app.dependency_overrides[get_llm] = lambda: gateway
+    learner = seeded_domain.learner_id
+    teacher_flag = llm_pressure_key(cfg.model_for_role("teacher"))
+
+    start = await client.post(
+        "/v1/sessions",
+        json={
+            "domain_id": str(seeded_domain.domain_id),
+            "topic_id": str(seeded_domain.topic_id),
+            "idempotency_key": "fallback-start",
+        },
+        headers=auth_headers,
+    )
+    assert start.status_code == 201, start.text
+    session_id = UUID(start.json()["session_id"])
+
+    async def turn(key: str) -> dict[str, Any]:
+        response = await client.post(
+            f"/v1/sessions/{session_id}/turns",
+            json={"text": "What next?", "idempotency_key": key},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        return dict(parse_sse(response.text))
+
+    async def fallback_rows() -> int:
+        async with db() as session:
+            return int(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT count(*) FROM ops.llm_ledger WHERE learner_id = :l "
+                            "AND role = 'teacher_fallback' AND status = 'ok'"
+                        ),
+                        {"l": learner},
+                    )
+                ).scalar_one()
+            )
+
+    # (а) The flag outlives the admission wait: no call to the main model.
+    await set_pressure_flag(redis, cfg.model_for_role("teacher"), 30, "429", datetime.now(UTC))
+    fake_llm.push("teacher", TeacherOutput(reply_text="Fallback (a).", pedagogical_move="explain"))
+    data = await turn("fallback-a")
+    assert data["turn_completed"]["degraded_mode"] == "teacher_fallback"
+    calls = fake_llm.calls_for("teacher")
+    assert [c.model for c in calls] == [cfg.model_for_role("teacher_fallback")]
+    assert await fallback_rows() == 1
+
+    # (б) No flag; the main call gets 429 → fallback, and the flag is set by the gateway.
+    await redis.delete(teacher_flag)
+    fake_llm.push(
+        "teacher",
+        ProviderRateLimitedError(30.0),
+        TeacherOutput(reply_text="Fallback (b).", pedagogical_move="explain"),
+    )
+    data = await turn("fallback-b")
+    assert data["turn_completed"]["degraded_mode"] == "teacher_fallback"
+    calls = fake_llm.calls_for("teacher")[1:]
+    assert [c.model for c in calls] == [
+        cfg.model_for_role("teacher"),
+        cfg.model_for_role("teacher_fallback"),
+    ]
+    assert await fallback_rows() == 2
+    assert await redis.pttl(teacher_flag) > 0
+
+    # (в) The fallback is down too → deterministic degradation of Phase 2 with a bank task.
+    await redis.delete(teacher_flag)
+    fake_llm.push("teacher", ProviderRateLimitedError(30.0))
+    fake_llm.fail("teacher")
+    data = await turn("fallback-c")
+    assert data["turn_completed"]["degraded_mode"] == "llm_unavailable"
+    assert UUID(data["task_assigned"]["task_id"]) in set(seeded_domain.math_task_ids)
+    assert await fallback_rows() == 2

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from typing import Any, Literal
 from uuid import UUID, uuid5
 
@@ -40,9 +40,12 @@ from quack.practice.evaluation import (
     task_from_row,
 )
 from quack.practice.selection import pick_task
+from quack.session.checkpoint_render import RENDERER_VERSION
 from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
+from quack.session.manifest import TurnManifest, write_turn_manifest
 from quack.session.schemas import TeacherOutput, TurnRequest
+from quack.session.spoiler_guard import find_spoiler, guarded_tasks, remove_spoiler_sentences
 from quack.session.tasks import assigned_task_ids_from_overlay, solved_families_from_overlay
 from quack.session.teacher_labels import (
     TeacherDecision,
@@ -78,6 +81,10 @@ def degraded_reply_text(task: TaskToCheck | None) -> str:
         "The tutor is temporarily limited right now, so let's practise with a ready task:\n\n"
         f"{task.prompt_text}"
     )
+
+
+# `teacher@N` of the turn (Т-§11.6); also written to the turn manifest (WP14.2).
+TEACHER_PROMPT_VERSION = 1
 
 
 async def get_available_tasks(
@@ -160,6 +167,49 @@ async def _admit_teacher(resources: AppResources, settings: Settings) -> None:
     await asyncio.sleep(left)
 
 
+async def _guard_spoiler(
+    resources: AppResources,
+    settings: Settings,
+    learner_id: UUID,
+    session_id: UUID,
+    turn_id: UUID,
+    output: TeacherOutput,
+    *,
+    closed_now: UUID | None,
+    task_label: Callable[[UUID], str | None],
+    retry: Callable[[dict[str, Any], int], Awaitable[TeacherOutput]],
+) -> TeacherOutput:
+    """WP15 (Т-§12.1, Т-§12.4): the reply goes back to the model while it reveals the answer of
+    an active task, at most `guard_max_retries` times; then code removes the sentence. The
+    log record carries no text of the learner or of the reply."""
+    async with resources.session_factory() as session:
+        guarded = await guarded_tasks(
+            session, learner_id, session_id, settings, closed_now=closed_now
+        )
+    attempt = 0
+    while (spoiled := find_spoiler(output.reply_text, guarded, settings)) is not None:
+        final = attempt >= settings.guard_max_retries
+        log.warning(
+            "guard_violation",
+            rule="spoiler",
+            session_id=str(session_id),
+            turn_id=str(turn_id),
+            task_id=str(spoiled.task_id),
+            attempt=attempt,
+            action="sentence_removed" if final else "retry",
+        )
+        if final:
+            reply = remove_spoiler_sentences(output.reply_text, guarded, settings)
+            return output.model_copy(update={"reply_text": reply})
+        attempt += 1
+        reason: dict[str, Any] = {"rule": "spoiler"}
+        label = task_label(spoiled.task_id)
+        if label is not None:
+            reason["task_label"] = label
+        output = await retry(reason, attempt)
+    return output
+
+
 async def open_turn(
     resources: AppResources,
     settings: Settings,
@@ -196,6 +246,7 @@ async def open_turn(
             session_last_checkpoint_turn = int(row.last_checkpoint_turn)
 
             # S-1: Check if this idempotency key was already used
+            resumed_reply: tuple[int, int] | None = None
             existing_event_row = (
                 await session.execute(
                     text(
@@ -240,72 +291,129 @@ async def open_turn(
                 eval_ev = stored_by_type.get("task.evaluated")
                 assigned_ev = stored_by_type.get("task.assigned")
 
-                if student_ev is None or teacher_ev is None:
+                if student_ev is None:
                     raise ApiError("VALIDATION_ERROR", "incomplete stored turn", status_code=500)
+                if teacher_ev is None:
+                    # D-B-018 (Т-§1.4, Т-§2.2): the reply is written, the teacher turn is not —
+                    # the client repeats the turn, it resumes on the stored reply.
+                    resumed_reply = (student_ev.seq, int(student_ev.payload["turn_index"]))
+                else:
+                    cached_sse: list[tuple[str, dict[str, Any]]] = [
+                        (
+                            "turn_started",
+                            {
+                                "turn_id": str(existing_turn_id),
+                                "turn_index": student_ev.payload["turn_index"],
+                                "user_seq": student_ev.seq,
+                            },
+                        ),
+                        # A replay repeats the frames of the stored turn (WP6.3).
+                        ("status", {"state": "thinking"}),
+                        (
+                            "token",
+                            {"delta": teacher_ev.payload.get("text", "")},
+                        ),
+                    ]
+                    if eval_ev is not None:
+                        cached_sse.append(
+                            (
+                                "task_evaluated",
+                                {
+                                    "task_id": eval_ev.payload["task_id"],
+                                    "is_correct": eval_ev.payload["is_correct"],
+                                    "score": eval_ev.payload["score"],
+                                    "feedback": eval_ev.payload["feedback"],
+                                },
+                            )
+                        )
+                    if assigned_ev is not None:
+                        assigned_t_row = await load_task(
+                            session, learner_id, UUID(assigned_ev.payload["task_id"])
+                        )
+                        cached_sse.append(
+                            (
+                                "task_assigned",
+                                {
+                                    "task_id": assigned_ev.payload["task_id"],
+                                    "kind": assigned_t_row.kind if assigned_t_row else "choice",
+                                    "prompt_text": assigned_t_row.prompt_text
+                                    if assigned_t_row
+                                    else "",
+                                },
+                            )
+                        )
+                    cached_sse.append(
+                        (
+                            "turn_completed",
+                            {
+                                "turn_id": str(existing_turn_id),
+                                "committed_seq": teacher_ev.seq,
+                                "degraded_mode": teacher_ev.payload.get("degraded_mode"),
+                            },
+                        )
+                    )
+                    cached_sse.append(("done", {}))
 
-                cached_sse: list[tuple[str, dict[str, Any]]] = [
-                    (
-                        "turn_started",
-                        {
-                            "turn_id": str(existing_turn_id),
-                            "turn_index": student_ev.payload["turn_index"],
-                            "user_seq": student_ev.seq,
-                        },
-                    ),
-                    (
-                        "token",
-                        {"delta": teacher_ev.payload.get("text", "")},
-                    ),
-                ]
-                if eval_ev is not None:
-                    cached_sse.append(
-                        (
-                            "task_evaluated",
-                            {
-                                "task_id": eval_ev.payload["task_id"],
-                                "is_correct": eval_ev.payload["is_correct"],
-                                "score": eval_ev.payload["score"],
-                                "feedback": eval_ev.payload["feedback"],
+                    async def _cached_stream() -> AsyncIterator[tuple[str, dict[str, Any]]]:
+                        try:
+                            for itm in cached_sse:
+                                yield itm
+                        finally:
+                            await lock.__aexit__(None, None, None)
+
+                    return _cached_stream()
+
+        # 1b. D-B-018 (Т-§1.4 п.1): the learner's reply is written in its own transaction before
+        #     the teacher; the teacher turn and its side events are written together later.
+        turn_id = uuid5(QUACK_UUID_NS, f"turn:{learner_id}:{session_id}:{body.idempotency_key}")
+        if resumed_reply is None:
+            student_turn_index = prev_turn_index + 1
+            async with resources.session_factory() as session, session.begin():
+                (student_stored,) = await append_events(
+                    session,
+                    learner_id,
+                    [
+                        NewEvent(
+                            type="turn.student_replied",
+                            payload={
+                                "session_id": str(session_id),
+                                "turn_id": str(turn_id),
+                                "turn_index": student_turn_index,
+                                "text": body.text,
+                                "related_task_id": (
+                                    str(body.related_task_id) if body.related_task_id else None
+                                ),
                             },
+                            actor="learner",
+                            idempotency_key=body.idempotency_key,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            domain_id=domain_id,
                         )
-                    )
-                if assigned_ev is not None:
-                    assigned_t_row = await load_task(
-                        session, learner_id, UUID(assigned_ev.payload["task_id"])
-                    )
-                    cached_sse.append(
-                        (
-                            "task_assigned",
-                            {
-                                "task_id": assigned_ev.payload["task_id"],
-                                "kind": assigned_t_row.kind if assigned_t_row else "choice",
-                                "prompt_text": assigned_t_row.prompt_text if assigned_t_row else "",
-                            },
-                        )
-                    )
-                cached_sse.append(
-                    (
-                        "turn_completed",
-                        {
-                            "turn_id": str(existing_turn_id),
-                            "committed_seq": teacher_ev.seq,
-                            "degraded_mode": teacher_ev.payload.get("degraded_mode"),
-                        },
-                    )
+                    ],
+                    publish_wakeup=True,
+                    redis=resources.redis,
                 )
-                cached_sse.append(("done", {}))
+            student_seq = student_stored.seq
+        else:
+            student_seq, student_turn_index = resumed_reply
+        prev_turn_index = student_turn_index - 1
+        teacher_turn_index = student_turn_index + 1
+    except Exception:
+        await lock.__aexit__(None, None, None)
+        raise
 
-                async def _cached_stream() -> AsyncIterator[tuple[str, dict[str, Any]]]:
-                    try:
-                        for itm in cached_sse:
-                            yield itm
-                    finally:
-                        await lock.__aexit__(None, None, None)
-
-                return _cached_stream()
-
+    async def _run_turn(
+        admission_error: LLMRateLimitedError | None,
+    ) -> list[tuple[str, dict[str, Any]]]:
         # 2. Build turn context
-        context = await build_turn_context(resources, settings, learner_id, session_id)
+        context = await build_turn_context(
+            resources,
+            settings,
+            learner_id,
+            session_id,
+            before_seq=student_seq,
+        )
         last_checkpoint_turn = max(context.last_checkpoint_turn, session_last_checkpoint_turn)
 
         # 3. Available tasks for prompt (using overlay.assigned_task_ids and overlay.graph)
@@ -323,7 +431,6 @@ async def open_turn(
 
         # 4. In-turn task evaluation (ТЗ-П2 §2.3.4) through the one cascade of quack.practice
         #    (WP6.2, D-B-006), then the teacher call via LLMGateway.
-        turn_id = uuid5(QUACK_UUID_NS, f"turn:{learner_id}:{session_id}:{body.idempotency_key}")
         submitted_task: TaskToCheck | None = None
         verdict: AnswerVerdict | None = None
         task_evaluation_json = "null"
@@ -404,16 +511,26 @@ async def open_turn(
             evaluations.append(current_evaluation)
         teacher_key = f"turn:{session_id}:{body.idempotency_key}:teacher"
 
-        async def ask_teacher(role: Literal["teacher", "teacher_fallback"]) -> TeacherOutput:
+        async def ask_teacher(
+            role: Literal["teacher", "teacher_fallback"],
+            *,
+            guard_reason: dict[str, Any] | None = None,
+            attempt: int = 0,
+        ) -> TeacherOutput:
+            key = teacher_key if role == "teacher" else f"{teacher_key}:fallback"
             result = await gateway.generate_structured(
                 role=role,
-                prompt_version=1,
+                prompt_version=TEACHER_PROMPT_VERSION,
                 response_model=TeacherOutput,
-                variables=variables,
+                # WP15: a retry carries the reason of the guard as data.
+                variables={
+                    **variables,
+                    "guard_reason": "" if guard_reason is None else json.dumps(guard_reason),
+                },
                 learner_id=learner_id,
                 session_id=session_id,
                 turn_id=turn_id,
-                idempotency_key=teacher_key if role == "teacher" else f"{teacher_key}:fallback",
+                idempotency_key=key if attempt == 0 else f"{key}:guard{attempt}",
                 prompt_role="teacher" if role == "teacher_fallback" else None,
                 reasoning_effort=teacher_reasoning_effort(
                     role=role,
@@ -425,7 +542,8 @@ async def open_turn(
 
         try:
             try:
-                await _admit_teacher(resources, settings)
+                if admission_error is not None:
+                    raise admission_error
                 teacher_output = await ask_teacher("teacher")
             except LLMUnavailableError as exc:
                 # WP5.4: 429, no admission or an open circuit of the teacher model.
@@ -434,6 +552,25 @@ async def open_turn(
                 log.warning("teacher_fallback", reason=exc.reason, session_id=str(session_id))
                 teacher_output = await ask_teacher("teacher_fallback")
                 used_fallback = True
+            teacher_output = await _guard_spoiler(
+                resources,
+                settings,
+                learner_id,
+                session_id,
+                turn_id,
+                teacher_output,
+                closed_now=(
+                    submitted_task.task_id
+                    if submitted_task is not None and verdict is not None and verdict.is_correct
+                    else None
+                ),
+                task_label=lambda task_id: labels.label("task", task_id),
+                retry=lambda reason, attempt: ask_teacher(
+                    "teacher_fallback" if used_fallback else "teacher",
+                    guard_reason=reason,
+                    attempt=attempt,
+                ),
+            )
             decision = resolve_teacher_output(teacher_output, labels)
         except (LLMBudgetExceededError, LLMUnavailableError, LLMSchemaError) as exc:
             llm_degraded_mode = (
@@ -457,26 +594,7 @@ async def open_turn(
             decision = TeacherDecision(focus_skill_ids=[], assign_task_id=None, concept=None)
 
         # 5. Events to commit
-        student_turn_index = prev_turn_index + 1
-        teacher_turn_index = prev_turn_index + 2
-
-        events: list[NewEvent] = [
-            NewEvent(
-                type="turn.student_replied",
-                payload={
-                    "session_id": str(session_id),
-                    "turn_id": str(turn_id),
-                    "turn_index": student_turn_index,
-                    "text": body.text,
-                    "related_task_id": str(body.related_task_id) if body.related_task_id else None,
-                },
-                actor="learner",
-                idempotency_key=body.idempotency_key,
-                session_id=session_id,
-                turn_id=turn_id,
-                domain_id=domain_id,
-            )
-        ]
+        events: list[NewEvent] = []
 
         final_evaluated: TaskEvaluated | None = None
         if submitted_task is not None and verdict is not None:
@@ -617,8 +735,32 @@ async def open_turn(
                 publish_wakeup=True,
                 redis=resources.redis,
             )
-            student_stored = next(e for e in stored_events if e.type == "turn.student_replied")
             teacher_stored = next(e for e in stored_events if e.type == "turn.teacher_replied")
+            # WP14.2 (Т-§3.2): the manifest goes in the same transaction as the reply.
+            manifest_role: Literal["teacher", "teacher_fallback"] = (
+                "teacher_fallback" if used_fallback else "teacher"
+            )
+            await write_turn_manifest(
+                session,
+                TurnManifest(
+                    turn_id=turn_id,
+                    learner_id=learner_id,
+                    session_id=session_id,
+                    prompt_version=TEACHER_PROMPT_VERSION,
+                    renderer_version=int(RENDERER_VERSION.rsplit("@", 1)[1]),
+                    role=manifest_role,
+                    model=settings.model_for_role(manifest_role),
+                    reasoning_effort=teacher_reasoning_effort(
+                        role=manifest_role,
+                        is_first_turn=prev_turn_index < 0,
+                        session_evaluations=evaluations,
+                    ),
+                    projected_seq=context.applied_seq,
+                    overlay_seqs=[event.seq for event in context.overlay.events],
+                    label_table=labels.table(),
+                    degraded_mode=degraded_mode,
+                ),
+            )
 
             await enqueue_job(
                 session,
@@ -628,7 +770,7 @@ async def open_turn(
                     {
                         "session_id": str(session_id),
                         "turn_id": str(turn_id),
-                        "student_seq": student_stored.seq,
+                        "student_seq": student_seq,
                         "teacher_seq": teacher_stored.seq,
                     },
                 ),
@@ -649,14 +791,6 @@ async def open_turn(
 
         # 7. Prepare SSE event sequence
         sse_events: list[tuple[str, dict[str, Any]]] = [
-            (
-                "turn_started",
-                {
-                    "turn_id": str(turn_id),
-                    "turn_index": student_turn_index,
-                    "user_seq": student_stored.seq,
-                },
-            ),
             (
                 "token",
                 {"delta": teacher_output.reply_text},
@@ -696,14 +830,27 @@ async def open_turn(
             )
         )
         sse_events.append(("done", {}))
-
-    except Exception:
-        await lock.__aexit__(None, None, None)
-        raise
+        return sse_events
 
     async def _stream() -> AsyncIterator[tuple[str, dict[str, Any]]]:
         try:
-            for item in sse_events:
+            yield (
+                "turn_started",
+                {
+                    "turn_id": str(turn_id),
+                    "turn_index": student_turn_index,
+                    "user_seq": student_seq,
+                },
+            )
+            # WP6.3 (Т-§12.2 stage 1): once the turn has the lock and the teacher admission,
+            # one `status` before the model call (also when the turn goes to teacher_fallback).
+            admission_error: LLMRateLimitedError | None = None
+            try:
+                await _admit_teacher(resources, settings)
+            except LLMRateLimitedError as exc:
+                admission_error = exc
+            yield ("status", {"state": "thinking"})
+            for item in await _run_turn(admission_error):
                 yield item
         finally:
             await lock.__aexit__(None, None, None)

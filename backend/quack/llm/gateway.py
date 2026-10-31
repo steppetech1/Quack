@@ -50,6 +50,7 @@ from quack.llm.pressure import (
     set_pressure_flag,
 )
 from quack.llm.provider import LLMProvider, ProviderRequest, ProviderResponse, ReasoningEffort
+from quack.llm.strict_schema import to_strict_json_schema
 from quack.logging import get_logger
 from quack.prompts.registry import PromptRegistry, PromptTemplate
 
@@ -104,6 +105,8 @@ class _CallContext:
     session_id: UUID | None
     turn_id: UUID | None
     idempotency_key: str
+    # WP5.7: the effort of the call, written to the ledger.
+    reasoning_effort: str | None = None
 
 
 class LLMGateway:
@@ -160,7 +163,6 @@ class LLMGateway:
         rendered = prompt.render(variables)
         model = self.settings.model_for_role(role)
         schema = response_model.model_json_schema()
-        ctx = _CallContext(role, prompt, model, learner_id, session_id, turn_id, idempotency_key)
 
         cached = await self._completed_outbox(learner_id, idempotency_key)
         if cached is not None:
@@ -174,6 +176,9 @@ class LLMGateway:
         exempt = role in self.settings.session_budget_exempt_roles
         await self._check_budgets(learner_id, None if exempt else session_id)
         effort = reasoning_effort or self.settings.llm_role_reasoning.get(role)
+        ctx = _CallContext(
+            role, prompt, model, learner_id, session_id, turn_id, idempotency_key, effort
+        )
         request_hash = hashlib.sha256(
             canonical_json(
                 {
@@ -193,12 +198,15 @@ class LLMGateway:
         request = ProviderRequest(
             model=model,
             prompt=rendered,
-            json_schema=schema,
+            # WP5.7 (Т-§11.1): the strict schema goes to `text.format`; the answer is still
+            # checked by `model_validate_json`.
+            json_schema=to_strict_json_schema(response_model),
             schema_name=response_model.__name__,
             temperature=temperature,
             timeout_sec=self.settings.llm_role_timeout_s.get(role, self.settings.llm_timeout_sec),
             reasoning_effort=effort,
             max_output_tokens=self.settings.llm_role_max_output_tokens.get(role),
+            prompt_cache_key=f"{prompt_role or role}@{prompt_version}",
         )
         totals = [0, 0, 0, 0]  # input, output, cached, latency
         try:
@@ -478,9 +486,10 @@ class LLMGateway:
                 text(
                     "INSERT INTO ops.llm_ledger (id, learner_id, session_id, turn_id, role, "
                     "prompt_version, prompt_hash, model, input_tokens, output_tokens, "
-                    "cached_tokens, latency_ms, status, error_code, created_at) VALUES "
-                    "(:id, :l, :s, :t, :role, :v, :h, :model, :i, :o, :c, :lat, :status, :err, "
-                    "now())"
+                    "cached_tokens, cached_input_tokens, reasoning_tokens, reasoning_effort, "
+                    "latency_ms, status, error_code, created_at) VALUES "
+                    "(:id, :l, :s, :t, :role, :v, :h, :model, :i, :o, :c, :ci, :r, :effort, "
+                    ":lat, :status, :err, now())"
                 ),
                 {
                     "id": uuid4(),
@@ -494,6 +503,9 @@ class LLMGateway:
                     "i": response.input_tokens,
                     "o": response.output_tokens,
                     "c": response.cached_tokens,
+                    "ci": response.cached_tokens,
+                    "r": response.reasoning_tokens,
+                    "effort": ctx.reasoning_effort,
                     "lat": latency_ms,
                     "status": status,
                     "err": error_code,
