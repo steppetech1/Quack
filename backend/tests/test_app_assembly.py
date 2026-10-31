@@ -519,3 +519,24 @@ def test_sse_endpoints_document_event_stream() -> None:
     for path in ("/v1/sessions/{session_id}/turns", "/v1/sessions/{session_id}/events"):
         (operation,) = paths[path].values()
         assert list(operation["responses"]["200"]["content"]) == ["text/event-stream"], path
+
+
+def test_turn_stream_documents_status_after_turn_started() -> None:
+    """WP6.3: the turn stream description lists its events in order; `status` with
+    `{"state": "thinking"}` comes right after `turn_started` (for the frontend at G1)."""
+    paths = _snapshot_app().openapi()["paths"]
+    (operation,) = paths["/v1/sessions/{session_id}/turns"].values()
+    schema = operation["responses"]["200"]["content"]["text/event-stream"]["schema"]
+    order = [
+        "turn_started",
+        "status",
+        "token",
+        "task_evaluated",
+        "task_assigned",
+        "turn_completed",
+        "done",
+    ]
+    positions = [schema["description"].find(f"`{name}`") for name in order]
+    assert all(p >= 0 for p in positions), schema["description"]
+    assert positions == sorted(positions), schema["description"]
+    assert '{"state": "thinking"}' in schema["description"]
