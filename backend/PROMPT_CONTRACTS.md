@@ -23,7 +23,7 @@ Output fields:
 - `evaluated_score`: number | null
 - `evaluated_feedback`: string | null
 
-Input blocks: `mode`, `topic_name`, `skills_slice_json`, `misconceptions_json`, `available_tasks_json`, `task_evaluation_json`, `rolling_summary`, `recent_turns_json`, `student_text`
+Input blocks: `mode`, `topic_name`, `skills_slice_json`, `misconceptions_json`, `available_tasks_json`, `task_evaluation_json`, `rolling_summary`, `recent_turns_json`, `student_text`, `guard_reason`
 Label fields: `focus_skill_labels`, `assign_task_label`, `concept_explained.topic_label`, `concept_explained.explained_skill_labels`
 Markers: "memory temporarily unavailable"
 
@@ -164,16 +164,6 @@ Output fields:
 - `text`: string
 
 Input blocks: `mode`, `title_context`, `skills_summary_json`, `misconceptions_summary_json`, `dialogue_excerpt_json`, `previous_content_md`
-
-## `checkpointer@1` → `CheckpointerOutput`
-
-Output fields:
-
-- `rolling_summary`: string
-- `open_threads`: list[string]
-- `key_observations`: list[string]
-
-Input blocks: `previous_summary`, `previous_open_threads_json`, `turns_to_fold_json`
 
 ## Edit points after G1
 
