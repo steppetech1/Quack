@@ -1,6 +1,6 @@
 """`graph.curate`: the domain graph is read through `read_consistent_slice` in READ mode, and
-`handle_graph_curate` reuses one Neo4j driver, Redis client and `LLMGateway` across jobs
-(РТЗ D-7.2, D-7.3).
+`handle_graph_curate` takes the Neo4j driver, Redis client and `LLMGateway` from `JobContext`
+(РТЗ D-7.2, D-7.3, WP2.1).
 """
 
 from __future__ import annotations
@@ -90,40 +90,44 @@ def _job(learner_id: UUID, domain_id: UUID) -> ClaimedJob:
     )
 
 
-async def test_handle_graph_curate_creates_driver_redis_and_gateway_once(
-    db: SessionFactory, settings: Settings, monkeypatch: pytest.MonkeyPatch
+async def test_handle_graph_curate_uses_context_resources_without_creating_any(
+    db: SessionFactory, settings: Settings
 ) -> None:
+    """WP2.1: the handler takes the driver, Redis and gateway from `JobContext` for every job
+    and neither creates nor closes them (replaces the per-settings cache of D-7.2)."""
     driver, redis = _Driver(), _Redis()
-    calls = {"driver": 0, "redis": 0, "gateway": 0}
-
-    def _create_driver(_settings: Settings) -> _Driver:
-        calls["driver"] += 1
-        return driver
-
-    def _create_redis(_settings: Settings) -> _Redis:
-        calls["redis"] += 1
-        return redis
+    gateways: list[object] = []
 
     class _Gateway:
-        def __init__(self, **_kwargs: Any) -> None:
-            calls["gateway"] += 1
+        def __init__(self) -> None:
+            gateways.append(self)
 
-    monkeypatch.setattr(curation, "_RESOURCES", {})
-    monkeypatch.setattr(curation, "create_driver", _create_driver)
-    monkeypatch.setattr(curation, "create_redis", _create_redis)
-    monkeypatch.setattr(curation, "LLMGateway", _Gateway)
-
-    ctx = JobContext(settings=settings.model_copy(), session_factory=db)
+    gateway = _Gateway()
+    ctx = JobContext(
+        settings=settings,
+        session_factory=db,
+        neo4j=driver,  # type: ignore[arg-type]
+        redis=redis,  # type: ignore[arg-type]
+        llm=gateway,  # type: ignore[arg-type]
+    )
     for _ in range(2):
         await curation.handle_graph_curate(_job(uuid4(), uuid4()), ctx)
 
-    assert calls == {"driver": 1, "redis": 1, "gateway": 1}
+    assert gateways == [gateway]
     assert not redis.closed
     assert driver.queries, "the curation job did not read the graph"
+    first_run = len(driver.queries)
 
-    other = JobContext(settings=settings.model_copy(), session_factory=db)
+    other_driver = _Driver()
+    other = JobContext(
+        settings=settings,
+        session_factory=db,
+        neo4j=other_driver,  # type: ignore[arg-type]
+        redis=_Redis(),  # type: ignore[arg-type]
+        llm=gateway,  # type: ignore[arg-type]
+    )
     await curation.handle_graph_curate(_job(uuid4(), uuid4()), other)
-    assert calls == {"driver": 2, "redis": 2, "gateway": 2}
+    assert other_driver.queries and len(driver.queries) == first_run
 
 
 async def test_curation_reads_graph_through_consistent_slice_in_read_mode(
