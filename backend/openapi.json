@@ -5988,7 +5988,7 @@
             "content": {
               "text/event-stream": {
                 "schema": {
-                  "description": "named events `event: <name>\\ndata: <json>` (С-§8.5)",
+                  "description": "named events `event: <name>\\ndata: <json>` (С-§8.5); events in order: `turn_started` {turn_id, turn_index, user_seq}; `status` {\"state\": \"thinking\"} once, right after `turn_started`, before the model call (WP6.3); `token` {delta}, one or more; `task_evaluated` when the turn checks a task answer; `task_assigned` when the turn assigns a task, after `task_evaluated` (WP6.4); `done` last",
                   "type": "string"
                 }
               }
