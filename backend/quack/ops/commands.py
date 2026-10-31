@@ -8,12 +8,14 @@ from uuid import UUID
 from alembic import command
 from alembic.config import Config
 from neo4j import AsyncDriver
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.config import Settings
 from quack.db.locks import LockKeyspace, advisory_lock
 from quack.db.postgres import SessionFactory
+from quack.db.redis import presence_key, ratelimit_key
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.jobs.queue import JobSpec, enqueue_job
 from quack.logging import get_logger
@@ -35,6 +37,8 @@ PURGE_TABLES = (
     "ops.jobs",
     "ops.dlq",
     "ops.projector_offsets",
+    "ops.dispatcher_offsets",
+    "ops.turn_manifests",
 )
 
 
@@ -86,10 +90,22 @@ async def replay_dlq(session_factory: SessionFactory, *, dlq_ids: list[UUID] | N
     return len(rows)
 
 
+async def _delete_redis_keys(redis: Redis, learner_id: UUID) -> None:
+    keys = [presence_key(learner_id)]
+    keys.extend([key async for key in redis.scan_iter(match=ratelimit_key("*", str(learner_id)))])
+    await redis.delete(*keys)
+
+
 async def purge_deleted(
-    engine: AsyncEngine, session_factory: SessionFactory, driver: AsyncDriver, *, chunk_size: int
+    engine: AsyncEngine,
+    session_factory: SessionFactory,
+    driver: AsyncDriver,
+    *,
+    chunk_size: int,
+    redis: Redis | None = None,
 ) -> list[UUID]:
-    """Physically delete learners with a pending_purge tombstone (Т-§2.9)."""
+    """Physically delete learners with a pending_purge tombstone (Т-§2.9); with `redis`, also
+    their keys `presence:learner:{id}` and `ratelimit:*:{id}` (Т-§19.5)."""
     async with session_factory() as session:
         pending = [
             row[0]
@@ -115,6 +131,8 @@ async def purge_deleted(
                     text("DELETE FROM auth.users WHERE id = :l"), {"l": learner_id}
                 )
             await Neo4jGraphStore(driver, str(learner_id)).delete_learner(chunk_size=chunk_size)
+            if redis is not None:
+                await _delete_redis_keys(redis, learner_id)
             async with session_factory() as session, session.begin():
                 await session.execute(
                     text(

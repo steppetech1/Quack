@@ -149,6 +149,7 @@ def _default_responses() -> dict[str, QueuedLLMItem]:
             "pedagogical_move": "assign_task",
         },
         "ExtractorOutput": {"observations": [], "misconceptions": []},
+        "ExtractorOutputV2": {"entries": []},
         "CheckpointerOutput": {
             "rolling_summary": "The learner practised the topic.",
             "open_threads": [],

@@ -20,7 +20,7 @@ from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOut
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.registry import PromptRegistry
-from quack.session.schemas import CheckpointerOutput, ExtractorOutputV2, TeacherOutput
+from quack.session.schemas import ExtractorOutputV2, TeacherOutput
 from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER
 
 CONTRACTS_PATH = Path(__file__).resolve().parents[2] / "PROMPT_CONTRACTS.md"
@@ -35,7 +35,6 @@ PROMPT_SCHEMAS: dict[str, type[BaseModel]] = {
     "curator@1": CuratorOutput,
     "diagnostic@1": DiagnosticOutput,
     "artifacts@1": ArtifactGenOutput,
-    "checkpointer@1": CheckpointerOutput,
 }
 
 # Fields whose values are labels of `LabelMap` (WP14.1, Т-§4.5).
