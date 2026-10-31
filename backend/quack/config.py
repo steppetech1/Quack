@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -122,6 +122,84 @@ class Settings(BaseSettings):
     # --- stream A ---
 
     # --- stream B ---
+    # WP5.7 (Д-§7, R4): Meta API credentials; the old LLM_API_* names are read as fallbacks.
+    meta_api_key: SecretStr = Field(
+        default=SecretStr(""), validation_alias=AliasChoices("META_API_KEY", "LLM_API_KEY")
+    )
+    meta_api_base_url: str = Field(
+        default="", validation_alias=AliasChoices("META_API_BASE_URL", "LLM_API_BASE_URL")
+    )
+    # WP5.1 (Т-§22.11): semaphores per process role and model; models outside the table get
+    # llm_concurrency_default (Phase 3 decision, ТЗ §6.2).
+    llm_concurrency: dict[str, dict[str, int]] = Field(
+        default_factory=lambda: {
+            "api": {"muse-wonder-1.0": 48, "muse-spark-1.3": 24},
+            "workers": {"muse-wonder-1.0": 2, "muse-spark-1.3": 6},
+        }
+    )
+    llm_concurrency_default: int = 4
+    # WP5.7 (Т-§11.1): reasoning effort, output limit and timeout by role; roles without an
+    # entry in llm_role_timeout_s use llm_timeout_sec. Teacher "high" is chosen per turn (WP6.5).
+    llm_role_reasoning: dict[str, Literal["low", "high"]] = Field(
+        default_factory=lambda: {
+            "teacher": "low",
+            "teacher_fallback": "low",
+            "extractor": "high",
+            "evaluator": "high",
+            "diagnostic": "high",
+            "task_gen": "high",
+            "structurer": "high",
+            "curator": "high",
+            "artifacts": "high",
+        }
+    )
+    llm_role_max_output_tokens: dict[str, int] = Field(
+        default_factory=lambda: {
+            "teacher": 8192,
+            "teacher_fallback": 4096,
+            "extractor": 4096,
+            "evaluator": 4096,
+            "diagnostic": 4096,
+            "task_gen": 4096,
+            "structurer": 4096,
+            "curator": 4096,
+            "artifacts": 4096,
+        }
+    )
+    max_output_tokens_cap: int = 16384
+    llm_role_timeout_s: dict[str, float] = Field(
+        default_factory=lambda: {"teacher": 45.0, "teacher_fallback": 30.0}
+    )
+    # WP5.2 (Т-§11.2): retries on failure and on 429; base_ms and max_wait_s are Phase 3
+    # decisions (ТЗ §6.2).
+    llm_retry_attempts: int = 2
+    llm_retry_base_ms: int = 500
+    llm_rate_limit_retries: int = 3
+    llm_rate_limit_base_ms: int = 1000
+    llm_rate_limit_max_wait_s: float = 10.0
+    # WP5.3 (Т-§22.11): pressure flag by 429 and by remaining-limit headers.
+    pressure_default_ttl_s: int = 30
+    pressure_remaining_share: float = 0.2
+    pressure_header_ttl_s: int = 10
+    # WP5.3, WP5.4 (Т-§21.3): how long the teacher waits for admission before teacher_fallback.
+    teacher_admission_wait_ms: int = 3000
+    # WP5.5 (Т-§21.3): circuit breaker per model.
+    circuit_failures: int = 5
+    circuit_open_s: float = 30.0
+    # WP5.6 (Т-§11.4): roles outside the session token budget.
+    session_budget_exempt_roles: tuple[str, ...] = ("extractor",)
+    # WP6.3: SSE keepalive comment interval. Phase 3 decision (ТЗ §6.2).
+    sse_keepalive_s: float = 15.0
+    # WP13 (Т-§10.3): verbatim window and batch collapse into episode lines.
+    conversation_verbatim_max_turns: int = 24
+    conversation_collapse_turns: int = 12
+    # WP14.1 (Т-§4.5): label limits per call.
+    candidate_skills_k: int = 15
+    label_max_topics: int = 8
+    label_max_tasks: int = 5
+    # WP15 (Т-§12.1, Т-§12.4): spoiler guard retries; numbers with |x| below this are not checked.
+    guard_max_retries: int = 2
+    spoiler_ignore_abs_below: int = 10
 
     # --- stream C ---
     # WP8.3: probe timeout of /health/ready and /healthz (was HEALTH_CHECK_TIMEOUT_SEC).

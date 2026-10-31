@@ -7,16 +7,23 @@ The exact Meta API surface (Responses API, structured output on Spark/Wonder) is
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol
 
 import httpx
 
 from quack.llm.errors import ProviderRateLimitedError, ProviderUnavailableError
 
+type ReasoningEffort = Literal["low", "high"]
+
 
 @dataclass(frozen=True)
 class ProviderRequest:
+    """One call of a role (seam S12). Fields after `repair_hint` are the Responses API
+    parameters of WP5.7 (Т-§11.1); `temperature` is sent only by the legacy provider and
+    goes away with it (WP5.7)."""
+
     model: str
     prompt: str
     json_schema: dict[str, Any]
@@ -24,18 +31,46 @@ class ProviderRequest:
     temperature: float
     timeout_sec: float
     repair_hint: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
+    max_output_tokens: int | None = None
+    prompt_cache_key: str | None = None
 
 
 @dataclass(frozen=True)
 class ProviderResponse:
+    """Answer of the provider (seam S12): the parsed answer text, the raw `output` items as
+    they came (reasoning items are passed on unchanged in the next phase, Т-§11.5), usage
+    by kind and the rate-limit headers of the response (WP5.3)."""
+
     content: str
     input_tokens: int
     output_tokens: int
     cached_tokens: int
     model: str
+    reasoning_tokens: int = 0
+    output_items: tuple[dict[str, Any], ...] = ()
+    incomplete: bool = False
+    headers: Mapping[str, str] = field(default_factory=dict)
+
+
+# Headers the gateway reads from every response, including 429 (Т-§11.3, WP5.3).
+RATE_LIMIT_HEADERS: tuple[str, ...] = (
+    "retry-after",
+    "x-ratelimit-limit-requests",
+    "x-ratelimit-remaining-requests",
+    "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-tokens",
+)
 
 
 class LLMProvider(Protocol):
+    """Provider interface of the gateway (seam S12).
+
+    Errors: `ProviderRateLimitedError` (429, `retry_after_sec` + headers),
+    `ProviderBadRequestError` (400, body), `ProviderUnavailableError` (5xx, timeout,
+    connection), `ProviderIncompleteError` (`status: incomplete`, partial text).
+    """
+
     async def complete_structured(self, request: ProviderRequest) -> ProviderResponse: ...
 
 
