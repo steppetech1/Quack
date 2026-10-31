@@ -7,6 +7,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -20,7 +21,7 @@ from quack.logging import configure_logging, get_logger, log_context
 
 # Re-exported for the files of stream B that still import them from here (D-C-014): the
 # imports move to `quack.api.resources` in B's PRs and this line then goes away.
-__all__ = ["AppResources", "create_app", "get_resources"]
+__all__ = ["AppResources", "create_app", "get_resources", "write_openapi"]
 
 log = get_logger(__name__)
 
@@ -131,3 +132,9 @@ def create_app(
     app.include_router(session_router, dependencies=[Depends(enforce_action_rate_limit)])
     app.include_router(artifacts_router)
     return app
+
+
+def write_openapi(path: Path) -> None:
+    """`ops openapi --out PATH`: write the schema of `create_app` (WP8.7). Lives in the
+    assembly layer because it builds the app (§4.1, PHASE3_NOTES D-C-015)."""
+    raise NotImplementedError
