@@ -9,6 +9,11 @@ import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from neo4j import AsyncDriver
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.jobs.queue import (
@@ -19,6 +24,7 @@ from quack.jobs.queue import (
     heartbeat_job,
     reap_stale_jobs,
 )
+from quack.llm.gateway import LLMGateway
 from quack.logging import get_logger
 
 log = get_logger(__name__)
@@ -26,8 +32,20 @@ log = get_logger(__name__)
 
 @dataclass(frozen=True)
 class JobContext:
+    """Per-process resources of `workers` (ТЗ Фазы 3 §4.2, seam S1).
+
+    The field set is a contract. `engine`, `neo4j`, `redis`, `llm` and `compute` default to
+    `None` only until WP2.1 (stage III): Phase 2 handlers still build their own and tests
+    construct the context from two fields (D-A-002).
+    """
+
     settings: Settings
     session_factory: SessionFactory
+    engine: AsyncEngine | None = None
+    neo4j: AsyncDriver | None = None
+    redis: Redis | None = None
+    llm: LLMGateway | None = None
+    compute: ComputeClient | None = None
 
 
 type JobHandler = Callable[[ClaimedJob, JobContext], Awaitable[None]]
@@ -55,6 +73,9 @@ class JobRunner:
     session_factory: SessionFactory
     worker_id: str
     handlers: dict[str, JobHandler] = field(default_factory=lambda: JOB_HANDLERS)
+    # WP2.1: the process-wide resources handed to every handler; built from the two
+    # fields above when absent (tests of the queue core).
+    context: JobContext | None = None
 
     async def _heartbeat(self, job: ClaimedJob) -> None:
         while True:
@@ -71,7 +92,7 @@ class JobRunner:
             job = await claim_next_job(session, self.worker_id, sorted(self.handlers))
         if job is None:
             return False
-        context = JobContext(self.settings, self.session_factory)
+        context = self.context or JobContext(self.settings, self.session_factory)
         beat = asyncio.create_task(self._heartbeat(job))
         try:
             await self.handlers[job.kind](job, context)

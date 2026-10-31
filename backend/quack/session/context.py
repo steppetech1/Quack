@@ -10,8 +10,8 @@ from neo4j.exceptions import ConnectionAcquisitionTimeoutError, ServiceUnavailab
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.events.models import StoredEvent
 from quack.events.reader import EVENT_COLUMNS, row_to_event

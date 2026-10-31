@@ -10,17 +10,10 @@ from pydantic import BaseModel, ConfigDict
 
 
 class PracticeParams(BaseModel):
-    """Search thresholds of stream C (WP1.6). Practice thresholds moved to `Settings`,
-    block of stream B (D-C-013)."""
+    """Empty after the move: search thresholds are in `Settings` (stream C), practice
+    thresholds in the block of stream B (D-C-013). Removal of the module is up to stream C."""
 
     model_config = ConfigDict(frozen=True)
-
-    # ТЗ §2.3 п.3: `q` has at least 2 characters.
-    search_min_query_len: int = 2
-    # ТЗ §2.3 п.3, ТЗ §3: `limit: int = 20`.
-    search_default_limit: int = 20
-    # A13: `limit` is between 1 and 100.
-    search_max_limit: int = 100
 
 
 PARAMS = PracticeParams()

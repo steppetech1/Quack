@@ -61,6 +61,35 @@ class FoldParams(BaseModel):
     prereq_unlock_mastery: float = 0.6
 
 
+class DiagnosticParams(BaseModel):
+    """Thresholds of the diagnostic (ТЗ-П1 §2.3, Т-§3.3); values of Phase 2, moved here by
+    WP1.6 from constants of `quack/domains/diagnostic.py`."""
+
+    model_config = {"frozen": True}
+
+    # The diagnostic asks at most this many questions.
+    max_questions: int = 5
+    # Prior of a tested skill: min(max_mastery, score * factor) with this confidence.
+    prior_tested_max_mastery: float = 0.5
+    prior_tested_factor: float = 0.5
+    prior_tested_confidence: float = 0.5
+    # Propagation of the result to neighbours: success at/above, failure below the threshold;
+    # the effect decays by this factor per edge of distance.
+    prior_propagated_success_threshold: float = 0.7
+    prior_propagated_fail_threshold: float = 0.5
+    prior_propagated_decay: float = 0.85
+    # Priors for prerequisites (success) and for dependent skills (failure).
+    prior_down_base_mastery: float = 0.4
+    prior_down_base_confidence: float = 0.35
+    prior_up_fail_mastery: float = 0.05
+    prior_up_base_confidence: float = 0.4
+    # Self-reported answers: a score at/above the threshold counts as correct.
+    self_report_correct_threshold: float = 0.6
+    no_self_report_score: float = 0.5
+    # tested_depth of a diagnostic task without difficulty.
+    default_tested_depth: float = 0.5
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
@@ -120,6 +149,25 @@ class Settings(BaseSettings):
     # Phase 3 (ТЗ Фазы 3 §6.2, §0.5): each stream edits only its own block below.
 
     # --- stream A ---
+    # §4.3: set by the CLI before resources are created (WP8.1).
+    process_role: Literal["api", "workers", "projector", "ops"] = "api"
+    # Д-§6.1, Д-§9.1: build version, reported by /healthz and `ops status`.
+    quack_version: str = "dev"
+    # Д-§4.1, Д-§14.1: API process count and graceful shutdown (compose values: 2 / 30).
+    api_workers: int = 1
+    api_graceful_shutdown_s: int = 30
+    # WP3.5 (Д-§6.1): how long `workers` waits for running jobs on SIGTERM.
+    worker_shutdown_grace_s: float = 20.0
+    # WP3.3: periodic jobs. Phase 3 decisions (ТЗ §6.2).
+    scheduler_tick_s: float = 15.0
+    session_sweep_interval_s: int = 60
+    purge_deleted_interval_s: int = 600
+    # WP3.4: a job deferred to the next UTC midnight gets up to this much random jitter.
+    daily_budget_defer_jitter_s: int = 900
+    # WP11.1 (Т-§22.4): dispatcher inside `projector`; batch size as projector_batch_max_events.
+    dispatcher_concurrency: int = 8
+    dispatcher_batch_size: int = 100
+    dispatcher_restart_pause_s: float = 5.0
 
     # --- stream B ---
     # WP5.7 (Д-§7, R4): Meta API credentials; the old LLM_API_* names are read as fallbacks.
@@ -227,6 +275,12 @@ class Settings(BaseSettings):
     # WP1.6: moved from quack/domains (JWT_TTL_DAYS, CURATION_DEFER_MINUTES).
     jwt_ttl_days: int = 7
     curation_defer_min: int = 10
+    # WP1.6, audit A7: other thresholds of Phase 2 (domains, artifacts) — Phase 3 decision D-C-014.
+    curation_min_evidence_for_promotion: int = 2
+    search_min_query_len: int = 2
+    search_default_limit: int = 20
+    search_max_limit: int = 100
+    diagnostic: DiagnosticParams = Field(default_factory=DiagnosticParams)
     # WP7: poll interval of GET /v1/learner/stream. Phase 3 decision (ТЗ §6.2).
     learner_stream_poll_ms: int = 2000
     # WP12 (Т-§7.4): evidence weight by tier, hint step penalty, hot window.

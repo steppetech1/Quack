@@ -140,3 +140,10 @@ async def redis(settings: Settings) -> AsyncIterator[Redis]:
     await client.flushdb()
     yield client
     await client.aclose()
+
+
+@pytest.fixture(autouse=True)
+def _clear_local_rate_limits() -> None:
+    from quack.api.ratelimit import LOCAL_LIMITS
+
+    LOCAL_LIMITS.clear()
