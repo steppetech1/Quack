@@ -201,7 +201,6 @@ EXPECTED_ROUTES: frozenset[tuple[str, str]] = frozenset(
 # by the package that mounts the route; `test_pending_routes_are_still_pending` fails otherwise.
 PENDING_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/v1/learner/stream"): "WP7",
-    ("GET", "/healthz"): "WP8.3",
 }
 
 

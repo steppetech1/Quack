@@ -95,6 +95,35 @@ def _health_router() -> APIRouter:
     return router
 
 
+class Healthz(BaseModel):
+    status: str
+
+
+def _healthz_router() -> APIRouter:
+    """`GET /healthz` (WP8.3, `Д-§9.1`): liveness by Postgres only — the teacher turn survives
+    Neo4j and Redis outages, `ops status` shows them."""
+    router = APIRouter(tags=["health"])
+
+    @router.get(
+        "/healthz",
+        response_model=Healthz,
+        responses={503: {"model": Healthz, "description": "Postgres is unreachable"}},
+    )
+    async def healthz(request: Request) -> JSONResponse:
+        resources: AppResources | None = getattr(request.app.state, "resources", None)
+        status = "error"
+        if resources is not None:
+
+            async def postgres() -> None:
+                async with resources.engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+
+            status = await _check(postgres, resources.settings.health_check_timeout_s)
+        return JSONResponse({"status": status}, status_code=200 if status == "ok" else 503)
+
+    return router
+
+
 def create_app(
     settings: Settings | None = None, *, resources: AppResources | None = None
 ) -> FastAPI:
@@ -136,6 +165,7 @@ def create_app(
         return response
 
     app.include_router(_health_router())
+    app.include_router(_healthz_router())
     # Imported here: `quack.session.router` and `artifacts/practice.py` still import this
     # module (D-C-014), so a module-level import would be a cycle.
     from quack.artifacts.router import router as artifacts_router
