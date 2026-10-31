@@ -246,6 +246,7 @@ async def open_turn(
             session_last_checkpoint_turn = int(row.last_checkpoint_turn)
 
             # S-1: Check if this idempotency key was already used
+            resumed_reply: tuple[int, int] | None = None
             existing_event_row = (
                 await session.execute(
                     text(
@@ -290,72 +291,129 @@ async def open_turn(
                 eval_ev = stored_by_type.get("task.evaluated")
                 assigned_ev = stored_by_type.get("task.assigned")
 
-                if student_ev is None or teacher_ev is None:
+                if student_ev is None:
                     raise ApiError("VALIDATION_ERROR", "incomplete stored turn", status_code=500)
+                if teacher_ev is None:
+                    # D-B-018 (Т-§1.4, Т-§2.2): the reply is written, the teacher turn is not —
+                    # the client repeats the turn, it resumes on the stored reply.
+                    resumed_reply = (student_ev.seq, int(student_ev.payload["turn_index"]))
+                else:
+                    cached_sse: list[tuple[str, dict[str, Any]]] = [
+                        (
+                            "turn_started",
+                            {
+                                "turn_id": str(existing_turn_id),
+                                "turn_index": student_ev.payload["turn_index"],
+                                "user_seq": student_ev.seq,
+                            },
+                        ),
+                        # A replay repeats the frames of the stored turn (WP6.3).
+                        ("status", {"state": "thinking"}),
+                        (
+                            "token",
+                            {"delta": teacher_ev.payload.get("text", "")},
+                        ),
+                    ]
+                    if eval_ev is not None:
+                        cached_sse.append(
+                            (
+                                "task_evaluated",
+                                {
+                                    "task_id": eval_ev.payload["task_id"],
+                                    "is_correct": eval_ev.payload["is_correct"],
+                                    "score": eval_ev.payload["score"],
+                                    "feedback": eval_ev.payload["feedback"],
+                                },
+                            )
+                        )
+                    if assigned_ev is not None:
+                        assigned_t_row = await load_task(
+                            session, learner_id, UUID(assigned_ev.payload["task_id"])
+                        )
+                        cached_sse.append(
+                            (
+                                "task_assigned",
+                                {
+                                    "task_id": assigned_ev.payload["task_id"],
+                                    "kind": assigned_t_row.kind if assigned_t_row else "choice",
+                                    "prompt_text": assigned_t_row.prompt_text
+                                    if assigned_t_row
+                                    else "",
+                                },
+                            )
+                        )
+                    cached_sse.append(
+                        (
+                            "turn_completed",
+                            {
+                                "turn_id": str(existing_turn_id),
+                                "committed_seq": teacher_ev.seq,
+                                "degraded_mode": teacher_ev.payload.get("degraded_mode"),
+                            },
+                        )
+                    )
+                    cached_sse.append(("done", {}))
 
-                cached_sse: list[tuple[str, dict[str, Any]]] = [
-                    (
-                        "turn_started",
-                        {
-                            "turn_id": str(existing_turn_id),
-                            "turn_index": student_ev.payload["turn_index"],
-                            "user_seq": student_ev.seq,
-                        },
-                    ),
-                    (
-                        "token",
-                        {"delta": teacher_ev.payload.get("text", "")},
-                    ),
-                ]
-                if eval_ev is not None:
-                    cached_sse.append(
-                        (
-                            "task_evaluated",
-                            {
-                                "task_id": eval_ev.payload["task_id"],
-                                "is_correct": eval_ev.payload["is_correct"],
-                                "score": eval_ev.payload["score"],
-                                "feedback": eval_ev.payload["feedback"],
+                    async def _cached_stream() -> AsyncIterator[tuple[str, dict[str, Any]]]:
+                        try:
+                            for itm in cached_sse:
+                                yield itm
+                        finally:
+                            await lock.__aexit__(None, None, None)
+
+                    return _cached_stream()
+
+        # 1b. D-B-018 (Т-§1.4 п.1): the learner's reply is written in its own transaction before
+        #     the teacher; the teacher turn and its side events are written together later.
+        turn_id = uuid5(QUACK_UUID_NS, f"turn:{learner_id}:{session_id}:{body.idempotency_key}")
+        if resumed_reply is None:
+            student_turn_index = prev_turn_index + 1
+            async with resources.session_factory() as session, session.begin():
+                (student_stored,) = await append_events(
+                    session,
+                    learner_id,
+                    [
+                        NewEvent(
+                            type="turn.student_replied",
+                            payload={
+                                "session_id": str(session_id),
+                                "turn_id": str(turn_id),
+                                "turn_index": student_turn_index,
+                                "text": body.text,
+                                "related_task_id": (
+                                    str(body.related_task_id) if body.related_task_id else None
+                                ),
                             },
+                            actor="learner",
+                            idempotency_key=body.idempotency_key,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            domain_id=domain_id,
                         )
-                    )
-                if assigned_ev is not None:
-                    assigned_t_row = await load_task(
-                        session, learner_id, UUID(assigned_ev.payload["task_id"])
-                    )
-                    cached_sse.append(
-                        (
-                            "task_assigned",
-                            {
-                                "task_id": assigned_ev.payload["task_id"],
-                                "kind": assigned_t_row.kind if assigned_t_row else "choice",
-                                "prompt_text": assigned_t_row.prompt_text if assigned_t_row else "",
-                            },
-                        )
-                    )
-                cached_sse.append(
-                    (
-                        "turn_completed",
-                        {
-                            "turn_id": str(existing_turn_id),
-                            "committed_seq": teacher_ev.seq,
-                            "degraded_mode": teacher_ev.payload.get("degraded_mode"),
-                        },
-                    )
+                    ],
+                    publish_wakeup=True,
+                    redis=resources.redis,
                 )
-                cached_sse.append(("done", {}))
+            student_seq = student_stored.seq
+        else:
+            student_seq, student_turn_index = resumed_reply
+        prev_turn_index = student_turn_index - 1
+        teacher_turn_index = student_turn_index + 1
+    except Exception:
+        await lock.__aexit__(None, None, None)
+        raise
 
-                async def _cached_stream() -> AsyncIterator[tuple[str, dict[str, Any]]]:
-                    try:
-                        for itm in cached_sse:
-                            yield itm
-                    finally:
-                        await lock.__aexit__(None, None, None)
-
-                return _cached_stream()
-
+    async def _run_turn(
+        admission_error: LLMRateLimitedError | None,
+    ) -> list[tuple[str, dict[str, Any]]]:
         # 2. Build turn context
-        context = await build_turn_context(resources, settings, learner_id, session_id)
+        context = await build_turn_context(
+            resources,
+            settings,
+            learner_id,
+            session_id,
+            before_seq=student_seq,
+        )
         last_checkpoint_turn = max(context.last_checkpoint_turn, session_last_checkpoint_turn)
 
         # 3. Available tasks for prompt (using overlay.assigned_task_ids and overlay.graph)
@@ -373,7 +431,6 @@ async def open_turn(
 
         # 4. In-turn task evaluation (ТЗ-П2 §2.3.4) through the one cascade of quack.practice
         #    (WP6.2, D-B-006), then the teacher call via LLMGateway.
-        turn_id = uuid5(QUACK_UUID_NS, f"turn:{learner_id}:{session_id}:{body.idempotency_key}")
         submitted_task: TaskToCheck | None = None
         verdict: AnswerVerdict | None = None
         task_evaluation_json = "null"
@@ -485,7 +542,8 @@ async def open_turn(
 
         try:
             try:
-                await _admit_teacher(resources, settings)
+                if admission_error is not None:
+                    raise admission_error
                 teacher_output = await ask_teacher("teacher")
             except LLMUnavailableError as exc:
                 # WP5.4: 429, no admission or an open circuit of the teacher model.
@@ -536,26 +594,7 @@ async def open_turn(
             decision = TeacherDecision(focus_skill_ids=[], assign_task_id=None, concept=None)
 
         # 5. Events to commit
-        student_turn_index = prev_turn_index + 1
-        teacher_turn_index = prev_turn_index + 2
-
-        events: list[NewEvent] = [
-            NewEvent(
-                type="turn.student_replied",
-                payload={
-                    "session_id": str(session_id),
-                    "turn_id": str(turn_id),
-                    "turn_index": student_turn_index,
-                    "text": body.text,
-                    "related_task_id": str(body.related_task_id) if body.related_task_id else None,
-                },
-                actor="learner",
-                idempotency_key=body.idempotency_key,
-                session_id=session_id,
-                turn_id=turn_id,
-                domain_id=domain_id,
-            )
-        ]
+        events: list[NewEvent] = []
 
         final_evaluated: TaskEvaluated | None = None
         if submitted_task is not None and verdict is not None:
@@ -696,7 +735,6 @@ async def open_turn(
                 publish_wakeup=True,
                 redis=resources.redis,
             )
-            student_stored = next(e for e in stored_events if e.type == "turn.student_replied")
             teacher_stored = next(e for e in stored_events if e.type == "turn.teacher_replied")
             # WP14.2 (Т-§3.2): the manifest goes in the same transaction as the reply.
             manifest_role: Literal["teacher", "teacher_fallback"] = (
@@ -732,7 +770,7 @@ async def open_turn(
                     {
                         "session_id": str(session_id),
                         "turn_id": str(turn_id),
-                        "student_seq": student_stored.seq,
+                        "student_seq": student_seq,
                         "teacher_seq": teacher_stored.seq,
                     },
                 ),
@@ -753,14 +791,6 @@ async def open_turn(
 
         # 7. Prepare SSE event sequence
         sse_events: list[tuple[str, dict[str, Any]]] = [
-            (
-                "turn_started",
-                {
-                    "turn_id": str(turn_id),
-                    "turn_index": student_turn_index,
-                    "user_seq": student_stored.seq,
-                },
-            ),
             (
                 "token",
                 {"delta": teacher_output.reply_text},
@@ -800,14 +830,27 @@ async def open_turn(
             )
         )
         sse_events.append(("done", {}))
-
-    except Exception:
-        await lock.__aexit__(None, None, None)
-        raise
+        return sse_events
 
     async def _stream() -> AsyncIterator[tuple[str, dict[str, Any]]]:
         try:
-            for item in sse_events:
+            yield (
+                "turn_started",
+                {
+                    "turn_id": str(turn_id),
+                    "turn_index": student_turn_index,
+                    "user_seq": student_seq,
+                },
+            )
+            # WP6.3 (Т-§12.2 stage 1): once the turn has the lock and the teacher admission,
+            # one `status` before the model call (also when the turn goes to teacher_fallback).
+            admission_error: LLMRateLimitedError | None = None
+            try:
+                await _admit_teacher(resources, settings)
+            except LLMRateLimitedError as exc:
+                admission_error = exc
+            yield ("status", {"state": "thinking"})
+            for item in await _run_turn(admission_error):
                 yield item
         finally:
             await lock.__aexit__(None, None, None)

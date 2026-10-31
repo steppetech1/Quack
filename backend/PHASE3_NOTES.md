@@ -703,28 +703,54 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
 - Требует подтверждения владельцем: нет (делегировано).
 
-### D-B-018. WP6.3: keepalive в зоне B; событие `status` упирается в формат `turn_started`
-- Класс: C (keepalive), конфликт документов (статус)
-- WP / место: WP6.3; `quack/session/keepalive.py`, `quack/session/router.py`
+### D-B-018. WP6.3: keepalive в зоне B; событие `status` и ранняя запись реплики ученика
+- Класс: C (keepalive), конфликт документов (статус) — решён исполнителем по поручению владельца
+  2026-11-01
+- WP / место: WP6.3; `quack/session/keepalive.py`, `quack/session/router.py`,
+  `quack/session/turns.py`, `quack/session/context.py`
 - Решение (keepalive): `with_keepalive` / `sse_keepalive_response` — после `sse_keepalive_s`
   тишины поток шлёт `: ping` и пустую строку; шаг потока событий между пингами не
   отменяется. Подключено к `GET /v1/sessions/{id}/events` и к потоку хода. Общий
   `sse_response` лежит в `quack/api/sse.py` (зона C), поэтому обёртка — в `quack/session`;
   C может перенести её в `quack/api/sse.py` и подключить к `GET /v1/learner/stream` (WP7).
-  Формат именованных событий и `openapi.json` не меняются.
 - Конфликт (статус хода): WP6.3 требует `status` «первым после `turn_started`» и до вызова
-  модели. `turn_started` по `С-§8.5` несёт `user_seq` — `seq` события `turn.student_replied`,
-  а оно пишется одной транзакцией с ответом учителя после вызова модели (`Т-§12.1`: до commit
-  хода в журнале нет; закон 7). До вызова модели `user_seq` неизвестен; номер заранее не
-  резервируется (`seq` общий на ученика, его пишут и фоновые задачи). Варианты:
-  (1) `status` до `turn_started`; (2) `turn_started` до модели без `user_seq` (или с `null`),
-  `user_seq` — в `turn_completed`: меняет формат `С-§8.5`, что WP6.3 запрещает; (3) писать
-  реплику ученика отдельной транзакцией до модели — против `Т-§12.1`. По `backend/CLAUDE.md`
-  исполнитель не выбирает. До решения `status` не сделан, `T-H10` не написан. Любой вариант
-  требует, чтобы поток хода начинался до вызова учителя (сейчас `open_turn` выполняет весь
-  ход до первого кадра).
-- Тесты: `T-H5` (`tests/session/test_session_events_stream.py::test_sse_keepalive`).
-- Требует решения владельца: да (статус хода).
+  модели, а `turn_started.user_seq` (`С-§8.5`) — `seq` реплики ученика, которую код Фазы 2
+  писал одной транзакцией с ответом учителя после модели. Варианты: (1) `status` до
+  `turn_started`; (2) `turn_started` без `user_seq` — меняет `С-§8.5`; (3) реплика ученика —
+  своей транзакцией до модели.
+- Решение: (3). `Т-§1.4` п.1: «API в одной транзакции выдаёт номер ученика и пишет событие
+  действия», сборка контекста и модель — после; `Т-§2.2` «хода в журнале нет» относится к
+  ходу учителя (`turn.committed` и его последствия пишутся вместе). Основной документ выше
+  `С-§` и кода Фазы 2 (§0.3 п.2). Формат `С-§8.5` не меняется.
+  - До ответа: блокировка, проверка сессии, идемпотентность, запись `turn.student_replied`
+    (ключ — ключ хода). Поток: `turn_started` → допуск учителя (WP5.3) → `status`
+    `{"state": "thinking"}` → остальной ход без изменений; ход учителя и его события
+    (`task.submitted`, `task.evaluated`, `task.assigned`, `turn.teacher_replied`, манифест,
+    задачи) — одной транзакцией, как раньше. Отказ допуска переводит ход на
+    `teacher_fallback` после `status` — событие одно.
+  - Повтор с тем же ключом: ход записан — повтор кадров (с `status`); записана только реплика —
+    ход возобновляется на ней (тот же `turn_id`, `user_seq`, без второй реплики).
+  - `build_turn_context(before_seq=…)`: срез ждёт проектор до события перед репликой (сама
+    реплика — в наложении, закон 9), окно разговора кончается перед ней (реплика — отдельная
+    переменная промпта). Без этого каждый ход ждал бы `projector_lag_timeout_ms`.
+  - Ошибка хода после первого кадра обрывает поток (как `Т-§12.1`, «обрыв до commit»), а не
+    отвечает JSON; клиент повторяет ход и получает его возобновление.
+- Правки тестов (§8.9 п.6 — новое событие контракта `С-§8.5`, не ослабление): в
+  `test_turn_evaluation::test_math_task_evaluated_in_turn_via_compute`,
+  `test_turns_and_sse::test_full_turn_sse_order_format_events_and_extract_job`,
+  `…::test_turn_without_concept_or_task`,
+  `…::test_practice_mode_assigns_task_even_if_move_is_not_assign_task` в точный список кадров
+  добавлен `status` после `turn_started` (индексы кадров сдвинуты); в первом из `turns_and_sse`
+  добавлена проверка `{"state": "thinking"}`. `T-M4` (свой, WP14.2): «сбой записи манифеста →
+  событий хода нет» считает события хода учителя (ключи `<ключ>:…`), реплика ученика по
+  решению пишется раньше — свойство «ход учителя и манифест атомарны» то же.
+- Тесты: `T-H5`, `T-H10` (`test_turn_status_before_text`, вместо задержки 0,5 с провайдер
+  держит ответ до чтения `status` — «раньше, чем провайдер вернул ответ» без таймингов),
+  `test_turn_resumes_on_the_stored_reply`.
+- `openapi.json`: у потока хода общее описание без перечня событий; добавить `status` в текст —
+  `quack/api/openapi.py` (C), фронтенду — на G1 (R-F).
+- Требует решения владельца: нет (поручено исполнителю 2026-11-01).
+
 ### D-B-019. WP15: защита от спойлера — что считается активной задачей и как сравнивается ответ
 - Класс: C
 - WP / место: WP15; `quack/session/spoiler_guard.py`, `quack/session/turns.py::_guard_spoiler`
@@ -1131,6 +1157,7 @@ _(пусто)_
 | WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
 | WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
 | WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
+| WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
 
 ## Правки тестов
 
