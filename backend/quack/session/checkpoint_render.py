@@ -38,3 +38,15 @@ def episode_lines(events: Sequence[StoredEvent], settings: Settings) -> list[str
     """Collapsed lines of the oldest `conversation_collapse_turns` turns once the verbatim
     window exceeds `conversation_verbatim_max_turns`, in whole batches (`T-C4`)."""
     raise NotImplementedError
+
+
+def collapsed_turn_count(turn_count: int, settings: Settings) -> int:
+    """Turns folded into episode lines (whole batches, `T-C4`)."""
+    raise NotImplementedError
+
+
+def visible_replies(
+    replies: Sequence[StoredEvent], up_to_turn_index: int, settings: Settings
+) -> list[StoredEvent]:
+    """Replies of the teacher context shown in full (D-B-023)."""
+    raise NotImplementedError
