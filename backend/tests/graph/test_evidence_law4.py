@@ -27,8 +27,12 @@ from quack.graph.evidence_weights import (
     assign_tier,
     evidence_weight,
 )
+from quack.graph.folds import _weight  # pyright: ignore[reportPrivateUsage]
 from quack.graph.memory import InMemoryGraph
-from quack.graph.projector import project_in_memory
+from quack.graph.projector import (
+    _evidence_trace,  # pyright: ignore[reportPrivateUsage]
+    project_in_memory,
+)
 from tests.factories import EventLog
 
 P = FoldParams()
@@ -448,6 +452,10 @@ async def test_v2_hint_penalty_is_counted_once() -> None:
     h = _history()
     seq, at, turn = _reply(h, "x = 4")
     _extracted(h, turn, [_element(h, seq, at, assistance="hint", hint_step=2)], hours_later=0)
-    (evidence,) = _evidence(await _project(h))
+    graph = await _project(h)
+    ((evidence_id, evidence),) = graph.nodes_with_label("Evidence")
     assert evidence["independence"] == 1.0
     assert evidence["hintStep"] == 2
+    # T3 × (1 − 0.25 · 2): the tier weight and the hint step only, nothing from the model.
+    trace = _evidence_trace(evidence_id, evidence)
+    assert _weight(trace, P, []) == pytest.approx(0.4 * (1 - 0.25 * 2))
