@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
 import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
@@ -18,12 +20,17 @@ from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.jobs.queue import (
     ClaimedJob,
+    JobDeferred,
+    JobFailedPermanently,
     claim_next_job,
     complete_job,
+    defer_job,
+    fail_job_permanently,
     fail_or_retry_job,
     heartbeat_job,
     reap_stale_jobs,
 )
+from quack.llm.errors import LLMBudgetExceededError
 from quack.llm.gateway import LLMGateway
 from quack.logging import get_logger
 
@@ -84,6 +91,15 @@ class JobRunner:
                 if not await heartbeat_job(session, job.id, self.worker_id):
                     return
 
+    def _budget_outcome(self, exc: LLMBudgetExceededError) -> JobDeferred | JobFailedPermanently:
+        """WP3.4: the session budget does not recover, the daily one does at UTC midnight."""
+        if exc.scope == "session":
+            return JobFailedPermanently(str(exc))
+        now = datetime.now(UTC)
+        midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        jitter = random.uniform(0, self.settings.daily_budget_defer_jitter_s)
+        return JobDeferred((midnight - now).total_seconds() + jitter, str(exc))
+
     async def run_one(self) -> bool:
         """Claim and execute one job; False when nothing was claimable."""
         if not self.handlers:
@@ -95,7 +111,22 @@ class JobRunner:
         context = self.context or JobContext(self.settings, self.session_factory)
         beat = asyncio.create_task(self._heartbeat(job))
         try:
-            await self.handlers[job.kind](job, context)
+            try:
+                await self.handlers[job.kind](job, context)
+            except LLMBudgetExceededError as exc:
+                raise self._budget_outcome(exc) from exc
+        except JobDeferred as exc:
+            log.info("job_deferred", kind=job.kind, job_id=str(job.id), reason=exc.reason)
+            async with self.session_factory() as session, session.begin():
+                await defer_job(session, job.id, self.worker_id, exc.delay_sec, exc.reason)
+        except JobFailedPermanently as exc:
+            log.warning(
+                "job_failed_permanently", kind=job.kind, job_id=str(job.id), reason=exc.reason
+            )
+            async with self.session_factory() as session, session.begin():
+                await fail_job_permanently(
+                    session, job.id, self.worker_id, exc.reason, stacktrace=traceback.format_exc()
+                )
         except Exception as exc:
             log.warning("job_failed", kind=job.kind, job_id=str(job.id), error=repr(exc))
             async with self.session_factory() as session, session.begin():
