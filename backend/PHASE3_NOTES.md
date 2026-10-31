@@ -540,6 +540,23 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/session/test_teacher_labels.py`.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-014. `PROMPT_CONTRACTS.md`, `T-M5`; имена полей с метками для `CuratorOutput`
+- Класс: B
+- WP / место: §7.6, S4, D-C-013 п.4; `backend/PROMPT_CONTRACTS.md`,
+  `tests/llm/prompt_contracts.py`, `tests/llm/test_labels.py`
+- Решение: реестр «промпт → схема», поля с метками, маркеры и точки правки — в
+  `tests/llm/prompt_contracts.py` (не в `quack/prompts`: ядро не импортирует продуктовые
+  схемы, `T-A6`). Файл собирается `uv run python -m tests.llm.prompt_contracts`; тест
+  `test_prompt_contracts_file_is_current` падает, если файл устарел. `T-M5` проверяет блок
+  `## Output contract` промптов, где он есть (`teacher@1`, `evaluator@1`, `task_gen@1`,
+  `extractor@2`).
+- Для C (D-C-013 п.4), имена полей с метками в `CuratorOutput` вместо UUID:
+  `promotions[].skill_label`, `promotions[].topic_label`; `skill_merges[]`,
+  `topic_merges[]`, `misconception_merges[]` — `source_label`, `target_label`. Промпт
+  `curator@1` остаётся прежним (D-B-012); после правки схемы C B добавляет поля в
+  `LABEL_FIELDS` и пересобирает файл.
+- Требует подтверждения владельцем: нет (делегировано).
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков

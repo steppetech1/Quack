@@ -8,6 +8,13 @@ import pytest
 
 from quack.config import Settings
 from quack.llm.labels import LabelMap, UnknownLabelError
+from quack.prompts.registry import PromptRegistry
+from tests.llm.prompt_contracts import (
+    CONTRACTS_PATH,
+    PROMPT_SCHEMAS,
+    render_contracts,
+    undeclared_names,
+)
 
 
 def _ids(n: int) -> list[UUID]:
@@ -67,3 +74,17 @@ def test_label_map_follows_settings_limits(settings: Settings) -> None:
     assert labels.label("skill", skills[1]) == "S2"
     assert labels.label("skill", skills[2]) is None
     assert sorted(labels.table()) == ["K1", "S1", "S2", "T1"]
+
+
+@pytest.mark.parametrize("ref", sorted(PROMPT_SCHEMAS))
+def test_prompt_mentions_only_declared_fields(ref: str) -> None:
+    """T-M5: backticked names of `## Output contract` are fields of the role schema or
+    labels of `LabelMap`."""
+    role, version = ref.split("@")
+    text = PromptRegistry().load(role, int(version)).text
+    assert undeclared_names(ref, text) == []
+
+
+def test_prompt_contracts_file_is_current() -> None:
+    """`backend/PROMPT_CONTRACTS.md` is built from code (§7.6, S4)."""
+    assert CONTRACTS_PATH.read_text(encoding="utf-8") == render_contracts()
