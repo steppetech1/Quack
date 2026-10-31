@@ -26,6 +26,23 @@ _JOB_COLUMNS = (
 )
 
 
+class JobDeferred(Exception):
+    """Raised by a handler: run again in `delay_sec`, without spending an attempt (WP3.2)."""
+
+    def __init__(self, delay_sec: float, reason: str) -> None:
+        super().__init__(reason)
+        self.delay_sec = delay_sec
+        self.reason = reason
+
+
+class JobFailedPermanently(Exception):
+    """Raised by a handler or the runner: failed, into ops.dlq, attempts are not spent (WP3.4)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class JobSpec:
     kind: str
@@ -36,6 +53,8 @@ class JobSpec:
     payload: dict[str, Any] = field(default_factory=dict)
     max_attempts: int = 5
     run_after: datetime | None = None
+    # WP3.1 (Т-§13.1): seq of the trigger event; None = the job does not read the graph.
+    required_seq: int | None = None
 
 
 @dataclass(frozen=True)

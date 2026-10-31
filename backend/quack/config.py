@@ -120,6 +120,25 @@ class Settings(BaseSettings):
     # Phase 3 (ТЗ Фазы 3 §6.2, §0.5): each stream edits only its own block below.
 
     # --- stream A ---
+    # §4.3: set by the CLI before resources are created (WP8.1).
+    process_role: Literal["api", "workers", "projector", "ops"] = "api"
+    # Д-§6.1, Д-§9.1: build version, reported by /healthz and `ops status`.
+    quack_version: str = "dev"
+    # Д-§4.1, Д-§14.1: API process count and graceful shutdown (compose values: 2 / 30).
+    api_workers: int = 1
+    api_graceful_shutdown_s: int = 30
+    # WP3.5 (Д-§6.1): how long `workers` waits for running jobs on SIGTERM.
+    worker_shutdown_grace_s: float = 20.0
+    # WP3.3: periodic jobs. Phase 3 decisions (ТЗ §6.2).
+    scheduler_tick_s: float = 15.0
+    session_sweep_interval_s: int = 60
+    purge_deleted_interval_s: int = 600
+    # WP3.4: a job deferred to the next UTC midnight gets up to this much random jitter.
+    daily_budget_defer_jitter_s: int = 900
+    # WP11.1 (Т-§22.4): dispatcher inside `projector`; batch size as projector_batch_max_events.
+    dispatcher_concurrency: int = 8
+    dispatcher_batch_size: int = 100
+    dispatcher_restart_pause_s: float = 5.0
 
     # --- stream B ---
     # WP5.7 (Д-§7, R4): Meta API credentials; the old LLM_API_* names are read as fallbacks.
