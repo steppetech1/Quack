@@ -29,6 +29,7 @@ from quack.graph.evidence_weights import (
 )
 from quack.graph.memory import InMemoryGraph
 from quack.graph.projector import project_in_memory
+from quack.session.schemas import ExtractorOutputV2
 from tests.factories import EventLog
 
 P = FoldParams()
@@ -83,6 +84,18 @@ def test_extractor_schema_has_no_weights() -> None:
     assert _numeric_fields(element, defs) == {"level", "hint_step", "source_seqs"}
     assert _open_strings(element, defs) == {"skill_label", "misconception_label", "quote"} | {
         "skill.new_skill.name"
+    }
+
+
+def test_extractor_output_schema_has_no_weights() -> None:
+    """T-W1 on the prompt-side schema of stream B (`ExtractorOutputV2`, D-B-011): numbers are
+    only the level and the source event numbers (`events`); everything else is closed or text."""
+    schema, defs = _schema(ExtractorOutputV2)
+    assert _numeric_fields(schema, defs) == {"entries.level", "entries.events"}
+    assert _open_strings(schema, defs) == {
+        "entries.skill",
+        "entries.misconception",
+        "entries.quote",
     }
 
 
