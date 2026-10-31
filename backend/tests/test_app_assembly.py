@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import re
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -21,8 +23,9 @@ from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from quack.api.app import create_app
+from quack.api.app import create_app, write_openapi
 from quack.api.errors import ErrorResponse
+from quack.api.openapi import render_openapi
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.db.redis import ratelimit_key
@@ -408,3 +411,87 @@ async def test_health_probe_timeout_comes_from_settings(
     async with _client(create_app(cfg, resources=resources)) as client:
         response = await client.get("/health/ready")
     assert response.json()["checks"]["neo4j"] == neo4j_state, response.text
+
+
+# --- WP8.7: OpenAPI snapshot -------------------------------------------------------------
+
+OPENAPI_SNAPSHOT = Path(__file__).resolve().parent.parent / "openapi.json"
+ERROR_REF = "#/components/schemas/ErrorResponse"
+MUTATING = {"post", "patch", "delete"}
+
+
+def _snapshot_app() -> FastAPI:
+    """The app as `ops openapi` builds it: no resources, the schema does not need them."""
+    return create_app(Settings())
+
+
+def test_openapi_snapshot_is_current() -> None:
+    """T-A7: the schema of the current `create_app`, serialized as `ops openapi` does, is
+    byte-equal to the committed `backend/openapi.json` (regenerate: `ops openapi --out`)."""
+    assert OPENAPI_SNAPSHOT.exists(), "backend/openapi.json is not committed"
+    assert render_openapi(_snapshot_app()) == OPENAPI_SNAPSHOT.read_bytes(), (
+        "backend/openapi.json is stale: run `python -m quack.cli ops openapi --out openapi.json`"
+    )
+
+
+def test_write_openapi_is_deterministic(tmp_path: Path) -> None:
+    """WP8.7: `ops openapi` output is deterministic, with sorted keys."""
+    first, second = tmp_path / "a.json", tmp_path / "b.json"
+    write_openapi(first)
+    write_openapi(second)
+    raw = first.read_bytes()
+    assert raw == second.read_bytes()
+    assert raw == render_openapi(_snapshot_app())
+    assert raw.endswith(b"\n")
+    parsed = json.loads(raw)
+    assert json.dumps(parsed, sort_keys=True, indent=2, ensure_ascii=False) + "\n" == raw.decode()
+
+
+def _error_codes(operation: dict[str, Any]) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for status, response in operation["responses"].items():
+        if status.startswith(("4", "5")):
+            schema = response.get("content", {}).get("application/json", {}).get("schema", {})
+            out[status] = schema.get("$ref")
+    return out
+
+
+def test_openapi_documents_every_response() -> None:
+    """WP8.7: every endpoint has a response model; errors use the common `ErrorResponse`
+    (`С-§8.5`) for 401, 404, 409, 422, 429, 503 where the route can return them."""
+    schema = _snapshot_app().openapi()
+    assert "ErrorResponse" in schema["components"]["schemas"]
+    assert "HTTPValidationError" not in schema["components"]["schemas"]
+    for path, operations in schema["paths"].items():
+        for method, operation in operations.items():
+            what = f"{method.upper()} {path}"
+            ok = [r for s, r in operation["responses"].items() if s.startswith("2")]
+            assert len(ok) == 1, what
+            content = ok[0].get("content", {})
+            assert content, f"{what}: no response body"
+            for media in content.values():
+                assert media.get("schema"), f"{what}: response without a model"
+            if not path.startswith("/v1/"):
+                continue  # `/health/*` keep their own bodies (WP8.3)
+            errors = _error_codes(operation)
+            expected = {"503"}
+            if (method.upper(), path) not in PUBLIC_ROUTES:
+                expected.add("401")
+            if PATH_PARAM.search(path):
+                expected.add("404")
+            if method in MUTATING:
+                expected.add("409")
+                if not path.endswith("/heartbeat"):
+                    expected.add("429")
+            if operation.get("parameters") or operation.get("requestBody"):
+                expected.add("422")
+            assert set(errors) == expected, f"{what}: {sorted(errors)} != {sorted(expected)}"
+            assert all(ref == ERROR_REF for ref in errors.values()), what
+
+
+def test_sse_endpoints_document_event_stream() -> None:
+    """WP8.7: SSE endpoints (`С-§8.5`) describe a `text/event-stream` body."""
+    paths = _snapshot_app().openapi()["paths"]
+    for path in ("/v1/sessions/{session_id}/turns", "/v1/sessions/{session_id}/events"):
+        (operation,) = paths[path].values()
+        assert list(operation["responses"]["200"]["content"]) == ["text/event-stream"], path
