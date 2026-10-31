@@ -69,7 +69,7 @@ class _FakeDriver:
     def __init__(self, skills: list[dict[str, Any]]) -> None:
         self._skills = skills
 
-    def session(self) -> _FakeNeo4jSession:
+    def session(self, **_config: Any) -> _FakeNeo4jSession:
         return _FakeNeo4jSession(self._skills)
 
     async def close(self) -> None:

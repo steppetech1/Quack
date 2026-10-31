@@ -8,7 +8,6 @@ from typing import Any, LiteralString
 from uuid import UUID, uuid5
 
 import orjson
-from neo4j import READ_ACCESS
 from redis.exceptions import RedisError
 
 from quack.api.resources import AppResources
@@ -20,7 +19,13 @@ from quack.artifacts.schemas import (
     CheatsheetRefreshRequest,
     CheatsheetRefreshResponse,
 )
-from quack.artifacts.store import ARTIFACT_VIEW_COLUMNS, fetch_rows, stored_event
+from quack.artifacts.store import (
+    ARTIFACT_VIEW_COLUMNS,
+    fetch_rows,
+    require_topic_of_learner,
+    stored_event,
+)
+from quack.db.neo4j import read_session
 from quack.db.redis import session_events_channel
 from quack.events import NewEvent, append_events
 from quack.graph.ids import QUACK_UUID_NS
@@ -72,7 +77,10 @@ async def get_cheatsheet(
         l=learner_id,
         t=topic_id,
     )
-    return ArtifactView.model_validate(rows[0]) if rows else None
+    if rows:
+        return ArtifactView.model_validate(rows[0])
+    await require_topic_of_learner(resources.session_factory, learner_id, topic_id)
+    return None
 
 
 async def request_cheatsheet_refresh(
@@ -82,6 +90,7 @@ async def request_cheatsheet_refresh(
     resources: AppResources,
 ) -> CheatsheetRefreshResponse:
     """Enqueue `artifact.refresh_cheatsheet` (spec §7.1)."""
+    await require_topic_of_learner(resources.session_factory, learner_id, topic_id)
     spec = kinds.artifact_refresh_cheatsheet(
         learner_id, topic_id, {"domain_id": str(body.domain_id)}
     )
@@ -259,7 +268,7 @@ async def _topic_sheet(
     deps: WorkerDeps, learner_id: UUID, domain_id: UUID, topic_id: UUID
 ) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
     """Topic name (None if not projected yet), live skills and their misconceptions (A16)."""
-    async with deps.neo4j.session(default_access_mode=READ_ACCESS) as session:
+    async with read_session(deps.neo4j) as session:
         result = await session.run(
             _TOPIC_SHEET,
             {

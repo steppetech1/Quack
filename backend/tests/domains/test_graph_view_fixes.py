@@ -591,10 +591,28 @@ async def test_graph_view_opens_every_neo4j_session_with_read_access(
     real_session = neo4j.session
     graph_view_modes: list[str | None] = []
 
+    def _opened_by_graph_view(frame: Any) -> bool:
+        """The session is opened by `graph_view.py` itself or through `read_session`
+        (`quack/db/neo4j.py`, WP4.1) called from `graph_view.py`."""
+        caller = frame.f_back if frame else None
+        if caller is None:
+            return False
+        name = caller.f_code.co_filename.replace("\\", "/")
+        if name.endswith("quack/domains/graph_view.py"):
+            return True
+        if not (name.endswith("quack/db/neo4j.py") and caller.f_code.co_name == "read_session"):
+            return False
+        outer = caller.f_back  # contextlib's __aenter__, then the code using `read_session`
+        for _ in range(2):
+            if outer is None:
+                return False
+            if outer.f_code.co_filename.replace("\\", "/").endswith("quack/domains/graph_view.py"):
+                return True
+            outer = outer.f_back
+        return False
+
     def _spy_session(*args: Any, **kwargs: Any) -> Any:
-        frame = inspect.currentframe()
-        caller_file = frame.f_back.f_code.co_filename if frame and frame.f_back else ""
-        if caller_file.replace("\\", "/").endswith("quack/domains/graph_view.py"):
+        if _opened_by_graph_view(inspect.currentframe()):
             graph_view_modes.append(kwargs.get("default_access_mode"))
         return real_session(*args, **kwargs)
 
