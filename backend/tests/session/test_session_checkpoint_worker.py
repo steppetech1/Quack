@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import httpx
-import pytest
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -19,10 +18,9 @@ from quack.graph.projector import run_projector_batch
 from quack.jobs import kinds
 from quack.jobs.queue import ClaimedJob, claim_next_job, complete_job, enqueue_job
 from quack.jobs.runner import JOB_HANDLERS, JobContext
-from quack.llm import provider as llm_provider_mod
-from quack.session import workers
 from quack.session.schemas import CheckpointerOutput, TeacherOutput
 from quack.session.workers import handle_session_checkpoint
+from tests.support.resources import build_job_context
 
 if TYPE_CHECKING:
     from tests.session.fixtures import FakeLLMProvider, SeededDomain
@@ -47,15 +45,9 @@ async def _invoke_checkpoint(
     job: ClaimedJob,
     ctx: JobContext,
     fake_llm: FakeLLMProvider,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invoke the registered `session.checkpoint` handler with `fake_llm` wired in."""
-    assert fake_llm.gateway is not None
-    monkeypatch.setattr(llm_provider_mod, "HttpLLMProvider", lambda *a, **kw: fake_llm)
-    if hasattr(workers, "HttpLLMProvider"):
-        monkeypatch.setattr(workers, "HttpLLMProvider", lambda *a, **kw: fake_llm)
-    if hasattr(workers, "LLMGateway"):
-        monkeypatch.setattr(workers, "LLMGateway", lambda *a, **kw: fake_llm.gateway)
+    """Invoke the registered `session.checkpoint` handler; `ctx.llm` is `fake_llm.gateway`."""
+    assert ctx.llm is fake_llm.gateway
     await handle_session_checkpoint(job, ctx)
 
 
@@ -68,13 +60,11 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
     redis: Redis,
     settings: Settings,
     fake_llm: FakeLLMProvider,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ТЗ worker test 4: `session.checkpoint` folds replies up to `up_to_turn_index` via
     `checkpointer@1` (`idempotency_key=f"checkpoint:{session_id}:{up_to_turn_index}"`),
     appends `session.checkpointed` and updates `core.sessions.last_checkpoint_turn`, and on a
     subsequent checkpoint reads the previous `session.checkpointed`."""
-    _ = redis
     assert JOB_HANDLERS.get("session.checkpoint") is handle_session_checkpoint
 
     # 1. Start session
@@ -151,8 +141,8 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
     )
     fake_llm.push("checkpointer", cp_out_1)
 
-    ctx = JobContext(settings=settings, session_factory=db)
-    await _invoke_checkpoint(cp_job_1, ctx, fake_llm, monkeypatch)
+    ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
+    await _invoke_checkpoint(cp_job_1, ctx, fake_llm)
     async with db() as session, session.begin():
         await complete_job(session, cp_job_1.id, "test-cp-worker")
 
@@ -253,7 +243,7 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
     )
     fake_llm.push("checkpointer", cp_out_2)
 
-    await _invoke_checkpoint(cp_job_2, ctx, fake_llm, monkeypatch)
+    await _invoke_checkpoint(cp_job_2, ctx, fake_llm)
     async with db() as session, session.begin():
         await complete_job(session, cp_job_2.id, "test-cp-worker")
 

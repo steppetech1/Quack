@@ -17,10 +17,10 @@ from quack.db.redis import session_events_channel
 from quack.events.payloads import ExtractedMisconception, ExtractedObservation, SkillRef
 from quack.jobs import kinds
 from quack.jobs.queue import claim_next_job, complete_job, enqueue_job
-from quack.jobs.runner import JobContext
 from quack.session.schemas import ExtractorOutput, TeacherOutput
 from quack.session.workers import run_turn_extract
 from tests.session.helpers import parse_sse, skill_label
+from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -104,7 +104,7 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
     fake_llm.push("extractor", ExtractorOutput(observations=[obs_1], misconceptions=[misc_1]))
 
     assert fake_llm.gateway is not None
-    ctx = JobContext(settings=settings, session_factory=db)
+    ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
     first_seq = await run_turn_extract(job, ctx, gateway=fake_llm.gateway, redis=redis, neo4j=neo4j)
     async with db() as session, session.begin():
         await complete_job(session, job.id, "test-worker")
