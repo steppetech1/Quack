@@ -15,7 +15,7 @@ from quack.db.postgres import SessionFactory
 from quack.jobs.queue import ClaimedJob, claim_next_job
 from quack.jobs.runner import JobContext
 from quack.session import workers
-from quack.session.schemas import ExtractorOutput, TeacherOutput
+from quack.session.schemas import ExtractorOutputV2, TeacherOutput
 from tests.session.helpers import parse_sse
 from tests.support.resources import build_job_context
 
@@ -127,7 +127,7 @@ async def test_topic_context_read_uses_teacher_seq_as_min_seq(
 
     monkeypatch.setattr(workers, "read_consistent_slice", spy)
 
-    fake_llm.push("extractor", ExtractorOutput(observations=[], misconceptions=[]))
+    fake_llm.push("extractor", ExtractorOutputV2(entries=[]))
     assert fake_llm.gateway is not None
     ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
     await workers.run_turn_extract(job, ctx, gateway=fake_llm.gateway, redis=redis, neo4j=neo4j)

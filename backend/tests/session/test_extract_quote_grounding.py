@@ -12,9 +12,8 @@ from sqlalchemy import text
 
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
-from quack.events.payloads import ExtractedMisconception, ExtractedObservation, SkillRef
 from quack.jobs.queue import claim_next_job
-from quack.session.schemas import ExtractorOutput, TeacherOutput
+from quack.session.schemas import ExtractorEntry, ExtractorOutputV2, TeacherOutput
 from quack.session.workers import run_turn_extract
 from tests.session.helpers import parse_sse, skill_label
 from tests.support.resources import build_job_context
@@ -22,7 +21,7 @@ from tests.support.resources import build_job_context
 pytest_plugins = ["tests.session.fixtures"]
 
 
-async def test_ungrounded_quotes_are_dropped(
+async def test_ungrounded_quotes_are_not_applied(
     client: httpx.AsyncClient,
     auth_headers: dict[str, str],
     seeded_domain: Any,
@@ -70,33 +69,33 @@ async def test_ungrounded_quotes_are_dropped(
             job = claimed
             break
 
-    skill = SkillRef(skill_id=seeded_domain.skill_ids[0])
+    # §8.9 п.9 (WP12, Т-§7.6): with extractor@2 a quote that is not in the learner's events is
+    # written with its rejection reason and not applied; the grounded element is applied.
+    student_seq = int(job.payload["student_seq"])
+    teacher_seq = int(job.payload["teacher_seq"])
+    power = skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])
 
-    def obs(quote: str) -> ExtractedObservation:
-        return ExtractedObservation(
-            skill=skill,
-            direction="negative",
-            strength=0.8,
-            independence=1.0,
-            tested_depth=0.5,
-            polarity_weight=1.0,
-            evidence_text=quote,
-        )
-
-    def misc(quote: str) -> ExtractedMisconception:
-        return ExtractedMisconception(
-            name="Wrong derivative",
-            skill=skill,
-            topic_id=seeded_domain.topic_id,
-            confidence=0.9,
-            evidence_text=quote,
+    def entry(quote: str, seq: int) -> ExtractorEntry:
+        return ExtractorEntry(
+            kind="skill_observation",
+            skill=power,
+            misconception=None,
+            level=3,
+            outcome="failure",
+            help="none",
+            gap_type="execution_error",
+            quote=quote,
+            events=[seq],
         )
 
     fake_llm.push(
         "extractor",
-        ExtractorOutput(
-            observations=[obs("derivative is 2x"), obs("the integral is x^2")],
-            misconceptions=[misc("the integral is x^2")],
+        ExtractorOutputV2(
+            entries=[
+                entry("derivative is 2x", student_seq),
+                entry("the integral is x^2", student_seq),
+                entry("Check it again.", teacher_seq),
+            ]
         ),
     )
     assert fake_llm.gateway is not None
@@ -113,5 +112,9 @@ async def test_ungrounded_quotes_are_dropped(
                 {"l": seeded_domain.learner_id, "t": turn_id},
             )
         ).scalar_one()
-    assert [o["evidence_text"] for o in payload["observations"]] == ["derivative is 2x"]
-    assert payload["misconceptions"] == []
+    verdicts = [(e["quote"], e["rejected_reason"]) for e in payload["elements"]]
+    assert verdicts == [
+        ("derivative is 2x", None),
+        ("the integral is x^2", "quote_not_in_source"),
+        ("Check it again.", "source_outside_episode"),
+    ]
