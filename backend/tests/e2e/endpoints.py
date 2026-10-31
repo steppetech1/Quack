@@ -93,6 +93,7 @@ def body_for(method: str, path: str, ids: Ids, key: str, variant: int = 0) -> di
             "mode": ["learn", "practice"][v],
         },
         ("POST", "/v1/sessions/{session_id}/finish"): {},
+        ("POST", "/v1/sessions/{session_id}/heartbeat"): {},
         ("POST", "/v1/sessions/{session_id}/turns"): {"text": ["Hello", "Bye"][v]},
         ("POST", "/v1/sessions/{session_id}/tasks/next"): {
             "topic_id": str(ids.topic_id),
@@ -119,5 +120,6 @@ def body_for(method: str, path: str, ids: Ids, key: str, variant: int = 0) -> di
         ("POST", "/v1/topics/{topic_id}/cheatsheet/refresh"): {"domain_id": str(ids.domain_id)},
     }
     body = dict(bodies[(method, path)])
-    body["idempotency_key"] = key
+    if (method, path) != ("POST", "/v1/sessions/{session_id}/heartbeat"):  # no body model
+        body["idempotency_key"] = key
     return body

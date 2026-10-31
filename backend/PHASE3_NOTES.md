@@ -1061,6 +1061,7 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP10.2 (стенд на `phase-3` после WP1, WP2, WP3.1–3.4, WP4, WP6.2) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed. Падают: `T-E1`, `T-E5` — `turn.extract` идёт мимо `ScriptedLLMProvider`: `quack/session/workers.py` строит свой шлюз (`_worker_resources`), а не берёт `JobContext.llm` (WP2.1, A/B); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200 (Q9); `T-E10` — нет обработчика `account.purge_deleted` и планировщика (A, WP3.3). Стенд: обработчики — `quack.runtime.register_all_handlers`, один `JobContext` над ресурсами стенда, `create_app(resources=)`. Побочно: кэш `_worker_resources` по `id(settings)` переносит открытый размыкатель из e2e в `tests/session/test_session_checkpoint_worker.py` при полном прогоне (уйдёт с WP2.1) |
 
 ## Правки тестов
 
@@ -1089,6 +1090,7 @@ _(пусто)_
 | Q5 | Склейка `artifact.refresh_cheatsheet` теряет `session_id` | O6 |
 | Q6 | Прод: `JWT_SECRET` не короче 32 байт (dev-секрет 20 байт) | STREAM3_NOTES §2 |
 | Q8 | ~~DoD п.3: `T-E4`, `T-E6`, `T-E7`, `T-E9` зелёные до реализации~~ — закрыто: D-C-012 | D-C-012 |
+| Q9 | `T-E2` ждёт 409 на `structure/propose` с тем же ключом и другим телом. По Т-§ «Идемпотентность» конфликт — по хэшу нагрузки события; нагрузка `structure.proposed` — ответ структуратора, который шлюз берёт из `core.llm_outbox` по тому же ключу, поэтому другое тело даёт ту же нагрузку и 200. Варианты: (а) добавить в нагрузку `structure.proposed` поля запроса (`goals`, `background`, `focus_areas`) — расширение схемы события; (б) хранить хэш входа в outbox и отдавать конфликт из шлюза (зона B); (в) исключить `propose` из проверки 409 в `T-E2` с причиной | T-E2, WP10.2 |
 | Q7 | ~~Подтвердить: токен ученика без строки `auth.users` → 401, тест потока 2 меняется~~ — закрыто 2026-10-31: решение передано исполнителю, принят вариант (1) | D-C-004 |
 
 ## DoD

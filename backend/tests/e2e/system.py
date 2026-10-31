@@ -9,10 +9,10 @@
 - `pause_background()` / `resume_background()` stop and start projector and workers (law 9);
 - `system.clock` is the replaceable time source of the scheduler.
 
-Wiring points owned by stream A are marked `# S-A:`. Until they land the stand runs what
-Phase 2 has: derived jobs are still enqueued in the event transaction (no dispatcher), the
-handlers are registered by importing the product modules (no `quack.runtime`), there is no
-scheduler. The e2e tests are red until those packages land — that is their purpose (§7.1).
+Wiring points owned by stream A are marked `# S-A:`. Handlers come from `quack.runtime`
+(WP2.2) and get one `JobContext` over the stand's resources (WP2.1). Until the dispatcher
+(WP11) and the scheduler (WP3.3) land, derived jobs are still enqueued in the event
+transaction and there are no periodic jobs; the e2e tests that need them stay red (§7.1).
 """
 
 from __future__ import annotations
@@ -39,7 +39,8 @@ from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.graph.worker import ProjectorWorker
 from quack.jobs.queue import ClaimedJob
-from quack.jobs.runner import JOB_HANDLERS, JobContext, JobHandler, JobRunner
+from quack.jobs.runner import JobContext, JobHandler, JobRunner
+from quack.runtime import register_all_handlers
 from tests.support.compute import ComputeScenario, scripted_compute
 from tests.support.llm import ScriptedLLMProvider
 from tests.support.resources import build_app_resources
@@ -87,15 +88,23 @@ _APPLIED_SQL = text("SELECT applied_seq FROM ops.projector_offsets WHERE learner
 
 
 def job_handlers() -> dict[str, JobHandler]:
-    """All job handlers of the product packages.
+    """All job handlers, registered as the `workers` process does (WP2.2). The completeness
+    check is `T-Q7`'s; here a missing handler leaves its jobs queued and the test that needs
+    them fails on its own assertion (S-A: `account.purge_deleted`, WP3.3)."""
+    return register_all_handlers()
 
-    S-A: `quack.runtime` registration function (WP2.2) replaces these imports.
-    """
-    from quack.artifacts import cheatsheets  # noqa: F401  (registers its handlers)
-    from quack.domains import curation  # noqa: F401  (registers graph.curate)
-    from quack.session import lifecycle, workers  # noqa: F401  (registers session handlers)
 
-    return dict(JOB_HANDLERS)
+def job_context(resources: AppResources) -> JobContext:
+    """The `workers` resources of §4.2 over the stand's ones: one process, one set (WP2.1)."""
+    return JobContext(
+        settings=resources.settings,
+        session_factory=resources.session_factory,
+        engine=resources.engine,
+        neo4j=resources.neo4j,
+        redis=resources.redis,
+        llm=resources.llm,
+        compute=resources.compute,
+    )
 
 
 def _logged(handler: JobHandler, log: list[JobStart]) -> JobHandler:
@@ -142,7 +151,13 @@ class System:
         self._spawn(projector.run_forever)
         # S-A: dispatcher task in the projector process (WP11.1) starts here.
         handlers = {k: _logged(h, self.job_starts) for k, h in job_handlers().items()}
-        runner = JobRunner(self.settings, self.session_factory, f"e2e-{uuid4().hex[:8]}", handlers)
+        runner = JobRunner(
+            self.settings,
+            self.session_factory,
+            f"e2e-{uuid4().hex[:8]}",
+            handlers,
+            context=job_context(self.resources),
+        )
         self._spawn(runner.run_forever)
         # S-A: scheduler of periodic jobs (WP3.3) starts here with `self.clock`.
 
@@ -222,8 +237,7 @@ async def build_system(
         provider=llm,
         compute=scripted_compute(compute),
     )
-    app = create_app(settings, connect=False)
-    app.state.resources = resources
+    app = create_app(settings, resources=resources)
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
     return System(
         settings=settings,

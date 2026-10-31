@@ -184,7 +184,13 @@ async def run_journey(system: System, key: str = "journey") -> Journey:
     nxt = ok(
         await api.post(
             f"/v1/sessions/{session_id}/tasks/next",
-            json={"topic_id": str(topic_id), "turn_id": turn_id, "idempotency_key": f"{key}:next"},
+            json={
+                "topic_id": str(topic_id),
+                "turn_id": turn_id,
+                # the scripted `task_gen` answers a choice task (tests/support/llm.py)
+                "kind": "choice",
+                "idempotency_key": f"{key}:next",
+            },
             headers=h,
         )
     )
