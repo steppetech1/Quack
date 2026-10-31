@@ -21,6 +21,8 @@ type ErrorCode = Literal[
     "VALIDATION_ERROR",
     "UNAUTHORIZED",
     "RATE_LIMITED",
+    # Phase 3 §4.5: a dependency needed for the answer (Neo4j, compute without fallback) is down.
+    "SERVICE_UNAVAILABLE",
 ]
 
 _STATUS_CODES: dict[int, ErrorCode] = {
@@ -31,6 +33,7 @@ _STATUS_CODES: dict[int, ErrorCode] = {
     409: "IDEMPOTENCY_CONFLICT",
     422: "VALIDATION_ERROR",
     429: "RATE_LIMITED",
+    503: "SERVICE_UNAVAILABLE",
 }
 
 

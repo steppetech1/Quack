@@ -13,9 +13,10 @@
   а не из-за дефекта. В Linux проверки прошли. Подробно — D-C-002.
 - **Заблокировано:** ничего.
 - **Решения класса C, требующие подтверждения:**
-  - D-C-001 — рабочие ветки называются `phase-3-<поток>-<тема>`, а не `phase-3/<поток>-<тема>`:
-    git не допускает одновременно ветку `phase-3` и ветки `phase-3/*`.
-- **Ветка / последний коммит:** `phase-3` = `694eb50`; заметки — в `phase-3-c-wp0-notes`.
+  - D-C-004 — в WP1.2 токен ученика без строки `auth.users` получает 401; утверждение теста
+    Фазы 2 `test_learner_without_auth_user_row_stays_valid` меняется на обратное (вне §8.9).
+  - D-C-001 (рабочие ветки `phase-3-<поток>-<тема>`) — подтверждено владельцем 2026-10-31.
+- **Ветка / последний коммит:** `phase-3` = `694eb50`; заметки — в `phase-3-c-wp0-notes`; WP1 — в `phase-3-c-wp1-auth-resources`.
 
 ## Вход
 
@@ -54,7 +55,7 @@
 | WP | Поток | Статус | Тесты |
 | :-- | :-: | :-- | :-- |
 | WP0 | C ведёт, A, B | зона C: выполнено (вход, прогон, аудит пунктов C); зоны A и B: ждут аудита своих пунктов | существующие 410 + 5 (compute) зелёные |
-| WP1 | C | не начат | — |
+| WP1 | C | Этап I WP1.2–1.3 и швы S1, S7, S8, S9 — выполнено; Этапы II–III — не начаты | новых нет; существующие 410 зелёные |
 | WP2 | A | не начат | — |
 | WP3 | A | не начат | — |
 | WP4 | C | не начат | — |
@@ -71,6 +72,17 @@
 | WP15 | B | не начат | — |
 
 Гейты: G0 — открыт (ждёт аудита A и B, Этапа I всех пакетов и таблицы S11).
+
+Швы потока C к G0:
+
+| Шов | Что выдано | Где |
+| :-- | :-- | :-- |
+| S1 (часть C) | `AppResources` с полями `settings`, `engine`, `session_factory`, `neo4j`, `redis`, `llm`, `compute`; зависимости `get_resources`, `get_settings`, `get_llm`, `get_compute` (тела — Этап III) | `quack/api/resources.py` |
+| S7 (часть C) | код `SERVICE_UNAVAILABLE` (503) в `ErrorCode`; обработчик ошибок Neo4j — в WP6.1 вместе с тестом | `quack/api/errors.py` |
+| S8 | `llm_pressure_key(model)` → `llm:pressure:{model}`, `llm_circuit_key(model)` → `llm:circuit:{model}`; лимиты — существующий `ratelimit_key(scope, key)` | `quack/db/redis.py`, блок `# --- stream C ---` |
+| S9 (каркас) | `FakeLLMProvider` (перенесён из `tests/domains/conftest.py`), `ScriptedLLMProvider` (сигнатуры; виды сбоев ждут S12 от B), `BrokenRedis`, `BrokenNeo4jDriver`, `ComputeScenario` + `scripted_compute` на `httpx.MockTransport`, `build_app_resources` | `tests/support/` |
+| — | `quack/api/auth.py`: `jwt_secret_for`, `issue_access_token`, `decode_access_token`, `get_current_learner_id` (тела — Этап III) | `quack/api/auth.py` |
+| — | `Settings`: блоки `# --- stream A/B/C ---`; в блоке C — параметры §6.2 пакетов C (`health_check_timeout_s`, `auth_requests_per_ip_per_min`, `learner_actions_per_min`, `turns_per_min`, `jwt_ttl_days`, `curation_defer_min`, `learner_stream_poll_ms`, `evidence_tier_weights`, `hint_step_penalty`, `hot_window_min`) | `quack/config.py` |
 
 ## Аудит
 
@@ -107,7 +119,7 @@
 | A25 | не проверено C (для B: формат diagnostic — `{"option", "answer", "options"}`, ремедиация T-016) | — | WP6.4 / B |
 | A26 | по STREAM3_NOTES §2 совпадает (проверить B) | `finish_session` ставит `kinds.session_finish_artifacts(learner, sid, {"domain_id", "topic_id"})`, его ждёт `run_finish_artifacts` | WP6.4 / B |
 | A27 | конфликт документов (проверить B) | порядок по ТЗ-П2: `task_evaluated` → `task_assigned`; С-§8.5 — наоборот (PHASE2_STREAM2_NOTES, «Конфликты» п.1) | WP6.4 / B |
-| A28 | подтверждено: Hypothesis-тестов нет | `hypothesis` нет ни в `pyproject.toml`, ни в `tests/` (`@given` не найден) | WP10, R16 / C |
+| A28 | подтверждено: Hypothesis-тестов нет, свойство покрыто частично | `hypothesis` нет ни в `pyproject.toml`, ни в `tests/` (`@given` не найден). Есть детерминированный тест Фазы 1 `tests/test_projector_determinism.py::test_batch_size_and_rebuild_equivalence`: один сценарий со всеми 36 типами событий, пачки по 1, одна пачка, случайные размеры 1–9 (`random.Random(7)`), полная пересборка — снимки равны; и `test_reapplying_already_applied_events_changes_nothing`. Не покрыто: случайные последовательности событий (`Т-§2.5`, ориентир) | WP10, R16 / C |
 | A29 | подтверждено, частично (проверить B) | `llm/provider.py`: `/chat/completions`, `response_format`, `temperature`; `config.py`: `llm_timeout_sec = 60.0`, модели `muse-wonder` / `muse-spark` | WP5.7 / B |
 
 ### Вызовы `enqueue_job` (вход для WP11, шов S11)
@@ -151,7 +163,7 @@
 | R3 | закрывается WP5.7 (A29 подтверждён: `/chat/completions`) |
 | R4 | закрывается WP5.7, WP9.2, WP10.3 |
 | R10 | ждёт аудита B (порядок слотов против `Т-§10.1`) |
-| R16 | подтверждено: Hypothesis-тестов нет, зависимости `hypothesis` в `pyproject.toml` нет. Добавление зависимости — класс D (§0.4.3: разрешён только `locust`), см. Q3 |
+| R16 | подтверждено: Hypothesis-тестов нет, зависимости `hypothesis` в `pyproject.toml` нет; свойство «пачки = пересборка» проверено детерминированно на одном сценарии в памяти (A28) плюс `T-E4` на Neo4j в WP10. Добавление зависимости — класс D (§0.4.3: разрешён только `locust`), см. Q3 |
 
 ## Журнал решений
 
@@ -180,7 +192,7 @@ _(пусто)_
   меняется; меняется один символ в шаблоне рабочих веток.
 - Обратимость: переименовать рабочие ветки (`git branch -m`), интеграционная не затронута.
 - Тесты: нет (процесс).
-- Требует подтверждения владельцем: да
+- Требует подтверждения владельцем: да — **подтверждено 2026-10-31, вариант (1)**
 
 ### D-C-002. Проверки `compute/` идут в Linux
 - Класс: B
@@ -195,6 +207,41 @@ _(пусто)_
 - Обратимость: не затрагивает код.
 - Тесты: `compute/tests/test_compute_service.py` (5 passed в Linux).
 - Требует подтверждения владельцем: нет
+
+### D-C-003. Две `AppResources` до Этапа III WP1.3
+- Класс: B
+- WP / место: WP1.3, `quack/api/resources.py`, `quack/api/app.py`
+- Контекст: шов S1 нужен к G0, а перевод шести мест создания `AppResources` и всех
+  импортов `quack.api.app.AppResources` — это реализация WP1.3 (Этап III). Если сразу
+  поменять поля старого класса, дерево `phase-3` станет красным.
+- Варианты: (1) новый контракт в `quack/api/resources.py`, старый класс живёт до Этапа III;
+  (2) сразу перевести все места.
+- Решение: (1). Старый `quack.api.app.AppResources` удаляется в Этапе III WP1.3.
+- Почему: §7.4 — `phase-3` всегда зелёная; §0.4.3 п.4.
+- Обратимость: удалить новый модуль.
+- Тесты: `T-A6` (после Этапа III в коде один `AppResources`).
+- Требует подтверждения владельцем: нет
+
+### D-C-004. Токен ученика без строки `auth.users`
+- Класс: C
+- WP / место: WP1.2, `quack/api/auth.py`;
+  `tests/session/test_auth_and_stream_resilience.py::test_learner_without_auth_user_row_stays_valid`
+- Контекст: контракт WP1.2 — `get_current_learner_id` проверяет «пользователь существует,
+  `deleted_at IS NULL`, tombstone нет»; так же уже работает `quack/domains/auth.py`.
+  Ремедиация потока 2 (T-034) сделала обратное: токен ученика без строки `auth.users`
+  принимается, потому что фикстуры `tests/session` не создают пользователя, и закрепила
+  это тестом. После WP1.2 этот тест падает, а в перечне §8.9 его нет.
+- Варианты: (1) контракт WP1.2: такой токен → 401; фикстуры `tests/session` (через
+  `tests/support/`) создают строку `auth.users`; утверждение теста меняется на `401`;
+  (2) принимать токен без пользователя, что расходится с контрактом WP1.2 и с `T-A3`.
+- Решение: (1).
+- Почему: §0.4.1 уровень 2 (контракт ТЗ Фазы 3 выше ТЗ-П2 и ремедиации); §0.4.3 п.1 —
+  токен несуществующего пользователя не должен давать доступ. Проверка не слабее: тест
+  проверяет то же место (ученик без `auth.users`) с более строгим ожиданием.
+- Обратимость: одна ветка условия в `get_current_learner_id` и одно утверждение теста.
+- Тесты: `T-A3`, изменённый `test_learner_without_auth_user_row_stays_valid` (Этап III,
+  запись в «Правки тестов»).
+- Требует подтверждения владельцем: да
 
 ## Заблокировано
 
@@ -214,12 +261,13 @@ _(пусто)_
 
 | # | Вопрос | Ссылка |
 | :-- | :-- | :-- |
-| Q1 | Подтвердить имена рабочих веток `phase-3-<поток>-<тема>` | D-C-001 |
+| Q1 | ~~Подтвердить имена рабочих веток `phase-3-<поток>-<тема>`~~ — закрыто: подтверждено 2026-10-31 | D-C-001 |
 | Q2 | Порядок SSE `task_evaluated` / `task_assigned` | A27, O2, WP6.4 (B) |
-| Q3 | R16: Hypothesis-тестов нет, а добавить `hypothesis` исполнитель не вправе (класс D). Добавляем зависимость (группа `dev`) или R16 остаётся без property-тестов? | R16, A28 |
+| Q3 | R16: Hypothesis-тестов нет (есть детерминированный тест Фазы 1 на одном сценарии), а добавить `hypothesis` исполнитель не вправе (класс D). Варианты: (а) оставить как есть до тестировщиков, срок по R16; (б) разрешить `hypothesis` в группе `dev` и добавить property-тест на случайных последовательностях событий в памяти | R16, A28 |
 | Q4 | FTS по `core.events` находит удалённые заметки и старые версии артефактов: исключать или оставить как журнал | O5 |
 | Q5 | Склейка `artifact.refresh_cheatsheet` теряет `session_id` | O6 |
 | Q6 | Прод: `JWT_SECRET` не короче 32 байт (dev-секрет 20 байт) | STREAM3_NOTES §2 |
+| Q7 | Подтвердить: токен ученика без строки `auth.users` → 401, тест потока 2 меняется | D-C-004 |
 
 ## DoD
 
