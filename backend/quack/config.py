@@ -61,6 +61,34 @@ class FoldParams(BaseModel):
     prereq_unlock_mastery: float = 0.6
 
 
+class DiagnosticParams(BaseModel):
+    """Thresholds of the diagnostic (ТЗ-П1 §2.3, Т-§3.3); values of Phase 2, moved here by
+    WP1.6 from constants of `quack/domains/diagnostic.py`."""
+
+    model_config = {"frozen": True}
+
+    # The diagnostic asks at most this many questions.
+    max_questions: int = 5
+    # Prior of a tested skill: min(0.5, score * factor) with this confidence.
+    prior_tested_factor: float = 0.5
+    prior_tested_confidence: float = 0.5
+    # Propagation of the result to neighbours: success at/above, failure below the threshold;
+    # the effect decays by this factor per edge of distance.
+    prior_propagated_success_threshold: float = 0.7
+    prior_propagated_fail_threshold: float = 0.5
+    prior_propagated_decay: float = 0.85
+    # Priors for prerequisites (success) and for dependent skills (failure).
+    prior_down_base_mastery: float = 0.4
+    prior_down_base_confidence: float = 0.35
+    prior_up_fail_mastery: float = 0.05
+    prior_up_base_confidence: float = 0.4
+    # Self-reported answers: a score at/above the threshold counts as correct.
+    self_report_correct_threshold: float = 0.6
+    no_self_report_score: float = 0.5
+    # tested_depth of a diagnostic task without difficulty.
+    default_tested_depth: float = 0.5
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
@@ -211,6 +239,12 @@ class Settings(BaseSettings):
     # WP1.6: moved from quack/domains (JWT_TTL_DAYS, CURATION_DEFER_MINUTES).
     jwt_ttl_days: int = 7
     curation_defer_min: int = 10
+    # WP1.6, audit A7: other thresholds of Phase 2 (domains, artifacts) — Phase 3 decision D-C-014.
+    curation_min_evidence_for_promotion: int = 2
+    search_min_query_len: int = 2
+    search_default_limit: int = 20
+    search_max_limit: int = 100
+    diagnostic: DiagnosticParams = Field(default_factory=DiagnosticParams)
     # WP7: poll interval of GET /v1/learner/stream. Phase 3 decision (ТЗ §6.2).
     learner_stream_poll_ms: int = 2000
     # WP12 (Т-§7.4): evidence weight by tier, hint step penalty, hot window.
