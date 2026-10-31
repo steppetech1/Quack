@@ -26,8 +26,7 @@ from quack.jobs.queue import enqueue_job
 from quack.jobs.runner import JobRunner
 from quack.logging import configure_logging, get_logger
 from quack.ops.commands import migrate, purge_deleted, replay_dlq
-from quack.session import lifecycle as _session_lifecycle  # noqa: F401  (registers session.sweep_inactive)
-from quack.session import workers as _session_workers  # noqa: F401  (registers turn.extract, session.checkpoint)
+from quack.runtime import close_job_context, create_job_context, register_all_handlers
 
 log = get_logger(__name__)
 
@@ -100,23 +99,35 @@ async def _worker(settings: Settings) -> int:
         with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, stop.set)
 
-    async def run(engine, session_factory, driver, redis) -> int:
+    context = await create_job_context(settings)
+    try:
+        engine, driver = context.engine, context.neo4j
+        if engine is None or driver is None:
+            raise RuntimeError("job context has no engine or neo4j driver")
         missing = await verify_schema(driver)
         if missing:
             log.error("neo4j_schema_missing", missing=missing)
             return 1
         worker_id = f"{socket.gethostname()}:{id(stop)}"
-        projector = ProjectorWorker(settings, engine, session_factory, driver, redis)
-        runner = JobRunner(settings, session_factory, worker_id)
+        projector = ProjectorWorker(
+            settings, engine, context.session_factory, driver, context.redis
+        )
+        runner = JobRunner(
+            settings,
+            context.session_factory,
+            worker_id,
+            handlers=register_all_handlers(),
+            context=context,
+        )
         log.info("worker_started", worker_id=worker_id)
         await asyncio.gather(
             projector.run_forever(stop),
             runner.run_forever(stop),
-            _schedule_sweep(settings, session_factory, stop),
+            _schedule_sweep(settings, context.session_factory, stop),
         )
         return 0
-
-    return await _with_resources(settings, run)
+    finally:
+        await close_job_context(context)
 
 
 async def _rebuild(settings: Settings, args: argparse.Namespace) -> int:
