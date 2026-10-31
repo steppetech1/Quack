@@ -75,6 +75,7 @@ async def replay_dlq(session_factory: SessionFactory, *, dlq_ids: list[UUID] | N
                         learner_id=UUID(learner) if learner else None,
                         payload=dict(snap.get("payload") or {}),
                         max_attempts=int(snap.get("max_attempts", 5)),
+                        required_seq=snap.get("required_seq"),
                     ),
                 )
             # source = 'projector': marking it replayed lets the worker retry the stream.
