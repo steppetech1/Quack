@@ -9,6 +9,7 @@ from neo4j import AsyncDriver
 from neo4j.exceptions import Neo4jError
 
 from quack.db.neo4j import read_session
+from quack.graph.neo4j_store import Neo4jGraphStore
 
 
 async def test_read_session_reads(neo4j: AsyncDriver) -> None:
@@ -30,3 +31,12 @@ async def test_read_session_rejects_writes(neo4j: AsyncDriver) -> None:
         result = await session.run("MATCH (p:Probe {id: $id}) RETURN count(p) AS n", {"id": probe})
         record = await result.single()
     assert record is not None and record["n"] == 0
+
+
+async def test_graph_store_reads_through_read_session(neo4j: AsyncDriver) -> None:
+    """D-C-016: the batch reads of `Neo4jGraphStore` open READ sessions; a write query sent
+    through `_read` fails in the driver."""
+    store = Neo4jGraphStore(neo4j, str(uuid4()))
+    assert await store._read("RETURN 1 AS one") == [{"one": 1}]  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(Neo4jError):
+        await store._read("CREATE (:Probe {id: $id})", id=str(uuid4()))  # pyright: ignore[reportPrivateUsage]

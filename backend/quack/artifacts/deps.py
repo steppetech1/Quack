@@ -23,7 +23,7 @@ from quack.llm.provider import HttpLLMProvider
 
 
 def _provider(settings: Settings) -> HttpLLMProvider:
-    return HttpLLMProvider(settings.llm_api_base_url, settings.llm_api_key.get_secret_value())
+    return HttpLLMProvider(settings.meta_api_base_url, settings.meta_api_key.get_secret_value())
 
 
 @dataclass(frozen=True)

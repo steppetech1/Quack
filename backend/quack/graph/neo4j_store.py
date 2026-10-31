@@ -56,8 +56,7 @@ class Neo4jGraphStore:
         self.learner_id = learner_id
 
     async def _read(self, query: str, **params: Any) -> list[dict[str, Any]]:
-        # Stays a plain session until stream B drops `_ReadOnlyDriver` (PHASE3_NOTES D-C-016).
-        async with self.driver.session() as session:
+        async with read_session(self.driver) as session:
             result = await session.run(cypher(query), params)
             return [record.data() async for record in result]
 
