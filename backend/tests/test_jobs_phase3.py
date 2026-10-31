@@ -11,11 +11,13 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from quack import cli
 from quack.api.app import create_app
 from quack.api.auth import issue_access_token
 from quack.config import Settings
@@ -25,12 +27,18 @@ from quack.events.models import NewEvent, StoredEvent
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.worker import ProjectorWorker
 from quack.jobs import kinds
-from quack.jobs.kinds import JobDeferred
-from quack.jobs.periodic import PeriodicScheduler, handle_purge_deleted
+from quack.jobs.kinds import JOB_KINDS, JobDeferred
+from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.queue import ClaimedJob, JobSpec, claim_next_job, enqueue_job
 from quack.jobs.runner import JobContext, JobHandler, JobRunner
 from quack.llm.errors import LLMBudgetExceededError
 from quack.ops.commands import PURGE_TABLES
+from quack.ops.purge_job import handle_purge_deleted
+from quack.runtime import (
+    JobHandlersMismatchError,
+    check_handlers_complete,
+    register_all_handlers,
+)
 from tests.scenario import build_scenario
 from tests.support.auth import ensure_user
 from tests.support.resources import build_app_resources, build_job_context
@@ -279,3 +287,28 @@ async def test_purge_job_removes_learner_completely(
         db, "SELECT status FROM ops.deletion_tombstones WHERE learner_id = :l", l=learner
     )
     assert tomb["status"] == "purged"
+
+
+# --- T-Q7: handler catalog -------------------------------------------------------------
+
+
+def test_all_job_kinds_have_handlers() -> None:
+    handlers = register_all_handlers()
+    assert set(handlers) == set(JOB_KINDS)
+    check_handlers_complete(handlers)
+    broken = dict(handlers)
+    broken.pop("graph.curate")
+    with pytest.raises(JobHandlersMismatchError) as info:
+        check_handlers_complete(broken)
+    assert info.value.missing == ["graph.curate"] and info.value.extra == []
+
+
+async def test_worker_exits_with_code_1_on_handler_mismatch(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-Q7: `workers` started with a registry that lacks a kind logs `job_handlers_mismatch`
+    and exits with code 1 before any resource is created."""
+    registry = dict(register_all_handlers())
+    registry.pop("graph.curate")
+    monkeypatch.setattr(cli, "register_all_handlers", lambda: registry)
+    assert await cli._worker(settings) == 1

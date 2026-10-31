@@ -287,6 +287,23 @@ C и WP11.4, плюс Q-A1) лежат в `tests/test_jobs_phase3_pending.py` н
 Значения `None` у полей `JobContext` остаются до перевода `session/workers.py` потоком B
 (`phase-3-b-workers-jobcontext`); снимаются отдельным PR A.
 
+### D-A-008. WP3.3: планировщик, `account.purge_deleted`, проверка полноты обработчиков
+
+Класс B. `quack/jobs/periodic.py`: `PeriodicScheduler(settings, session_factory, clock=…)` со
+`tick()` и `run_forever(stop)` ставит `session.sweep_inactive` и `account.purge_deleted` с
+`run_after` = начало следующей корзины `(floor(now / interval) + 1) * interval`; корзина — по
+UTC-времени эпохи. Склейка по `coalesce_key` держит одну ждущую задачу. Старый
+`cli._schedule_sweep` (интервал `max(60, timeout / 6)`) удалён, интервалы теперь
+`session_sweep_interval_s` и `purge_deleted_interval_s`.
+`handle_purge_deleted` лежит в `quack/ops/purge_job.py` (слой сборки: `jobs` не импортирует `ops`, `T-A6`), вызывает `ops.commands.purge_deleted` через `ctx.engine`, `ctx.neo4j`,
+`ctx.redis` и дополнительно удаляет `presence:learner:{id}` и `ratelimit:*:{id}`.
+В `PURGE_TABLES` добавлены `ops.dispatcher_offsets` и `ops.turn_manifests`: таблицы миграции
+`0002` с `learner_id`, без них удаление ученика оставляло бы строки (Т-§16.3, `T-Q11`).
+`cli worker` сверяет `register_all_handlers()` с `JOB_KINDS` до создания ресурсов и при
+расхождении пишет `job_handlers_mismatch` (списки `missing`, `extra`) и выходит с кодом 1
+(`T-Q7`, закрывает D-A-005). `T-Q7` и проверка кода выхода перенесены из pending в
+`tests/test_jobs_phase3.py`.
+
 #### Этап I и красные тесты потока A к G0
 
 Сигнатуры: `JobSpec.required_seq`, `JobDeferred`, `JobFailedPermanently`, `JOB_KINDS`,
