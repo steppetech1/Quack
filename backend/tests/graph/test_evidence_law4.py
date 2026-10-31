@@ -113,7 +113,7 @@ AT = 10 * 24 * 60 * MS_PER_MINUTE
 
 
 def _params(**overrides: Any) -> EvidenceWeightParams:
-    return EvidenceWeightParams.from_settings(Settings().model_copy(update=overrides))
+    return EvidenceWeightParams.from_settings(Settings(**overrides))
 
 
 @pytest.mark.parametrize(
@@ -381,3 +381,62 @@ async def test_v1_and_v2_extracted_events_both_apply() -> None:
     assert len(_evidence(graph)) == 2
     learner = graph.get("Learner", str(h.log.learner_id))
     assert learner is not None and learner["appliedSeq"] == h.log.events[-1].seq
+
+
+# --- T-W7 and law 4 in the fold ------------------------------------------------------------
+
+
+async def test_rules2_rebuild_equals_incremental() -> None:
+    """T-W7: a history with v2 events — batches of any size equal a rebuild; `rules@2`."""
+    h = _history()
+    for i in range(4):
+        seq, at, turn = _reply(h, f"answer {i}: x = 4")
+        outcome = "correct" if i % 2 == 0 else "incorrect"
+        gap = "none" if outcome == "correct" else "execution"
+        _extracted(h, turn, [_element(h, seq, at, outcome=outcome, gap_type=gap)], hours_later=0.5)
+    by_one = await project_in_memory(h.log.learner_id, h.log.events, P, batch_size=1)
+    by_four = await project_in_memory(h.log.learner_id, h.log.events, P, batch_size=4)
+    rebuilt = await project_in_memory(
+        h.log.learner_id, h.log.events, P, batch_size=len(h.log.events)
+    )
+    assert by_one.snapshot() == by_four.snapshot() == rebuilt.snapshot()
+    learner = rebuilt.get("Learner", str(h.log.learner_id))
+    assert learner is not None and learner["projectorVersion"] == "rules@2"
+    assert len(_evidence(rebuilt)) == 4
+
+
+def _v1_history(strength: float, polarity_weight: float) -> History:
+    h = _history()
+    _, _, turn = _reply(h, "x = 4")
+    h.log.add(
+        "turn.extracted",
+        {
+            "session_id": str(h.session),
+            "turn_id": turn,
+            "observations": [
+                {
+                    "skill": {"skill_id": str(h.skill)},
+                    "direction": "positive",
+                    "strength": strength,
+                    "independence": 1.0,
+                    "tested_depth": 0.5,
+                    "polarity_weight": polarity_weight,
+                    "evidence_text": "x = 4",
+                }
+            ],
+        },
+        actor="extractor@1",
+    )
+    return h
+
+
+async def test_model_strength_does_not_change_the_state() -> None:
+    """Law 4 under rules@2: the strength and polarity weight the model put into a v1
+    observation do not change the skill state; the code weight of tier T3 does."""
+    weak, strong = _v1_history(0.1, 0.1), _v1_history(1.0, 1.0)
+    weak_skill = (await _project(weak)).get("Skill", str(weak.skill))
+    strong_skill = (await _project(strong)).get("Skill", str(strong.skill))
+    assert weak_skill is not None and strong_skill is not None
+    assert weak_skill["pMastery"] == strong_skill["pMastery"]
+    assert float(str(strong_skill["pMastery"])) > 0
+    assert weak_skill["confidence"] == strong_skill["confidence"]
