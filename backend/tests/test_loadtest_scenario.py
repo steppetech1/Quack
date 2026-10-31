@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+
 from loadtest.scenario import (
     TURNS_PER_SESSION,
     Learner,

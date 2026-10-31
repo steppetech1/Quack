@@ -1556,6 +1556,25 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `::test_diagnostic_question_without_a_valid_reference_is_not_banked`.
 - Требует подтверждения владельцем: да (класс C, вместо валидатора в `events` из предложения B)
 
+### D-C-031. WP10.3: сценарий Locust — значения, которых нет в документах
+- Класс: B
+- WP / место: WP10.3; `loadtest/scenario.py`, `loadtest/locustfile.py`, группа `loadtest` в
+  `pyproject.toml`
+- Контекст: `Д-§11` и WP10.3 задают ход и heartbeat раз в 30 с, «иногда» задачу и завершение
+  «после K ходов», файл учеников `ops seed-learners` (WP8.6). Не заданы K, доля ходов с задачей,
+  вид задачи, ответ и текст хода.
+- Решение: `TURNS_PER_SESSION = 10`, `TASK_SHARE = 0.2`, задача `choice` с ответом `A` (её проверяет
+  код, без `compute` и модели), текст хода — один вопрос. Логика — в `loadtest/scenario.py` без
+  импорта Locust (Locust при импорте патчит стандартную библиотеку через gevent и ломает asyncio
+  в pytest); `locustfile.py` только связывает её с `HttpUser`. В отчёте Locust — строки SSE
+  `turn: status` (`teacher_status_p95_ms`), `turn: first token`, `turn: complete` (сбой — оборванный
+  поток, критерий smoke). `[tool.uv] default-groups = ["dev", "loadtest"]`: pyright проверяет
+  `loadtest/`; образ ставится без групп (WP9, A).
+- Почему: §0.4.3 — проще и проверяемо тестом без стенда; значения меняются в одном месте.
+- Обратимость: константы сценария.
+- Тесты: `tests/test_loadtest_scenario.py`; на стенде e2e — `tests/e2e/test_loadtest_stream.py`.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -1593,6 +1612,7 @@ _(пусто)_
 | WP6.4 (схема) | `uv run pytest -q tests/practice` (коммит `a9aa6ee`) | 14 failed: `NotImplementedError` в `parse_reference_solution` / `reference_solution_payload` |
 | WP6.4 (стыки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase2_seams.py` (тесты `ac949b8` на коде `47f3fc1`) | 4 failed: читатели ждут `sympy`, `task_gen@1` пишет ключи Фазы 2, в payload нет `session_id`. `T-H7` упал из-за фикстур в новом формате (без проверки `compute` нет `task_evaluated`); сам порядок кадров уже верный (A27) |
 | WP6.4 (C: `diagnostic`, `finish_artifacts`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py tests/artifacts/test_artifacts_search_export.py` (коммит `edd0bf9`) | 2 failed: ответ `diagnostic@1` с верным вариантом вне вариантов записан в банк (`actor = diagnostic@1`); обработчик `session.finish_artifacts` берёт `session_id` из lock key (`badly formed hexadecimal UUID string`) |
+| WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
 
 ## Правки тестов
 
