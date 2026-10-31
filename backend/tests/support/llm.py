@@ -150,11 +150,6 @@ def _default_responses() -> dict[str, QueuedLLMItem]:
         },
         "ExtractorOutput": {"observations": [], "misconceptions": []},
         "ExtractorOutputV2": {"entries": []},
-        "CheckpointerOutput": {
-            "rolling_summary": "The learner practised the topic.",
-            "open_threads": [],
-            "key_observations": [],
-        },
         "TaskGenOutput": {
             "statement": "Pick the right option.",
             "options": [
