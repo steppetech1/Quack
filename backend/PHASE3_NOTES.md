@@ -1516,6 +1516,23 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/domains/test_propose_idempotency.py`, `T-E2`.
 - Требует подтверждения владельцем: да (класс C), Q9 закрыт этим решением
 
+### D-C-029. T-O5: `CheckpointerOutput` заменён на `ExtractorOutputV2`
+- Класс: C
+- WP / место: WP10.3 (`T-O5`); `tests/test_meta_mock.py::OUTPUT_MODELS`,
+  `tests/support/llm.py`, `tests/test_support_scripted_llm.py`
+- Контекст: `T-O5` перечисляет девять моделей вывода, среди них `CheckpointerOutput`. WP13 (B, #43)
+  строит `session.checkpoint` кодом, #45 удалил `checkpointer@1` из промптов и манифеста; B
+  снимет класс, когда его перестанут читать тесты. `extractor@2` (D-B-022) отвечает
+  `ExtractorOutputV2`, которого в списке нет.
+- Варианты (с уровнями §0.4.1): (а) оставить `CheckpointerOutput` — тест держит удалённую роль и
+  мешает снять класс; (б) убрать без замены — восемь моделей, ослабление теста, класс D;
+  (в) заменить на `ExtractorOutputV2`.
+- Решение: (в). Девять моделей: все модели вывода промптов манифеста (`extractor@1` и `@2`).
+- Почему: `T-O5` проверяет, что подменный сервер отдаёт валидный ответ для каждой модели вывода
+  (уровень 2 §0.4.1); список следует манифесту после WP13.
+- Обратимость: список в тесте.
+- Тесты: `T-O5`, `tests/test_support_scripted_llm.py`.
+- Требует подтверждения владельцем: да (класс C, расходится с буквой таблицы `T-O5`)
 ### D-C-030. WP6.4 п.1: неверный `reference_solution` отклоняется у того, кто пишет в банк, а не в `quack/events`
 - Класс: C
 - WP / место: WP6.4 (`T-H8` (а)); `quack/domains/diagnostic.py::_generate_question`,

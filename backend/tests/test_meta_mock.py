@@ -26,19 +26,19 @@ from quack.llm.responses_client import ResponsesClient
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.session.schemas import (
-    CheckpointerOutput,
     ExtractorOutput,
+    ExtractorOutputV2,
     TeacherOutput,
 )
 
-# The nine output models of T-O5.
+# The nine output models of T-O5; `CheckpointerOutput` → `ExtractorOutputV2` (WP13, D-C-029).
 OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
     StructurerOutput,
     DiagnosticOutput,
     CuratorOutput,
     TeacherOutput,
     ExtractorOutput,
-    CheckpointerOutput,
+    ExtractorOutputV2,
     TaskGenOutput,
     EvaluatorOutput,
     ArtifactGenOutput,
