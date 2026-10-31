@@ -175,10 +175,11 @@ async def _check_math(
     try:
         request = MathCheckRequest.model_validate(
             {
-                "mode": reference.get("check_mode", "expression_equiv"),
+                "mode": reference.get("mode", "expression_equiv"),
                 "student_expr": answer,
-                "reference_expr": reference.get("sympy"),
+                "reference_expr": reference.get("expression"),
                 "variables": reference.get("variables", ["x"]),
+                "tolerance": reference.get("tolerance", 1e-6),
             }
         )
     except ValidationError:
@@ -270,7 +271,10 @@ async def evaluate_answer(
 def _fallback_verdict(
     task: TaskToCheck, reference: dict[str, Any], answer: str, **common: Any
 ) -> AnswerVerdict:
-    expected = reference.get("answer") or reference.get("sympy")
+    # WP6.4 keys: `sample_answer` (open, code), `answer` (choice), `expression` (math).
+    expected = (
+        reference.get("sample_answer") or reference.get("answer") or reference.get("expression")
+    )
     return _code_verdict(task, "hybrid", _matches(answer, expected, _squash), **common)
 
 

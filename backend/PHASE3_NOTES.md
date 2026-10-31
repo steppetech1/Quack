@@ -1012,6 +1012,42 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   коммит `a99ac64`); `test_prompt_contracts_file_is_current`, манифест, `T-M5`.
 - Требует подтверждения владельцем: нет
 
+### D-B-025. WP6.4: `ReferenceSolution` в коде B, payload `finish_artifacts`, порядок кадров
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01; разделение с C — вариант (б)
+  по ответу C 2026-11-01)
+- WP / место: WP6.4 п.1–3, A25–A27, D-B-001 (1); `quack/practice/schemas.py`,
+  `quack/practice/generation.py`, `quack/practice/evaluation.py`, `quack/session/spoiler_guard.py`,
+  `quack/session/lifecycle.py`
+- Решение:
+  1. `ReferenceSolution` — по таблице WP6.4 плюс `hints` и `latex`; `extra="forbid"`, у `choice`
+     верный вариант обязан быть среди `options`, у `open` — хотя бы один `key_points`.
+     `parse_reference_solution(kind, data)` → `ValueError` на неверном формате;
+     `reference_solution_payload` — словарь для банка (`None` не пишется).
+  2. Вид `code` (есть в `task.generated`, в таблице нет) читается как `open`: исполнителя кода в
+     Фазе 3 нет, ответ проверяет `evaluator@1` по `key_points`.
+  3. `task_gen@1` → банк (D-B-010): `math` — `expression` = ответ модели, `mode` по типу ответа;
+     `open`/`code` — `key_points` = непустые строки `solution`, иначе `[answer]`, `sample_answer` =
+     ответ. Ключи `solution` и `units` больше не пишутся (читателей нет). Неверный формат —
+     `GeneratedTaskError`, практика уходит на банк, как при ошибке модели.
+  4. Читатели: проверка `math` — `expression`, `mode`, `variables`, `tolerance`; запасной вердикт —
+     `sample_answer` / `answer` / `expression`; защита от спойлера — `expression` (`math`),
+     `answer` (`choice`), `open` не проверяется.
+  5. WP6.4 п.2: `finish_session` ставит `session.finish_artifacts` с
+     `{"session_id", "domain_id", "topic_id"}`. Обработчик C пока берёт `session_id` из
+     `lock_key` — совместимо.
+  6. WP6.4 п.3: порядок `task_evaluated` → `task_assigned` в коде уже такой (A27) — тест `T-H7`.
+- Остаётся у C (ветка `phase-3-c-wp64-diagnostic`, вливается в эту до PR): `diagnostic.py`
+  пишет `reference_solution_payload(ChoiceReference(...))`/`OpenReference`; отказ неверного
+  формата при записи в банк (`task.generated`, `quack/events/**`); вторая половина `T-H8` (а) —
+  ответы `diagnostic@1`; обработчик `finish_artifacts` по `payload["session_id"]`.
+- Правки тестов (§8.9): фикстуры с ключами Фазы 2 `sympy`/`check_mode` → `expression`/`mode`
+  (`tests/session/fixtures.py`, `test_phase3_hot_path.py`, `test_spoiler_guard.py`,
+  `tests/artifacts/test_practice_engine.py`, `test_artifacts_search_export.py` — фикстуры C по
+  договорённости); утверждения те же. Запись `CheckpointerOutput` снята из `SCHEMA_ROLES`.
+- Тесты: `tests/practice/test_reference_solution.py` (14), `tests/session/test_phase2_seams.py`
+  (`T-H7`, `T-H8` (а) — сторона `task_gen@1`, (б) — сторона `finish_session`).
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1491,6 +1527,8 @@ _(пусто)_
 | WP13 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_checkpoint_law10.py` (коммит `5f56772`) | 5 failed, 1 passed: `T-C1`…`T-C4` и видимая часть — `NotImplementedError` в `checkpoint_render`; `T-C5` зелёный (у `session.checkpoint` уже `required_seq = NULL`) |
 | WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
 | WP15 (причина повтора) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py -k retries_then` (коммит `a99ac64`) | 1 failed: в запросах повторов нет `{"rule": "spoiler"` — в `teacher@1` нет блока `{{ guard_reason }}` |
+| WP6.4 (схема) | `uv run pytest -q tests/practice` (коммит `a9aa6ee`) | 14 failed: `NotImplementedError` в `parse_reference_solution` / `reference_solution_payload` |
+| WP6.4 (стыки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase2_seams.py` (тесты `ac949b8` на коде `47f3fc1`) | 4 failed: читатели ждут `sympy`, `task_gen@1` пишет ключи Фазы 2, в payload нет `session_id`. `T-H7` упал из-за фикстур в новом формате (без проверки `compute` нет `task_evaluated`); сам порядок кадров уже верный (A27) |
 
 ## Правки тестов
 
