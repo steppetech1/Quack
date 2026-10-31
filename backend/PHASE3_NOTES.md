@@ -703,6 +703,24 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-020. WP14.2: значения полей манифеста хода
+- Класс: C
+- WP / место: WP14.2; `quack/session/manifest.py`, `quack/session/turns.py`
+- Решение: строка пишется в транзакции `append_events` хода, после события. Типы
+  `TurnManifest` приведены к колонкам миграции `0002_phase3` (версии — числа `N` из
+  `name@N`). `prompt_version` — `TEACHER_PROMPT_VERSION` (1); `renderer_version` — номер
+  `RENDERER_VERSION` (`renderer@1`, D-B-002): другой версии отрисовки контекста учителя в
+  Фазе 3 нет. `role` — `teacher_fallback`, если ответ дал запасной, иначе `teacher` (и при
+  детерминированной деградации); `model` — модель этой роли; `reasoning_effort` — уровень этой
+  роли (WP6.5); `projected_seq` — `applied_seq` среза; `overlay_seqs` — `seq` событий
+  наложения; `label_table` — `LabelMap.table()`; `degraded_mode` — итог хода.
+- В красном коммите `T-M4` ждал `degraded_mode = None`; в фикстуре проектор не применил
+  `session.started`, ход честно идёт в `projector_lag`. Ожидание исправлено до зелёного
+  коммита: манифест равен `turn_completed.degraded_mode` (проверка не слабее — точное
+  совпадение с итогом хода).
+- Тесты: `T-M4` (`tests/llm/test_labels.py`).
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1061,6 +1079,7 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
 
 ## Правки тестов
 

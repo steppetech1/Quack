@@ -162,7 +162,8 @@ async def test_turn_manifest_row_is_atomic(
         headers=auth_headers,
     )
     assert response.status_code == 200, response.text
-    turn_id = UUID(dict(parse_sse(response.text))["turn_started"]["turn_id"])
+    sse = dict(parse_sse(response.text))
+    turn_id = UUID(sse["turn_started"]["turn_id"])
 
     (row,) = await _manifest_rows(db, learner)
     assert row.turn_id == turn_id
@@ -174,7 +175,7 @@ async def test_turn_manifest_row_is_atomic(
     assert row.reasoning_effort == "high"  # the first turn of the session (WP6.5)
     assert row.projected_seq == seeded_domain.applied_seq
     assert all(seq > row.projected_seq for seq in row.overlay_seqs)
-    assert row.degraded_mode is None
+    assert row.degraded_mode == sse["turn_completed"]["degraded_mode"]
     prompt = fake_llm.calls_for("teacher")[-1].prompt
     labels = set(re.findall(r"\b[STKM]\d+\b", prompt))
     assert labels
