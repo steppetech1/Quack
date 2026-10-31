@@ -199,9 +199,7 @@ EXPECTED_ROUTES: frozenset[tuple[str, str]] = frozenset(
 )
 # Endpoints of §6.4 whose packages are not done yet (PHASE3_NOTES, O9). The entry is removed
 # by the package that mounts the route; `test_pending_routes_are_still_pending` fails otherwise.
-PENDING_ROUTES: dict[tuple[str, str], str] = {
-    ("GET", "/v1/learner/stream"): "WP7",
-}
+PENDING_ROUTES: dict[tuple[str, str], str] = {}
 
 
 def _declared_routes() -> list[tuple[str, str]]:
