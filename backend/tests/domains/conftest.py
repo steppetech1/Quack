@@ -13,37 +13,23 @@ from uuid import UUID, uuid4
 import httpx
 import jwt
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from quack.api.app import AppResources, create_app
-from quack.api.errors import ApiError
+from quack.api.app import create_app
+from quack.api.auth import DEV_JWT_SECRET, JWT_ALGORITHM
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.domains import curation
-from quack.domains.auth import DEV_JWT_SECRET, JWT_ALGORITHM, get_current_learner_id
-from quack.domains.router import router as domains_router
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from tests.support.llm import FakeLLMProvider, QueuedLLMItem
+from tests.support.resources import build_app_resources
 
 __all__ = ["FakeLLMProvider", "QueuedLLMItem"]
-
-
-def _decode_bearer_fallback(request: Request, settings: Settings) -> UUID:
-    header = request.headers.get("Authorization", "")
-    if not header.startswith("Bearer "):
-        raise ApiError("UNAUTHORIZED", "missing bearer token", status_code=401)
-    token = header.removeprefix("Bearer ").strip()
-    secret = settings.jwt_secret.get_secret_value() or DEV_JWT_SECRET
-    try:
-        payload = jwt.decode(token, secret, algorithms=[JWT_ALGORITHM])
-        return UUID(str(payload["sub"]))
-    except Exception as exc:
-        raise ApiError("UNAUTHORIZED", "invalid token", status_code=401) from exc
 
 
 @pytest.fixture
@@ -63,22 +49,9 @@ def domains_app(
     fake_llm_provider: FakeLLMProvider,
 ) -> FastAPI:
     app = create_app(settings, connect=False)
-    app.state.resources = AppResources(
-        engine=pg_engine,
-        session_factory=db,
-        neo4j=neo4j,
-        redis=redis,
+    app.state.resources = build_app_resources(
+        settings, pg_engine, neo4j, redis, session_factory=db, provider=fake_llm_provider
     )
-    app.state.llm_provider = fake_llm_provider
-    app.include_router(domains_router)
-
-    async def _auth_dep_with_stage2_fallback(request: Request) -> UUID:
-        try:
-            return await get_current_learner_id(request)
-        except NotImplementedError:
-            return _decode_bearer_fallback(request, settings)
-
-    app.dependency_overrides[get_current_learner_id] = _auth_dep_with_stage2_fallback
     return app
 
 

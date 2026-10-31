@@ -1,5 +1,5 @@
 """FastAPI application factory: pooled resources in the lifespan, request/trace ids,
-unified errors and health endpoints. Phase 2 streams add their routers here."""
+unified errors, health endpoints and the product routers (ТЗ Фазы 3 WP1)."""
 
 from __future__ import annotations
 
@@ -7,47 +7,23 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 
-from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from neo4j import AsyncDriver
-from redis.asyncio import Redis
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
 
+from quack.api.auth import get_current_learner_id
 from quack.api.errors import install_error_handlers
+from quack.api.resources import AppResources, create_app_resources, get_resources
 from quack.config import Settings, get_settings
-from quack.db.neo4j import create_driver
-from quack.db.postgres import SessionFactory, create_engine, create_session_factory
-from quack.db.redis import create_redis
 from quack.logging import configure_logging, get_logger, log_context
+
+# Re-exported until WP1.4 moves product imports to `quack.api.resources` (D-C-003).
+__all__ = ["AppResources", "create_app", "get_resources"]
 
 log = get_logger(__name__)
 
 HEALTH_CHECK_TIMEOUT_SEC = 2.0
-
-
-@dataclass
-class AppResources:
-    """Pools shared by request handlers. API code opens Neo4j sessions read-only (law 3)."""
-
-    engine: AsyncEngine
-    session_factory: SessionFactory
-    neo4j: AsyncDriver
-    redis: Redis
-
-    async def close(self) -> None:
-        await self.redis.aclose()
-        await self.neo4j.close()
-        await self.engine.dispose()
-
-
-def get_resources(request: Request) -> AppResources:
-    resources = getattr(request.app.state, "resources", None)
-    if resources is None:
-        raise RuntimeError("application resources are not initialized")
-    return resources
 
 
 def _trace_id(request: Request) -> str:
@@ -86,6 +62,8 @@ def _health_router() -> APIRouter:
                     await conn.execute(text("SELECT 1"))
 
             async def redis() -> None:
+                if resources.redis is None:
+                    raise RuntimeError("redis is not configured")
                 await resources.redis.ping()  # type: ignore[misc]
 
             checks = {
@@ -109,13 +87,7 @@ def create_app(settings: Settings | None = None, *, connect: bool = True) -> Fas
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.resources = None
         if connect:
-            engine = create_engine(settings)
-            app.state.resources = AppResources(
-                engine=engine,
-                session_factory=create_session_factory(engine),
-                neo4j=create_driver(settings),
-                redis=create_redis(settings),
-            )
+            app.state.resources = create_app_resources(settings)
         try:
             yield
         finally:
@@ -141,7 +113,13 @@ def create_app(settings: Settings | None = None, *, connect: bool = True) -> Fas
         return response
 
     app.include_router(_health_router())
-    from quack.session.router import router as session_router  # circular: session.deps -> api.app
+    # Imported here: product modules still import `quack.api.app` (cycle until WP1.4).
+    from quack.artifacts.router import router as artifacts_router
+    from quack.domains.router import router as domains_router
+    from quack.session.router import router as session_router
 
-    app.include_router(session_router)
+    authenticated = [Depends(get_current_learner_id)]
+    app.include_router(domains_router)  # router-level auth inside, except register/login
+    app.include_router(session_router, dependencies=authenticated)
+    app.include_router(artifacts_router)  # router-level auth inside
     return app

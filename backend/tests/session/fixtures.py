@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from quack.api.app import AppResources, create_app
+from quack.api.app import create_app
 from quack.compute_client.client import (
     ComputeClient,
     ComputeUnavailableError,
@@ -41,9 +41,10 @@ from quack.llm.errors import ProviderUnavailableError
 from quack.llm.gateway import LLMGateway
 from quack.llm.provider import ProviderRequest, ProviderResponse
 from quack.session.deps import get_compute_client, get_llm_gateway
-from quack.session.router import router
 from tests.factories import new_event
 from tests.session.helpers import make_token
+from tests.support.auth import ensure_users_hook
+from tests.support.resources import build_app_resources
 
 # The gateway passes no role to the provider; the response schema identifies it.
 SCHEMA_ROLES = {
@@ -64,23 +65,24 @@ async def session_app(
     neo4j: AsyncDriver,
     redis: Redis,
 ) -> FastAPI:
-    """`create_app(settings, connect=False)` over the test pools with the session router.
+    """`create_app(settings, connect=False)` over the test pools (all routers mounted).
 
     The lifespan is not run by `ASGITransport`, so the resources set here stay in place
     and the pools are owned (and closed) by the infrastructure fixtures.
     """
     app = create_app(settings, connect=False)
-    app.state.resources = AppResources(
-        engine=pg_engine, session_factory=db, neo4j=neo4j, redis=redis
-    )
-    app.include_router(router)
+    app.state.resources = build_app_resources(settings, pg_engine, neo4j, redis, session_factory=db)
     return app
 
 
 @pytest.fixture
-async def client(session_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
+async def client(session_app: FastAPI, db: SessionFactory) -> AsyncIterator[httpx.AsyncClient]:
+    """Every Bearer subject gets an `auth.users` row before the request (D-C-004)."""
     transport = httpx.ASGITransport(app=session_app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+    hooks = {"request": [ensure_users_hook(db)]}
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test", event_hooks=hooks
+    ) as http:
         yield http
 
 
