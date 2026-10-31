@@ -40,7 +40,14 @@ def resolve_degraded_mode(
     projector_lag: bool,
 ) -> DegradedMode | None:
     """First true reason in `DEGRADED_MODE_PRIORITY`, `None` for a regular turn (`T-H3`)."""
-    raise NotImplementedError
+    flags: dict[DegradedMode, bool] = {
+        "budget_exceeded": budget_exceeded,
+        "llm_unavailable": llm_unavailable,
+        "memory_unavailable": memory_unavailable,
+        "teacher_fallback": teacher_fallback,
+        "projector_lag": projector_lag,
+    }
+    return next((mode for mode in DEGRADED_MODE_PRIORITY if flags[mode]), None)
 
 
 def teacher_reasoning_effort(

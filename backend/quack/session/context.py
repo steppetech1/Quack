@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
+from neo4j.exceptions import ConnectionAcquisitionTimeoutError, ServiceUnavailable, SessionExpired
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,9 +18,21 @@ from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.memory import InMemoryGraph, prop_str
 from quack.graph.neo4j_store import Neo4jGraphStore, read_applied_seq
 from quack.graph.overlay import SessionOverlay, build_session_overlay
-from quack.graph.slice import SliceDeps, read_consistent_slice
+from quack.graph.slice import ConsistentSlice, SliceDeps, read_consistent_slice
+from quack.logging import get_logger
 
 TURN_EVENT_TYPES = ("turn.student_replied", "turn.teacher_replied")
+
+# Connection failures of the Neo4j driver (WP6.1, Т-§20.7): server down, session expired,
+# timeout. The turn then goes on an empty base slice plus the session overlay.
+NEO4J_CONNECTION_ERRORS: tuple[type[BaseException], ...] = (
+    ServiceUnavailable,
+    SessionExpired,
+    ConnectionAcquisitionTimeoutError,
+    TimeoutError,
+)
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,6 +52,7 @@ class TurnContext:
     last_checkpoint_turn: int = -1
     key_observations: list[str] = field(default_factory=list)
     checkpoint: StoredEvent | None = None
+    memory_unavailable: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,9 +175,17 @@ async def build_turn_context(
         applied_seq_reader=applied_seq_reader,
         snapshot_read_retries=settings.snapshot_read_retries,
     )
-    graph_slice = await read_consistent_slice(
-        learner_id, None, store.dump, settings.projector_lag_timeout_ms, deps=deps
-    )
+    memory_unavailable = False
+    try:
+        graph_slice = await read_consistent_slice(
+            learner_id, None, store.dump, settings.projector_lag_timeout_ms, deps=deps
+        )
+    except NEO4J_CONNECTION_ERRORS as exc:
+        # WP6.1: the student model is unreachable; every session event is overlaid on an
+        # empty slice (applied_seq 0), so the overlay invariants still hold.
+        log.warning("turn_memory_unavailable", learner_id=str(learner_id), error=type(exc).__name__)
+        memory_unavailable = True
+        graph_slice = ConsistentSlice(InMemoryGraph(), 0, 0, False, True)
 
     async with resources.session_factory() as session:
         overlay = await build_session_overlay(
@@ -198,4 +220,5 @@ async def build_turn_context(
         last_checkpoint_turn=last_cp_turn,
         key_observations=[str(o) for o in cp.get("key_observations", [])],
         checkpoint=checkpoint,
+        memory_unavailable=memory_unavailable,
     )

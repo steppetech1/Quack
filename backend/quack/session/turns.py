@@ -36,6 +36,7 @@ from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
 from quack.session.schemas import TeacherOutput, TurnRequest
 from quack.session.tasks import assigned_task_ids_from_overlay, solved_families_from_overlay
+from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER, resolve_degraded_mode
 
 _TB_COLUMNS = ", ".join(f"tb.{c.strip()}" for c in TASK_COLUMNS.split(","))
 
@@ -305,8 +306,17 @@ async def open_turn(
             "topic_name": context.topic_name,
             "rolling_summary": context.rolling_summary,
             "recent_turns_json": json.dumps(context.recent_turns, ensure_ascii=False),
-            "skills_slice_json": json.dumps(context.skills_slice, ensure_ascii=False),
-            "misconceptions_json": json.dumps(context.misconceptions, ensure_ascii=False),
+            # WP6.1 (Т-§20.7): the memory slot is marked while Neo4j is unreachable.
+            "skills_slice_json": (
+                MEMORY_UNAVAILABLE_MARKER
+                if context.memory_unavailable
+                else json.dumps(context.skills_slice, ensure_ascii=False)
+            ),
+            "misconceptions_json": (
+                MEMORY_UNAVAILABLE_MARKER
+                if context.memory_unavailable
+                else json.dumps(context.misconceptions, ensure_ascii=False)
+            ),
             "available_tasks_json": json.dumps(available_tasks_data, ensure_ascii=False),
             "task_evaluation_json": task_evaluation_json,
             "student_text": body.text,
@@ -463,7 +473,13 @@ async def open_turn(
                         solved_family_ids=solved_family_ids,
                         session_id=session_id,
                     )
-        degraded_mode = llm_degraded_mode or ("projector_lag" if context.lag_degraded else None)
+        degraded_mode = resolve_degraded_mode(
+            budget_exceeded=llm_degraded_mode == "budget_exceeded",
+            llm_unavailable=llm_degraded_mode == "llm_unavailable",
+            memory_unavailable=context.memory_unavailable,
+            teacher_fallback=False,  # role `teacher_fallback` arrives with WP5.4
+            projector_lag=context.lag_degraded,
+        )
         teacher_actor = (
             "code" if llm_degraded_mode in ("llm_unavailable", "budget_exceeded") else "teacher@1"
         )
