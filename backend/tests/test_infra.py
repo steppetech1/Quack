@@ -271,6 +271,9 @@ def test_cli_parser() -> None:
     assert args.learner == learner and not args.stale_rules
     assert parser.parse_args(["ops", "rebuild", "--stale-rules"]).stale_rules
     assert parser.parse_args(["ops", "rebuild", "--all"]).all
+    assert parser.parse_args(["ops", "openapi", "--out", "o.json"]).out == "o.json"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["ops", "openapi"])
     with pytest.raises(SystemExit):
         parser.parse_args(["ops", "rebuild", "--all", "--stale-rules"])
     with pytest.raises(SystemExit):

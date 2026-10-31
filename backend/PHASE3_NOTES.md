@@ -240,6 +240,21 @@
 Класс B. `JobDeferred` и `JobFailedPermanently` определены в `quack/jobs/queue.py` (ядро
 очереди, §6.5) и реэкспортируются из `quack/jobs/kinds.py`, как требует шов S2.
 
+### D-A-005. WP2 без правок зон B и C; проверка полноты в `cli` — вместе с WP3.3
+
+Класс C, вынесено в сигнал. WP2 разделён по владельцу файлов (поручение разработчика потока A):
+сделана часть в зоне A, перевод обработчиков в `domains/curation.py`, `session/workers.py`,
+`artifacts/workers.py` на `JobContext` (пересечение №2, §7.3) отложен до уведомления B и C.
+Сделано: `quack.runtime` (`create_job_context`, `close_job_context`, `register_all_handlers`,
+`check_handlers_complete`), `JobRunner(context=…)`, `cli worker` строит контекст один раз и
+регистрирует обработчики через `register_all_handlers` (этим закрыт A2: обработчики
+`graph.curate`, `session.finish_artifacts`, `artifact.refresh_cheatsheet` теперь есть в
+процессе worker).
+`T-Q7` остаётся красным: в `JOB_KINDS` есть `account.purge_deleted`, его обработчик — WP3.3. Вызов
+`check_handlers_complete` в `cli worker` с выходом `job_handlers_mismatch` включается в WP3.3
+вместе с обработчиком, иначе до него процесс `worker` не стартовал бы. Утверждение `T-Q7` не
+ослаблено.
+
 #### Этап I и красные тесты потока A к G0
 
 Сигнатуры: `JobSpec.required_seq`, `JobDeferred`, `JobFailedPermanently`, `JOB_KINDS`,
@@ -671,6 +686,7 @@ _(пусто)_
 | фикстуры `tests/domains/conftest.py`, `tests/session/fixtures.py`, `tests/artifacts/conftest.py` | ресурсы — `build_app_resources`; роутеры не монтируются повторно; удалены переопределения `get_llm_gateway`/`get_compute_client` (`artifacts`) и запасной разбор JWT (`domains`); хук пользователей в `client` (`session`) | §8.1, §8.9 (фикстуры и импорты); D-C-006 |
 | `tests/domains/conftest.py`, `tests/session/fixtures.py`, `tests/artifacts/conftest.py`, `tests/test_infra.py` | `create_app(settings, connect=False)` → `create_app(settings, resources=build_app_resources(...))` | WP1.1: убран `connect=False`, введён явный `resources=`; тесты сохраняют владение пулами |
 | `tests/conftest.py` | добавлена autouse-фикстура `_clear_local_rate_limits` с вызовом `LOCAL_LIMITS.clear()` | Изоляция тестов ограничителя с локальным in-memory счётчиком при отказе Redis (WP1.5) |
+| `tests/test_infra.py::test_cli_parser` | добавлены проверки `ops openapi --out` | §8.9 п.3: тест дополняется новой командой, старые утверждения сохранены |
 
 ## Вопросы к команде
 
