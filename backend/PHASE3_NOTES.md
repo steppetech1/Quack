@@ -1418,6 +1418,7 @@ _(пусто)_
 | WP12 (обработчик B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_turn_extract_worker.py tests/session/test_extract_quote_grounding.py tests/session/test_worker_pool_and_slice.py` (коммит `539f863`) | 3 failed, 1 passed: обработчик пишет `turn.extracted` v1 через `extractor@1` |
 | WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
 | WP10.2 (`confirm`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `1b209a3`) | 1 failed: тот же ключ с другой `structure_version` → 422 `VALIDATION_ERROR` (проверка версии раньше ключа), ждали 409 |
+| WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
 
 ## Правки тестов
 
