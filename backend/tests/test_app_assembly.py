@@ -27,9 +27,9 @@ from quack.api.app import create_app, write_openapi
 from quack.api.errors import ErrorResponse
 from quack.api.openapi import render_openapi
 from quack.config import Settings
-from quack.db.postgres import SessionFactory
+from quack.db.postgres import SessionFactory, create_engine
 from quack.db.redis import ratelimit_key
-from tests.support.broken import BrokenRedis
+from tests.support.broken import BrokenNeo4jDriver, BrokenRedis
 from tests.support.resources import build_app_resources
 
 PUBLIC_ROUTES = {("POST", "/v1/auth/register"), ("POST", "/v1/auth/login")}
@@ -201,7 +201,6 @@ EXPECTED_ROUTES: frozenset[tuple[str, str]] = frozenset(
 # by the package that mounts the route; `test_pending_routes_are_still_pending` fails otherwise.
 PENDING_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/v1/learner/stream"): "WP7",
-    ("GET", "/healthz"): "WP8.3",
 }
 
 
@@ -411,6 +410,33 @@ async def test_health_probe_timeout_comes_from_settings(
     async with _client(create_app(cfg, resources=resources)) as client:
         response = await client.get("/health/ready")
     assert response.json()["checks"]["neo4j"] == neo4j_state, response.text
+
+
+# --- WP8.3: /healthz -----------------------------------------------------------------------
+
+
+async def test_healthz_depends_only_on_postgres(
+    settings: Settings, pg_engine: AsyncEngine, db: SessionFactory
+) -> None:
+    """T-A8: Neo4j and Redis broken → `/healthz` 200; Postgres unreachable → 503. No auth."""
+    resources = build_app_resources(
+        settings, pg_engine, BrokenNeo4jDriver(), BrokenRedis(), session_factory=db
+    )
+    async with _client(create_app(settings, resources=resources)) as client:
+        ok = await client.get("/healthz")
+    assert (ok.status_code, ok.json()) == (200, {"status": "ok"}), ok.text
+
+    dead = create_engine(settings.model_copy(update={"postgres_dsn": DEAD_POSTGRES_DSN}))
+    try:
+        broken = build_app_resources(settings, dead, BrokenNeo4jDriver(), BrokenRedis())
+        async with _client(create_app(settings, resources=broken)) as client:
+            down = await client.get("/healthz")
+    finally:
+        await dead.dispose()
+    assert (down.status_code, down.json()) == (503, {"status": "error"}), down.text
+
+
+DEAD_POSTGRES_DSN = "postgresql://quack:quack@127.0.0.1:1/quack_test"
 
 
 # --- WP8.7: OpenAPI snapshot -------------------------------------------------------------
