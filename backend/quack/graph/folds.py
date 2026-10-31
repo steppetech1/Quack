@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from quack.config import FoldParams
+from quack.graph.evidence_weights import (
+    EvidenceWeightParams,
+    Tier,
+    WeightedEvidence,
+    evidence_weight,
+)
 from quack.graph.types import Props
 
 type EvidenceKind = Literal["skill", "manifestation"]
@@ -43,6 +49,10 @@ class EvidenceTrace:
     direction: str = "positive"
     family_id: str = "unknown"
     superseded: bool = False
+    # WP12 (Т-§7.4): categorical facts the weight depends on, set by code.
+    options_count: int = 0  # choice of k options; 0 = open answer
+    hint_step: int = 0  # 1..3 for an extractor element with a hint; 0 = none
+    shown_solution: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,11 +163,25 @@ def _is_gated(e: EvidenceTrace) -> bool:
     return e.tier in (1, 2)
 
 
-def _weight(e: EvidenceTrace, params: FoldParams) -> float:
-    """Т-§7.4: base weight of the tier × independence × tested-depth factor."""
-    base = params.tier_base_weights[e.tier - 1]
-    depth = params.depth_weight_floor + (1.0 - params.depth_weight_floor) * e.tested_depth
-    return base * e.independence * depth
+def _weight(e: EvidenceTrace, params: FoldParams, exposures: Sequence[ExposureTrace]) -> float:
+    """Т-§7.4 by code (WP12.2 п.4, rules@2): `evidence_weight` of the tier, guessing, hot window
+    and hint step × `independence` (the hint penalty of a task, computed by code from the hints
+    given) × the tested-depth factor of gated evidence."""
+    last_exposure = max((x.at_ms for x in exposures if x.at_ms <= e.at_ms), default=0)
+    weighted = WeightedEvidence(
+        tier=cast("Tier", e.tier),
+        at_ms=e.at_ms,
+        options_count=e.options_count or None,
+        last_exposure_at_ms=last_exposure,
+        hint_step=e.hint_step or None,
+        shown_solution=e.shown_solution,
+    )
+    weight = evidence_weight(weighted, EvidenceWeightParams.from_fold(params)) * e.independence
+    if _is_gated(e):
+        # Tested depth of a task verdict is set by code from the task (Phase 1 multiplier kept,
+        # PHASE3_NOTES D-C-020); ungated T3/T4 evidence carries no depth of the model.
+        weight *= params.depth_weight_floor + (1.0 - params.depth_weight_floor) * e.tested_depth
+    return weight
 
 
 def recompute_skill_fold(
@@ -175,7 +199,7 @@ def recompute_skill_fold(
     s_sum = f_sum = w_sum = 0.0
     n = len(gated)
     for i, e in enumerate(gated):
-        w = _weight(e, params)
+        w = _weight(e, params, exps)
         w_eff = w * params.level_recency_factor ** (n - 1 - i)
         s_sum += w_eff * e.score
         f_sum += w_eff * (1.0 - e.score)
@@ -196,19 +220,16 @@ def recompute_skill_fold(
             sum(params.exposure_mastery_gain * x.depth for x in exps),
         )
         ungated = [e for e in ordered if not _is_gated(e)]
+        # rules@2 (law 4): the code weight, not the model's strength or polarity weight.
         positive = sum(
-            params.ungated_evidence_gain
-            * params.tier_base_weights[e.tier - 1]
-            * e.strength
-            * e.polarity_weight
-            * e.independence
+            params.ungated_evidence_gain * _weight(e, params, exps)
             for e in ungated
             if e.direction == "positive"
         )
         p_ungated = min(params.ungated_mastery_ceiling, exposure_part + positive)
         prior_part = min(params.prior_mastery_ceiling, prior.mastery * prior.confidence)
         p_mastery = max(p_ungated, prior_part)
-        w_ungated = sum(params.tier_base_weights[e.tier - 1] * e.strength for e in ungated)
+        w_ungated = sum(_weight(e, params, exps) for e in ungated)
         ungated_conf = 0.0
         if w_ungated > 0:
             ungated_conf = min(
