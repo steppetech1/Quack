@@ -1388,6 +1388,25 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/domains/test_propose_idempotency.py`, `T-E2`.
 - Требует подтверждения владельцем: да (класс C), Q9 закрыт этим решением
 
+### D-C-026. Стенд e2e: время планировщика и очереди двигается вместе (T-E10)
+- Класс: C
+- WP / место: WP10.2 (`T-E10`); `tests/e2e/system.py::System.advance_time`, запуск `PeriodicScheduler`
+- Контекст: `PeriodicScheduler` (WP3.3, A) берёт время из подменяемых часов и ставит `run_after`
+  на начало следующего интервала, а `JobRunner` берёт задачи по `now()` базы. Сдвиг одних часов
+  стенда не делает задачу `account.purge_deleted` готовой: она ждёт реального времени.
+- Варианты (с уровнями §0.4.1): (а) уменьшить `purge_deleted_interval_s` на стенде до секунды —
+  очистка идёт во всех тестах стенда, `settle` ловит задачи, которые появляются каждую секунду;
+  (б) ставить задачу очистки в тесте руками — `T-E10` перестаёт проверять планировщик;
+  (в) часы для `JobRunner` — правка зоны A; (г) `System.advance_time(s)`: сдвигает часы
+  планировщика и `run_after` ждущих задач на `s`.
+- Решение: (г). Стенд запускает `PeriodicScheduler` с `clock=System.clock` вместе с проектором
+  и `JobRunner`; `T-E10` зовёт `await system.advance_time(purge_deleted_interval_s)`.
+- Почему: `T-E10` проверяет путь «удаление → планировщик → обработчик → purged» без правки
+  кода A и без лишних задач в остальных тестах.
+- Обратимость: только стенд `tests/e2e`.
+- Тесты: `T-E10`.
+- Требует подтверждения владельцем: нет (стенд тестов)
+
 ## Заблокировано
 
 _(пусто)_
@@ -1420,6 +1439,7 @@ _(пусто)_
 | WP10.2 (стенд на `phase-3` после WP1, WP2, WP3.1–3.4, WP4, WP6.2) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed. Падают: `T-E1`, `T-E5` — `turn.extract` идёт мимо `ScriptedLLMProvider`: `quack/session/workers.py` строит свой шлюз (`_worker_resources`), а не берёт `JobContext.llm` (WP2.1, A/B); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200 (Q9); `T-E10` — нет обработчика `account.purge_deleted` и планировщика (A, WP3.3). Стенд: обработчики — `quack.runtime.register_all_handlers`, один `JobContext` над ресурсами стенда, `create_app(resources=)`. Побочно: кэш `_worker_resources` по `id(settings)` переносит открытый размыкатель из e2e в `tests/session/test_session_checkpoint_worker.py` при полном прогоне (уйдёт с WP2.1) |
 | WP10.2 (стенд + `phase-3-b-workers-jobcontext`, WP2.1 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q` (ветка `phase-3-c-e2e-red`) | 3 failed, 598 passed. `T-E5` зелёный; размыкатель между тестами не переносится. Падают: `T-E1` — `turn.extract` без `required_seq`, задачи ставит не диспетчер (A, WP11); `T-E2` — Q9; `T-E10` — WP3.3 (A) |
 | WP10.2 (стенд на `phase-3` 6cefd3e, после #38/#40 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed → после правки стенда 3 failed, 7 passed. `T-E5` упал: обработчик зовёт модель со схемой `ExtractorOutputV2` (D-B-022), стенд сбивал `ExtractorOutput`; стенд переведён на `ExtractorOutputV2`. Красные: `T-E1` (WP11, A), `T-E2` (#37), `T-E10` (#34, A) |
+| WP10.2 (стенд на `phase-3` 320df09, после #31, #34, #37) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 3 failed, 7 passed → со стендом на `PeriodicScheduler` и `advance_time` (D-C-026) 2 failed, 8 passed. `T-E10` зелёный. Красные: `T-E1` — `turn.extract` без `required_seq` (WP11, A); `T-E2` — `structure/confirm` с тем же ключом и другой `structure_version` → 422 раньше проверки ключа (C, `domains/structure.py`) |
 
 ## Правки тестов
 

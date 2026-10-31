@@ -248,8 +248,7 @@ async def test_account_deletion_end_to_end(system: System) -> None:
     deleted = ok(await system.client.delete("/v1/learner", headers=j.learner.headers))
     assert deleted["status"] == "pending_purge"
 
-    # `purge_deleted_interval_s` arrives with WP3.3 (stream A, §6.2).
-    system.clock.advance(system.settings.model_dump()["purge_deleted_interval_s"])
+    await system.advance_time(system.settings.purge_deleted_interval_s)
     await system.settle()
 
     learner_id = j.learner.learner_id

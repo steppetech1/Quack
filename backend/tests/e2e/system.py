@@ -38,6 +38,7 @@ from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.graph.worker import ProjectorWorker
+from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, JobHandler, JobRunner
 from quack.runtime import register_all_handlers
@@ -159,7 +160,22 @@ class System:
             context=job_context(self.resources),
         )
         self._spawn(runner.run_forever)
-        # S-A: scheduler of periodic jobs (WP3.3) starts here with `self.clock`.
+        # Scheduler of periodic jobs (WP3.3) on the stand clock (D-C-026).
+        scheduler = PeriodicScheduler(self.settings, self.session_factory, clock=self.clock)
+        self._spawn(scheduler.run_forever)
+
+    async def advance_time(self, seconds: float) -> None:
+        """Time passes for the scheduler and for the queue (D-C-026): the stand clock moves and
+        every waiting job comes `seconds` closer, as `JobRunner` claims by the database `now()`."""
+        self.clock.advance(seconds)
+        async with self.session_factory() as session, session.begin():
+            await session.execute(
+                text(
+                    "UPDATE ops.jobs SET run_after = run_after - make_interval(secs => :s) "
+                    "WHERE status = 'queued'"
+                ),
+                {"s": seconds},
+            )
 
     async def stop_background(self) -> None:
         self._stop.set()
