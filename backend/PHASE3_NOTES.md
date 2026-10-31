@@ -1496,6 +1496,29 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/domains/test_propose_idempotency.py`, `T-E2`.
 - Требует подтверждения владельцем: да (класс C), Q9 закрыт этим решением
 
+### D-C-030. WP6.4 п.1: неверный `reference_solution` отклоняется у того, кто пишет в банк, а не в `quack/events`
+- Класс: C
+- WP / место: WP6.4 (`T-H8` (а)); `quack/domains/diagnostic.py::_generate_question`,
+  `_reference_solution`
+- Контекст: «запись неправильного формата отклоняется при записи в банк». `core.task_bank` пишет
+  проекция `task.generated` в `quack/events` (слой core), а модель `ReferenceSolution` — в
+  `quack/practice/schemas.py` (слой product), который сам импортирует `quack.events.payloads`.
+  B предложил валидатор `TaskGenerated.reference_solution` через `parse_reference_solution`.
+- Варианты (с уровнями §0.4.1): (а) валидатор в `quack/events/payloads.py` — импорт product из
+  core нарушает §4.1 (`T-A6`) и даёт цикл импортов; (б) регистрация проверки из `practice` в
+  `events` при импорте — проверка зависит от того, импортирован ли `practice` в процессе;
+  (в) перенести модели в core — ТЗ называет место `quack/practice/schemas.py`; (г) отклонять у
+  каждого, кто пишет `task.generated`: `task_gen@1` — `GeneratedTaskError` (B), `diagnostic@1` —
+  `ChoiceReference`, ответ без верного варианта среди вариантов → детерминированный вопрос кода.
+- Решение: (г). Как у `task_gen@1` в тесте B `test_wrong_reference_of_task_gen_is_rejected`.
+  Фикстуры с ключами Фазы 2 не трогаются: проекция их принимает, читатели B их не получают от
+  кода.
+- Почему: §4.1 и `T-A6` (уровень 2 §0.4.1); одна модель в `quack/practice/schemas.py` (WP6.4).
+- Обратимость: код записи в `diagnostic.py`.
+- Тесты: `tests/domains/test_diag_state_from_events.py::test_diagnostic_reference_is_a_choice_reference`,
+  `::test_diagnostic_question_without_a_valid_reference_is_not_banked`.
+- Требует подтверждения владельцем: да (класс C, вместо валидатора в `events` из предложения B)
+
 ## Заблокировано
 
 _(пусто)_
@@ -1529,6 +1552,7 @@ _(пусто)_
 | WP15 (причина повтора) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py -k retries_then` (коммит `a99ac64`) | 1 failed: в запросах повторов нет `{"rule": "spoiler"` — в `teacher@1` нет блока `{{ guard_reason }}` |
 | WP6.4 (схема) | `uv run pytest -q tests/practice` (коммит `a9aa6ee`) | 14 failed: `NotImplementedError` в `parse_reference_solution` / `reference_solution_payload` |
 | WP6.4 (стыки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase2_seams.py` (тесты `ac949b8` на коде `47f3fc1`) | 4 failed: читатели ждут `sympy`, `task_gen@1` пишет ключи Фазы 2, в payload нет `session_id`. `T-H7` упал из-за фикстур в новом формате (без проверки `compute` нет `task_evaluated`); сам порядок кадров уже верный (A27) |
+| WP6.4 (C: `diagnostic`, `finish_artifacts`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py tests/artifacts/test_artifacts_search_export.py` (коммит `edd0bf9`) | 2 failed: ответ `diagnostic@1` с верным вариантом вне вариантов записан в банк (`actor = diagnostic@1`); обработчик `session.finish_artifacts` берёт `session_id` из lock key (`badly formed hexadecimal UUID string`) |
 
 ## Правки тестов
 

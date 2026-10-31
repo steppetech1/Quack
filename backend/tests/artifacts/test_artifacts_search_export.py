@@ -290,7 +290,7 @@ async def test_finish_artifacts_creates_digest_and_enqueues_cheatsheet(
     await seed.complete_session(learner, sid, s.domain_id)
     fake_provider.respond("ArtifactGenOutput", DIGEST)
 
-    payload = {"domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
+    payload = {"session_id": str(sid), "domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
     job = await _claim(db, kinds.session_finish_artifacts(learner, sid, payload))
     await run_finish_artifacts(job, worker_deps)
 
