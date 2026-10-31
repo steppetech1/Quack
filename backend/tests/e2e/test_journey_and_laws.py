@@ -139,7 +139,7 @@ async def test_failed_background_job_commits_nothing(system: System) -> None:
     )
     session_id = UUID(session["session_id"])
     # The gateway retries a schema failure once (Т-§11.1): two bad answers fail the attempt.
-    system.llm.fail(ScriptedFailure("invalid_json", schema_name="ExtractorOutput", times=2))
+    system.llm.fail(ScriptedFailure("invalid_json", schema_name="ExtractorOutputV2", times=2))
     events = await turn(system, learner, session_id, "I think it is 2x", "te5:t1")
     started = first(events, "turn_started")
     assert started is not None
