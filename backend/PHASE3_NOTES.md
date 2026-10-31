@@ -61,8 +61,8 @@
 | WP4 | C | WP4.1: `read_session`, модули C переведены, `T-A9a`/`T-A9b` зелёные; **частично** — модули B в `PENDING_NEO4J_SESSIONS` и `_read` хранилища ждут правки B (D-C-016). WP4.2: шпаргалки чужой темы → 404 (D-C-017), `T-E3` зелёный на стенде | 461 passed |
 | WP5 | B | не начат | — |
 | WP6 | B | не начат | — |
-| WP7 | C | не начат | — |
-| WP8 | A, C | WP8.7 (C): выполнено — `ops openapi` (функция `write_openapi`), снимок `backend/openapi.json`, `ErrorResponse` и SSE в схеме (D-C-015); остальное — не начато | `T-A7` + 3 теста схемы зелёные; всего 456 passed |
+| WP7 | C | выполнено: `GET /v1/learner/stream` (Redis, опрос без Redis, keepalive), снимок `openapi.json` обновлён (D-C-021, D-C-022) | `T-H4` + keepalive + 401 зелёные |
+| WP8 | A, C | WP8.3 (C): выполнено — `GET /healthz` только по Postgres, `T-A8`; WP8.7 (C): выполнено — `ops openapi` (функция `write_openapi`), снимок `backend/openapi.json`, `ErrorResponse` и SSE в схеме (D-C-015); остальное — не начато | `T-A7` + 3 теста схемы зелёные; всего 456 passed |
 | WP9 | A | не начат | — |
 | WP10 | C | WP10.1 стенд `system` и WP10.2 `T-E1`…`T-E10` — написаны (красные, ветка `phase-3-c-e2e-red`); WP10.3 — не начат | 6 красных, 4 зелёных на текущем коде |
 | WP11 | A | не начат | — |
@@ -1067,6 +1067,62 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   тесты свёрток Фазы 1 без изменений.
 - Требует подтверждения владельцем: нет. Если владелец хочет `Т-§7.4` буквально (без глубины и у
   T1/T2) — убрать строку множителя в `_weight` и переписать `test_deeper_testing_gives_larger_gain` (класс C).
+### D-C-021. WP7: где живёт канал и тест `T-H4`
+- Класс: B
+- WP / место: WP7; `quack/api/learner_stream.py`, `tests/test_learner_stream.py`, `tests/support/sse.py`
+- Контекст: канал не относится ни к одному продуктовому пакету; `T-H4` перечислен в §8.5 (файл горячего
+  пути — зона B); `httpx.ASGITransport` буферизует весь ответ, бесконечный SSE так не прочитать.
+- Варианты: (1) роутер в `quack.api` (основание API, зона C), монтируется в `create_app`; тест — отдельный
+  файл C; потоковый транспорт — в `tests/support/` (S9); (2) роутер в `quack/session/` — зона B.
+- Решение: (1). Транспорт повторяет тот, что B написал в `tests/session/test_session_events_stream.py`;
+  B может перейти на общий из `tests/support/sse.py`.
+- Почему: §7.3 (зона C), §4.1 (основание API импортирует только ядро и API).
+- Обратимость: одна строка `include_router`, модуль канала.
+- Тесты: `T-H4` (`test_learner_stream`, `test_learner_stream_polls_without_redis`), keepalive, 401.
+- Требует подтверждения владельцем: нет
+
+### D-C-022. WP7: поведение канала в пограничных случаях и keepalive
+- Класс: B
+- WP / место: WP7, WP6.3; `quack/api/learner_stream.py`, `quack/api/sse.py::KEEPALIVE_COMMENT`, `sse_bytes_response`
+- Контекст: ТЗ не говорит, что делать после обрыва подписки в середине потока и как слать keepalive, пока
+  общий keepalive WP6.3 (поток B) не сделан.
+- Решение: подписка на `projector:applied:{id}` оформляется до первого чтения смещений (событие между
+  ними не теряется); ошибка Redis в середине → подписка закрывается, канал переходит на опрос
+  `ops.projector_offsets` раз в `learner_stream_poll_ms` и шлёт событие только при росте `applied_seq`;
+  каждое сообщение Redis → `projection_advanced {"applied_seq"}`; молчание дольше `sse_keepalive_s` →
+  `: ping`. Соединение с Postgres берётся на один запрос; при отключении клиента подписка закрывается
+  под `asyncio.shield`. Кадр keepalive и ответ из готовых кадров — общие в `quack/api/sse.py`: B может
+  взять их для WP6.3.
+- Почему: §0.4.3 п.1 (событие не теряется), п.4.
+- Обратимость: функция `learner_stream`.
+- Тесты: `tests/test_learner_stream.py`.
+### D-C-023. WP10.3: `meta-mock` — значения, которых нет в документах
+- Класс: C
+- WP / место: WP10.3, `Д-§11`, `Т-§11.8`; `backend/loadtest/meta_mock.py`, `tests/test_meta_mock.py`
+- Контекст: WP10.3 задаёт поведение подменного сервера, но не все значения: имя и значение
+  параметра длины ответа учителя, число токенов рассуждения, счёт токенов «по длине», вид
+  «короткого текста», выбор доли ответов, тела ошибок. Адаптер `ResponsesClient` (WP5.7, B) —
+  пока только сигнатура (D-B-004), поэтому формат на проводе берётся из контракта Responses API
+  (`Т-§11.1`, `T-L8`), а не из адаптера (по ответу B).
+- Варианты: (1) взять значения из кода стенда и записать здесь, менять без правки контракта;
+  (2) ждать владельца.
+- Решение: (1). `META_MOCK_TEACHER_CHARS` = 600 (длина `reply_text` в ответе на
+  `TeacherOutput`; относится ко всем свободным строкам этой схемы); токены рассуждения: `low` —
+  256, `high` — 1024; токены = ⌈символы / 4⌉ (вход — JSON поля `input`); короткий текст —
+  `text`; `boolean` — `false`; число без границ — 0, с одной границей — граница; `uuid`,
+  `date-time`, `date` — фиксированные значения; `minItems` соблюдается. Доля 429 и доля
+  обрывов — детерминированный счётчик (доля 0,5 — каждый второй), чтобы тесты не зависели от
+  случая. `retry-after` для доли 429 — 1 с, для пустого ведра — время до пополнения; формат
+  `mixed` идёт по кругу `seconds` → `http-date` → `none`. С `tools` шаги чередуют один и два
+  `function_call`, аргументы — минимальный экземпляр `parameters` инструмента. Уровень, кроме
+  `high`, считается `low` (в `Settings` других нет). Процесс — Starlette, запуск
+  `uvicorn --factory loadtest.meta_mock:app_from_env`; `loadtest` добавлен в `include` pyright.
+  `minimal_instance` — общий генератор для `T-L9` (B импортирует его из `loadtest.meta_mock`).
+- Почему: §0.4.3 п.2 (меньше нового); значения — стенда, не продукта; ни одно не влияет на
+  продуктовый код.
+- Обратимость: константы в одном модуле.
+- Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
+- Требует подтверждения владельцем: нет
 
 ## Заблокировано
 
@@ -1087,6 +1143,9 @@ _(пусто)_
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
 | WP12 (часть 2) | проверка на неверной реализации (§8.9): `CURRENT_RULES_VERSION_NUM = 1` и вес «без ворот» × `strength` × `polarity_weight` модели; `uv run pytest -q tests/graph -k "rules2 or strength"` | 2 failed: `T-W7` (`projectorVersion = rules@1`), `test_model_strength_does_not_change_the_state` (сила модели меняет `pMastery`). Тесты написаны вместе с реализацией, отдельного красного коммита нет |
+| WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
+| WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
+| WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
 
 ## Правки тестов
 
@@ -1101,6 +1160,7 @@ _(пусто)_
 | `tests/domains/test_curation_keys_and_actor.py::_FakeDriver.session` | принимает `**_config` | WP4.1: сессии открываются через `read_session(driver)` с `default_access_mode`; фикстура, утверждения не менялись |
 | `tests/domains/test_graph_view_fixes.py::test_graph_view_opens_every_neo4j_session_with_read_access` | шпион считает и сессии, открытые через `read_session`, вызванную из `graph_view.py` | WP4.1 перенёс место открытия сессии в `quack/db/neo4j.py`; утверждения (≥ 2 сессии, все READ) те же. Проверка «не ослаблен»: при `read_session` без READ тест падает |
 | `tests/factories.py::EventLog.add` | необязательный параметр `schema_version` (по умолчанию 1) | WP12: события `turn.extracted` v2 в сценариях; фикстура, утверждения не менялись |
+| `tests/test_app_assembly.py::PENDING_ROUTES` | убран `GET /v1/learner/stream` | WP7 смонтирован (`test_pending_routes_are_still_pending` требует удалить запись) |
 
 ## Вопросы к команде
 
