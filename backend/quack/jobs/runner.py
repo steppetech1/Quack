@@ -73,6 +73,9 @@ class JobRunner:
     session_factory: SessionFactory
     worker_id: str
     handlers: dict[str, JobHandler] = field(default_factory=lambda: JOB_HANDLERS)
+    # WP2.1: the process-wide resources handed to every handler; built from the two
+    # fields above when absent (tests of the queue core).
+    context: JobContext | None = None
 
     async def _heartbeat(self, job: ClaimedJob) -> None:
         while True:
@@ -89,7 +92,7 @@ class JobRunner:
             job = await claim_next_job(session, self.worker_id, sorted(self.handlers))
         if job is None:
             return False
-        context = JobContext(self.settings, self.session_factory)
+        context = self.context or JobContext(self.settings, self.session_factory)
         beat = asyncio.create_task(self._heartbeat(job))
         try:
             await self.handlers[job.kind](job, context)
