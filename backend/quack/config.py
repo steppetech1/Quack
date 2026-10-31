@@ -175,6 +175,8 @@ class Settings(BaseSettings):
     dispatcher_restart_pause_s: float = 5.0
 
     # --- stream B ---
+    # Т-§7.5: turns before the episode given to the extractor for understanding only (WP12).
+    episode_context_turns: int = 3
     # WP5.7 (Д-§7, R4): Meta API credentials; the old LLM_API_* names are read as fallbacks.
     meta_api_key: SecretStr = Field(
         default=SecretStr(""), validation_alias=AliasChoices("META_API_KEY", "LLM_API_KEY")

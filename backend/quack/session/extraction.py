@@ -23,7 +23,7 @@ teacher's words are never a quote of the learner).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -170,3 +170,77 @@ def turn_extracted_v2(
 ) -> TurnExtractedV2:
     """Payload of `turn.extracted` with `schema_version = 2`."""
     return TurnExtractedV2(session_id=session_id, turn_id=turn_id, elements=elements)
+
+
+# --- input blocks of extractor@2 (D-B-022) ------------------------------------------------
+
+# Events of an episode shown to the extractor, as numbered lines (Т-§7.6, Т-§10: built by code
+# from the events, in English).
+EPISODE_EVENT_TYPES: tuple[str, ...] = (
+    "turn.student_replied",
+    "task.submitted",
+    "task.hint_given",
+    "task.evaluated",
+    "turn.teacher_replied",
+    "task.assigned",
+)
+NONE_LINE = "(none)"
+
+
+def _event_line(event: StoredEvent, task_lines: Mapping[str, str], labels: LabelMap) -> str | None:
+    p = event.payload
+    head = f"[{event.seq}]"
+    if event.type == "turn.student_replied":
+        return f"{head} learner: {p.get('text', '')}"
+    if event.type == "task.submitted":
+        return f"{head} learner's answer to the problem: {p.get('answer', '')}"
+    if event.type == "turn.teacher_replied":
+        return f"{head} teacher: {p.get('text', '')}"
+    if event.type == "task.assigned":
+        return f"{head} problem given: {task_lines.get(str(p.get('task_id')), '')}".rstrip()
+    if event.type == "task.evaluated":
+        verdict = "correct" if p.get("is_correct") else "incorrect"
+        return f"{head} automatic check of the learner's answer: {verdict}"
+    if event.type == "task.hint_given":
+        return f"{head} hint, step {p.get('hint_level')} of 3: {p.get('hint_text', '')}"
+    return None
+
+
+def task_line(prompt_text: str, skill_ids: Sequence[str], labels: LabelMap) -> str:
+    """`<statement> (tests: S1, S2)` — what a problem tests, by the labels of the call."""
+    tested = [label for sid in skill_ids if (label := labels.label("skill", UUID(sid))) is not None]
+    return prompt_text + (f" (tests: {', '.join(tested)})" if tested else "")
+
+
+def render_events(
+    events: Sequence[StoredEvent], task_lines: Mapping[str, str], labels: LabelMap
+) -> str:
+    """Numbered lines of `events` (`[seq] who: text`); `(none)` when there are none."""
+    lines = [
+        line for event in events if (line := _event_line(event, task_lines, labels)) is not None
+    ]
+    return "\n".join(lines) or NONE_LINE
+
+
+def render_candidate_skills(skills: Sequence[Mapping[str, Any]], labels: LabelMap) -> str:
+    """`S1: <name>` per candidate skill that got a label."""
+    lines = [
+        f"{label}: {skill.get('name', '')}"
+        for skill in skills
+        if (label := labels.label("skill", UUID(str(skill["skill_id"])))) is not None
+    ]
+    return "\n".join(lines) or NONE_LINE
+
+
+def render_known_misconceptions(
+    misconceptions: Sequence[Mapping[str, Any]], labels: LabelMap
+) -> str:
+    """`M1 (skill S1): <name>` per known misconception of the candidate skills."""
+    lines: list[str] = []
+    for item in misconceptions:
+        label = labels.label("misconception", UUID(str(item["misconception_id"])))
+        skill = labels.label("skill", UUID(str(item["skill_id"])))
+        if label is None or skill is None:
+            continue
+        lines.append(f"{label} (skill {skill}): {item.get('name', '')}")
+    return "\n".join(lines) or NONE_LINE
