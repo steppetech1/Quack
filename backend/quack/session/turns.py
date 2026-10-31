@@ -56,6 +56,7 @@ from quack.session.teacher_labels import (
     resolve_teacher_output,
     skills_view,
     tasks_view,
+    teacher_label_errors,
     topic_line,
     turns_view,
 )
@@ -537,6 +538,8 @@ async def open_turn(
                     is_first_turn=prev_turn_index < 0,
                     session_evaluations=evaluations,
                 ),
+                # WP14.1 (T-M2): an unknown label goes back to the model once.
+                check=lambda output: teacher_label_errors(output, labels),
             )
             return result.value
 
