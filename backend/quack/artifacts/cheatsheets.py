@@ -11,7 +11,7 @@ import orjson
 from redis.exceptions import RedisError
 
 from quack.api.resources import AppResources
-from quack.artifacts.deps import WorkerDeps, build_worker_deps
+from quack.artifacts.deps import WorkerDeps, worker_deps
 from quack.artifacts.practice import LLM_ERRORS
 from quack.artifacts.schemas import (
     ArtifactGenOutput,
@@ -371,11 +371,9 @@ async def run_refresh_cheatsheet(job: ClaimedJob, deps: WorkerDeps) -> None:
 
 @register_job_handler("session.finish_artifacts")
 async def _finish_artifacts_handler(job: ClaimedJob, ctx: JobContext) -> None:
-    async with build_worker_deps(ctx) as deps:
-        await run_finish_artifacts(job, deps)
+    await run_finish_artifacts(job, worker_deps(ctx))
 
 
 @register_job_handler("artifact.refresh_cheatsheet")
 async def _refresh_cheatsheet_handler(job: ClaimedJob, ctx: JobContext) -> None:
-    async with build_worker_deps(ctx) as deps:
-        await run_refresh_cheatsheet(job, deps)
+    await run_refresh_cheatsheet(job, worker_deps(ctx))

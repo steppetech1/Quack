@@ -15,7 +15,7 @@ from quack.db.postgres import SessionFactory
 from quack.jobs.queue import ClaimedJob, claim_next_job
 from quack.jobs.runner import JobContext
 from quack.session import workers
-from quack.session.schemas import ExtractorOutput, TeacherOutput
+from quack.session.schemas import ExtractorOutputV2, TeacherOutput
 from tests.session.helpers import parse_sse
 from tests.support.resources import build_job_context
 
@@ -40,7 +40,8 @@ async def test_handlers_share_driver_redis_and_gateway(
     db: SessionFactory, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """WP2.1: both handlers take the Redis client and the LLM gateway of `JobContext`, the same
-    objects for every job; without them in the context the handler raises `RuntimeError`."""
+    objects for every job; without the driver or the gateway the handler raises `RuntimeError`,
+    without Redis it runs with `redis = None` (§4.2)."""
     seen: list[tuple[str, Any, Any]] = []
 
     async def fake_extract(job: ClaimedJob, ctx: JobContext, *, gateway: Any, redis: Any) -> int:
@@ -66,6 +67,11 @@ async def test_handlers_share_driver_redis_and_gateway(
     with pytest.raises(RuntimeError):
         await workers.handle_turn_extract(extract_job, JobContext(settings, db))
     assert len(seen) == 3
+
+    # §4.2: `redis = None` is work without Redis, the handler runs and passes it on.
+    no_redis = build_job_context(settings, db, object(), None)
+    await workers.handle_session_checkpoint(_job("session.checkpoint", {}), no_redis)
+    assert seen[-1] == ("checkpoint", no_redis.llm, None)
 
 
 async def test_topic_context_read_uses_teacher_seq_as_min_seq(
@@ -121,7 +127,7 @@ async def test_topic_context_read_uses_teacher_seq_as_min_seq(
 
     monkeypatch.setattr(workers, "read_consistent_slice", spy)
 
-    fake_llm.push("extractor", ExtractorOutput(observations=[], misconceptions=[]))
+    fake_llm.push("extractor", ExtractorOutputV2(entries=[]))
     assert fake_llm.gateway is not None
     ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
     await workers.run_turn_extract(job, ctx, gateway=fake_llm.gateway, redis=redis, neo4j=neo4j)

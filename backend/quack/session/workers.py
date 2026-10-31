@@ -16,33 +16,51 @@ from sqlalchemy import text
 
 from quack.db.redis import session_events_channel
 from quack.events.append import append_events
-from quack.events.models import NewEvent
+from quack.events.models import NewEvent, StoredEvent
+from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore, read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.llm.gateway import LLMGateway
+from quack.llm.labels import LabelMap
 from quack.logging import get_logger
+from quack.practice.evaluation import load_task
 from quack.session.context import TURN_EVENT_TYPES, _topic_slice, last_checkpoint
-from quack.session.schemas import CheckpointerOutput, ExtractorOutput
+from quack.session.extraction import (
+    EPISODE_EVENT_TYPES,
+    extracted_elements,
+    extraction_context,
+    render_candidate_skills,
+    render_events,
+    render_known_misconceptions,
+    task_line,
+    turn_extracted_v2,
+)
+from quack.session.schemas import CheckpointerOutput, ExtractorOutputV2
 
 log = get_logger(__name__)
+
+# `extractor@N` of `turn.extract` (WP12.1); the actor of `turn.extracted` v2.
+EXTRACTOR_PROMPT_VERSION = 2
+EXTRACTOR_ACTOR = f"extractor@{EXTRACTOR_PROMPT_VERSION}"
 
 
 @dataclass(frozen=True)
 class _JobResources:
     neo4j: AsyncDriver
-    redis: Redis
+    redis: Redis | None
     llm: LLMGateway
 
 
 def _job_resources(ctx: JobContext) -> _JobResources:
     """Neo4j driver, Redis client and LLM gateway of the process, only from `ctx` (WP2.1).
 
-    The `JobContext` fields stay optional until D-A-002 is lifted; then this check goes away.
+    `redis = None` is work without Redis (§4.2): the handlers already accept it. The driver
+    and the gateway stay optional until D-A-002 is lifted; then this check goes away.
     """
-    if ctx.neo4j is None or ctx.redis is None or ctx.llm is None:
-        raise RuntimeError("JobContext lacks neo4j, redis or llm (WP2.1)")
+    if ctx.neo4j is None or ctx.llm is None:
+        raise RuntimeError("JobContext lacks neo4j or llm (WP2.1)")
     return _JobResources(neo4j=ctx.neo4j, redis=ctx.redis, llm=ctx.llm)
 
 
@@ -80,6 +98,55 @@ async def _read_topic_context(
     return skills, misconceptions
 
 
+async def _episode_events(
+    session: Any,
+    learner_id: UUID,
+    session_id: UUID,
+    turn_id: UUID,
+    teacher_seq: int | None,
+    context_turns: int,
+) -> tuple[list[StoredEvent], list[StoredEvent]]:
+    """Events of the episode and of the turns before it (D-B-022).
+
+    Phase 3 has no `episode.closed` (Т-§7.5): the episode is the turn — the session events
+    after the previous teacher reply up to this turn's teacher reply (the learner's reply and
+    answer, hints, checks, the teacher reply and its problem). `context_turns` teacher turns
+    before it are given for understanding only."""
+    if teacher_seq is None:
+        teacher_seq = (
+            await session.execute(
+                text(
+                    "SELECT max(seq) FROM core.events WHERE learner_id = :l AND turn_id = :t "
+                    "AND type = 'turn.teacher_replied'"
+                ),
+                {"l": learner_id, "t": turn_id},
+            )
+        ).scalar_one()
+    rows = (
+        await session.execute(
+            text(
+                f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l "
+                "AND session_id = :s AND type = ANY(:types) "
+                "AND seq <= :upto ORDER BY seq"
+            ),
+            {
+                "l": learner_id,
+                "s": session_id,
+                "types": list(EPISODE_EVENT_TYPES),
+                "upto": teacher_seq if teacher_seq is not None else 2**62,
+            },
+        )
+    ).all()
+    events = [row_to_event(row) for row in rows]
+    replies = [i for i, e in enumerate(events) if e.type == "turn.teacher_replied"]
+    if not replies:
+        return events, []
+    # The last teacher reply closes the episode; the one before it opens it.
+    start = replies[-2] + 1 if len(replies) >= 2 else 0
+    before_start = replies[-2 - context_turns] + 1 if len(replies) >= 2 + context_turns else 0
+    return events[start:], events[before_start:start]
+
+
 async def run_turn_extract(
     job: ClaimedJob,
     ctx: JobContext,
@@ -88,11 +155,11 @@ async def run_turn_extract(
     redis: Redis | None = None,
     neo4j: AsyncDriver | None = None,
 ) -> int:
-    """Execute `turn.extract` for `job`; returns the committed `seq` of `turn.extracted`."""
+    """Execute `turn.extract` for `job` with `extractor@2` (WP12, D-B-016, D-B-022); returns
+    the committed `seq` of `turn.extracted` (schema version 2)."""
     payload = job.payload
     session_id = UUID(str(payload["session_id"]))
     turn_id = UUID(str(payload["turn_id"]))
-    student_seq = payload.get("student_seq")
     teacher_seq = payload.get("teacher_seq")
 
     async with ctx.session_factory() as session:
@@ -115,39 +182,20 @@ async def run_turn_extract(
                 )
             ).one()
             learner_id = sess_row.learner_id
-
         domain_id: UUID = sess_row.domain_id
         topic_id: UUID | None = sess_row.topic_id
-
-        if student_seq is not None and teacher_seq is not None:
-            reply_rows = (
-                await session.execute(
-                    text(
-                        "SELECT seq, type, payload FROM core.events "
-                        "WHERE learner_id = :l AND seq IN (:s_seq, :t_seq) ORDER BY seq"
-                    ),
-                    {"l": learner_id, "s_seq": int(student_seq), "t_seq": int(teacher_seq)},
-                )
-            ).all()
-        else:
-            reply_rows = (
-                await session.execute(
-                    text(
-                        "SELECT seq, type, payload FROM core.events "
-                        "WHERE learner_id = :l AND session_id = :s AND turn_id = :t "
-                        "AND type IN ('turn.student_replied', 'turn.teacher_replied') ORDER BY seq"
-                    ),
-                    {"l": learner_id, "s": session_id, "t": turn_id},
-                )
-            ).all()
-
-    student_text = ""
-    teacher_text = ""
-    for r in reply_rows:
-        if r.type == "turn.student_replied":
-            student_text = str(r.payload.get("text", ""))
-        elif r.type == "turn.teacher_replied":
-            teacher_text = str(r.payload.get("text", ""))
+        episode, before = await _episode_events(
+            session,
+            learner_id,
+            session_id,
+            turn_id,
+            int(teacher_seq) if teacher_seq is not None else None,
+            ctx.settings.episode_context_turns,
+        )
+        task_ids = {
+            str(e.payload["task_id"]) for e in [*before, *episode] if e.type == "task.assigned"
+        }
+        tasks = {tid: await load_task(session, learner_id, UUID(tid)) for tid in task_ids}
 
     driver = neo4j if neo4j is not None else _job_resources(ctx).neo4j
     skills, misconceptions = await _read_topic_context(
@@ -158,41 +206,37 @@ async def run_turn_extract(
         redis=redis,
         ctx=ctx,
     )
-
+    # Т-§4.5, Т-§7.6: candidates are the skills of the session topic, by labels only.
+    labels = LabelMap.build(
+        ctx.settings,
+        skills=[UUID(str(s["skill_id"])) for s in skills],
+        misconceptions=[UUID(str(m["misconception_id"])) for m in misconceptions],
+    )
+    task_lines = {
+        tid: task_line(task.prompt_text, task.skill_ids, labels)
+        for tid, task in tasks.items()
+        if task is not None
+    }
     variables = {
-        "topic_id": str(topic_id) if topic_id else "",
-        "known_skills_json": json.dumps(skills, ensure_ascii=False),
-        "known_misconceptions_json": json.dumps(misconceptions, ensure_ascii=False),
-        "student_text": student_text,
-        "teacher_text": teacher_text,
+        "events_before": render_events(before, task_lines, labels),
+        "episode": render_events(episode, task_lines, labels),
+        "candidate_skills": render_candidate_skills(skills, labels),
+        "known_misconceptions": render_known_misconceptions(misconceptions, labels),
     }
 
     llm_result = await gateway.generate_structured(
         role="extractor",
-        prompt_version=1,
-        response_model=ExtractorOutput,
+        prompt_version=EXTRACTOR_PROMPT_VERSION,
+        response_model=ExtractorOutputV2,
         variables=variables,
         learner_id=learner_id,
         session_id=session_id,
         turn_id=turn_id,
-        idempotency_key=f"extract:{turn_id}:v1",
+        idempotency_key=f"extract:{turn_id}:v{EXTRACTOR_PROMPT_VERSION}",
     )
-    output = llm_result.value
-
-    # Law 4 (Т-§7.5-7.6): keep only items whose quote is literally in the student's reply.
-    student_lower = student_text.lower()
-
-    def _grounded(evidence_text: str) -> bool:
-        quote = evidence_text.strip().lower()
-        if quote in student_lower or quote == "".join(student_lower.split()):
-            return True
-        log.warning(
-            "extractor_ungrounded_quote_dropped", turn_id=str(turn_id), evidence_text=evidence_text
-        )
-        return False
-
-    observations = [o for o in output.observations if _grounded(o.evidence_text)]
-    misconceptions_out = [m for m in output.misconceptions if _grounded(m.evidence_text)]
+    # Law 4 (WP12.2): code checks every element; rejected ones are written with the reason.
+    check = extraction_context(labels, episode, topic_id=topic_id)
+    extracted = turn_extracted_v2(session_id, turn_id, extracted_elements(llm_result.value, check))
 
     async with ctx.session_factory() as session, session.begin():
         old_rows = (
@@ -217,7 +261,7 @@ async def run_turn_extract(
                         "target_event_seq": old_seq,
                         "reason": "re-extracted",
                     },
-                    actor="extractor@1",
+                    actor=EXTRACTOR_ACTOR,
                     idempotency_key=f"supersede:{turn_id}:{old_seq}",
                     session_id=session_id,
                     turn_id=turn_id,
@@ -226,18 +270,14 @@ async def run_turn_extract(
             )
             extract_event_key = f"turn.extracted:{turn_id}:after:{old_seq}"
         else:
-            extract_event_key = f"turn.extracted:{turn_id}:v1"
+            extract_event_key = f"turn.extracted:{turn_id}:v{EXTRACTOR_PROMPT_VERSION}"
 
         events_to_append.append(
             NewEvent(
                 type="turn.extracted",
-                payload={
-                    "session_id": str(session_id),
-                    "turn_id": str(turn_id),
-                    "observations": [o.model_dump(mode="json") for o in observations],
-                    "misconceptions": [m.model_dump(mode="json") for m in misconceptions_out],
-                },
-                actor="extractor@1",
+                schema_version=2,
+                payload=extracted.model_dump(mode="json"),
+                actor=EXTRACTOR_ACTOR,
                 idempotency_key=extract_event_key,
                 session_id=session_id,
                 turn_id=turn_id,

@@ -95,20 +95,29 @@ async def last_checkpoint(
 
 
 async def read_active_window(
-    session: AsyncSession, learner_id: UUID, session_id: UUID, after_turn: int, limit: int
+    session: AsyncSession,
+    learner_id: UUID,
+    session_id: UUID,
+    after_turn: int,
+    limit: int,
+    *,
+    before_seq: int | None = None,
 ) -> list[StoredEvent]:
-    """The last `limit` replies of the session with `turn_index > after_turn`, oldest first."""
+    """The last `limit` replies of the session with `turn_index > after_turn` (and `seq` below
+    `before_seq` when given), oldest first."""
     result = await session.execute(
         text(
             f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l "
             "AND session_id = :s AND type = ANY(:types) "
-            "AND (payload->>'turn_index')::int > :after ORDER BY seq DESC LIMIT :limit"
+            "AND (payload->>'turn_index')::int > :after AND seq < :before "
+            "ORDER BY seq DESC LIMIT :limit"
         ),
         {
             "l": learner_id,
             "s": session_id,
             "types": list(TURN_EVENT_TYPES),
             "after": after_turn,
+            "before": before_seq if before_seq is not None else 2**62,
             "limit": max(0, limit),
         },
     )
@@ -158,9 +167,18 @@ def _topic_slice(
 
 
 async def build_turn_context(
-    resources: AppResources, settings: Settings, learner_id: UUID, session_id: UUID
+    resources: AppResources,
+    settings: Settings,
+    learner_id: UUID,
+    session_id: UUID,
+    *,
+    before_seq: int | None = None,
 ) -> TurnContext:
-    """Consistent slice (<= projector_lag_timeout_ms) + overlay + last checkpoint + <= 12 turns."""
+    """Consistent slice (<= projector_lag_timeout_ms) + overlay + last checkpoint + <= 12 turns.
+
+    `before_seq` — `seq` of the learner's reply of this turn (D-B-018): the slice waits for the
+    projector only up to the event before it (the reply itself is overlaid, law 9), and the
+    window of turns ends before it (the reply is a variable of its own)."""
     async with resources.session_factory() as session:
         row = await _load_session_row(session, learner_id, session_id)
 
@@ -178,7 +196,11 @@ async def build_turn_context(
     memory_unavailable = False
     try:
         graph_slice = await read_consistent_slice(
-            learner_id, None, store.dump, settings.projector_lag_timeout_ms, deps=deps
+            learner_id,
+            None if before_seq is None else before_seq - 1,
+            store.dump,
+            settings.projector_lag_timeout_ms,
+            deps=deps,
         )
     except NEO4J_CONNECTION_ERRORS as exc:
         # WP6.1: the student model is unreachable; every session event is overlaid on an
@@ -200,7 +222,12 @@ async def build_turn_context(
         cp = checkpoint.payload if checkpoint is not None else {}
         last_cp_turn = int(cp.get("up_to_turn_index", -1))
         window = await read_active_window(
-            session, learner_id, session_id, last_cp_turn, settings.active_window_turns
+            session,
+            learner_id,
+            session_id,
+            last_cp_turn,
+            settings.active_window_turns,
+            before_seq=before_seq,
         )
 
     topic_name, skills, misconceptions = _topic_slice(overlay.graph, row.topic_id)

@@ -23,7 +23,6 @@ from quack.api.app import create_app
 from quack.api.auth import DEV_JWT_SECRET, JWT_ALGORITHM
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
-from quack.domains import curation
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from tests.support.llm import FakeLLMProvider, QueuedLLMItem
@@ -34,9 +33,7 @@ __all__ = ["FakeLLMProvider", "QueuedLLMItem"]
 
 @pytest.fixture
 def fake_llm_provider() -> FakeLLMProvider:
-    provider = FakeLLMProvider()
-    curation.llm_provider_override = provider
-    return provider
+    return FakeLLMProvider()
 
 
 @pytest.fixture

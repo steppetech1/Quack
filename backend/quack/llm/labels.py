@@ -79,6 +79,12 @@ class LabelMap:
             raise UnknownLabelError(kind, label)
         return ids[index]
 
+    def labels(self, kind: LabelKind) -> dict[str, UUID]:
+        """`label → id` of one kind (the label tables of `ExtractionContext`, WP12)."""
+        return {
+            f"{LABEL_PREFIX[kind]}{i}": object_id for i, object_id in enumerate(self._ids[kind], 1)
+        }
+
     def table(self) -> dict[str, str]:
         """`label → id` of all labels, for `ops.turn_manifests.label_table`."""
         return {label: str(object_id) for (_, object_id), label in self._labels.items()}

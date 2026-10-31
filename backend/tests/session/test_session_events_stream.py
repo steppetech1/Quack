@@ -273,3 +273,44 @@ async def test_session_events_foreign_or_unknown_session_returns_404(
     )
     assert unknown_resp.status_code == 404, unknown_resp.text
     assert unknown_resp.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_sse_keepalive(
+    session_app: FastAPI,
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    seeded_domain: SeededDomain,
+    settings: Settings,
+) -> None:
+    """T-H5 (WP6.3, Д-§3.1): `sse_keepalive_s = 0.2`, `GET /v1/sessions/{id}/events` without
+    events for 0.7 s → at least 2 comments `: ping`, no named events."""
+    session_app.state.settings = settings.model_copy(update={"sse_keepalive_s": 0.2})
+    start_resp = await client.post(
+        "/v1/sessions",
+        json={
+            "domain_id": str(seeded_domain.domain_id),
+            "topic_id": str(seeded_domain.topic_id),
+            "idempotency_key": "start-sse-keepalive",
+        },
+        headers=auth_headers,
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    session_id = UUID(start_resp.json()["session_id"])
+
+    lines: list[str] = []
+    async with (
+        httpx.AsyncClient(
+            transport=StreamingASGITransport(session_app), base_url="http://test"
+        ) as stream_client,
+        stream_client.stream(
+            "GET", f"/v1/sessions/{session_id}/events", headers=auth_headers
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(0.7):
+                async for line in resp.aiter_lines():
+                    lines.append(line)
+
+    assert lines.count(": ping") >= 2, lines
+    assert not [line for line in lines if line.startswith(("event:", "data:"))], lines

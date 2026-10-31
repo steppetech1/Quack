@@ -25,3 +25,16 @@ def sse_response(events: AsyncIterator[tuple[str, dict[str, Any]]]) -> Streaming
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# WP6.3: an SSE comment that keeps a silent stream open behind proxies (`Д-§3.1`).
+KEEPALIVE_COMMENT = b": ping\n\n"
+
+
+def sse_bytes_response(chunks: AsyncIterator[bytes]) -> StreamingResponse:
+    """A stream of ready SSE frames (named events and keepalive comments)."""
+    return StreamingResponse(
+        chunks,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
