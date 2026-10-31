@@ -1,15 +1,25 @@
-# AGENT.md - docs/
+# AGENT.md - backend/docs/
 
-This folder is the project's memory between agent runs. Keep it short, accurate and current.
+Эта папка — память проекта между запусками агентов. Держи её короткой, точной и актуальной.
+Правила кода и ТЗ — в `backend/AGENT.md` и корневом `AGENT.md`.
 
-## Files
-- CONTEXT.md   - what the project is, stack, structure, how to build/run/test, conventions, current state.
-- PROGRESS.md  - log of finished tasks, newest first.
-- DECISIONS.md - non-obvious decisions and their reasons.
-- agents/      - (optional) issue tracker / triage labels / domain docs config created by /setup-matt-pocock-skills.
+## Файлы
+- CONTEXT.md   — что за проект, стек, структура, как собрать/запустить/протестировать, текущее состояние.
+- PROGRESS.md  — журнал завершённых задач, новые сверху.
+- DECISIONS.md — неочевидные решения и причины (Фазы 1–2; решения Фазы 3 — в `backend/PHASE3_NOTES.md`).
+- agents/      — конфигурация трекера задач, меток и доменных доков (необязательно).
 
-## Update protocol (after EVERY task)
-1. Add ONE entry at the top of PROGRESS.md (right below the marker comment): date, task, what changed, notes for the next agent.
-2. Update CONTEXT.md only if structure, commands, dependencies or architecture changed. Replace stale text, do not pile up.
-3. Add to DECISIONS.md only decisions that a future agent could otherwise undo by mistake.
-4. Never paste long logs or code here; link to files instead.
+## Фаза 3
+- Журнал решений (`D-A|B|C-NNN`), «Красные прогоны», «Заблокировано» (`BLOCKED-NNN`), таблица DoD живут в
+  `backend/PHASE3_NOTES.md`, а не здесь. Пиши только в **свой** раздел потока; общие разделы ведёт поток C.
+- Запись о решении делается в момент решения, по шаблону ТЗ Ф3 §0.4.5.
+- Прогресс WP фиксируй строкой в своём разделе: «выполнен / частично (BLOCKED-NNN)» + число тестов.
+
+## Протокол обновления (после каждой задачи)
+1. Одна запись сверху PROGRESS.md: дата, задача/WP, что изменено, заметки следующему агенту.
+2. CONTEXT.md меняй, только если изменились структура, команды, зависимости или архитектура. Заменяй устаревший
+   текст, не наращивай.
+3. В DECISIONS.md — только решения, которые будущий агент мог бы по ошибке отменить.
+4. Не вставляй длинные логи и код — давай ссылки на файлы.
+5. Не правь `docs/**` и README «заодно»: вне задач, где они названы в скоупе, это даёт конфликты слияния
+   (ТЗ Ф3 §0.5, владелец общих файлов — поток C).
