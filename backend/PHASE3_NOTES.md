@@ -703,6 +703,33 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-017. `session/workers.py` на ресурсах `JobContext` (WP2.1, по просьбе A)
+- Класс: B
+- WP / место: WP2.1 (пересечение №2, §7.3); `quack/session/workers.py`,
+  `tests/support/resources.py`
+- Решение: драйвер Neo4j, Redis и шлюз берутся только из `ctx` (`ctx.neo4j`, `ctx.redis`,
+  `ctx.llm`); модульный кэш `_RESOURCES`, `_worker_resources`, вызовы `create_driver`,
+  `create_redis`, `HttpLLMProvider(` удалены. Пока поля `JobContext` необязательны (D-A-002),
+  один хелпер `_job_resources(ctx)` проверяет их и бросает `RuntimeError`; убирается, когда A
+  снимет `None`. `compute` обработчики `workers.py` не используют и не проверяют. Логика
+  обработчиков не менялась. Сборщик `build_job_context` в `tests/support/resources.py`
+  (§2.3 конфликт 20: тесты собирают контекст сборщиком).
+- Правки тестов (§8.9): `test_worker_pool_and_slice::test_handlers_share_driver_redis_and_gateway`
+  — вместо «`create_driver`/`create_redis`/`LLMGateway` вызваны по одному разу» проверяется,
+  что все три вызова получают те же `ctx.llm` и `ctx.redis`, и что без ресурсов в контексте
+  обработчик бросает `RuntimeError`. Свойство то же (общие ресурсы на все задачи), критерий
+  строже; проверка «не ослаблен»: если обработчик создаёт свой шлюз, тест падает.
+  Фикстуры: `JobContext(settings=…, session_factory=db)` → `build_job_context(...)` в
+  `test_session_checkpoint_worker`, `test_turn_extract_worker`, `test_extract_quote_grounding`,
+  `test_worker_pool_and_slice`; из `test_session_checkpoint_worker` убрана подмена
+  `HttpLLMProvider`/`LLMGateway` (шлюз приходит из контекста).
+- Снятие `_ReadOnlyDriver` (D-C-016, отдельный коммит): `workers.py` отдаёт `ctx.neo4j` в
+  `Neo4jGraphStore` и `read_applied_seq` как есть, своих сессий на драйвере не открывает;
+  запись `quack.session.workers` удалена из `PENDING_NEO4J_SESSIONS` (список пуст). До того как
+  C переведёт `Neo4jGraphStore._read` на `read_session`, чтение графа в `turn.extract` идёт без
+  `READ_ACCESS` — ход C по D-C-016.
+- Требует подтверждения владельцем: нет (поручение A).
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков

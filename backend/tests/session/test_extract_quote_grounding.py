@@ -14,10 +14,10 @@ from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.events.payloads import ExtractedMisconception, ExtractedObservation, SkillRef
 from quack.jobs.queue import claim_next_job
-from quack.jobs.runner import JobContext
 from quack.session.schemas import ExtractorOutput, TeacherOutput
 from quack.session.workers import run_turn_extract
 from tests.session.helpers import parse_sse, skill_label
+from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -100,7 +100,7 @@ async def test_ungrounded_quotes_are_dropped(
         ),
     )
     assert fake_llm.gateway is not None
-    ctx = JobContext(settings=settings, session_factory=db)
+    ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
     await run_turn_extract(job, ctx, gateway=fake_llm.gateway, redis=redis, neo4j=neo4j)
 
     async with db() as session:

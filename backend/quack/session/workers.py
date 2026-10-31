@@ -5,17 +5,16 @@ from __future__ import annotations
 import contextlib
 import json
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 import orjson
-from neo4j import READ_ACCESS, AsyncDriver, AsyncSession
+from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
 
-from quack.db.neo4j import create_driver
-from quack.db.redis import create_redis, session_events_channel
+from quack.db.redis import session_events_channel
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.graph.neo4j_store import Neo4jGraphStore, read_applied_seq
@@ -23,7 +22,6 @@ from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.llm.gateway import LLMGateway
-from quack.llm.provider import HttpLLMProvider
 from quack.logging import get_logger
 from quack.session.context import TURN_EVENT_TYPES, _topic_slice, last_checkpoint
 from quack.session.schemas import CheckpointerOutput, ExtractorOutput
@@ -32,41 +30,20 @@ log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
-class _WorkerResources:
-    driver: AsyncDriver
+class _JobResources:
+    neo4j: AsyncDriver
     redis: Redis
-    gateway: LLMGateway
+    llm: LLMGateway
 
 
-_RESOURCES: dict[int, _WorkerResources] = {}
+def _job_resources(ctx: JobContext) -> _JobResources:
+    """Neo4j driver, Redis client and LLM gateway of the process, only from `ctx` (WP2.1).
 
-
-class _ReadOnlyDriver:
-    """Driver view whose sessions are opened with `READ_ACCESS` (the graph store is frozen core)."""
-
-    def __init__(self, driver: AsyncDriver) -> None:
-        self._driver = driver
-
-    def session(self, **config: Any) -> AsyncSession:
-        return self._driver.session(default_access_mode=READ_ACCESS, **config)
-
-
-def _worker_resources(ctx: JobContext) -> _WorkerResources:
-    """Driver, Redis client and LLM gateway shared by all jobs (cached per `ctx.settings`)."""
-    key = id(ctx.settings)
-    resources = _RESOURCES.get(key)
-    if resources is None:
-        provider = HttpLLMProvider(
-            ctx.settings.llm_api_base_url,
-            ctx.settings.llm_api_key.get_secret_value(),
-        )
-        resources = _WorkerResources(
-            driver=create_driver(ctx.settings),
-            redis=create_redis(ctx.settings),
-            gateway=LLMGateway(ctx.session_factory, provider, ctx.settings),
-        )
-        _RESOURCES[key] = resources
-    return resources
+    The `JobContext` fields stay optional until D-A-002 is lifted; then this check goes away.
+    """
+    if ctx.neo4j is None or ctx.redis is None or ctx.llm is None:
+        raise RuntimeError("JobContext lacks neo4j, redis or llm (WP2.1)")
+    return _JobResources(neo4j=ctx.neo4j, redis=ctx.redis, llm=ctx.llm)
 
 
 async def _read_topic_context(
@@ -80,15 +57,14 @@ async def _read_topic_context(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if topic_id is None:
         return [], []
-    reader = cast("AsyncDriver", _ReadOnlyDriver(neo4j_driver))
-    store = Neo4jGraphStore(reader, str(learner_id))
+    store = Neo4jGraphStore(neo4j_driver, str(learner_id))
 
     if redis is None:
         graph = await store.dump()
     else:
 
         async def applied_seq_reader(learner: UUID) -> int:
-            return await read_applied_seq(reader, str(learner))
+            return await read_applied_seq(neo4j_driver, str(learner))
 
         deps = SliceDeps(
             session_factory=ctx.session_factory,
@@ -173,7 +149,7 @@ async def run_turn_extract(
         elif r.type == "turn.teacher_replied":
             teacher_text = str(r.payload.get("text", ""))
 
-    driver = neo4j if neo4j is not None else _worker_resources(ctx).driver
+    driver = neo4j if neo4j is not None else _job_resources(ctx).neo4j
     skills, misconceptions = await _read_topic_context(
         driver,
         learner_id,
@@ -294,8 +270,8 @@ async def run_turn_extract(
 
 @register_job_handler("turn.extract")
 async def handle_turn_extract(job: ClaimedJob, ctx: JobContext) -> None:
-    resources = _worker_resources(ctx)
-    await run_turn_extract(job, ctx, gateway=resources.gateway, redis=resources.redis)
+    resources = _job_resources(ctx)
+    await run_turn_extract(job, ctx, gateway=resources.llm, redis=resources.redis)
 
 
 async def run_session_checkpoint(
@@ -403,5 +379,5 @@ async def run_session_checkpoint(
 
 @register_job_handler("session.checkpoint")
 async def handle_session_checkpoint(job: ClaimedJob, ctx: JobContext) -> None:
-    resources = _worker_resources(ctx)
-    await run_session_checkpoint(job, ctx, gateway=resources.gateway, redis=resources.redis)
+    resources = _job_resources(ctx)
+    await run_session_checkpoint(job, ctx, gateway=resources.llm, redis=resources.redis)
