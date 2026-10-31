@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import inspect
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
@@ -17,6 +18,7 @@ from uuid import UUID, uuid4
 import httpx
 import orjson
 from pydantic import BaseModel, ValidationError
+from redis.asyncio import Redis
 from sqlalchemy import text
 
 from quack.config import Settings
@@ -71,11 +73,16 @@ class LLMGateway:
         provider: LLMProvider,
         settings: Settings,
         prompts: PromptRegistry | None = None,
+        *,
+        redis: Redis | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.provider = provider
         self.settings = settings
         self.prompts = prompts or PromptRegistry()
+        self.redis = redis
+        # Pauses between retries; replaced in tests to record them (WP5.2).
+        self.sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
         self.semaphore = asyncio.Semaphore(settings.llm_semaphore_limit)
 
     async def aclose(self) -> None:
