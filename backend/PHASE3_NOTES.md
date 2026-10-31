@@ -1293,7 +1293,10 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   WP4.1, поэтому `T-A9a` от этого не зависит.
 - Почему: §0.4.4 п.11; §7.4 — `phase-3` зелёная.
 - Обратимость: строка в `_read`, записи списка.
-- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`.
+- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`,
+  `test_graph_store_reads_through_read_session`.
+- Выполнено: B убрал `_ReadOnlyDriver`, список пуст (`0eccdba`); `_read` открывает сессию через
+  `read_session` (ветка `phase-3-c-wp41-store-read`).
 - Требует подтверждения владельцем: нет
 
 ### D-C-017. WP4.2: принадлежность темы проверяется по журналу событий
@@ -1433,6 +1436,23 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
 - Требует подтверждения владельцем: нет
 
+### D-C-024. §2.3 п.8, R4: ID моделей и имена `META_API_*` в `Settings`
+- Класс: B
+- WP / место: §2.3 п.8, R4, §6.2; `quack/config.py`, `quack/api/resources.py`, `quack/artifacts/deps.py`, `quack/domains/curation.py`
+- Контекст: в `Settings` были два набора полей: `llm_api_key`/`llm_api_base_url` (env `LLM_API_*`) и
+  `meta_api_key`/`meta_api_base_url` (блок B, env `META_API_*` с запасными `LLM_API_*`). Код A
+  (`quack/runtime`) и B (`session/workers.py`) читает старые поля: при одном `META_API_KEY` в env они
+  получали бы пустой ключ. Модели по умолчанию — условные `muse-wonder`/`muse-spark`.
+- Варианты: (1) старые поля удалить, оставить их имена свойствами над `meta_api_*`, читателей C
+  перевести на новые имена; (2) править файлы A и B (нет среди исключений §7.3).
+- Решение: (1). `llm_default_model = muse-spark-1.3`, `llm_role_models` = `teacher: muse-wonder-1.0`,
+  `teacher_fallback: muse-spark-1.3` (распределение ролей то же). Прод требует `META_API_KEY`;
+  маскируется `meta_api_key`. A и B переходят на `meta_api_*` в своих файлах, после чего свойства
+  удаляются. `.env.example` (только новые имена, WP5.7) — у B.
+- Почему: §2.3 п.8, R4, §0.4.3 п.2.
+- Обратимость: два свойства и значения по умолчанию в `config.py`.
+- Тесты: `tests/test_settings_meta_api.py` (4).
+- Требует подтверждения владельцем: нет
 ### D-C-025. `structure/propose`: ключ события выводится из клиентского ключа и хэша ввода (Q9, T-E2)
 - Класс: C
 - WP / место: WP10.2 (`T-E2`); `quack/domains/structure.py::proposal_key`, `_check_proposal_key`
@@ -1482,6 +1502,9 @@ _(пусто)_
 | WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
 | WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
 | WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
+| WP5.7 (процесс API на `ResponsesClient`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_api_llm_provider.py` | 1 failed: провайдер шлюза API — `HttpLLMProvider`, ждали `ResponsesClient` |
+| WP6.3 (кадры хода в `openapi`) | `uv run pytest -q tests/test_app_assembly.py -k turn_stream_documents` | 1 failed: в описании потока хода нет списка событий и `status {"state": "thinking"}` |
+| WP10.3 (`T-O5`) | `uv run pytest -q tests/test_meta_mock.py` | написан после адаптера WP5.7 и `meta-mock`, красного прогона нет; проверка на неверной реализации — тесты провода того же файла (27) были красными до `meta-mock` |
 | WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
 | WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
 | WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
