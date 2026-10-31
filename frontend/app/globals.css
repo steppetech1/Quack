@@ -1,0 +1,219 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Переплёт задачника: тёмный коленкор, бумажный текст, охра тиснения */
+:root {
+  --cloth: #1c1915;
+  --cloth-deep: #171410;
+  --cloth-raised: #24201a;
+  --cloth-hover: #2c2720;
+  --seam: #3a3329;
+  --seam-soft: #2e2921;
+  --paper: #e6dccb;
+  --paper-dim: #a99e8b;
+  --rule: #6f6657;
+  --duck: #cdc2ad;
+  --ribbon: #e5863b;
+  --ribbon-hover: #ec9a57;
+  --ribbon-soft: #e5863b29;
+  --on-ribbon: #1c1915;
+
+  --st-solid: #8fb08a;
+  --st-review: #86a8c6;
+  --st-confused: #d6727c;
+  --st-new: #9a8f7d;
+
+  /* shadcn */
+  --background: var(--cloth);
+  --foreground: var(--paper);
+  --card: var(--cloth-raised);
+  --card-foreground: var(--paper);
+  --popover: var(--cloth-raised);
+  --popover-foreground: var(--paper);
+  --primary: var(--ribbon);
+  --primary-foreground: var(--on-ribbon);
+  --secondary: var(--cloth-hover);
+  --secondary-foreground: var(--paper);
+  --muted: var(--cloth-raised);
+  --muted-foreground: var(--paper-dim);
+  --accent: var(--cloth-hover);
+  --accent-foreground: var(--paper);
+  --destructive: var(--st-confused);
+  --border: var(--seam);
+  --input: var(--seam);
+  --ring: var(--ribbon);
+  --radius: 0.75rem;
+  --sidebar: var(--cloth-deep);
+  --sidebar-foreground: var(--paper);
+  --sidebar-primary: var(--ribbon);
+  --sidebar-primary-foreground: var(--on-ribbon);
+  --sidebar-accent: var(--cloth-raised);
+  --sidebar-accent-foreground: var(--paper);
+  --sidebar-border: var(--seam);
+  --sidebar-ring: var(--ribbon);
+  --chart-1: var(--st-solid);
+  --chart-2: var(--st-review);
+  --chart-3: var(--st-confused);
+  --chart-4: var(--st-new);
+  --chart-5: var(--ribbon);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-cloth: var(--cloth);
+  --color-cloth-deep: var(--cloth-deep);
+  --color-cloth-raised: var(--cloth-raised);
+  --color-cloth-hover: var(--cloth-hover);
+  --color-seam: var(--seam);
+  --color-seam-soft: var(--seam-soft);
+  --color-paper: var(--paper);
+  --color-paper-dim: var(--paper-dim);
+  --color-rule: var(--rule);
+  --color-duck: var(--duck);
+  --color-ribbon: var(--ribbon);
+  --color-ribbon-soft: var(--ribbon-soft);
+  --color-ribbon-hover: var(--ribbon-hover);
+  --color-on-ribbon: var(--on-ribbon);
+  --color-st-solid: var(--st-solid);
+  --color-st-review: var(--st-review);
+  --color-st-confused: var(--st-confused);
+  --color-st-new: var(--st-new);
+
+  --font-sans: var(--font-golos);
+  --font-mono: var(--font-jetbrains);
+  --font-serif: var(--font-pt-serif);
+  --font-hand: var(--font-caveat);
+  --font-heading: var(--font-pt-serif);
+
+  /* Три кегля на весь экран + дисплей для названия домена */
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.35;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.45;
+  --text-display: 1.875rem;
+  --text-display--line-height: 1.15;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  /* DESIGN: control 11px — кнопки и поля; option 10px — строки списков и пункты меню */
+  --radius-control: 11px;
+  --radius-option: 10px;
+
+  --animate-found: found 1.6s cubic-bezier(0.16, 1, 0.3, 1) 2;
+  --animate-toast: toast 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-breathe: breathe 3s ease-in-out infinite;
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.18); }
+  }
+  @keyframes found {
+    0% { r: 7; opacity: 0.9; }
+    100% { r: 26; opacity: 0; }
+  }
+  @keyframes toast {
+    from { transform: translateY(8px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-feature-settings: "kern";
+  }
+  body {
+    @apply bg-cloth text-paper text-body;
+    caret-color: var(--ribbon);
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--ribbon) 32%, transparent);
+    color: var(--paper);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ribbon);
+    outline-offset: 2px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--seam) transparent;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--paper-dim);
+  }
+}
+
+[data-flash] {
+  border-radius: 8px;
+  animation: flash 1.5s ease-out forwards;
+}
+@keyframes flash {
+  from { box-shadow: 0 0 0 4px color-mix(in oklab, var(--ribbon) 75%, transparent); }
+  to { box-shadow: 0 0 0 4px transparent; }
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* без анимации: кольцо просто стоит, пока его не снимет таймер */
+  [data-flash] {
+    animation: none !important;
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--ribbon) 75%, transparent);
+  }
+}
