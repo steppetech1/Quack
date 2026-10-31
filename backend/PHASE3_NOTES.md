@@ -229,11 +229,12 @@
 
 ### D-A-003. Условие постановки `session.checkpoint` в диспетчере
 
-Класс C, вынесено в сигнал. Сегодня условие считается в транзакции хода по состоянию сессии
-(`last_checkpoint_turn`). Правило диспетчера должно воспроизвести его, читая то же состояние
-из реляционных таблиц (граф и модели диспетчер не трогает, WP11.1). Откуда берётся
-`last_checkpoint_turn`, уточню в Этапе III WP11; если окажется, что его нет вне транзакции
-хода, нужен вопрос к владельцу.
+Закрыто ответом потока B. `last_checkpoint_turn` лежит в колонке
+`core.sessions.last_checkpoint_turn` (по `session_id` события); её обновляет синхронная
+проекция в той же транзакции, что `session.checkpointed` (`events/projections.py`,
+`GREATEST`), отставания проектора нет. Условие правила диспетчера:
+`payload.turn_index` события `turn.teacher_replied` − `last_checkpoint_turn` ≥
+`checkpoint_every_turns`. Диспетчер читает только реляционные таблицы, граф не трогает.
 
 ### D-A-004. Исключения очереди живут в `queue.py`
 
@@ -254,6 +255,20 @@
 `check_handlers_complete` в `cli worker` с выходом `job_handlers_mismatch` включается в WP3.3
 вместе с обработчиком, иначе до него процесс `worker` не стартовал бы. Утверждение `T-Q7` не
 ослаблено.
+
+### D-A-006. WP3.2 для `graph.curate` — вместе с WP2.1, `T-Q2` и разбиение файла тестов
+
+Класс C. (1) Последний пункт WP3.2 (`graph.curate` при `presence` бросает `JobDeferred` вместо
+прямого `UPDATE`) правит `domains/curation.py`, зону C. Исключение №2 из §7.3 разрешает там
+только перевод на `JobContext`, поэтому пункт делается в одном PR с WP2.1, после слияния WP4
+потока C (порядок договорён с C). Тест отложения `graph.curate` (§8.9 п.2) меняется там же.
+Ядро (`defer_job`, обработка в `JobRunner`) готово и проверено `T-Q3`, `T-Q4`.
+(2) В `T-Q2` второй ученик взят с тем же `domain`; ключ склейки `curate:{domain}` слил задачи
+двух учеников. Исправлен тест (свой `domain`), утверждение не менялось: `NULL`, затем 4 → 4.
+(3) Файл `tests/test_jobs_phase3.py` в `phase-3` содержит только зелёные `T-Q1`–`T-Q4`, `T-Q8`.
+Красные `T-Q7` (ждёт обработчик `account.purge_deleted`, WP3.3) и `T-Q9` (ждёт WP2.1 в зонах B и
+C и WP11.4, плюс Q-A1) лежат в `tests/test_jobs_phase3_pending.py` на ветке
+`phase-3-a-pending-red` и перейдут в основной файл, когда позеленеют (§7.4).
 
 #### Этап I и красные тесты потока A к G0
 
@@ -678,6 +693,7 @@ _(пусто)_
 | WP1.1, 1.4–1.6 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py tests/test_ratelimit.py tests/test_thresholds_in_settings.py tests/domains/test_curation_thresholds.py` (коммит `f00f41d`) | 20 failed, 5 errors, 6 passed (T-A1 route order/mount, T-A4/T-A5 ratelimit stub, T-A6 imports, local fallback, curation deferral, thresholds in Settings) |
 | WP10.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 6 failed, 4 passed. Падают: `T-E1` — нет колонки `ops.jobs.required_seq` (A, WP3.1/WP11); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200, ждали 409 (**дефект C**, `domains`); `T-E3` — `GET /v1/topics/{id}/cheatsheet` чужой темы → `200 null`, ждали 404 (**дефект C**, `artifacts`, STREAM3_NOTES риск 9); `T-E5` — обработчики задач не берут шлюз из `JobContext`, извлечение идёт мимо `ScriptedLLMProvider` (A, WP2.1); `T-E8` — ограничитель fail-open без Redis (C, WP1.5); `T-E10` — нет `purge_deleted_interval_s` и планировщика (A, WP3.3). Зелёные уже на текущем коде: `T-E4`, `T-E6`, `T-E7`, `T-E9` — проверяют поведение Фаз 1–2; DoD п.3 («были красными») для них не выполним, проверка «тест падает на заведомо неверной реализации» (§8.9) — не делалась |
 | WP2, WP3.1–3.2, WP3.4 (Этап II) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_jobs_phase3.py` | 7 failed, 0 passed: `T-Q1` (захват игнорирует `required_seq`), `T-Q2` (склейка не пишет `required_seq`), `T-Q3`/`T-Q4` (`JobDeferred` идёт по ветке повтора, `attempt` растёт), `T-Q7` (`register_all_handlers` — `NotImplementedError`), `T-Q8` (бюджет не маршрутизируется), `T-Q9` (нарушения в `domains`, `session`, `artifacts`). Остальной набор: 423 passed |
+| WP3.1, 3.2 (ядро), 3.4 (Этап II) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_jobs_phase3.py` (до реализации) | 5 failed: `T-Q1` (захват игнорирует `required_seq`), `T-Q2` (склейка не пишет `required_seq`), `T-Q3`/`T-Q4` (`JobDeferred` идёт по ветке повтора), `T-Q8` (бюджет не маршрутизируется) |
 | WP8.7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k "openapi or sse_endpoints"` (коммит `1eec6bd`) | 4 failed: `T-A7` — нет `backend/openapi.json`; `write_openapi` — `NotImplementedError`; схема — нет `ErrorResponse`, 422 описан `HTTPValidationError`; SSE-эндпоинты — `application/json` без модели |
 
 ## Правки тестов
