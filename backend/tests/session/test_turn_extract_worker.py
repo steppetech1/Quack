@@ -14,10 +14,9 @@ from sqlalchemy import text
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.db.redis import session_events_channel
-from quack.events.payloads import ExtractedMisconception, ExtractedObservation, SkillRef
 from quack.jobs import kinds
 from quack.jobs.queue import claim_next_job, complete_job, enqueue_job
-from quack.session.schemas import ExtractorOutput, TeacherOutput
+from quack.session.schemas import ExtractorEntry, ExtractorOutputV2, TeacherOutput
 from quack.session.workers import run_turn_extract
 from tests.session.helpers import parse_sse, skill_label
 from tests.support.resources import build_job_context
@@ -84,24 +83,36 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
     await pubsub.subscribe(channel)
     await pubsub.get_message(timeout=1.0)
 
-    # 3. Queue extractor@1 output and run the worker
-    obs_1 = ExtractedObservation(
-        skill=SkillRef(skill_id=seeded_domain.skill_ids[0]),
-        direction="negative",
-        strength=0.8,
-        independence=1.0,
-        tested_depth=0.5,
-        polarity_weight=1.0,
-        evidence_text="The derivative of x^3 is 3x^3",
+    # 3. Queue extractor@2 output and run the worker (§8.9 п.9: categorical elements)
+    student_seq = int(sse_events["turn_started"]["user_seq"])
+    power = skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])
+    output = ExtractorOutputV2(
+        entries=[
+            ExtractorEntry(
+                kind="skill_observation",
+                skill=power,
+                misconception=None,
+                level=3,
+                outcome="failure",
+                help="none",
+                gap_type="execution_error",
+                quote="The derivative of x^3 is 3x^3",
+                events=[student_seq],
+            ),
+            ExtractorEntry(
+                kind="misconception_suspicion",
+                skill=power,
+                misconception="M1",
+                level=None,
+                outcome=None,
+                help=None,
+                gap_type=None,
+                quote="3x^3 because I bring down the 3",
+                events=[student_seq],
+            ),
+        ]
     )
-    misc_1 = ExtractedMisconception(
-        name="Forgets to lower the exponent",
-        skill=SkillRef(skill_id=seeded_domain.skill_ids[0]),
-        topic_id=seeded_domain.topic_id,
-        confidence=0.9,
-        evidence_text="3x^3 because I bring down the 3",
-    )
-    fake_llm.push("extractor", ExtractorOutput(observations=[obs_1], misconceptions=[misc_1]))
+    fake_llm.push("extractor", output)
 
     assert fake_llm.gateway is not None
     ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
@@ -109,17 +120,19 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
     async with db() as session, session.begin():
         await complete_job(session, job.id, "test-worker")
 
-    # Verify prompt rendered student/teacher text and Neo4j topic skills/misconceptions
+    # The prompt carries the numbered episode, candidate skills and known misconceptions by
+    # labels (Т-§4.5: no ids), the learner's and the teacher's text.
     extractor_calls = fake_llm.calls_for("extractor")
     assert len(extractor_calls) == 1
     prompt_text = extractor_calls[0].prompt
-    assert str(seeded_domain.topic_id) in prompt_text
-    assert "Power rule" in prompt_text
-    assert "Forgets to lower the exponent" in prompt_text
-    assert "The derivative of x^3 is 3x^3" in prompt_text
-    assert "Remember to multiply by the exponent" in prompt_text
+    assert str(seeded_domain.topic_id) not in prompt_text
+    assert str(seeded_domain.skill_ids[0]) not in prompt_text
+    assert f"{power}: Power rule" in prompt_text
+    assert f"M1 (skill {power}): Forgets to lower the exponent" in prompt_text
+    assert f"[{student_seq}] learner: The derivative of x^3 is 3x^3" in prompt_text
+    assert "teacher: Remember to multiply by the exponent" in prompt_text
 
-    # Verify LLM outbox used idempotency_key = f"extract:{turn_id}:v1"
+    # Verify LLM outbox used idempotency_key = f"extract:{turn_id}:v2"
     async with db() as session:
         outbox_key = (
             await session.execute(
@@ -130,16 +143,16 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
                 {"l": seeded_domain.learner_id},
             )
         ).scalar_one()
-    assert outbox_key == f"extract:{turn_id}:v1"
+    assert outbox_key == f"extract:{turn_id}:v2"
 
-    # 4. Verify turn.extracted event written in core.events
+    # 4. Verify turn.extracted v2 written in core.events
     async with db() as session:
         extracted_rows = (
             await session.execute(
                 text(
-                    "SELECT seq, type, actor, session_id, turn_id, payload FROM core.events "
-                    "WHERE learner_id = :l AND type IN ('turn.extracted', 'evidence.superseded') "
-                    "ORDER BY seq"
+                    "SELECT seq, type, actor, schema_version, session_id, turn_id, payload "
+                    "FROM core.events WHERE learner_id = :l "
+                    "AND type IN ('turn.extracted', 'evidence.superseded') ORDER BY seq"
                 ),
                 {"l": seeded_domain.learner_id},
             )
@@ -148,13 +161,17 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
     first_extracted = extracted_rows[0]
     assert first_extracted.type == "turn.extracted"
     assert first_extracted.seq == first_seq
-    assert first_extracted.actor == "extractor@1"
+    assert first_extracted.actor == "extractor@2"
+    assert first_extracted.schema_version == 2
     assert first_extracted.session_id == session_id
     assert first_extracted.turn_id == turn_id
     assert first_extracted.payload["turn_id"] == str(turn_id)
-    assert len(first_extracted.payload["observations"]) == 1
-    assert first_extracted.payload["observations"][0]["direction"] == "negative"
-    assert len(first_extracted.payload["misconceptions"]) == 1
+    elements = first_extracted.payload["elements"]
+    assert [e["kind"] for e in elements] == ["evidence", "misconception_hypothesis"]
+    assert elements[0]["outcome"] == "incorrect"
+    assert elements[0]["skill"]["skill_id"] == str(seeded_domain.skill_ids[0])
+    assert elements[1]["misconception_id"] == str(seeded_domain.misconception_id)
+    assert all(e["rejected_reason"] is None for e in elements)
 
     # 5. Verify extractor_done published on session_events_channel(session_id)
     msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=2.0)

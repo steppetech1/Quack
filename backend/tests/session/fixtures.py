@@ -50,6 +50,7 @@ from tests.support.resources import build_app_resources
 SCHEMA_ROLES = {
     "TeacherOutput": "teacher",
     "ExtractorOutput": "extractor",
+    "ExtractorOutputV2": "extractor",
     "CheckpointerOutput": "checkpointer",
     # WP6.2: the turn checks open answers and compute outages with `evaluator@1`.
     "EvaluatorOutput": "evaluator",
