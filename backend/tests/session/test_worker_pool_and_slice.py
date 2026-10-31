@@ -15,8 +15,9 @@ from quack.db.postgres import SessionFactory
 from quack.jobs.queue import ClaimedJob, claim_next_job
 from quack.jobs.runner import JobContext
 from quack.session import workers
-from quack.session.schemas import ExtractorOutput, TeacherOutput
+from quack.session.schemas import ExtractorOutputV2, TeacherOutput
 from tests.session.helpers import parse_sse
+from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -38,20 +39,10 @@ def _job(kind: str, payload: dict[str, Any]) -> ClaimedJob:
 async def test_handlers_share_driver_redis_and_gateway(
     db: SessionFactory, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    counts = {"driver": 0, "redis": 0, "gateway": 0}
+    """WP2.1: both handlers take the Redis client and the LLM gateway of `JobContext`, the same
+    objects for every job; without the driver or the gateway the handler raises `RuntimeError`,
+    without Redis it runs with `redis = None` (§4.2)."""
     seen: list[tuple[str, Any, Any]] = []
-
-    def fake_driver(_settings: Settings) -> Any:
-        counts["driver"] += 1
-        return object()
-
-    def fake_redis(_settings: Settings) -> Any:
-        counts["redis"] += 1
-        return object()
-
-    def fake_gateway(*_a: Any, **_kw: Any) -> Any:
-        counts["gateway"] += 1
-        return object()
 
     async def fake_extract(job: ClaimedJob, ctx: JobContext, *, gateway: Any, redis: Any) -> int:
         seen.append(("extract", gateway, redis))
@@ -61,23 +52,26 @@ async def test_handlers_share_driver_redis_and_gateway(
         seen.append(("checkpoint", gateway, redis))
         return 1
 
-    monkeypatch.setattr(workers, "_RESOURCES", {})
-    monkeypatch.setattr(workers, "create_driver", fake_driver)
-    monkeypatch.setattr(workers, "create_redis", fake_redis)
-    monkeypatch.setattr(workers, "HttpLLMProvider", lambda *a, **kw: object())
-    monkeypatch.setattr(workers, "LLMGateway", fake_gateway)
     monkeypatch.setattr(workers, "run_turn_extract", fake_extract)
     monkeypatch.setattr(workers, "run_session_checkpoint", fake_checkpoint)
 
-    ctx = JobContext(settings=settings, session_factory=db)
+    ctx = build_job_context(settings, db, object(), object())
     extract_job = _job("turn.extract", {})
     await workers.handle_turn_extract(extract_job, ctx)
     await workers.handle_turn_extract(extract_job, ctx)
     await workers.handle_session_checkpoint(_job("session.checkpoint", {}), ctx)
 
-    assert counts == {"driver": 1, "redis": 1, "gateway": 1}
     assert len(seen) == 3
-    assert len({(id(g), id(r)) for _, g, r in seen}) == 1
+    assert {(id(g), id(r)) for _, g, r in seen} == {(id(ctx.llm), id(ctx.redis))}
+
+    with pytest.raises(RuntimeError):
+        await workers.handle_turn_extract(extract_job, JobContext(settings, db))
+    assert len(seen) == 3
+
+    # §4.2: `redis = None` is work without Redis, the handler runs and passes it on.
+    no_redis = build_job_context(settings, db, object(), None)
+    await workers.handle_session_checkpoint(_job("session.checkpoint", {}), no_redis)
+    assert seen[-1] == ("checkpoint", no_redis.llm, None)
 
 
 async def test_topic_context_read_uses_teacher_seq_as_min_seq(
@@ -133,9 +127,9 @@ async def test_topic_context_read_uses_teacher_seq_as_min_seq(
 
     monkeypatch.setattr(workers, "read_consistent_slice", spy)
 
-    fake_llm.push("extractor", ExtractorOutput(observations=[], misconceptions=[]))
+    fake_llm.push("extractor", ExtractorOutputV2(entries=[]))
     assert fake_llm.gateway is not None
-    ctx = JobContext(settings=settings, session_factory=db)
+    ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
     await workers.run_turn_extract(job, ctx, gateway=fake_llm.gateway, redis=redis, neo4j=neo4j)
 
     assert recorded == [teacher_seq]
