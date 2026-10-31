@@ -40,17 +40,17 @@ HINTS = [
     "cos(x**2) times 2*x.",
 ]
 CHAIN_REF: dict[str, Any] = {
-    "sympy": "2*x*cos(x**2)",
+    "expression": "2*x*cos(x**2)",
     "latex": "2x\\cos(x^2)",
-    "check_mode": "expression_equiv",
+    "mode": "expression_equiv",
     "variables": ["x"],
     "hints": HINTS,
 }
 # A non-default check mode and variable: the request to compute must take them from the task.
 INTEGRAL_REF: dict[str, Any] = {
-    "sympy": "t**3/3",
+    "expression": "t**3/3",
     "latex": "\\frac{t^3}{3}",
-    "check_mode": "integral",
+    "mode": "integral",
     "variables": ["t"],
     "hints": ["Use the power rule.", "Raise the power by one.", "t**3 divided by 3."],
 }
@@ -265,8 +265,8 @@ async def test_next_task_targets_new_family(
     )
     assert (bank["family_id"], bank["kind"]) == (family, "math")
     assert bank["reference_solution"]["hints"] == HINTS
-    assert bank["reference_solution"]["sympy"] == CHAIN_REF["sympy"]
-    assert bank["reference_solution"]["check_mode"] == CHAIN_REF["check_mode"]
+    assert bank["reference_solution"]["expression"] == CHAIN_REF["expression"]
+    assert bank["reference_solution"]["mode"] == CHAIN_REF["mode"]
 
     # A10: the same idempotency_key returns the stored answer without new events or LLM calls.
     again = await client.post(f"/v1/sessions/{sid}/tasks/next", json=body, headers=auth(learner))

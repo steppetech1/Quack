@@ -109,8 +109,6 @@ class Settings(BaseSettings):
     neo4j_password: SecretStr = SecretStr("neo4j")
     redis_url: str = "redis://localhost:6379/0"
     compute_url: str = "http://localhost:8001"
-    llm_api_key: SecretStr = SecretStr("")
-    llm_api_base_url: str = ""
     jwt_secret: SecretStr = SecretStr("")
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -143,9 +141,10 @@ class Settings(BaseSettings):
 
     # --- LLM gateway (Т-§11) ---
     llm_timeout_sec: float = 60.0
-    llm_default_model: str = "muse-spark"
+    # §2.3 п.8 (Т-§1.3): the live model IDs; the role split of Phase 2 is kept.
+    llm_default_model: str = "muse-spark-1.3"
     llm_role_models: dict[str, str] = Field(
-        default_factory=lambda: {"teacher": "muse-wonder", "teacher_fallback": "muse-spark"}
+        default_factory=lambda: {"teacher": "muse-wonder-1.0", "teacher_fallback": "muse-spark-1.3"}
     )
 
     # --- Compute client (spec §8.4) ---
@@ -322,7 +321,7 @@ class Settings(BaseSettings):
                 name
                 for name, value in (
                     ("JWT_SECRET", self.jwt_secret),
-                    ("LLM_API_KEY", self.llm_api_key),
+                    ("META_API_KEY", self.meta_api_key),
                     ("NEO4J_PASSWORD", self.neo4j_password),
                 )
                 if not value.get_secret_value()
@@ -340,13 +339,23 @@ class Settings(BaseSettings):
                 return "postgresql+asyncpg://" + dsn[len(prefix) :]
         raise ValueError("POSTGRES_DSN must start with postgresql://")
 
+    @property
+    def llm_api_key(self) -> SecretStr:
+        """R4: the old name of `meta_api_key`, kept for readers not yet moved to it."""
+        return self.meta_api_key
+
+    @property
+    def llm_api_base_url(self) -> str:
+        """R4: the old name of `meta_api_base_url`, kept for readers not yet moved to it."""
+        return self.meta_api_base_url
+
     def model_for_role(self, role: str) -> str:
         return self.llm_role_models.get(role, self.llm_default_model)
 
     def secret_values(self) -> list[str]:
         """Values the logger must mask (Д-§7)."""
         values = [
-            self.llm_api_key.get_secret_value(),
+            self.meta_api_key.get_secret_value(),
             self.jwt_secret.get_secret_value(),
             self.neo4j_password.get_secret_value(),
         ]
