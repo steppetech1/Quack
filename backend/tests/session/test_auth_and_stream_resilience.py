@@ -78,7 +78,7 @@ async def test_events_stream_without_redis_is_empty_sse(
 ) -> None:
     session_id = await _start_session(client, auth_headers, seeded_domain, "resil-no-redis")
     res: AppResources = session_app.state.resources
-    session_app.state.resources = replace(res, redis=None)  # type: ignore[arg-type]
+    session_app.state.resources = replace(res, redis=None)
     resp = await client.get(f"/v1/sessions/{session_id}/events", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"].startswith("text/event-stream")
