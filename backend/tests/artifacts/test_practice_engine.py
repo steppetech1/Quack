@@ -275,6 +275,13 @@ async def test_next_task_targets_new_family(
     assert await _last_seq(db, learner) == before + 2
     assert len(fake_provider.calls) == 1
 
+    # T-E2: the same key with another body is 409 and writes nothing.
+    for other in ({**body, "kind": "open"}, {**body, "turn_id": str(uuid4())}):
+        r = await client.post(f"/v1/sessions/{sid}/tasks/next", json=other, headers=auth(learner))
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == before + 2
+
 
 async def test_next_task_falls_back_to_bank_when_llm_down(
     client: httpx.AsyncClient,
