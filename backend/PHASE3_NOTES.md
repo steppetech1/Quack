@@ -173,7 +173,97 @@ _(пусто)_
 
 ### Поток B
 
-_(пусто)_
+#### Аудит WP0, зона B (2026-10-31, `phase-3` `fca744f`)
+
+Проверки зоны на `fca744f`: `ruff check` — passed, `ruff format --check` — 172 files already
+formatted, `pyright` — 0 errors. `pytest` в этом прогоне не запускался: контейнеры
+`quack-test-*` общие с идущей параллельно сессией потока C; последний полный прогон — у C
+(410 passed, раздел «Статус»).
+
+| # | Итог | Что в коде | Пакет |
+| :-- | :-- | :-- | :-- |
+| A12 | подтверждено | `LLMGateway.__init__`: один `asyncio.Semaphore(llm_semaphore_limit)` на шлюз; `_call` превращает `ProviderUnavailableError` (в том числе 429) и таймаут в `LLMUnavailableError` без повторов; флага давления, размыкателя, `teacher_fallback` нет (роль есть только в `llm_role_models`) | WP5.1–5.5 |
+| A13 | подтверждено, расхождений больше, чем в O1 | Ход: `session/tasks.py::_check` (choice — `option`/`answer`; math — `ref["sympy"] or ref["answer"]`, режим `ref["mode"]`), затем **вердикт самого учителя** (`TeacherOutput.evaluated_is_correct/score`, `evaluator="llm"`, actor `teacher@1`), затем `turns.py::_code_evaluation` — эвристика по `pedagogical_move` (`give_feedback` → верно; ветки `remedy_misconception`, `praise`, `scaffold`, `probe` недостижимы: этих значений нет в `Literal`). Практика: `artifacts/practice.py::_evaluate` — choice → compute (`sympy`, `check_mode`) → `evaluator@1` → сравнение строк. Различаются также `skill_scores.tested_depth` (`task.difficulty` против `PARAMS.compute_tested_depth`) и `triggered_misconceptions` (в ходе всегда пусто). Основа для WP6.2 — каскад практики (ТЗ WP6.2) | WP6.2 |
+| A14 | подтверждено | `session/context.py::build_turn_context` → `read_consistent_slice` → `_watermarked_read` (`store.dump`, `read_applied_seq`): ошибки драйвера не перехватываются ни там, ни в `turns.py::open_turn`; ход падает до записи событий | WP6.1 |
+| A22 | **подтверждено: нарушение закона 10** | `session/workers.py::run_session_checkpoint` подаёт `checkpointer@1` прошлую сводку (`previous_summary`) и прошлые `open_threads` | WP13 целиком |
+| A23 | подтверждено | Выходы: `TeacherOutput.focus_skill_ids: list[UUID]`, `assign_task_id`, `concept_explained.topic_id`, `skills: list[SkillRef]` (`skill_id: UUID`); `ExtractorOutput` — `SkillRef.skill_id`, `ExtractedMisconception.topic_id`; `CuratorOutput` — `skill_id`, `topic_id`, `source_id`, `target_id`; `EvaluatorOutput.skill_scores[].skill_id`. Входы: учитель — `skill_id`, `misconception_id`, `task_id`, `turn_id`, `related_task_id` в JSON-блоках; извлекатель — `topic_id`, `skill_id`; оценщик — `target_skills_json` с `skill_id`. Без id: `StructurerOutput` (slug), `DiagnosticOutput`, `ArtifactGenOutput`, `TaskGenOutput`. Манифеста хода нет | WP14 |
+| A24 | подтверждено | В `turns.py` проверки текста хода нет | WP15 |
+| A25 | **расхождение с таблицей WP6.4** | Пишут: `task_gen@1` (правило 5 промпта) — math `{sympy, latex, check_mode, variables?, hints}`, choice `{option, hints}`, open/code `{answer, hints}`; `diagnostic.py::_reference_solution` — `{option, answer, options}`. Читают: ход — `sympy`/`answer`, `mode`; практика — `sympy`, `check_mode`, `option`, `hints`. Ключей таблицы WP6.4 (`expression`, `mode`, `tolerance`, `key_points`, `sample_answer`) в коде нет; `hints` (лестница подсказок практики) в таблице нет. Ход и практика расходятся между собой (`mode` против `check_mode`). См. D-B-001 | WP6.4 |
+| A26 | частично совпадает | `finish_session` ставит payload `{"domain_id", "topic_id"}` **без `session_id`**; обработчик `run_finish_artifacts` берёт `session_id` из `lock_key` (`session:{id}:finish`), поэтому стороны совместимы. `cheatsheet_ready` публикует следующая задача цепочки (`artifact.refresh_cheatsheet`, payload `{"domain_id", "session_id"}`) в `session:events:{session_id}`; `stream.py` пересылает его как есть. До контракта WP6.4 не хватает `session_id` в payload | WP6.4 (B — постановка; после WP11 — правило диспетчера A) |
+| A27 | совпадает с решением WP6.4 | `turns.py`: `token` → `task_evaluated` → `task_assigned` → `turn_completed` → `done`, одинаково в обычном ходе и в повторе по ключу идемпотентности. Остаётся `T-H7` и запись порядка в текст `С-§8.5` | WP6.4 |
+| A29 | **подтверждено целиком** | `llm/provider.py::HttpLLMProvider`: `POST /chat/completions`, `response_format`, передаётся `temperature` (0.0 из шлюза), нет `reasoning` и `max_output_tokens`, нет `store`, `prompt_cache_key`; ответ — `choices[0].message.content`, `status: incomplete`/`finish_reason` не проверяются; `retry-after` — только число секунд, дата HTTP не разбирается; `x-ratelimit-*` не читаются; 400 и 5xx — один класс `ProviderUnavailableError`. Схема — `model_json_schema()` без препроцессора. `llm_timeout_sec = 60.0` (поднимать не нужно). Модели — условные: `llm_default_model = "muse-spark"`, `llm_role_models = {"teacher": "muse-wonder", "teacher_fallback": "muse-spark"}`, остальные роли — на модель по умолчанию. Окружение — `LLM_API_KEY`, `LLM_API_BASE_URL`. WP5.7 нужен целиком | WP5.7 |
+| R10 | расхождение с `Т-§10.1`, записано | `teacher@1` — один шаблон одним сообщением `user`; блоки по порядку: режим и тема, `rolling_summary` (сводка модели), `recent_turns_json`, `skills_slice_json`, `misconceptions_json`, `available_tasks_json`, `task_evaluation_json`, реплика ученика. Против `Т-§10.1`: нет слотов 2 (схема выхода уходит только в формат ответа), 3 (профиль), 4 (домен и цели), 6 (план), 8 (материалы), 9 (метки); слот 7 — сырой JSON свойств узлов с id и числами вместо строк кода (`Т-§10.2`); вместо строк эпизодов — сводка модели (`Т-§10.3`, закрывает WP13); блок доступных задач в `Т-§10.1` не назван. Порядок «разговор → память» совпадает. По §2.3 строка 14 Фаза 3 добавляет только маркер памяти (WP6.1) и таблицу меток (WP14) | R10 → следующая фаза |
+
+Прочее, найденное аудитом:
+
+- `KIND_LLM_ROLES` (WP5.3) совпадает с кодом обработчиков: `turn.extract` → `extractor`,
+  `session.checkpoint` → `checkpointer`, `session.finish_artifacts` и
+  `artifact.refresh_cheatsheet` → `artifacts`, `graph.curate` → `curator`. Других ролей
+  обработчики не вызывают (`role=` по `quack/**`).
+- §6.1 \[ПРОВЕРИТЬ в WP0\]: у `ops.llm_ledger.status` CHECK нет (`0001_initial_schema.py`),
+  статус `incomplete` расширения ограничения не требует. Колонка `cached_tokens` уже есть
+  (D-B-003).
+- WP15 \[ПРОВЕРИТЬ в WP0\]: события «показать решение» в коде нет; есть только
+  `task.hint_given` со ступенью `hint_level` 1–3 (`PracticeParams.max_hint_level = 3`).
+  Признак просьбы для WP15 — подсказка ступени 3 по активной задаче.
+- Строгая схема (WP5.7, к G1): свободный словарь — только `TaskGenOutput.reference_solution:
+  dict[str, Any]`; закрывается моделью `ReferenceSolution` (WP6.4).
+- `llm_semaphore_limit` (WP5.1) станет неиспользуемым после WP5.1; отметка — в WP5.1.
+- Скрипта пересборки `manifest.json` (§7.3, зона B) в репозитории нет — появится в первом
+  пакете, который меняет промпт или манифест.
+
+### D-B-001. Формат `reference_solution`: таблица WP6.4 против кода
+- Класс: C
+- WP / место: WP6.4 п.1; `prompts/task_gen/v1.md` (правило 5), `domains/diagnostic.py`,
+  `session/tasks.py`, `artifacts/practice.py`
+- Контекст: аудит A25. Таблица WP6.4 \[КОНТРАКТ\] задаёт math `{expression, mode, variables,
+  tolerance}`, open `{key_points, sample_answer}`. Код и промпт `task_gen@1` пишут и читают
+  math `{sympy, latex, check_mode, variables, hints}`, open `{answer, hints}`; лестница
+  подсказок практики читает `hints`, которого в таблице нет.
+- Варианты: (1) `ReferenceSolution` по таблице WP6.4 плюс необязательные `hints`
+  (расширение) и `latex` для показа; запись в банк переводится на неё, читатели — тоже;
+  меняется правило 5 промпта `task_gen@1`; (2) `ReferenceSolution` по фактическим ключам кода,
+  таблица WP6.4 — отклонение в реестр; (3) модель принимает оба набора и нормализует при записи.
+- Решение: (1).
+- Почему: §0.4.3 п.2 — таблица WP6.4 — контракт ТЗ, код расходится с ней; `hints` и `latex` —
+  только совместимое расширение. Промпты всё равно правятся до G1 (§7.6). Настоящих данных в
+  банке нет (хакатон), старые события `task.generated` есть только в тестах.
+- Обратимость: одна модель `quack/practice/schemas.py` и правило 5 промпта.
+- Тесты: `T-H8` (а).
+- Требует подтверждения владельцем: да. Отдельно — какой формат `reference_solution` уже
+  заложен в готовящийся промпт `task_gen` (промпт пишет владелец).
+
+### D-B-002. Версия отрисовщика в `session.checkpointed`
+- Класс: C
+- WP / место: WP13; `events/payloads.py::SessionCheckpointed`, `session/workers.py`
+- Контекст: WP13 — «поле версии в payload события получает значение `renderer@1`». В payload
+  `SessionCheckpointed` поля версии нет (`session_id`, `up_to_turn_index`, `rolling_summary`,
+  `open_threads`, `key_observations`); версия сейчас — `actor = "checkpointer@1"`. Добавить
+  поле — изменить payload-схему (§0.4.4 п.2, класс D).
+- Варианты: (1) `renderer@1` пишется в `actor` события; (2) новое поле payload — класс D;
+  (3) версия не пишется.
+- Решение: (1).
+- Почему: §0.4.4 п.2 — схема события не меняется; `actor` уже несёт версию у всех событий
+  моделей (`teacher@1`, `extractor@1`), `Т-§10.6` требует только версию отрисовщика.
+- Обратимость: одна строка в обработчике.
+- Тесты: `T-C2` (payload и actor детерминированы).
+- Требует подтверждения владельцем: да
+
+### D-B-003. `cached_input_tokens` при существующей `cached_tokens`
+- Класс: C
+- WP / место: WP5.7, §6.1; `ops.llm_ledger`
+- Контекст: §6.1 добавляет `cached_input_tokens BIGINT NULL`, а в `ops.llm_ledger` уже есть
+  `cached_tokens INT NOT NULL DEFAULT 0`, которую шлюз заполняет из
+  `usage.prompt_tokens_details.cached_tokens`.
+- Варианты: (1) добавить колонку по §6.1, заполнять обе одним значением; (2) не добавлять,
+  писать `usage.input_tokens_details.cached_tokens` в `cached_tokens`; (3) переименовать —
+  запрещено (§0.4.4 п.3).
+- Решение: (1).
+- Почему: §0.4.3 п.2 — имя колонки задано контрактом §6.1, расширение совместимое; старый код
+  и запросы по `cached_tokens` не ломаются.
+- Обратимость: убрать колонку из `0002` до слияния в `main`.
+- Тесты: `T-L10`.
+- Требует подтверждения владельцем: да (колонка-дубль — на выбор владельца между (1) и (2))
 
 ### Поток C
 
