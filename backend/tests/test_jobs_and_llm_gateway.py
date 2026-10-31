@@ -35,6 +35,7 @@ from quack.llm.errors import (
 )
 from quack.llm.gateway import LLMGateway
 from quack.llm.provider import ProviderRequest, ProviderResponse
+from quack.llm.strict_schema import to_strict_json_schema
 from quack.prompts.registry import (
     PromptHashMismatchError,
     PromptNotFoundError,
@@ -421,7 +422,7 @@ async def test_gateway_call_writes_ledger_outbox_and_session_tokens(
     assert len(provider.calls) == 1
     request = provider.calls[0]
     assert request.prompt == "Classify: x^2"
-    assert request.json_schema == Answer.model_json_schema()
+    assert request.json_schema == to_strict_json_schema(Answer)  # WP5.7: the strict schema
     [ledger] = await _q(db, "SELECT * FROM ops.llm_ledger")
     assert ledger["role"] == "extractor" and ledger["prompt_version"] == 1
     assert ledger["input_tokens"] == 100 and ledger["output_tokens"] == 20

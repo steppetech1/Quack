@@ -6,7 +6,6 @@ import contextlib
 from typing import Any
 from uuid import UUID, uuid4
 
-import neo4j
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
@@ -15,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources
 from quack.config import Settings
-from quack.db.neo4j import cypher
+from quack.db.neo4j import cypher, read_session
 from quack.db.redis import create_redis, presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
@@ -94,7 +93,7 @@ async def _resolve_topic_and_plan(
     """
 
     async def load_topic() -> Any:
-        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as session:
+        async with read_session(resources.neo4j) as session:
             result = await session.run(
                 cypher(_TOPIC_QUERY),
                 {

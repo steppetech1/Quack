@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.162.0",
     "httpx>=0.28.1",
     "neo4j>=5.20",
+    "openai>=3.42.0",
     "orjson>=3.13.0",
     "pwdlib[argon2]>=0.3.1",
     "pydantic>=2.7",
@@ -23,6 +24,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26.0",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1",
