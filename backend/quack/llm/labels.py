@@ -32,6 +32,16 @@ class UnknownLabelError(ValueError):
 class LabelMap:
     """Two-way map label ↔ id for one model call."""
 
+    def __init__(self, by_kind: dict[LabelKind, list[UUID]]) -> None:
+        self._ids: dict[LabelKind, list[UUID]] = {kind: [] for kind in LABEL_PREFIX}
+        self._labels: dict[tuple[LabelKind, UUID], str] = {}
+        for kind, ids in by_kind.items():
+            for object_id in ids:
+                if (kind, object_id) in self._labels:
+                    continue  # one label per object, the first (most important) position
+                self._ids[kind].append(object_id)
+                self._labels[(kind, object_id)] = f"{LABEL_PREFIX[kind]}{len(self._ids[kind])}"
+
     @classmethod
     def build(
         cls,
@@ -42,17 +52,38 @@ class LabelMap:
         tasks: Sequence[UUID] = (),
         misconceptions: Sequence[UUID] = (),
     ) -> LabelMap:
-        """Labels in the given order, cut at the limits of `settings`."""
-        raise NotImplementedError
+        """Labels in the given order, cut at the limits of `settings`. Misconceptions have
+        no limit of their own (`M1…Mn`, ТЗ §2.3 row 18)."""
+        return cls(
+            {
+                "skill": _unique(skills)[: settings.candidate_skills_k],
+                "topic": _unique(topics)[: settings.label_max_topics],
+                "task": _unique(tasks)[: settings.label_max_tasks],
+                "misconception": _unique(misconceptions),
+            }
+        )
 
     def label(self, kind: LabelKind, object_id: UUID) -> str | None:
         """Label of `object_id`, or `None` if it got none (beyond the limit)."""
-        raise NotImplementedError
+        return self._labels.get((kind, object_id))
 
     def resolve(self, kind: LabelKind, label: str) -> UUID:
         """Id of `label`; `UnknownLabelError` if the table has no such label."""
-        raise NotImplementedError
+        prefix = LABEL_PREFIX[kind]
+        number = label.removeprefix(prefix)
+        if label == number or not number.isdigit() or number.startswith("0"):
+            raise UnknownLabelError(kind, label)
+        index = int(number) - 1
+        ids = self._ids[kind]
+        if index >= len(ids):
+            raise UnknownLabelError(kind, label)
+        return ids[index]
 
     def table(self) -> dict[str, str]:
         """`label → id` of all labels, for `ops.turn_manifests.label_table`."""
-        raise NotImplementedError
+        return {label: str(object_id) for (_, object_id), label in self._labels.items()}
+
+
+def _unique(ids: Sequence[UUID]) -> list[UUID]:
+    """`ids` without repeats, first occurrence kept (order of importance)."""
+    return list(dict.fromkeys(ids))
