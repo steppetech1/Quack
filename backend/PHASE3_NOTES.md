@@ -710,8 +710,9 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Решение: драйвер Neo4j, Redis и шлюз берутся только из `ctx` (`ctx.neo4j`, `ctx.redis`,
   `ctx.llm`); модульный кэш `_RESOURCES`, `_worker_resources`, вызовы `create_driver`,
   `create_redis`, `HttpLLMProvider(` удалены. Пока поля `JobContext` необязательны (D-A-002),
-  один хелпер `_job_resources(ctx)` проверяет их и бросает `RuntimeError`; убирается, когда A
-  снимет `None`. `compute` обработчики `workers.py` не используют и не проверяют. Логика
+  один хелпер `_job_resources(ctx)` проверяет драйвер и шлюз и бросает `RuntimeError`;
+  убирается, когда A снимет `None`. `ctx.redis = None` допустим — работа без Redis (§4.2),
+  обработчики его уже принимают (ревью A). `compute` обработчики `workers.py` не используют и не проверяют. Логика
   обработчиков не менялась. Сборщик `build_job_context` в `tests/support/resources.py`
   (§2.3 конфликт 20: тесты собирают контекст сборщиком).
 - Правки тестов (§8.9): `test_worker_pool_and_slice::test_handlers_share_driver_redis_and_gateway`

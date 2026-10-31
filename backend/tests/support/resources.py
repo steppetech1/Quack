@@ -52,7 +52,7 @@ def build_job_context(
     settings: Settings,
     session_factory: SessionFactory,
     neo4j: AsyncDriver | Any,
-    redis: Redis | Any,
+    redis: Redis | Any | None,
     *,
     engine: AsyncEngine | None = None,
     llm: LLMGateway | None = None,
@@ -67,7 +67,7 @@ def build_job_context(
         session_factory=session_factory,
         engine=engine,
         neo4j=cast(AsyncDriver, neo4j),
-        redis=cast(Redis, redis),
+        redis=cast(Redis | None, redis),
         llm=llm or LLMGateway(session_factory, provider or UnavailableLLMProvider(), settings),
         compute=compute or scripted_compute(ComputeScenario()),
     )

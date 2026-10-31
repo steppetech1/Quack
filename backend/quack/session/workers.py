@@ -32,17 +32,18 @@ log = get_logger(__name__)
 @dataclass(frozen=True)
 class _JobResources:
     neo4j: AsyncDriver
-    redis: Redis
+    redis: Redis | None
     llm: LLMGateway
 
 
 def _job_resources(ctx: JobContext) -> _JobResources:
     """Neo4j driver, Redis client and LLM gateway of the process, only from `ctx` (WP2.1).
 
-    The `JobContext` fields stay optional until D-A-002 is lifted; then this check goes away.
+    `redis = None` is work without Redis (§4.2): the handlers already accept it. The driver
+    and the gateway stay optional until D-A-002 is lifted; then this check goes away.
     """
-    if ctx.neo4j is None or ctx.redis is None or ctx.llm is None:
-        raise RuntimeError("JobContext lacks neo4j, redis or llm (WP2.1)")
+    if ctx.neo4j is None or ctx.llm is None:
+        raise RuntimeError("JobContext lacks neo4j or llm (WP2.1)")
     return _JobResources(neo4j=ctx.neo4j, redis=ctx.redis, llm=ctx.llm)
 
 

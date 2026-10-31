@@ -40,7 +40,8 @@ async def test_handlers_share_driver_redis_and_gateway(
     db: SessionFactory, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """WP2.1: both handlers take the Redis client and the LLM gateway of `JobContext`, the same
-    objects for every job; without them in the context the handler raises `RuntimeError`."""
+    objects for every job; without the driver or the gateway the handler raises `RuntimeError`,
+    without Redis it runs with `redis = None` (§4.2)."""
     seen: list[tuple[str, Any, Any]] = []
 
     async def fake_extract(job: ClaimedJob, ctx: JobContext, *, gateway: Any, redis: Any) -> int:
@@ -66,6 +67,11 @@ async def test_handlers_share_driver_redis_and_gateway(
     with pytest.raises(RuntimeError):
         await workers.handle_turn_extract(extract_job, JobContext(settings, db))
     assert len(seen) == 3
+
+    # §4.2: `redis = None` is work without Redis, the handler runs and passes it on.
+    no_redis = build_job_context(settings, db, object(), None)
+    await workers.handle_session_checkpoint(_job("session.checkpoint", {}), no_redis)
+    assert seen[-1] == ("checkpoint", no_redis.llm, None)
 
 
 async def test_topic_context_read_uses_teacher_seq_as_min_seq(
