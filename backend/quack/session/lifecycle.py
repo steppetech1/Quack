@@ -12,8 +12,8 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.db.neo4j import cypher
 from quack.db.redis import create_redis, presence_key
@@ -183,7 +183,10 @@ async def _started_by_key(
 async def _set_presence(
     resources: AppResources, settings: Settings, learner_id: UUID, session_id: UUID
 ) -> None:
-    # Presence is advisory; the session itself lives in Postgres.
+    # Presence is advisory; the session itself lives in Postgres. No Redis → no presence
+    # (§4.2, D-C-005).
+    if resources.redis is None:
+        return
     with contextlib.suppress(RedisError, OSError):
         await resources.redis.set(
             presence_key(learner_id), str(session_id), ex=settings.heartbeat_ttl_sec

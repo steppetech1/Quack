@@ -16,6 +16,7 @@ from quack.graph.projector import run_projector_batch
 from quack.llm.errors import LLMUnavailableError
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain
+from tests.session.helpers import skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -112,7 +113,7 @@ async def test_normal_mode_keeps_actor_teacher_1(
         TeacherOutput(
             reply_text="Normal response.",
             pedagogical_move="explain",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 

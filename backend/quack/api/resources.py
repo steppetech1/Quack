@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import httpx
 from fastapi import Request
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
@@ -29,9 +28,7 @@ class AppResources:
     """Heavy objects created once per process (§4.2) and passed explicitly.
 
     - `neo4j`: outside the projector only read sessions are opened (law 3, WP4);
-    - `redis`: by §4.2 the contract type is `Redis | None` (`None` = working without Redis).
-      It stays `Redis` until `quack/session/lifecycle.py::_set_presence` handles `None`
-      (D-C-005, stream B); the code below already treats `None` as "no Redis";
+    - `redis`: `None` means working without Redis (§4.2);
     - `llm`: one gateway per process (WP5.1);
     - `compute`: one client with one `httpx.AsyncClient`.
     """
@@ -40,19 +37,15 @@ class AppResources:
     engine: AsyncEngine
     session_factory: SessionFactory
     neo4j: AsyncDriver
-    redis: Redis  # contract: Redis | None (D-C-005)
+    redis: Redis | None
     llm: LLMGateway
     compute: ComputeClient
 
     async def close(self) -> None:
         """Close in reverse creation order: compute, llm, redis, neo4j, engine (§4.2)."""
         await self.compute.aclose()
-        # `LLMGateway` has no close of its own yet (seam S1, stream B): close the HTTP
-        # client of the provider when it has one.
-        provider_client = getattr(self.llm.provider, "client", None)
-        if isinstance(provider_client, httpx.AsyncClient):
-            await provider_client.aclose()
-        if self.redis is not None:  # D-C-005: None until the contract type lands
+        await self.llm.aclose()
+        if self.redis is not None:
             await self.redis.aclose()
         await self.neo4j.close()
         await self.engine.dispose()

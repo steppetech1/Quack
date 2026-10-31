@@ -16,7 +16,7 @@ from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -61,7 +61,7 @@ async def test_turn_idempotent_retry_returns_200_and_calls_llm_once(
         TeacherOutput(
             reply_text="Hello, student! Let's explore derivatives.",
             pedagogical_move="explain",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 

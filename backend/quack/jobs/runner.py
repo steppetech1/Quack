@@ -5,20 +5,33 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
 import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
+from neo4j import AsyncDriver
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.jobs.queue import (
     ClaimedJob,
+    JobDeferred,
+    JobFailedPermanently,
     claim_next_job,
     complete_job,
+    defer_job,
+    fail_job_permanently,
     fail_or_retry_job,
     heartbeat_job,
     reap_stale_jobs,
 )
+from quack.llm.errors import LLMBudgetExceededError
+from quack.llm.gateway import LLMGateway
 from quack.logging import get_logger
 
 log = get_logger(__name__)
@@ -26,8 +39,20 @@ log = get_logger(__name__)
 
 @dataclass(frozen=True)
 class JobContext:
+    """Per-process resources of `workers` (ТЗ Фазы 3 §4.2, seam S1).
+
+    The field set is a contract. `engine`, `neo4j`, `redis`, `llm` and `compute` default to
+    `None` only until WP2.1 (stage III): Phase 2 handlers still build their own and tests
+    construct the context from two fields (D-A-002).
+    """
+
     settings: Settings
     session_factory: SessionFactory
+    engine: AsyncEngine | None = None
+    neo4j: AsyncDriver | None = None
+    redis: Redis | None = None
+    llm: LLMGateway | None = None
+    compute: ComputeClient | None = None
 
 
 type JobHandler = Callable[[ClaimedJob, JobContext], Awaitable[None]]
@@ -55,6 +80,9 @@ class JobRunner:
     session_factory: SessionFactory
     worker_id: str
     handlers: dict[str, JobHandler] = field(default_factory=lambda: JOB_HANDLERS)
+    # WP2.1: the process-wide resources handed to every handler; built from the two
+    # fields above when absent (tests of the queue core).
+    context: JobContext | None = None
 
     async def _heartbeat(self, job: ClaimedJob) -> None:
         while True:
@@ -62,6 +90,15 @@ class JobRunner:
             async with self.session_factory() as session, session.begin():
                 if not await heartbeat_job(session, job.id, self.worker_id):
                     return
+
+    def _budget_outcome(self, exc: LLMBudgetExceededError) -> JobDeferred | JobFailedPermanently:
+        """WP3.4: the session budget does not recover, the daily one does at UTC midnight."""
+        if exc.scope == "session":
+            return JobFailedPermanently(str(exc))
+        now = datetime.now(UTC)
+        midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        jitter = random.uniform(0, self.settings.daily_budget_defer_jitter_s)
+        return JobDeferred((midnight - now).total_seconds() + jitter, str(exc))
 
     async def run_one(self) -> bool:
         """Claim and execute one job; False when nothing was claimable."""
@@ -71,10 +108,25 @@ class JobRunner:
             job = await claim_next_job(session, self.worker_id, sorted(self.handlers))
         if job is None:
             return False
-        context = JobContext(self.settings, self.session_factory)
+        context = self.context or JobContext(self.settings, self.session_factory)
         beat = asyncio.create_task(self._heartbeat(job))
         try:
-            await self.handlers[job.kind](job, context)
+            try:
+                await self.handlers[job.kind](job, context)
+            except LLMBudgetExceededError as exc:
+                raise self._budget_outcome(exc) from exc
+        except JobDeferred as exc:
+            log.info("job_deferred", kind=job.kind, job_id=str(job.id), reason=exc.reason)
+            async with self.session_factory() as session, session.begin():
+                await defer_job(session, job.id, self.worker_id, exc.delay_sec, exc.reason)
+        except JobFailedPermanently as exc:
+            log.warning(
+                "job_failed_permanently", kind=job.kind, job_id=str(job.id), reason=exc.reason
+            )
+            async with self.session_factory() as session, session.begin():
+                await fail_job_permanently(
+                    session, job.id, self.worker_id, exc.reason, stacktrace=traceback.format_exc()
+                )
         except Exception as exc:
             log.warning("job_failed", kind=job.kind, job_id=str(job.id), error=repr(exc))
             async with self.session_factory() as session, session.begin():

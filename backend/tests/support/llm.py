@@ -2,8 +2,8 @@
 
 - `FakeLLMProvider`: queue of responses in call order (moved from `tests/domains/conftest.py`).
 - `ScriptedLLMProvider`: response chosen by `schema_name`, not by order, because background
-  jobs in e2e tests run concurrently. Stage I skeleton: its failure kinds follow the provider
-  interface of WP5.7 (seam S12, stream B) and are filled in when that interface lands.
+  jobs in e2e tests run concurrently; failure kinds follow the provider interface of WP5.7
+  (seam S12).
 """
 
 from __future__ import annotations
@@ -16,7 +16,12 @@ from typing import Any
 import orjson
 from pydantic import BaseModel
 
-from quack.llm.errors import ProviderRateLimitedError, ProviderUnavailableError
+from quack.llm.errors import (
+    ProviderBadRequestError,
+    ProviderIncompleteError,
+    ProviderRateLimitedError,
+    ProviderUnavailableError,
+)
 from quack.llm.provider import ProviderRequest, ProviderResponse
 
 type QueuedLLMItem = dict[str, Any] | BaseModel | str | Exception
@@ -77,9 +82,11 @@ type Responder = Callable[[ProviderRequest], QueuedLLMItem]
 class ScriptedFailure:
     """A failure injected for calls matching `model` and/or `schema_name` (`None` = any).
 
-    `kind` values (§8.1): `rate_limited` (with `retry_after`: seconds, HTTP date or `None`),
-    `unavailable`, `bad_request`, `incomplete`, `invalid_json`, `commentary_only`,
-    `ratelimit_headers` (with `remaining_share`). `times` = how many matching calls fail.
+    `kind` values (§8.1): `rate_limited` (with `retry_after`: seconds, HTTP date or `None`,
+    sent as the raw `retry-after` header), `unavailable`, `bad_request`, `incomplete`,
+    `invalid_json`, `commentary_only` (only a `phase: commentary` message, no answer),
+    `ratelimit_headers` (a normal answer whose `x-ratelimit-remaining-*` headers are
+    `remaining_share` of the limits). `times` = how many matching calls are affected.
     """
 
     kind: str
@@ -90,9 +97,21 @@ class ScriptedFailure:
     remaining_share: float | None = None
 
 
-# Failure kinds the Phase 2 provider interface can express; the rest arrive with the
-# Responses API provider interface (WP5.7, seam S12, stream B).
-SUPPORTED_FAILURES = frozenset({"unavailable", "rate_limited", "invalid_json"})
+# Failure kinds of §8.1 over the provider interface of WP5.7 (seam S12).
+SUPPORTED_FAILURES = frozenset(
+    {
+        "unavailable",
+        "rate_limited",
+        "bad_request",
+        "incomplete",
+        "invalid_json",
+        "commentary_only",
+        "ratelimit_headers",
+    }
+)
+# Limits reported by `ratelimit_headers`; the remaining part is `remaining_share` of them.
+SCRIPTED_REQUEST_LIMIT = 1000
+SCRIPTED_TOKEN_LIMIT = 1_000_000
 
 
 def _default_responses() -> dict[str, QueuedLLMItem]:
@@ -136,18 +155,63 @@ def _default_responses() -> dict[str, QueuedLLMItem]:
             "key_observations": [],
         },
         "TaskGenOutput": {
-            "family_id": "scripted-family",
-            "difficulty": 0.5,
-            "prompt_text": "Pick the right option.",
-            "reference_solution": {"option": "A", "answer": "A", "options": ["A", "B"]},
+            "statement": "Pick the right option.",
+            "options": [
+                {"label": "A", "text": "Right", "correct": True, "catches": None},
+                {"label": "B", "text": "Wrong", "correct": False, "catches": "slip"},
+            ],
+            "answer": {"type": "choice", "value": "A", "units": None},
+            "solution": "A is right.",
+            "hints": ["Read the options.", "Compare them.", "A is close."],
+            "tests": [{"skill": "S1", "level": 1}],
+            "method_named": True,
+            "variant_of": None,
+            "form": None,
+            "pair_task": None,
         },
         "EvaluatorOutput": {
-            "is_correct": True,
-            "score": 1.0,
-            "feedback": "Correct.",
-            "skill_scores": [],
+            "items": [],
+            "verdict": "correct",
+            "confidence": 1.0,
+            "misconception": None,
+            "note": "Correct.",
         },
         "ArtifactGenOutput": {"title": "Notes", "text": "# Notes\n\nScripted text."},
+    }
+
+
+def _retry_after_seconds(raw: str | None) -> float | None:
+    """Seconds of a numeric `retry-after`; an HTTP date or no header gives `None`."""
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _failed_content(failure: ScriptedFailure) -> str:
+    """Raise the provider error of `failure`, or return the broken answer text."""
+    if failure.kind == "unavailable":
+        raise ProviderUnavailableError("scripted: unavailable")
+    if failure.kind == "rate_limited":
+        headers = {} if failure.retry_after is None else {"retry-after": failure.retry_after}
+        raise ProviderRateLimitedError(_retry_after_seconds(failure.retry_after), headers=headers)
+    if failure.kind == "bad_request":
+        raise ProviderBadRequestError('{"error": {"message": "scripted bad request"}}')
+    if failure.kind == "incomplete":
+        raise ProviderIncompleteError('{"reply_text": "cut')
+    if failure.kind == "commentary_only":
+        return ""
+    return "{not json"
+
+
+def _ratelimit_headers(remaining_share: float) -> dict[str, str]:
+    return {
+        "x-ratelimit-limit-requests": str(SCRIPTED_REQUEST_LIMIT),
+        "x-ratelimit-remaining-requests": str(int(SCRIPTED_REQUEST_LIMIT * remaining_share)),
+        "x-ratelimit-limit-tokens": str(SCRIPTED_TOKEN_LIMIT),
+        "x-ratelimit-remaining-tokens": str(int(SCRIPTED_TOKEN_LIMIT * remaining_share)),
     }
 
 
@@ -197,9 +261,7 @@ class ScriptedLLMProvider:
     def fail(self, failure: ScriptedFailure) -> None:
         """Inject a failure for matching calls."""
         if failure.kind not in SUPPORTED_FAILURES:
-            raise NotImplementedError(
-                f"failure kind {failure.kind!r} needs the provider interface of WP5.7 (S12)"
-            )
+            raise ValueError(f"unknown failure kind {failure.kind!r}")
         self.failures.append(failure)
 
     def calls_for(
@@ -232,14 +294,21 @@ class ScriptedLLMProvider:
             gate.arrived.set()
             await gate.release.wait()
         failure = self._take_failure(request)
-        if failure is not None:
-            if failure.kind == "unavailable":
-                raise ProviderUnavailableError("scripted: unavailable")
-            if failure.kind == "rate_limited":
-                retry = float(failure.retry_after) if failure.retry_after else None
-                raise ProviderRateLimitedError(retry)
-            content = "{not json"
+        headers: dict[str, str] = {}
+        output_items: tuple[dict[str, Any], ...] = ()
+        if failure is not None and failure.kind != "ratelimit_headers":
+            content = _failed_content(failure)
+            if failure.kind == "commentary_only":
+                output_items = (
+                    {
+                        "type": "message",
+                        "phase": "commentary",
+                        "content": [{"type": "output_text", "text": "Thinking it over."}],
+                    },
+                )
         else:
+            if failure is not None:
+                headers = _ratelimit_headers(failure.remaining_share or 0.0)
             responder = self.responders.get(request.schema_name)
             if responder is None:
                 raise AssertionError(
@@ -252,4 +321,6 @@ class ScriptedLLMProvider:
             output_tokens=40,
             cached_tokens=0,
             model=request.model,
+            output_items=output_items,
+            headers=headers,
         )

@@ -122,8 +122,7 @@ def app(
     fake_provider: FakeProvider,
     fake_compute: FakeCompute,
 ) -> FastAPI:
-    application = create_app(settings, connect=False)
-    application.state.resources = build_app_resources(
+    resources = build_app_resources(
         settings,
         pg_engine,
         neo4j,
@@ -132,7 +131,7 @@ def app(
         provider=fake_provider,
         compute=fake_compute,
     )
-    return application
+    return create_app(settings, resources=resources)
 
 
 @pytest.fixture

@@ -10,11 +10,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-import neo4j
-
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
+from quack.db.neo4j import read_session
 from quack.domains.schemas import (
     ArtifactRefView,
     DomainGraphResponse,
@@ -110,7 +109,7 @@ async def get_domain_graph_view(
         list[dict[str, Any]],
         dict[str, int],
     ]:
-        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as s:
+        async with read_session(resources.neo4j) as s:
             d_res = await s.run(
                 "MATCH (d:Domain {id: $d, learnerId: $l}) RETURN d.id AS id",
                 {"d": str(domain_id), "l": str(learner_id)},
@@ -270,7 +269,7 @@ async def get_topic_detail_view(
         list[dict[str, Any]],
         dict[str, int],
     ]:
-        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as s:
+        async with read_session(resources.neo4j) as s:
             t_res = await s.run(
                 "MATCH (d:Domain {id: $d, learnerId: $l})-[:HAS_TOPIC]->(t:Topic {id: $tid}) "
                 "WHERE t.status <> 'merged' "

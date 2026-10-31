@@ -1,0 +1,2 @@
+# openapi.json is compared byte-for-byte with the generated schema (T-A7): LF on every OS.
+openapi.json text eol=lf

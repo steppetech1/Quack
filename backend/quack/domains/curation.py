@@ -11,14 +11,13 @@ from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
-import neo4j
 import orjson
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
 
 from quack.config import Settings
-from quack.db.neo4j import create_driver
+from quack.db.neo4j import create_driver, read_session
 from quack.db.redis import create_redis, presence_key
 from quack.domains.schemas import CuratorOutput
 from quack.events.append import append_events
@@ -33,8 +32,6 @@ from quack.logging import get_logger
 
 log = get_logger(__name__)
 
-CURATION_DEFER_MINUTES = 10
-CURATION_MIN_EVIDENCE_FOR_PROMOTION = 2
 
 # Module-level hook allowing tests to inject a FakeLLMProvider when running via JobRunner.
 llm_provider_override: LLMProvider | None = None
@@ -71,18 +68,11 @@ class _DomainGraph:
     prereq_edges: list[dict[str, Any]]
 
 
-def _read_session(driver: AsyncDriver) -> Any:
-    try:
-        return driver.session(default_access_mode=neo4j.READ_ACCESS)
-    except TypeError:  # minimal driver doubles without the `default_access_mode` keyword
-        return driver.session()
-
-
 async def _load_domain_graph(
     driver: AsyncDriver, learner_id: UUID, domain_id: UUID
 ) -> _DomainGraph:
     params = {"d": str(domain_id), "l": str(learner_id)}
-    async with _read_session(driver) as s:
+    async with read_session(driver) as s:
         d_res = await s.run(
             "MATCH (d:Domain {id: $d, learnerId: $l}) RETURN d.name AS name", params
         )
@@ -142,7 +132,7 @@ async def _read_domain_graph(
         return await _loader()
 
     async def _applied_seq(learner: UUID) -> int:
-        async with _read_session(driver) as s:
+        async with read_session(driver) as s:
             res = await s.run(
                 "MATCH (l:Learner {id: $id}) RETURN l.appliedSeq AS seq", {"id": str(learner)}
             )
@@ -174,8 +164,8 @@ async def curate_domain_graph(
     redis: Redis | None = None,
     llm: LLMGateway | None = None,
 ) -> None:
-    """Execute `graph.curate` for a domain: defer by 10 minutes if `presence:learner:{id}` is
-    active in Redis; otherwise run deterministic promotion/deduplication and `curator@1`
+    """Execute `graph.curate` for a domain: defer by `curation_defer_min` if `presence:learner:{id}`
+    is active in Redis; otherwise run deterministic promotion/deduplication and `curator@1`
     merges, emitting `skill.promoted`, `skill.merged`, `topic.merged`, `misconception.merged`
     (ТЗ §2.5, §4; Т-§10).
     """
@@ -201,7 +191,7 @@ async def curate_domain_graph(
     try:
         is_active = bool(await redis.exists(presence_key(learner_id)))
         if is_active:
-            run_after = datetime.now(UTC) + timedelta(minutes=CURATION_DEFER_MINUTES)
+            run_after = datetime.now(UTC) + timedelta(minutes=ctx.settings.curation_defer_min)
             async with ctx.session_factory() as session, session.begin():
                 if job.coalesce_key is not None:
                     existing_queued = await session.execute(
@@ -273,12 +263,12 @@ async def curate_domain_graph(
                 )
                 handled_skill_ids.add(pid)
 
-        # 2. Deterministic promotion for evidenceCount >= 2
+        # 2. Deterministic promotion for evidenceCount >= curation_min_evidence_for_promotion
         for pid, pprops in provisional_skills.items():
             if pid in handled_skill_ids:
                 continue
             ev_count = int(pprops.get("evidenceCount", 0))
-            if ev_count >= CURATION_MIN_EVIDENCE_FOR_PROMOTION:
+            if ev_count >= ctx.settings.curation_min_evidence_for_promotion:
                 events_to_append.append(
                     NewEvent(
                         type="skill.promoted",

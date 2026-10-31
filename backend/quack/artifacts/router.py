@@ -12,9 +12,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 
 from quack.api.auth import get_current_learner_id
+from quack.api.errors import ApiError
+from quack.api.ratelimit import enforce_action_rate_limit
 from quack.api.resources import AppResources, get_compute, get_llm, get_resources
 from quack.artifacts import cheatsheets, notes, practice, search
-from quack.artifacts.params import PARAMS
 from quack.artifacts.schemas import (
     ArtifactListResponse,
     ArtifactView,
@@ -41,7 +42,11 @@ from quack.config import Settings
 from quack.llm.gateway import LLMGateway
 
 # Router-level auth: 401 before body validation (ТЗ Фазы 3 WP1.2, T-A2).
-router = APIRouter(prefix="/v1", tags=["artifacts"], dependencies=[Depends(get_current_learner_id)])
+router = APIRouter(
+    prefix="/v1",
+    tags=["artifacts"],
+    dependencies=[Depends(get_current_learner_id), Depends(enforce_action_rate_limit)],
+)
 
 
 def _settings(request: Request) -> Settings:
@@ -140,11 +145,25 @@ async def list_artifacts(
 async def search_artifacts(
     learner_id: CurrentLearnerId,
     resources: Resources,
-    q: str = Query(min_length=PARAMS.search_min_query_len),
+    q: str = Query(...),
     domain_id: UUID | None = None,
-    limit: int = Query(PARAMS.search_default_limit, ge=1, le=PARAMS.search_max_limit),
+    limit: int | None = Query(None),
 ) -> SearchResponse:
-    return await search.search_artifacts(learner_id, q, domain_id, limit, resources)
+    cfg = resources.settings
+    if len(q) < cfg.search_min_query_len:
+        raise ApiError(
+            "VALIDATION_ERROR",
+            f"query must be at least {cfg.search_min_query_len} characters",
+            status_code=422,
+        )
+    effective_limit = cfg.search_default_limit if limit is None else limit
+    if effective_limit < 1 or effective_limit > cfg.search_max_limit:
+        raise ApiError(
+            "VALIDATION_ERROR",
+            f"limit must be between 1 and {cfg.search_max_limit}",
+            status_code=422,
+        )
+    return await search.search_artifacts(learner_id, q, domain_id, effective_limit, resources)
 
 
 # --- Cheatsheets ---

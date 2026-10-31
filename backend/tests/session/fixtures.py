@@ -51,6 +51,8 @@ SCHEMA_ROLES = {
     "TeacherOutput": "teacher",
     "ExtractorOutput": "extractor",
     "CheckpointerOutput": "checkpointer",
+    # WP6.2: the turn checks open answers and compute outages with `evaluator@1`.
+    "EvaluatorOutput": "evaluator",
 }
 
 
@@ -70,9 +72,8 @@ async def session_app(
     The lifespan is not run by `ASGITransport`, so the resources set here stay in place
     and the pools are owned (and closed) by the infrastructure fixtures.
     """
-    app = create_app(settings, connect=False)
-    app.state.resources = build_app_resources(settings, pg_engine, neo4j, redis, session_factory=db)
-    return app
+    resources = build_app_resources(settings, pg_engine, neo4j, redis, session_factory=db)
+    return create_app(settings, resources=resources)
 
 
 @pytest.fixture

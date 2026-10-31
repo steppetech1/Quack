@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,6 +59,35 @@ class FoldParams(BaseModel):
     topic_solid_mastery: float = 0.7
     topic_solid_coverage: float = 0.8
     prereq_unlock_mastery: float = 0.6
+
+
+class DiagnosticParams(BaseModel):
+    """Thresholds of the diagnostic (ТЗ-П1 §2.3, Т-§3.3); values of Phase 2, moved here by
+    WP1.6 from constants of `quack/domains/diagnostic.py`."""
+
+    model_config = {"frozen": True}
+
+    # The diagnostic asks at most this many questions.
+    max_questions: int = 5
+    # Prior of a tested skill: min(max_mastery, score * factor) with this confidence.
+    prior_tested_max_mastery: float = 0.5
+    prior_tested_factor: float = 0.5
+    prior_tested_confidence: float = 0.5
+    # Propagation of the result to neighbours: success at/above, failure below the threshold;
+    # the effect decays by this factor per edge of distance.
+    prior_propagated_success_threshold: float = 0.7
+    prior_propagated_fail_threshold: float = 0.5
+    prior_propagated_decay: float = 0.85
+    # Priors for prerequisites (success) and for dependent skills (failure).
+    prior_down_base_mastery: float = 0.4
+    prior_down_base_confidence: float = 0.35
+    prior_up_fail_mastery: float = 0.05
+    prior_up_base_confidence: float = 0.4
+    # Self-reported answers: a score at/above the threshold counts as correct.
+    self_report_correct_threshold: float = 0.6
+    no_self_report_score: float = 0.5
+    # tested_depth of a diagnostic task without difficulty.
+    default_tested_depth: float = 0.5
 
 
 class Settings(BaseSettings):
@@ -120,8 +149,121 @@ class Settings(BaseSettings):
     # Phase 3 (ТЗ Фазы 3 §6.2, §0.5): each stream edits only its own block below.
 
     # --- stream A ---
+    # §4.3: set by the CLI before resources are created (WP8.1).
+    process_role: Literal["api", "workers", "projector", "ops"] = "api"
+    # Д-§6.1, Д-§9.1: build version, reported by /healthz and `ops status`.
+    quack_version: str = "dev"
+    # Д-§4.1, Д-§14.1: API process count and graceful shutdown (compose values: 2 / 30).
+    api_workers: int = 1
+    api_graceful_shutdown_s: int = 30
+    # WP3.5 (Д-§6.1): how long `workers` waits for running jobs on SIGTERM.
+    worker_shutdown_grace_s: float = 20.0
+    # WP3.3: periodic jobs. Phase 3 decisions (ТЗ §6.2).
+    scheduler_tick_s: float = 15.0
+    session_sweep_interval_s: int = 60
+    purge_deleted_interval_s: int = 600
+    # WP3.4: a job deferred to the next UTC midnight gets up to this much random jitter.
+    daily_budget_defer_jitter_s: int = 900
+    # WP11.1 (Т-§22.4): dispatcher inside `projector`; batch size as projector_batch_max_events.
+    dispatcher_concurrency: int = 8
+    dispatcher_batch_size: int = 100
+    dispatcher_restart_pause_s: float = 5.0
 
     # --- stream B ---
+    # WP5.7 (Д-§7, R4): Meta API credentials; the old LLM_API_* names are read as fallbacks.
+    meta_api_key: SecretStr = Field(
+        default=SecretStr(""), validation_alias=AliasChoices("META_API_KEY", "LLM_API_KEY")
+    )
+    meta_api_base_url: str = Field(
+        default="", validation_alias=AliasChoices("META_API_BASE_URL", "LLM_API_BASE_URL")
+    )
+    # WP5.1 (Т-§22.11): semaphores per process role and model; models outside the table get
+    # llm_concurrency_default (Phase 3 decision, ТЗ §6.2).
+    llm_concurrency: dict[str, dict[str, int]] = Field(
+        default_factory=lambda: {
+            "api": {"muse-wonder-1.0": 48, "muse-spark-1.3": 24},
+            "workers": {"muse-wonder-1.0": 2, "muse-spark-1.3": 6},
+        }
+    )
+    llm_concurrency_default: int = 4
+    # WP5.7 (Т-§11.1): reasoning effort, output limit and timeout by role; roles without an
+    # entry in llm_role_timeout_s use llm_timeout_sec. Teacher "high" is chosen per turn (WP6.5).
+    llm_role_reasoning: dict[str, Literal["low", "high"]] = Field(
+        default_factory=lambda: {
+            "teacher": "low",
+            "teacher_fallback": "low",
+            "extractor": "high",
+            "evaluator": "high",
+            "diagnostic": "high",
+            "task_gen": "high",
+            "structurer": "high",
+            "curator": "high",
+            "artifacts": "high",
+        }
+    )
+    llm_role_max_output_tokens: dict[str, int] = Field(
+        default_factory=lambda: {
+            "teacher": 8192,
+            "teacher_fallback": 4096,
+            "extractor": 4096,
+            "evaluator": 4096,
+            "diagnostic": 4096,
+            "task_gen": 4096,
+            "structurer": 4096,
+            "curator": 4096,
+            "artifacts": 4096,
+        }
+    )
+    max_output_tokens_cap: int = 16384
+    llm_role_timeout_s: dict[str, float] = Field(
+        default_factory=lambda: {"teacher": 45.0, "teacher_fallback": 30.0}
+    )
+    # WP5.2 (Т-§11.2): retries on failure and on 429; base_ms and max_wait_s are Phase 3
+    # decisions (ТЗ §6.2).
+    llm_retry_attempts: int = 2
+    llm_retry_base_ms: int = 500
+    llm_rate_limit_retries: int = 3
+    llm_rate_limit_base_ms: int = 1000
+    llm_rate_limit_max_wait_s: float = 10.0
+    # WP5.3 (Т-§22.11): pressure flag by 429 and by remaining-limit headers.
+    pressure_default_ttl_s: int = 30
+    pressure_remaining_share: float = 0.2
+    pressure_header_ttl_s: int = 10
+    # WP5.3, WP5.4 (Т-§21.3): how long the teacher waits for admission before teacher_fallback.
+    teacher_admission_wait_ms: int = 3000
+    # WP5.5 (Т-§21.3): circuit breaker per model.
+    circuit_failures: int = 5
+    circuit_open_s: float = 30.0
+    # WP5.6 (Т-§11.4): roles outside the session token budget.
+    session_budget_exempt_roles: tuple[str, ...] = ("extractor",)
+    # WP6.3: SSE keepalive comment interval. Phase 3 decision (ТЗ §6.2).
+    sse_keepalive_s: float = 15.0
+    # WP13 (Т-§10.3): verbatim window and batch collapse into episode lines.
+    conversation_verbatim_max_turns: int = 24
+    conversation_collapse_turns: int = 12
+    # WP14.1 (Т-§4.5): label limits per call.
+    candidate_skills_k: int = 15
+    label_max_topics: int = 8
+    label_max_tasks: int = 5
+    # WP6.2 (D-C-013): practice thresholds moved from quack/artifacts/params.py (ТЗ-П3).
+    # Т-§7.4, ТЗ-П3 decision 1: independence penalty of hint level k is 0.25·k (k = 1..3).
+    hint_penalties: tuple[float, float, float] = (0.25, 0.5, 0.75)
+    # ТЗ-П3 §2.2 п.2: hint_level = min(max_hint_level, current_max_level + 1).
+    max_hint_level: int = 3
+    # ТЗ-П3 decision 8: tested_depth of skill_scores when the verdict comes without the LLM.
+    compute_tested_depth: float = 0.5
+    # Phase 3 decision D-B-009: `score` of `task.evaluated` for the verdict of evaluator@1
+    # (`unclear` is "not checked", law 8: it falls back to the code verdict).
+    evaluator_verdict_scores: dict[Literal["correct", "partial", "incorrect"], float] = Field(
+        default_factory=lambda: {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
+    )
+    # ТЗ-П3 A6: difficulty of a task written by task_gen@1.
+    default_target_difficulty: float = 0.5
+    # Phase 3 decision D-B-010: level of understanding asked from task_gen@1 (3 = applies).
+    task_gen_target_level: int = 3
+    # WP15 (Т-§12.1, Т-§12.4): spoiler guard retries; numbers with |x| below this are not checked.
+    guard_max_retries: int = 2
+    spoiler_ignore_abs_below: int = 10
 
     # --- stream C ---
     # WP8.3: probe timeout of /health/ready and /healthz (was HEALTH_CHECK_TIMEOUT_SEC).
@@ -133,6 +275,12 @@ class Settings(BaseSettings):
     # WP1.6: moved from quack/domains (JWT_TTL_DAYS, CURATION_DEFER_MINUTES).
     jwt_ttl_days: int = 7
     curation_defer_min: int = 10
+    # WP1.6, audit A7: other thresholds of Phase 2 (domains, artifacts) — Phase 3 decision D-C-014.
+    curation_min_evidence_for_promotion: int = 2
+    search_min_query_len: int = 2
+    search_default_limit: int = 20
+    search_max_limit: int = 100
+    diagnostic: DiagnosticParams = Field(default_factory=DiagnosticParams)
     # WP7: poll interval of GET /v1/learner/stream. Phase 3 decision (ТЗ §6.2).
     learner_stream_poll_ms: int = 2000
     # WP12 (Т-§7.4): evidence weight by tier, hint step penalty, hot window.
@@ -141,6 +289,8 @@ class Settings(BaseSettings):
     )
     hint_step_penalty: float = 0.25
     hot_window_min: int = 10
+    # Т-§7.4 «окно горит» ×0.5; ТЗ §6.2 не называет параметр — Phase 3 decision D-C-019.
+    hot_window_factor: float = 0.5
 
     fold: FoldParams = Field(default_factory=FoldParams)
 
