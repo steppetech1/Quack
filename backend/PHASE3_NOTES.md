@@ -1419,6 +1419,7 @@ _(пусто)_
 | WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
 | WP10.2 (`confirm`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `1b209a3`) | 1 failed: тот же ключ с другой `structure_version` → 422 `VALIDATION_ERROR` (проверка версии раньше ключа), ждали 409 |
 | WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
+| WP10.2 (`diagnostic/finish`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py -k same_key_other_session` (коммит `619219c`) | 1 failed: тот же ключ с другим `session_id` → 404 `NOT_FOUND` (сессия ищется раньше ключа), ждали 409 |
 
 ## Правки тестов
 
