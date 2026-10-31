@@ -215,3 +215,69 @@ async def test_turn_manifest_row_is_atomic(
             headers=auth_headers,
         )
     assert len(await _manifest_rows(db, learner)) == 1
+
+
+async def _labels_session(
+    client: httpx.AsyncClient, auth_headers: dict[str, str], seeded: SeededDomain, key: str
+) -> UUID:
+    start = await client.post(
+        "/v1/sessions",
+        json={
+            "domain_id": str(seeded.domain_id),
+            "topic_id": str(seeded.topic_id),
+            "idempotency_key": key,
+        },
+        headers=auth_headers,
+    )
+    assert start.status_code == 201, start.text
+    return UUID(start.json()["session_id"])
+
+
+@pytest.mark.parametrize("second_valid", [False, True], ids=["wrong_again", "repaired"])
+async def test_unknown_label_returns_to_model_once(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    seeded_domain: SeededDomain,
+    fake_llm: FakeLLMProvider,
+    second_valid: bool,
+) -> None:
+    """T-M2 (WP14.1, Т-§4.5): an answer with an unknown label goes back to the model once with
+    the error text; wrong again → the element is dropped with a log record, the rest of the
+    answer is applied and the turn completes (200, full SSE)."""
+    from structlog.testing import capture_logs
+
+    session_id = await _labels_session(client, auth_headers, seeded_domain, f"m2-{second_valid}")
+    before = len(fake_llm.calls_for("teacher"))
+    wrong = TeacherOutput(
+        reply_text="First draft.", pedagogical_move="assign_task", assign_task_label="K99"
+    )
+    second = TeacherOutput(
+        reply_text="Second draft.",
+        pedagogical_move="assign_task",
+        assign_task_label="K1" if second_valid else "K99",
+    )
+    fake_llm.push("teacher", wrong, second)
+    with capture_logs() as logs:
+        response = await client.post(
+            f"/v1/sessions/{session_id}/turns",
+            json={"text": "Give me a task", "idempotency_key": f"m2-turn-{second_valid}"},
+            headers=auth_headers,
+        )
+    assert response.status_code == 200, response.text
+
+    calls = fake_llm.calls_for("teacher")[before:]
+    assert len(calls) == 2
+    assert calls[0].repair_hint is None
+    assert calls[1].repair_hint is not None and "K99" in calls[1].repair_hint
+
+    events = parse_sse(response.text)
+    names = list(dict.fromkeys(name for name, _ in events))
+    text_out = "".join(data["delta"] for name, data in events if name == "token")
+    assert text_out == "Second draft."
+    dropped = [e for e in logs if e.get("event") == "teacher_unknown_label"]
+    if second_valid:
+        assert "task_assigned" in names
+        assert not dropped
+    else:
+        assert names == ["turn_started", "status", "token", "turn_completed", "done"]
+        assert dropped and dropped[-1]["label"] == "K99"
