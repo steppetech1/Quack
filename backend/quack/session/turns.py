@@ -397,7 +397,7 @@ async def open_turn(
             eval_actor = "code"
             if submission_outcome.evaluated is not None:
                 final_evaluated = submission_outcome.evaluated
-                eval_actor = "compute" if llm_degraded_mode is not None else "code"
+                eval_actor = "compute"
             else:
                 assert submitted_task is not None
                 penalties = hint_penalties(context.overlay, submitted_task.id)
