@@ -37,8 +37,8 @@ DIGEST = ArtifactGenOutput(
 NOTE_TITLE = "Composite functions"
 NOTE_TEXT = "chain rule for composite functions"
 CHAIN_REF: dict[str, Any] = {
-    "sympy": "2*x*cos(x**2)",
-    "check_mode": "expression_equiv",
+    "expression": "2*x*cos(x**2)",
+    "mode": "expression_equiv",
     "hints": ["Composite function.", "Outer times inner derivative.", "cos(x**2) times 2*x."],
 }
 
