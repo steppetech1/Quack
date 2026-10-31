@@ -265,6 +265,42 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 - Тесты: `T-L10`.
 - Требует подтверждения владельцем: да (колонка-дубль — на выбор владельца между (1) и (2))
 
+#### Этап I потока B к G0 (ветка `phase-3-b-stage1-llm`)
+
+| Шов / пакет | Что выдано | Где |
+| :-- | :-- | :-- |
+| S1 (часть B) | конструктор `LLMGateway` без изменений; `LLMGateway.aclose()` закрывает HTTP-клиент провайдера (`aclose` провайдера или его `httpx.AsyncClient`) — для `AppResources.close` | `quack/llm/gateway.py` |
+| S3 | `pressured_models(redis) -> frozenset[str]`, `set_pressure_flag`, `parse_retry_after`, `low_remaining`, ключи размыкателя (сигнатуры); `LLMRateLimitedError(LLMUnavailableError)`; `LLMUnavailableError.reason` (`unavailable`, `timeout`, `rate_limited`, `bad_request`, `circuit_open`); `LLMSchemaError.reason` (`schema`, `incomplete`, `label`); `LLMBudgetExceededError.scope` уже был | `quack/llm/pressure.py`, `quack/llm/errors.py` |
+| S7 (часть B) | `resolve_degraded_mode(...)` и порядок `DEGRADED_MODE_PRIORITY` (§4.4); маркер `MEMORY_UNAVAILABLE_MARKER` (WP6.1) | `quack/session/turn_policy.py` |
+| S10 | пакет `quack/practice`: `ReferenceSolution` (`MathReference`, `ChoiceReference`, `OpenReference` по таблице WP6.4 + `hints`, `latex`, D-B-001), `parse_reference_solution`, `evaluate_answer`, `independence_from_hints`, `pick_task` (сигнатуры) | `quack/practice/` |
+| S12 | `ProviderRequest` + `reasoning_effort`, `max_output_tokens`, `prompt_cache_key`; `ProviderResponse` + `reasoning_tokens`, `output_items`, `incomplete`, `headers`; `RATE_LIMIT_HEADERS`; ошибки `ProviderRateLimitedError(retry_after_sec, headers, body)`, `ProviderBadRequestError(body)`, `ProviderIncompleteError(partial_text)`; `ProviderUnavailableError` — 5xx, таймаут, связь. Новые поля — со значениями по умолчанию, старый код работает | `quack/llm/provider.py`, `quack/llm/errors.py` |
+| WP5.7 | `to_strict_json_schema`, `StrictSchemaError(field_path)`; `ResponsesClient(base_url, api_key, *, http_client)` (сигнатуры) | `quack/llm/strict_schema.py`, `quack/llm/responses_client.py` |
+| WP5.4, WP6.5 | `generate_structured(..., *, prompt_role=None, reasoning_effort=None)`; до реализации непустые значения → `NotImplementedError` | `quack/llm/gateway.py` |
+| WP6.5 | `teacher_reasoning_effort(...)` | `quack/session/turn_policy.py` |
+| WP13 | `render_checkpoint`, `episode_lines`, `RENDERER_VERSION = "renderer@1"` | `quack/session/checkpoint_render.py` |
+| WP14 | `LabelMap` (`build`, `label`, `resolve`, `table`), `UnknownLabelError`; `TurnManifest`, `write_turn_manifest` | `quack/llm/labels.py`, `quack/session/manifest.py` |
+| WP15 | `spoiler_sentences`, `remove_sentences` | `quack/session/spoiler.py` |
+| §6.2 | все параметры B в блоке `# --- stream B ---` (`llm_concurrency*`, `llm_role_reasoning`, `llm_role_max_output_tokens`, `max_output_tokens_cap`, `llm_role_timeout_s`, повторы, давление, допуск, размыкатель, `session_budget_exempt_roles`, `sse_keepalive_s`, окно разговора, метки, защита от спойлера); `meta_api_key`, `meta_api_base_url` читают `META_API_*`, запасные — `LLM_API_*`. Значения `llm_role_models` (ID моделей) меняются в WP5.7 | `quack/config.py` |
+| D-C-005 | `_set_presence` без Redis возвращается сразу; проверено: с аннотацией `redis: Redis \| None` в `AppResources` pyright всего дерева — 0 errors | `quack/session/lifecycle.py` |
+
+Не входит в Этап I B и нужно от других: миграция `0002_phase3` (колонки `ops.llm_ledger` и
+таблица `ops.turn_manifests` — поля по §6.1 и WP14.2, D-B-003) — владелец `quack/db`,
+`migrations/` не назван в §7.3, см. сигнал; заполнение `ScriptedLLMProvider` по S12 — C (S9).
+
+### D-B-004. SDK OpenAI и `jsonschema` не входят в зависимости
+- Класс: D
+- WP / место: WP5.7 (адаптер `ResponsesClient` поверх `AsyncOpenAI`, `Т-§11.5`), `T-L8`,
+  `T-L9` (проверка экземпляра через `jsonschema`); `pyproject.toml`
+- Контекст: контракт WP5.7 и `Т-§11.5` называют `AsyncOpenAI` из официального OpenAI SDK, а
+  `T-L9` — проверку схемой `jsonschema`. Ни `openai`, ни `jsonschema` нет в `pyproject.toml`;
+  §0.4.3 разрешает добавить только `locust`, остальное — класс D.
+- Варианты для владельца: (1) разрешить `openai` (основные зависимости) и `jsonschema`
+  (группа `dev`); (2) `ResponsesClient` на `httpx` без SDK — отход от `Т-§11.5`, в реестр §2.4;
+  `T-L9` — только `model_validate_json`.
+- Не блокирует: Этап I и `to_strict_json_schema` (до G1). Блокирует: адаптер WP5.7 после G1,
+  часть `T-L9` про `jsonschema`. До ответа `ResponsesClient` — сигнатура без импорта SDK.
+- Требует решения владельца: да
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков

@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
 import orjson
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
@@ -27,7 +29,7 @@ from quack.llm.errors import (
     ProviderRateLimitedError,
     ProviderUnavailableError,
 )
-from quack.llm.provider import LLMProvider, ProviderRequest, ProviderResponse
+from quack.llm.provider import LLMProvider, ProviderRequest, ProviderResponse, ReasoningEffort
 from quack.logging import get_logger
 from quack.prompts.registry import PromptRegistry, PromptTemplate
 
@@ -76,6 +78,18 @@ class LLMGateway:
         self.prompts = prompts or PromptRegistry()
         self.semaphore = asyncio.Semaphore(settings.llm_semaphore_limit)
 
+    async def aclose(self) -> None:
+        """Release the provider's HTTP client at process stop (§4.2, seam S1)."""
+        close = getattr(self.provider, "aclose", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+            return
+        client = getattr(self.provider, "client", None)
+        if isinstance(client, httpx.AsyncClient):
+            await client.aclose()
+
     async def generate_structured[T: BaseModel](
         self,
         role: str,
@@ -87,7 +101,15 @@ class LLMGateway:
         turn_id: UUID | None,
         idempotency_key: str,
         temperature: float = 0.0,
+        *,
+        prompt_role: str | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> LLMResult[T]:
+        """Phase 3 (§6.6): `prompt_role` takes the template of `prompt_role@prompt_version`
+        while model, limits, ledger and outbox stay with `role` (WP5.4); `reasoning_effort`
+        overrides the role effort (WP6.5). Both are Stage I: not implemented yet."""
+        if prompt_role is not None or reasoning_effort is not None:
+            raise NotImplementedError("prompt_role / reasoning_effort: WP5.4, WP6.5")
         prompt = self.prompts.load(role, prompt_version)
         rendered = prompt.render(variables)
         model = self.settings.model_for_role(role)
