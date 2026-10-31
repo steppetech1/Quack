@@ -723,6 +723,11 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `test_session_checkpoint_worker`, `test_turn_extract_worker`, `test_extract_quote_grounding`,
   `test_worker_pool_and_slice`; из `test_session_checkpoint_worker` убрана подмена
   `HttpLLMProvider`/`LLMGateway` (шлюз приходит из контекста).
+- Снятие `_ReadOnlyDriver` (D-C-016, отдельный коммит): `workers.py` отдаёт `ctx.neo4j` в
+  `Neo4jGraphStore` и `read_applied_seq` как есть, своих сессий на драйвере не открывает;
+  запись `quack.session.workers` удалена из `PENDING_NEO4J_SESSIONS` (список пуст). До того как
+  C переведёт `Neo4jGraphStore._read` на `read_session`, чтение графа в `turn.extract` идёт без
+  `READ_ACCESS` — ход C по D-C-016.
 - Требует подтверждения владельцем: нет (поручение A).
 
 ### Поток C

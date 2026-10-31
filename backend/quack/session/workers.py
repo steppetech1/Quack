@@ -5,11 +5,11 @@ from __future__ import annotations
 import contextlib
 import json
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 import orjson
-from neo4j import READ_ACCESS, AsyncDriver, AsyncSession
+from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
@@ -36,16 +36,6 @@ class _JobResources:
     llm: LLMGateway
 
 
-class _ReadOnlyDriver:
-    """Driver view whose sessions are opened with `READ_ACCESS` (the graph store is frozen core)."""
-
-    def __init__(self, driver: AsyncDriver) -> None:
-        self._driver = driver
-
-    def session(self, **config: Any) -> AsyncSession:
-        return self._driver.session(default_access_mode=READ_ACCESS, **config)
-
-
 def _job_resources(ctx: JobContext) -> _JobResources:
     """Neo4j driver, Redis client and LLM gateway of the process, only from `ctx` (WP2.1).
 
@@ -67,15 +57,14 @@ async def _read_topic_context(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if topic_id is None:
         return [], []
-    reader = cast("AsyncDriver", _ReadOnlyDriver(neo4j_driver))
-    store = Neo4jGraphStore(reader, str(learner_id))
+    store = Neo4jGraphStore(neo4j_driver, str(learner_id))
 
     if redis is None:
         graph = await store.dump()
     else:
 
         async def applied_seq_reader(learner: UUID) -> int:
-            return await read_applied_seq(reader, str(learner))
+            return await read_applied_seq(neo4j_driver, str(learner))
 
         deps = SliceDeps(
             session_factory=ctx.session_factory,
