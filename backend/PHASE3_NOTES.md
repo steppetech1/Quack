@@ -747,6 +747,99 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/session/test_extraction_v2.py`.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-018. WP6.3: keepalive в зоне B; событие `status` и ранняя запись реплики ученика
+- Класс: C (keepalive), конфликт документов (статус) — решён исполнителем по поручению владельца
+  2026-11-01
+- WP / место: WP6.3; `quack/session/keepalive.py`, `quack/session/router.py`,
+  `quack/session/turns.py`, `quack/session/context.py`
+- Решение (keepalive): `with_keepalive` / `sse_keepalive_response` — после `sse_keepalive_s`
+  тишины поток шлёт `: ping` и пустую строку; шаг потока событий между пингами не
+  отменяется. Подключено к `GET /v1/sessions/{id}/events` и к потоку хода. Общий
+  `sse_response` лежит в `quack/api/sse.py` (зона C), поэтому обёртка — в `quack/session`;
+  C может перенести её в `quack/api/sse.py` и подключить к `GET /v1/learner/stream` (WP7).
+- Конфликт (статус хода): WP6.3 требует `status` «первым после `turn_started`» и до вызова
+  модели, а `turn_started.user_seq` (`С-§8.5`) — `seq` реплики ученика, которую код Фазы 2
+  писал одной транзакцией с ответом учителя после модели. Варианты: (1) `status` до
+  `turn_started`; (2) `turn_started` без `user_seq` — меняет `С-§8.5`; (3) реплика ученика —
+  своей транзакцией до модели.
+- Решение: (3). `Т-§1.4` п.1: «API в одной транзакции выдаёт номер ученика и пишет событие
+  действия», сборка контекста и модель — после; `Т-§2.2` «хода в журнале нет» относится к
+  ходу учителя (`turn.committed` и его последствия пишутся вместе). Основной документ выше
+  `С-§` и кода Фазы 2 (§0.3 п.2). Формат `С-§8.5` не меняется.
+  - До ответа: блокировка, проверка сессии, идемпотентность, запись `turn.student_replied`
+    (ключ — ключ хода). Поток: `turn_started` → допуск учителя (WP5.3) → `status`
+    `{"state": "thinking"}` → остальной ход без изменений; ход учителя и его события
+    (`task.submitted`, `task.evaluated`, `task.assigned`, `turn.teacher_replied`, манифест,
+    задачи) — одной транзакцией, как раньше. Отказ допуска переводит ход на
+    `teacher_fallback` после `status` — событие одно.
+  - Повтор с тем же ключом: ход записан — повтор кадров (с `status`); записана только реплика —
+    ход возобновляется на ней (тот же `turn_id`, `user_seq`, без второй реплики).
+  - `build_turn_context(before_seq=…)`: срез ждёт проектор до события перед репликой (сама
+    реплика — в наложении, закон 9), окно разговора кончается перед ней (реплика — отдельная
+    переменная промпта). Без этого каждый ход ждал бы `projector_lag_timeout_ms`.
+  - Ошибка хода после первого кадра обрывает поток (как `Т-§12.1`, «обрыв до commit»), а не
+    отвечает JSON; клиент повторяет ход и получает его возобновление.
+- Правки тестов (§8.9 п.6 — новое событие контракта `С-§8.5`, не ослабление): в
+  `test_turn_evaluation::test_math_task_evaluated_in_turn_via_compute`,
+  `test_turns_and_sse::test_full_turn_sse_order_format_events_and_extract_job`,
+  `…::test_turn_without_concept_or_task`,
+  `…::test_practice_mode_assigns_task_even_if_move_is_not_assign_task` в точный список кадров
+  добавлен `status` после `turn_started` (индексы кадров сдвинуты); в первом из `turns_and_sse`
+  добавлена проверка `{"state": "thinking"}`. `T-M4` (свой, WP14.2): «сбой записи манифеста →
+  событий хода нет» считает события хода учителя (ключи `<ключ>:…`), реплика ученика по
+  решению пишется раньше — свойство «ход учителя и манифест атомарны» то же.
+- Тесты: `T-H5`, `T-H10` (`test_turn_status_before_text`, вместо задержки 0,5 с провайдер
+  держит ответ до чтения `status` — «раньше, чем провайдер вернул ответ» без таймингов),
+  `test_turn_resumes_on_the_stored_reply`.
+- `openapi.json`: у потока хода общее описание без перечня событий; добавить `status` в текст —
+  `quack/api/openapi.py` (C), фронтенду — на G1 (R-F).
+- Требует решения владельца: нет (поручено исполнителю 2026-11-01).
+
+### D-B-019. WP15: защита от спойлера — что считается активной задачей и как сравнивается ответ
+- Класс: C
+- WP / место: WP15; `quack/session/spoiler_guard.py`, `quack/session/turns.py::_guard_spoiler`
+- Решение:
+  1. Активная задача — выдана в этой сессии (`task.assigned`) до текущего хода, по ней нет
+     верного `task.evaluated` и нет подсказки ступени `max_hint_level` (признак просьбы
+     решения по аудиту WP0). Задача, которую этот ход проверил как верную, закрыта.
+  2. Ответ — из ключей банка D-B-010: `math` — `sympy`, `choice` — `answer` (текст верного
+     варианта; у задач банка без `answer` не проверяется), `open` — не проверяется.
+     Сравнение — локальная нормализация (без вызова `compute` на каждую попытку): регистр,
+     `**` → `^`, степени-индексы, пробелы у операторов, без `*`; число — по значению,
+     выражение и текст варианта — целым токеном. Целые с модулем меньше
+     `spoiler_ignore_abs_below` и однобуквенные ответы не проверяются.
+  3. Повтор — та же роль (`teacher` или `teacher_fallback`), тот же уровень рассуждения,
+     ключ `…:guard<N>`; до `guard_max_retries`, затем удаляется предложение с ответом.
+     `LLMBudgetExceededError` на повторе → `budget_exceeded`, недоступность → `llm_unavailable`
+     (общий обработчик хода). Лог `guard_violation`: правило, сессия, ход, задача, попытка,
+     действие; без текста ученика и ответа.
+  4. Причина повтора идёт модели данными в переменной `guard_reason` (JSON `{"rule":
+     "spoiler", "task_label": "K…"}`; метки нет, если задача вне таблицы вызова; пустая строка
+     на первой попытке). **В `teacher@1` места `{{ guard_reason }}` нет** — лишняя переменная
+     не подставляется, модель причину не видит. Добавить блок в промпт — работа владельца
+     (промпты).
+- Тесты: `T-G1`–`T-G4` (`tests/session/test_spoiler_guard.py`).
+- Требует подтверждения владельцем: п.1 — нет, **2026-11-01 решено исполнителем по поручению
+  владельца**: признак `ТЗ-П2` «подсказка высшей ступени», события `solution.requested`
+  (`Т-§2.2`) в коде нет. П.4 — блок `{{ guard_reason }}` в `teacher@1` пишет владелец (промпты).
+### D-B-020. WP14.2: значения полей манифеста хода
+- Класс: C
+- WP / место: WP14.2; `quack/session/manifest.py`, `quack/session/turns.py`
+- Решение: строка пишется в транзакции `append_events` хода, после события. Типы
+  `TurnManifest` приведены к колонкам миграции `0002_phase3` (версии — числа `N` из
+  `name@N`). `prompt_version` — `TEACHER_PROMPT_VERSION` (1); `renderer_version` — номер
+  `RENDERER_VERSION` (`renderer@1`, D-B-002): другой версии отрисовки контекста учителя в
+  Фазе 3 нет. `role` — `teacher_fallback`, если ответ дал запасной, иначе `teacher` (и при
+  детерминированной деградации); `model` — модель этой роли; `reasoning_effort` — уровень этой
+  роли (WP6.5); `projected_seq` — `applied_seq` среза; `overlay_seqs` — `seq` событий
+  наложения; `label_table` — `LabelMap.table()`; `degraded_mode` — итог хода.
+- В красном коммите `T-M4` ждал `degraded_mode = None`; в фикстуре проектор не применил
+  `session.started`, ход честно идёт в `projector_lag`. Ожидание исправлено до зелёного
+  коммита: манифест равен `turn_completed.degraded_mode` (проверка не слабее — точное
+  совпадение с итогом хода).
+- Тесты: `T-M4` (`tests/llm/test_labels.py`).
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1190,6 +1283,10 @@ _(пусто)_
 | WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
 | WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
 | WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
+| WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
+| WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
+| WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
+| WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
 
 ## Правки тестов
 

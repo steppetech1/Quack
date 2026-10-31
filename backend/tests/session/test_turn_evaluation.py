@@ -101,12 +101,19 @@ async def test_math_task_evaluated_in_turn_via_compute(
     # 6. Check SSE sequence and task_evaluated payload
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "task_evaluated", "turn_completed", "done"]
+    assert event_names == [
+        "turn_started",
+        "status",
+        "token",
+        "task_evaluated",
+        "turn_completed",
+        "done",
+    ]
 
     turn_started = sse_events[0][1]
     turn_id = UUID(turn_started["turn_id"])
 
-    task_eval_sse = sse_events[2][1]
+    task_eval_sse = sse_events[3][1]
     # D-B-006: feedback of a code verdict comes from the one cascade of quack.practice.
     assert task_eval_sse == {
         "task_id": str(math_task_id),

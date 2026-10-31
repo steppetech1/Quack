@@ -96,32 +96,40 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     assert turn_resp.headers["content-type"].startswith("text/event-stream")
 
     # 4. Check SSE sequence and format
-    # format: turn_started → token → task_assigned → turn_completed → done
+    # format: turn_started → status → token → task_assigned → turn_completed → done
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "task_assigned", "turn_completed", "done"]
+    assert event_names == [
+        "turn_started",
+        "status",
+        "token",
+        "task_assigned",
+        "turn_completed",
+        "done",
+    ]
 
     turn_started = sse_events[0][1]
     turn_id = UUID(turn_started["turn_id"])
+    assert sse_events[1][1] == {"state": "thinking"}
     assert turn_started["turn_index"] == 0
     assert isinstance(turn_started["user_seq"], int)
     user_seq = turn_started["user_seq"]
 
-    token_event = sse_events[1][1]
+    token_event = sse_events[2][1]
     assert token_event["delta"] == "Let's practice the power rule."
 
-    task_assigned = sse_events[2][1]
+    task_assigned = sse_events[3][1]
     assert UUID(task_assigned["task_id"]) == seeded_domain.math_task_ids[0]
     assert task_assigned["kind"] == "math"
     assert task_assigned["prompt_text"] == "Find d/dx x^3"
 
-    turn_completed = sse_events[3][1]
+    turn_completed = sse_events[4][1]
     assert UUID(turn_completed["turn_id"]) == turn_id
     assert isinstance(turn_completed["committed_seq"], int)
     assert turn_completed["committed_seq"] > user_seq
     assert turn_completed["degraded_mode"] is None
 
-    assert sse_events[4][1] == {}
+    assert sse_events[5][1] == {}
 
     # 5. Check events recorded in core.events
     async with db() as session:
@@ -229,7 +237,7 @@ async def test_turn_without_concept_or_task(
 
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "turn_completed", "done"]
+    assert event_names == ["turn_started", "status", "token", "turn_completed", "done"]
 
     async with db() as session:
         rows = (
@@ -288,7 +296,14 @@ async def test_practice_mode_assigns_task_even_if_move_is_not_assign_task(
 
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "task_assigned", "turn_completed", "done"]
+    assert event_names == [
+        "turn_started",
+        "status",
+        "token",
+        "task_assigned",
+        "turn_completed",
+        "done",
+    ]
 
 
 async def test_parallel_turn_on_same_session_gets_409_turn_locked(
