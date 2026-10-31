@@ -69,7 +69,8 @@ class DiagnosticParams(BaseModel):
 
     # The diagnostic asks at most this many questions.
     max_questions: int = 5
-    # Prior of a tested skill: min(0.5, score * factor) with this confidence.
+    # Prior of a tested skill: min(max_mastery, score * factor) with this confidence.
+    prior_tested_max_mastery: float = 0.5
     prior_tested_factor: float = 0.5
     prior_tested_confidence: float = 0.5
     # Propagation of the result to neighbours: success at/above, failure below the threshold;

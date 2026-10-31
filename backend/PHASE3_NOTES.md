@@ -55,7 +55,7 @@
 | WP | Поток | Статус | Тесты |
 | :-- | :-: | :-- | :-- |
 | WP0 | C ведёт, A, B | зона C: выполнено (вход, прогон, аудит пунктов C); зоны A и B: ждут аудита своих пунктов | существующие 410 + 5 (compute) зелёные |
-| WP1 | C | WP1.2, WP1.3 — выполнено (Этапы I–III); WP1.1, WP1.4–WP1.6 — не начаты (роутеры уже смонтированы, D-C-007) | `T-A2`, `T-A3` зелёные; всего 412 passed |
+| WP1 | C | выполнено полностью (WP1.1–WP1.6); `create_app(resources=)`, единый JWT, единый AppResources, единый ratelimit, пороги в Settings | `T-A1`–`T-A6`, `test_ratelimit`, `test_thresholds_in_settings` зелёные; всего 452 passed |
 | WP2 | A | не начат | — |
 | WP3 | A | не начат | — |
 | WP4 | C | не начат | — |
@@ -524,6 +524,20 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
   изменения утверждений; `T-M*` (метки) у B.
 - Требует подтверждения владельцем: нет
 
+### D-C-014. Шов с B: реэкспорт `quack.api.app`, роутер `session` и ограничитель ходов (WP1.1, WP1.4, WP1.5)
+- Класс: B
+- WP / место: WP1.1, WP1.4, WP1.5, §7.3 п.2; `quack/api/app.py`, `quack/session/deps.py`, `backend/tests/test_app_assembly.py`
+- Контекст: B владеет `quack/session/*` и переносит практику (D-C-013). В `quack/session/` пять файлов (`context`, `lifecycle`, `router`, `stream`, `turns`) и `quack/artifacts/practice.py` импортируют `AppResources`/`get_resources` из `quack.api.app`. Чтобы разорвать импортный цикл и смонтировать роутер `session` в `create_app`:
+  1. В `quack/api/app.py` оставлен временный реэкспорт `AppResources`, `get_resources`, `create_app` из `quack.api.resources` до слияния правок B; в `tests/test_app_assembly.py` эти файлы перечислены в `PENDING_IMPORTS` теста `T-A6`.
+  2. В `quack/session/deps.py` поправлено тело `enforce_turn_rate_limit`: вместо устаревшего вызова фазы 2 вызывается общий ограничитель `check_turn_rate_limit(resources, learner_id)`.
+  3. В `tests/test_app_assembly.py` (T-A1) в `PENDING_ROUTES` добавлены маршруты WP7 (`/v1/learner/stream`) и WP8.3 (`/healthz`, `/health/live`, `/health/ready`), которые будут смонтированы в соответствующих пакетах (отклонение O9).
+  4. Пороги диагностики (`diagnostic.*`), поиска (`search_*`) и курации (`curation_min_evidence_for_promotion`) перенесены в `Settings` под блоком `# --- stream C ---` (WP1.6).
+  5. По §8.9: устаревшие проверки fail-open (где при отказе Redis лимит пропускал запросы) удалены / заменены проверками in-memory fallback (T-A5, T-E8), так как fail-open устранён согласно ТЗ §2.3 п.3.
+- Почему: §0.4.3 п.4; разделение ответственности потоков B и C на стыке роутеров и ресурсов.
+- Обратимость: реэкспорт удаляется после перевода файлов B на `quack.api.resources`.
+- Тесты: `T-A1`, `T-A4`, `T-A5`, `T-A6`, `tests/test_ratelimit.py`, `tests/test_thresholds_in_settings.py` (все зелёные).
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -533,6 +547,7 @@ _(пусто)_
 | WP | Команда | Итог |
 | :-- | :-- | :-- |
 | WP1.2–1.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py` (коммит `fd8d31b`) | 2 failed: `T-A2` — `GET /v1/domains is not mounted`; `T-A3` — `POST /v1/auth/register` → 404 |
+| WP1.1, 1.4–1.6 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py tests/test_ratelimit.py tests/test_thresholds_in_settings.py tests/domains/test_curation_thresholds.py` (коммит `f00f41d`) | 20 failed, 5 errors, 6 passed (T-A1 route order/mount, T-A4/T-A5 ratelimit stub, T-A6 imports, local fallback, curation deferral, thresholds in Settings) |
 | WP10.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 6 failed, 4 passed. Падают: `T-E1` — нет колонки `ops.jobs.required_seq` (A, WP3.1/WP11); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200, ждали 409 (**дефект C**, `domains`); `T-E3` — `GET /v1/topics/{id}/cheatsheet` чужой темы → `200 null`, ждали 404 (**дефект C**, `artifacts`, STREAM3_NOTES риск 9); `T-E5` — обработчики задач не берут шлюз из `JobContext`, извлечение идёт мимо `ScriptedLLMProvider` (A, WP2.1); `T-E8` — ограничитель fail-open без Redis (C, WP1.5); `T-E10` — нет `purge_deleted_interval_s` и планировщика (A, WP3.3). Зелёные уже на текущем коде: `T-E4`, `T-E6`, `T-E7`, `T-E9` — проверяют поведение Фаз 1–2; DoD п.3 («были красными») для них не выполним, проверка «тест падает на заведомо неверной реализации» (§8.9) — не делалась |
 
 ## Правки тестов
@@ -542,6 +557,8 @@ _(пусто)_
 | `tests/session/test_auth_and_stream_resilience.py::test_learner_without_auth_user_row_stays_valid` → `…_is_rejected` | ожидание `200/404` → `401 UNAUTHORIZED`; запрос идёт обычным клиентом без хука D-C-006 | D-C-004 (класс C, решено по поручению владельца). Проверка не слабее: то же место, более строгое ожидание; на старой реализации (`current_learner_id` потока 2) тест падает |
 | там же, `test_events_stream_without_redis_is_empty_sse`, `test_relay_ends_cleanly_on_redis_error` | конструктор `AppResources(...)` → `dataclasses.replace(res, redis=...)` | новый набор полей S1; утверждения не менялись |
 | фикстуры `tests/domains/conftest.py`, `tests/session/fixtures.py`, `tests/artifacts/conftest.py` | ресурсы — `build_app_resources`; роутеры не монтируются повторно; удалены переопределения `get_llm_gateway`/`get_compute_client` (`artifacts`) и запасной разбор JWT (`domains`); хук пользователей в `client` (`session`) | §8.1, §8.9 (фикстуры и импорты); D-C-006 |
+| `tests/domains/conftest.py`, `tests/session/fixtures.py`, `tests/artifacts/conftest.py`, `tests/test_infra.py` | `create_app(settings, connect=False)` → `create_app(settings, resources=build_app_resources(...))` | WP1.1: убран `connect=False`, введён явный `resources=`; тесты сохраняют владение пулами |
+| `tests/conftest.py` | добавлена autouse-фикстура `_clear_local_rate_limits` с вызовом `LOCAL_LIMITS.clear()` | Изоляция тестов ограничителя с локальным in-memory счётчиком при отказе Redis (WP1.5) |
 
 ## Вопросы к команде
 

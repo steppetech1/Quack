@@ -48,11 +48,10 @@ def domains_app(
     redis: Redis,
     fake_llm_provider: FakeLLMProvider,
 ) -> FastAPI:
-    app = create_app(settings, connect=False)
-    app.state.resources = build_app_resources(
+    resources = build_app_resources(
         settings, pg_engine, neo4j, redis, session_factory=db, provider=fake_llm_provider
     )
-    return app
+    return create_app(settings, resources=resources)
 
 
 @pytest.fixture

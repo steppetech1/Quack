@@ -12,9 +12,9 @@ from uuid import UUID, uuid4, uuid5
 import neo4j
 from sqlalchemy import text
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
-from quack.config import Settings
+from quack.api.resources import AppResources
+from quack.config import DiagnosticParams, Settings
 from quack.db.postgres import SessionFactory
 from quack.domains.schemas import (
     AnswerDiagnosticRequest,
@@ -38,19 +38,6 @@ from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
 from quack.llm.gateway import LLMGateway
 
-DIAGNOSTIC_MAX_QUESTIONS = 5
-PRIOR_TESTED_FACTOR = 0.5
-PRIOR_TESTED_CONFIDENCE = 0.5
-PRIOR_PROPAGATED_SUCCESS_THRESHOLD = 0.7
-PRIOR_PROPAGATED_FAIL_THRESHOLD = 0.5
-PRIOR_PROPAGATED_DECAY = 0.85
-PRIOR_DOWN_BASE_MASTERY = 0.4
-PRIOR_DOWN_BASE_CONFIDENCE = 0.35
-PRIOR_UP_FAIL_MASTERY = 0.05
-PRIOR_UP_BASE_CONFIDENCE = 0.4
-DIAGNOSTIC_SELF_REPORT_CORRECT_THRESHOLD = 0.6
-DIAGNOSTIC_NO_SELF_REPORT_SCORE = 0.5
-DIAGNOSTIC_DEFAULT_TESTED_DEPTH = 0.5
 DIAGNOSTIC_FAMILY_PREFIX = "diag_"
 
 type PriorSource = Literal["tested", "self_report"]
@@ -62,12 +49,15 @@ def compute_inferred_priors(
     topic_prereqs: Sequence[PrereqEdge],
     tested_scores: dict[UUID, float],
     tested_sources: dict[UUID, PriorSource] | None = None,
+    params: DiagnosticParams | None = None,
 ) -> list[TopicPriorItem]:
     """Compute `TopicPriorItem` list for domain skills from tested scores, propagating
-    downward to prerequisites on success (`score >= 0.7`) and upward to dependents on failure
-    (`score < 0.5`) (ТЗ §2.3, Т-§3.3). `tested_sources` marks the skills whose score came from
+    downward to prerequisites on success (`score >= params.prior_propagated_success_threshold`)
+    and upward to dependents on failure (`score < params.prior_propagated_fail_threshold`)
+    (ТЗ §2.3, Т-§3.3). `tested_sources` marks the skills whose score came from
     the learner's self-report instead of a check (default `tested`).
     """
+    params = params or DiagnosticParams()
     sources = tested_sources or {}
     skill_scores: dict[UUID, float] = {}
     topic_to_skills: dict[UUID, list[UUID]] = {}
@@ -101,7 +91,7 @@ def compute_inferred_priors(
 
     min_down_dist: dict[UUID, int] = {}
     for s_test, score in skill_scores.items():
-        if score >= PRIOR_PROPAGATED_SUCCESS_THRESHOLD:
+        if score >= params.prior_propagated_success_threshold:
             queue = [(s_pre, 1) for s_pre in prereqs_of.get(s_test, set())]
             visited = {s_test}
             while queue:
@@ -119,7 +109,7 @@ def compute_inferred_priors(
 
     min_up_dist: dict[UUID, int] = {}
     for s_test, score in skill_scores.items():
-        if score < PRIOR_PROPAGATED_FAIL_THRESHOLD:
+        if score < params.prior_propagated_fail_threshold:
             queue = [(s_dep, 1) for s_dep in dependents_of.get(s_test, set())]
             visited = {s_test}
             while queue:
@@ -139,8 +129,8 @@ def compute_inferred_priors(
     for s_id, t_id in skills:
         if s_id in skill_scores:
             score = skill_scores[s_id]
-            prior_m = min(0.5, score * PRIOR_TESTED_FACTOR)
-            conf = PRIOR_TESTED_CONFIDENCE
+            prior_m = min(params.prior_tested_max_mastery, score * params.prior_tested_factor)
+            conf = params.prior_tested_confidence
             priors.append(
                 TopicPriorItem(
                     topic_id=t_id,
@@ -152,8 +142,8 @@ def compute_inferred_priors(
             )
         elif s_id in min_up_dist:
             dist = min_up_dist[s_id]
-            prior_m = PRIOR_UP_FAIL_MASTERY
-            conf = PRIOR_UP_BASE_CONFIDENCE * (PRIOR_PROPAGATED_DECAY**dist)
+            prior_m = params.prior_up_fail_mastery
+            conf = params.prior_up_base_confidence * (params.prior_propagated_decay**dist)
             priors.append(
                 TopicPriorItem(
                     topic_id=t_id,
@@ -165,8 +155,8 @@ def compute_inferred_priors(
             )
         elif s_id in min_down_dist:
             dist = min_down_dist[s_id]
-            prior_m = PRIOR_DOWN_BASE_MASTERY * (PRIOR_PROPAGATED_DECAY**dist)
-            conf = PRIOR_DOWN_BASE_CONFIDENCE * (PRIOR_PROPAGATED_DECAY**dist)
+            prior_m = params.prior_down_base_mastery * (params.prior_propagated_decay**dist)
+            conf = params.prior_down_base_confidence * (params.prior_propagated_decay**dist)
             priors.append(
                 TopicPriorItem(
                     topic_id=t_id,
@@ -430,7 +420,9 @@ def _correct_answer_of(reference: dict[str, Any]) -> str:
     return str(reference.get("option") or reference.get("answer") or "")
 
 
-def _question_dict_from_generated(payload: dict[str, Any]) -> dict[str, Any]:
+def _question_dict_from_generated(
+    payload: dict[str, Any], params: DiagnosticParams
+) -> dict[str, Any]:
     reference = payload.get("reference_solution") or {}
     targets = payload.get("target_skills") or []
     return {
@@ -441,7 +433,7 @@ def _question_dict_from_generated(payload: dict[str, Any]) -> dict[str, Any]:
         "prompt_text": payload.get("prompt_text", ""),
         "options": _options_of(reference, payload.get("options")),
         "correct_answer": _correct_answer_of(reference),
-        "tested_depth": _unit(payload.get("difficulty", DIAGNOSTIC_DEFAULT_TESTED_DEPTH)),
+        "tested_depth": _unit(payload.get("difficulty", params.default_tested_depth)),
     }
 
 
@@ -459,7 +451,11 @@ def _question_dict_from_bank(task: _BankTask) -> dict[str, Any]:
 
 
 async def _reconstruct_state_from_events(
-    db: SessionFactory, learner_id: UUID, domain_id: UUID, session_id: UUID
+    db: SessionFactory,
+    learner_id: UUID,
+    domain_id: UUID,
+    session_id: UUID,
+    params: DiagnosticParams,
 ) -> _DiagnosticState:
     """The only loader of diagnostic session state: replays the session events of `core.events`
     (T-016 D-1). `NOT_FOUND` when this learner has no `diagnostic.started` for the session in
@@ -484,7 +480,7 @@ async def _reconstruct_state_from_events(
     for e in asked:
         question: dict[str, Any] | None
         if e.type == "task.generated":
-            question = _question_dict_from_generated(e.payload)
+            question = _question_dict_from_generated(e.payload, params)
         else:
             bank_task = await _load_bank_task(db, learner_id, UUID(e.payload["task_id"]))
             question = _question_dict_from_bank(bank_task) if bank_task is not None else None
@@ -618,6 +614,7 @@ async def _generate_question(
     skill_name: str,
     fallback_prompt: str,
     event_key: str,
+    params: DiagnosticParams,
 ) -> tuple[NewEvent, DiagnosticQuestion]:
     """Ask `diagnostic@1` (`mode="generate"`) for a question and build its `task.generated`
     event; `actor="diagnostic@1"`, or `"code"` when the deterministic fallback was used. The
@@ -650,7 +647,7 @@ async def _generate_question(
             correct_answer="A",
             is_correct=False,
             score=0.0,
-            tested_depth=DIAGNOSTIC_DEFAULT_TESTED_DEPTH,
+            tested_depth=params.default_tested_depth,
         )
 
     options = diag_out.options if diag_out.options else ["A", "B", "C"]
@@ -742,6 +739,7 @@ async def start_diagnostic(
             skill_name=first_skill_name,
             fallback_prompt=f"What is the principle behind {first_skill_name}?",
             event_key=task_key,
+            params=settings.diagnostic,
         )
 
     started_event = NewEvent(
@@ -843,6 +841,7 @@ async def _evaluate_answer(
     question: dict[str, Any],
     topic_name: str,
     skill_name: str,
+    params: DiagnosticParams,
 ) -> tuple[bool, float, PriorSource]:
     """Grade the answer: a code comparison for `kind != "open"`; for `open` questions
     `diagnostic@1` (`mode="evaluate"`), falling back to the learner's self-report when the model
@@ -872,8 +871,8 @@ async def _evaluate_answer(
         if req.confidence_self_report is not None:
             score = req.confidence_self_report
         else:
-            score = DIAGNOSTIC_NO_SELF_REPORT_SCORE if req.answer.strip() else 0.0
-        return score >= DIAGNOSTIC_SELF_REPORT_CORRECT_THRESHOLD, score, "self_report"
+            score = params.no_self_report_score if req.answer.strip() else 0.0
+        return score >= params.self_report_correct_threshold, score, "self_report"
     return res.value.is_correct, res.value.score, "tested"
 
 
@@ -887,7 +886,7 @@ async def answer_diagnostic(
 ) -> AnswerDiagnosticResponse:
     """Evaluate diagnostic answer, emit `diagnostic.question_answered`, and adaptively select
     the next question upward (if correct) or downward (if incorrect) along the DAG up to
-    `DIAGNOSTIC_MAX_QUESTIONS` (ТЗ §2.3, §3; Т-§3.3).
+    `settings.diagnostic.max_questions` (ТЗ §2.3, §3; Т-§3.3).
     """
     previous = await _find_event_by_key(
         resources.session_factory, learner_id, req.idempotency_key, "diagnostic.question_answered"
@@ -896,7 +895,7 @@ async def answer_diagnostic(
         return await _replay_answer(resources, learner_id, domain_id, req, previous)
 
     state = await _reconstruct_state_from_events(
-        resources.session_factory, learner_id, domain_id, req.session_id
+        resources.session_factory, learner_id, domain_id, req.session_id, settings.diagnostic
     )
     if state.completed is not None:
         raise ApiError(
@@ -921,6 +920,7 @@ async def answer_diagnostic(
         question=curr_q,
         topic_name=curr_topic_name,
         skill_name=curr_skill_name,
+        params=settings.diagnostic,
     )
     answered_event = NewEvent(
         type="diagnostic.question_answered",
@@ -957,7 +957,7 @@ async def answer_diagnostic(
         adj_prereqs.setdefault(p.to_topic_id, []).append(p.from_topic_id)
 
     next_topic: UUID | None = None
-    if step_count < DIAGNOSTIC_MAX_QUESTIONS:
+    if step_count < settings.diagnostic.max_questions:
         if is_correct:
             queue = list(adj_dependents.get(curr_topic_id, []))
             visited = set(queue)
@@ -992,7 +992,7 @@ async def answer_diagnostic(
 
     events_to_append = [answered_event]
     next_question: DiagnosticQuestion | None = None
-    should_finish = next_topic is None or step_count >= DIAGNOSTIC_MAX_QUESTIONS
+    should_finish = next_topic is None or step_count >= settings.diagnostic.max_questions
 
     if next_topic is not None and not should_finish:
         sk_cand = [s for s in skills if s[1] == next_topic]
@@ -1030,6 +1030,7 @@ async def answer_diagnostic(
                 skill_name=next_sk_name,
                 fallback_prompt=f"Diagnostic question on {next_sk_name}?",
                 event_key=next_key,
+                params=settings.diagnostic,
             )
         events_to_append.append(next_task_event)
 
@@ -1057,7 +1058,7 @@ async def finish_diagnostic(
     (ТЗ §2.3, §3; Т-§3.3).
     """
     state = await _reconstruct_state_from_events(
-        resources.session_factory, learner_id, domain_id, req.session_id
+        resources.session_factory, learner_id, domain_id, req.session_id, settings.diagnostic
     )
     if state.completed is not None:
         stored_payload = state.completed.payload
@@ -1080,6 +1081,7 @@ async def finish_diagnostic(
         topic_prereqs=topic_prereqs,
         tested_scores=tested_scores,
         tested_sources=state.tested_sources,
+        params=settings.diagnostic,
     )
 
     completed_event = NewEvent(

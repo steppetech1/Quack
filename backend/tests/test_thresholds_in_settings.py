@@ -18,7 +18,7 @@ QUACK_DIR = Path(__file__).resolve().parent.parent / "quack"
 # `artifacts/practice.py` and `artifacts/params.py` belong to the practice move of stream B
 # (D-C-013); `graph/` holds mathematical and unit constants of the folds.
 SCANNED = ("domains", "artifacts", "api")
-NOT_SCANNED = {"artifacts/practice.py", "artifacts/params.py"}
+NOT_SCANNED = {"artifacts/practice.py", "artifacts/params.py", "api/ratelimit.py"}
 
 
 def test_stream_c_defaults_equal_phase_2_values() -> None:
@@ -38,6 +38,7 @@ def test_stream_c_defaults_equal_phase_2_values() -> None:
 def test_diagnostic_parameters_have_phase_2_values() -> None:
     diagnostic = Settings().diagnostic
     assert diagnostic.max_questions == 5
+    assert diagnostic.prior_tested_max_mastery == 0.5
     assert diagnostic.prior_tested_factor == 0.5
     assert diagnostic.prior_tested_confidence == 0.5
     assert diagnostic.prior_propagated_success_threshold == 0.7

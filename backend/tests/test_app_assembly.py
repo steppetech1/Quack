@@ -212,7 +212,7 @@ def _declared_routes() -> list[tuple[str, str]]:
     for router in (_public, _protected, session_router, artifacts_router):
         for route in router.routes:
             assert isinstance(route, APIRoute), route
-            declared.extend((method, route.path) for method in sorted(route.methods))
+            declared.extend((method, route.path) for method in sorted(route.methods or ()))
     return declared
 
 
