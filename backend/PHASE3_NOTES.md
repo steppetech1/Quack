@@ -940,6 +940,78 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   умолчанию `{"entries": []}` в `tests/support/llm.py` (S9).
 - Требует подтверждения владельцем: нет
 
+### D-B-023. WP13: сводка сессии кодом, строки эпизодов и видимая часть разговора
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP13, A22; `quack/session/checkpoint_render.py`,
+  `quack/session/workers.py::run_session_checkpoint`, `quack/session/context.py`,
+  `quack/jobs/kinds.py::KIND_LLM_ROLES`
+- Контекст: аудит A22 подтвердил нарушение закона 10 (`checkpointer@1` получал прошлую сводку).
+  Схема `session.checkpointed`, вид задачи, ключи и `required_seq = NULL` не меняются.
+- Решение:
+  1. Ход — пара реплик с одним `turn_id` (`turn_index` событий считает реплики). Число
+     свёрнутых ходов: 0, пока ходов ≤ `conversation_verbatim_max_turns` (24); дальше —
+     `conversation_collapse_turns` (12) × число начатых пачек (`Т-§10.3`).
+  2. `rolling_summary` — строки эпизодов свёрнутых ходов, по одной на ход:
+     `Turn 3, give hint: task 1 assigned; level 4 incorrect after hint 2 gap: when to apply`.
+     Эпизодов в смысле `Т-§7.5` в Фазе 3 нет (`episode.closed` — следующая фаза), поэтому
+     единица строки — ход. Имён навыков нет: события несут только id, а id модели не видят
+     (`Т-§4.5`); задачи нумеруются по порядку выдачи в сессии.
+  3. `open_threads` — задачи сессии без верного ответа: `Task 1 is open` /
+     `Task 1 is open: last answer not solved`. `key_observations` — гипотезы заблуждений и
+     неверные/частичные элементы извлечения с цитатой ученика, сработавшие ловушки задач.
+  4. Вход — только события сессии `turn.*_replied`, `task.assigned`, `task.evaluated`,
+     `turn.extracted` (v1 и v2) до `up_to_turn_index`; прошлые `session.checkpointed` не
+     читаются (их `up_to_turn_index` лишь отмечает, что задача уже сделана). actor —
+     `renderer@1` (D-B-002). `KIND_LLM_ROLES["session.checkpoint"] = ()`.
+  5. Контекст учителя: целиком показываются все ходы, которые сводка не свернула (а не
+     последние `active_window_turns` реплик после неё) — иначе ходы между свёрнутой частью и
+     `up_to_turn_index` пропадали бы. Начало видимой части меняется раз в пачку (кэш,
+     `Т-§10.3`); при отставании сводки окно просто длиннее (закон 9).
+     `active_window_turns` контекстом больше не читается (его читает `artifacts`).
+- Не сделано (работа с промптами, за пользователем): удаление `prompts/checkpointer/v1.md`,
+  ключа `checkpointer@1` в `manifest.json`, `CheckpointerOutput` и его следов в тестах
+  (`tests/llm/prompt_contracts.py`, `tests/support/llm.py`, `tests/session/fixtures.py`,
+  `tests/test_meta_mock.py` — C, `tests/test_support_scripted_llm.py`). В `llm_role_models`
+  записи `checkpointer` нет.
+- Правки тестов (§8.9 п.8): `test_session_checkpoint_worker` — вместо ответа и промпта
+  `checkpointer@1` проверяются отсутствие вызовов модели и строк `llm_outbox`, payload, равный
+  `render_checkpoint` по событиям сессии, actor и ключ события; вид задачи, ключ, одно событие
+  на `up_to_turn_index`, поля payload, `last_checkpoint_turn` и повтор без эффекта остались.
+  `test_worker_pool_and_slice` — обработчик сводки не берёт шлюз. Проверка «не ослаблен»:
+  со сворачиванием по одному ходу `T-C4` и `test_visible_part_follows_the_checkpoint` падают.
+- Тесты: `tests/session/test_checkpoint_law10.py` (`T-C1`…`T-C5` и видимая часть).
+- Требует подтверждения владельцем: нет
+
+### D-B-024. Промпты: сверка с пакетом владельца, блок причины повтора, снятие `checkpointer@1`
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01: «сверяясь с техдоком, прими
+  решения сама»)
+- WP / место: §7.6, WP13, WP15 (D-B-019 п.4); `quack/prompts/**`, `PROMPT_CONTRACTS.md`,
+  `tests/llm/prompt_contracts.py`
+- Контекст: владелец передал проверенные промпты (пакет от 2026-10-31, вне репозитория).
+  В пакете у каждого промпта слой 1 (доктрина), а слой 2 (`## Output contract` /
+  `## Input blocks`) — заготовка «заполняет поток B».
+- Решение:
+  1. Слой 1 `teacher`, `extractor@2`, `evaluator`, `task_gen` в репозитории совпадает с пакетом
+     дословно — менять нечего. Номера версий пакета (v6, v3…) — история прогонов владельца;
+     в коде версии `@1` правятся на месте до первой выкатки (§7.6 п.3).
+  2. `structurer`, `curator`, `artifacts` в пакете — другая постановка входа и выхода
+     (structurer — разметка куска материала по кандидатам `Т-§4.3`, curator — решения по парам,
+     artifacts — блоки, карточки и замечания), чем схемы и вызовы кода C (`StructurerOutput` по
+     интервью, `CuratorOutput` по всему графу, `ArtifactGenOutput`). Подменить текст без смены
+     кода C нельзя — не делается, вынесено к C.
+  3. `teacher@1`, слой 2: в конец добавлен входной блок «Check of your previous draft» с
+     `{{ guard_reason }}` — причина повтора идёт модели данными (`Т-§12.1`: «возврат в model с
+     причиной»). Блок в хвосте: на первой попытке он пуст и не рвёт кэш начала (`Т-§10.1`).
+     Доктрина не тронута, правило — ссылка на правило 4 слоя 1.
+  4. `checkpointer@1` удалён: файл, ключ манифеста (скрипт), запись в `PROMPT_SCHEMAS`.
+     `CheckpointerOutput` пока остаётся: его читают `tests/test_meta_mock.py` и `loadtest` (C),
+     `tests/support/llm.py`, `tests/test_support_scripted_llm.py`; снимается после C.
+- Замечание: у активной задачи метки обычно нет (таблица вызова строится по доступным задачам),
+  поэтому в причине чаще только `{"rule": "spoiler"}`. Текст блока это учитывает («when present»).
+- Тесты: `T-G1` дополнен — первая попытка без причины, повторы с ней (на коде без блока падал,
+  коммит `a99ac64`); `test_prompt_contracts_file_is_current`, манифест, `T-M5`.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1447,7 +1519,9 @@ _(пусто)_
 | WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
 | WP5.7 (адаптер) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py` (коммит `3d76160`) | 10 failed, 23 passed: `T-L8` ×9 и `T-L10` — `NotImplementedError` в `ResponsesClient`; `T-L9` (экземпляр, `jsonschema`) зелёный |
 | WP12 (обработчик B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_turn_extract_worker.py tests/session/test_extract_quote_grounding.py tests/session/test_worker_pool_and_slice.py` (коммит `539f863`) | 3 failed, 1 passed: обработчик пишет `turn.extracted` v1 через `extractor@1` |
+| WP13 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_checkpoint_law10.py` (коммит `5f56772`) | 5 failed, 1 passed: `T-C1`…`T-C4` и видимая часть — `NotImplementedError` в `checkpoint_render`; `T-C5` зелёный (у `session.checkpoint` уже `required_seq = NULL`) |
 | WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
+| WP15 (причина повтора) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py -k retries_then` (коммит `a99ac64`) | 1 failed: в запросах повторов нет `{"rule": "spoiler"` — в `teacher@1` нет блока `{{ guard_reason }}` |
 | WP10.2 (`confirm`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `1b209a3`) | 1 failed: тот же ключ с другой `structure_version` → 422 `VALIDATION_ERROR` (проверка версии раньше ключа), ждали 409 |
 | WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
 | WP10.2 (`diagnostic/finish`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py -k same_key_other_session` (коммит `619219c`) | 1 failed: тот же ключ с другим `session_id` → 404 `NOT_FOUND` (сессия ищется раньше ключа), ждали 409 |
@@ -1472,6 +1546,7 @@ _(пусто)_
 | `tests/domains/test_curation_slice_and_pool.py` | тест кэша клиентов по `id(settings)` заменён тестом «ресурсы из `JobContext`, ничего не создаётся и не закрывается» | D-A-007, класс C: свойство сохранено, кэша больше нет |
 | `tests/domains/conftest.py`, `tests/domains/test_diagnostic_and_graph_view.py` | `fake_llm_provider` не пишет в `curation.llm_provider_override`; контекст — `build_job_context` | §8.9: фикстуры и импорты |
 | `tests/test_app_assembly.py::PENDING_ROUTES` | убран `GET /v1/learner/stream` | WP7 смонтирован (`test_pending_routes_are_still_pending` требует удалить запись) |
+| `tests/session/test_session_checkpoint_worker.py`, `tests/session/test_worker_pool_and_slice.py` | ответ и промпт `checkpointer@1` → отсутствие вызова модели и payload по `render_checkpoint`; обработчик сводки без шлюза | §8.9 п.8, D-B-023; с неверной реализацией сворачивания `T-C4` падает |
 
 ## Вопросы к команде
 
