@@ -73,6 +73,9 @@ def settings() -> Settings:
         neo4j_user=NEO4J_USER,
         neo4j_password=NEO4J_PASSWORD,  # type: ignore[arg-type]
         redis_url=REDIS_URL,
+        # Tests of Phases 1–2 inject one provider failure and expect the fallback at once;
+        # the retries of WP5.2 are covered by T-L2/T-L3 with their own settings.
+        llm_retry_attempts=0,
     )
 
 

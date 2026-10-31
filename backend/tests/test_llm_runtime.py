@@ -488,13 +488,12 @@ async def test_incomplete_response_retried_once_with_doubled_limit(
     assert len(capped.calls) == 1
 
     breaker = _scripted()
-    breaker.fail(ScriptedFailure("incomplete", times=12))
+    breaker.fail(ScriptedFailure("incomplete", times=100))
     gw_b = _gw(db, breaker, role_prompts, llm_role_max_output_tokens=limits, circuit_failures=5)
-    for _ in range(6):
+    for _ in range(7):
         with pytest.raises(LLMSchemaError):
             await _ask(gw_b)
-    with pytest.raises(LLMSchemaError):  # still reaches the provider: no open circuit
-        await _ask(gw_b)
+    assert len(breaker.calls) == 14  # every call reached the provider: the circuit stayed closed
 
 
 async def test_bad_request_not_retried(db: SessionFactory, role_prompts: PromptRegistry) -> None:

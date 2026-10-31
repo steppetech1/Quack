@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Collection
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid5
 
 from sqlalchemy import text
@@ -20,8 +21,15 @@ from quack.events.payloads import SkillRef, TaskEvaluated, TaskSubmitted
 from quack.graph.ids import QUACK_UUID_NS
 from quack.jobs import kinds
 from quack.jobs.queue import enqueue_job
-from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
+from quack.llm.errors import (
+    LLMBudgetExceededError,
+    LLMRateLimitedError,
+    LLMSchemaError,
+    LLMUnavailableError,
+)
 from quack.llm.gateway import LLMGateway
+from quack.llm.pressure import pressure_ttl_s
+from quack.logging import get_logger
 from quack.practice.evaluation import (
     TASK_COLUMNS,
     AnswerVerdict,
@@ -48,7 +56,13 @@ from quack.session.teacher_labels import (
     topic_line,
     turns_view,
 )
-from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER, resolve_degraded_mode
+from quack.session.turn_policy import (
+    MEMORY_UNAVAILABLE_MARKER,
+    resolve_degraded_mode,
+    teacher_reasoning_effort,
+)
+
+log = get_logger(__name__)
 
 _TB_COLUMNS = ", ".join(f"tb.{c.strip()}" for c in TASK_COLUMNS.split(","))
 
@@ -97,6 +111,53 @@ async def get_available_tasks(
     sql += " ORDER BY tb.difficulty, tb.created_seq, tb.id"
     rows = (await session.execute(text(sql), params)).all()
     return [task_from_row(r) for r in rows]
+
+
+async def session_evaluations(
+    session: AsyncSession, learner_id: UUID, session_id: UUID
+) -> list[TaskEvaluated]:
+    """`task.evaluated` of the session in `seq` order (input of WP6.5)."""
+    rows = (
+        await session.execute(
+            text(
+                "SELECT payload FROM core.events WHERE learner_id = :l AND session_id = :s "
+                "AND type = 'task.evaluated' ORDER BY seq"
+            ),
+            {"l": learner_id, "s": session_id},
+        )
+    ).all()
+    return [TaskEvaluated.model_validate(r.payload) for r in rows]
+
+
+def _task_evaluated(
+    session_id: UUID, turn_id: UUID, task: TaskToCheck, verdict: AnswerVerdict
+) -> TaskEvaluated:
+    return TaskEvaluated.model_validate(
+        {
+            "session_id": str(session_id),
+            "turn_id": str(turn_id),
+            "task_id": str(task.task_id),
+            "evaluator": verdict.evaluator,
+            "is_correct": verdict.is_correct,
+            "score": verdict.score,
+            "independence": verdict.independence,
+            "feedback": verdict.feedback,
+            "skill_scores": verdict.skill_scores,
+            "triggered_misconceptions": verdict.triggered_misconceptions,
+        }
+    )
+
+
+async def _admit_teacher(resources: AppResources, settings: Settings) -> None:
+    """WP5.3: while the teacher model has a pressure flag the turn waits for it to expire, at
+    most `teacher_admission_wait_ms`; a longer flag sends the turn to `teacher_fallback`."""
+    model = settings.model_for_role("teacher")
+    left = await pressure_ttl_s(resources.redis, model)
+    if left is None:
+        return
+    if left * 1000 > settings.teacher_admission_wait_ms:
+        raise LLMRateLimitedError(f"teacher: {model} is under pressure", retry_after_sec=left)
+    await asyncio.sleep(left)
 
 
 async def open_turn(
@@ -331,18 +392,48 @@ async def open_turn(
         # Deterministic degradation (Т-§17.1): the turn never fails with 503 on LLM errors.
         llm_degraded_mode: str | None = None
         fallback_task: TaskToCheck | None = None
-        try:
-            teacher_result = await gateway.generate_structured(
-                role="teacher",
+        used_fallback = False
+        current_evaluation = (
+            _task_evaluated(session_id, turn_id, submitted_task, verdict)
+            if submitted_task is not None and verdict is not None
+            else None
+        )
+        async with resources.session_factory() as session:
+            evaluations = await session_evaluations(session, learner_id, session_id)
+        if current_evaluation is not None:
+            evaluations.append(current_evaluation)
+        teacher_key = f"turn:{session_id}:{body.idempotency_key}:teacher"
+
+        async def ask_teacher(role: Literal["teacher", "teacher_fallback"]) -> TeacherOutput:
+            result = await gateway.generate_structured(
+                role=role,
                 prompt_version=1,
                 response_model=TeacherOutput,
                 variables=variables,
                 learner_id=learner_id,
                 session_id=session_id,
                 turn_id=turn_id,
-                idempotency_key=f"turn:{session_id}:{body.idempotency_key}:teacher",
+                idempotency_key=teacher_key if role == "teacher" else f"{teacher_key}:fallback",
+                prompt_role="teacher" if role == "teacher_fallback" else None,
+                reasoning_effort=teacher_reasoning_effort(
+                    role=role,
+                    is_first_turn=prev_turn_index < 0,
+                    session_evaluations=evaluations,
+                ),
             )
-            teacher_output = teacher_result.value
+            return result.value
+
+        try:
+            try:
+                await _admit_teacher(resources, settings)
+                teacher_output = await ask_teacher("teacher")
+            except LLMUnavailableError as exc:
+                # WP5.4: 429, no admission or an open circuit of the teacher model.
+                if not isinstance(exc, LLMRateLimitedError) and exc.reason != "circuit_open":
+                    raise
+                log.warning("teacher_fallback", reason=exc.reason, session_id=str(session_id))
+                teacher_output = await ask_teacher("teacher_fallback")
+                used_fallback = True
             decision = resolve_teacher_output(teacher_output, labels)
         except (LLMBudgetExceededError, LLMUnavailableError, LLMSchemaError) as exc:
             llm_degraded_mode = (
@@ -407,20 +498,7 @@ async def open_turn(
                     domain_id=domain_id,
                 )
             )
-            final_evaluated = TaskEvaluated.model_validate(
-                {
-                    "session_id": str(session_id),
-                    "turn_id": str(turn_id),
-                    "task_id": str(submitted_task.task_id),
-                    "evaluator": verdict.evaluator,
-                    "is_correct": verdict.is_correct,
-                    "score": verdict.score,
-                    "independence": verdict.independence,
-                    "feedback": verdict.feedback,
-                    "skill_scores": verdict.skill_scores,
-                    "triggered_misconceptions": verdict.triggered_misconceptions,
-                }
-            )
+            final_evaluated = _task_evaluated(session_id, turn_id, submitted_task, verdict)
             events.append(
                 NewEvent(
                     type="task.evaluated",
@@ -485,7 +563,7 @@ async def open_turn(
             budget_exceeded=llm_degraded_mode == "budget_exceeded",
             llm_unavailable=llm_degraded_mode == "llm_unavailable",
             memory_unavailable=context.memory_unavailable,
-            teacher_fallback=False,  # role `teacher_fallback` arrives with WP5.4
+            teacher_fallback=used_fallback and llm_degraded_mode is None,
             projector_lag=context.lag_degraded,
         )
         teacher_actor = (
