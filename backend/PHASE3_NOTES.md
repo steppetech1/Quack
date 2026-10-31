@@ -1096,6 +1096,32 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Почему: §0.4.3 п.1 (событие не теряется), п.4.
 - Обратимость: функция `learner_stream`.
 - Тесты: `tests/test_learner_stream.py`.
+### D-C-023. WP10.3: `meta-mock` — значения, которых нет в документах
+- Класс: C
+- WP / место: WP10.3, `Д-§11`, `Т-§11.8`; `backend/loadtest/meta_mock.py`, `tests/test_meta_mock.py`
+- Контекст: WP10.3 задаёт поведение подменного сервера, но не все значения: имя и значение
+  параметра длины ответа учителя, число токенов рассуждения, счёт токенов «по длине», вид
+  «короткого текста», выбор доли ответов, тела ошибок. Адаптер `ResponsesClient` (WP5.7, B) —
+  пока только сигнатура (D-B-004), поэтому формат на проводе берётся из контракта Responses API
+  (`Т-§11.1`, `T-L8`), а не из адаптера (по ответу B).
+- Варианты: (1) взять значения из кода стенда и записать здесь, менять без правки контракта;
+  (2) ждать владельца.
+- Решение: (1). `META_MOCK_TEACHER_CHARS` = 600 (длина `reply_text` в ответе на
+  `TeacherOutput`; относится ко всем свободным строкам этой схемы); токены рассуждения: `low` —
+  256, `high` — 1024; токены = ⌈символы / 4⌉ (вход — JSON поля `input`); короткий текст —
+  `text`; `boolean` — `false`; число без границ — 0, с одной границей — граница; `uuid`,
+  `date-time`, `date` — фиксированные значения; `minItems` соблюдается. Доля 429 и доля
+  обрывов — детерминированный счётчик (доля 0,5 — каждый второй), чтобы тесты не зависели от
+  случая. `retry-after` для доли 429 — 1 с, для пустого ведра — время до пополнения; формат
+  `mixed` идёт по кругу `seconds` → `http-date` → `none`. С `tools` шаги чередуют один и два
+  `function_call`, аргументы — минимальный экземпляр `parameters` инструмента. Уровень, кроме
+  `high`, считается `low` (в `Settings` других нет). Процесс — Starlette, запуск
+  `uvicorn --factory loadtest.meta_mock:app_from_env`; `loadtest` добавлен в `include` pyright.
+  `minimal_instance` — общий генератор для `T-L9` (B импортирует его из `loadtest.meta_mock`).
+- Почему: §0.4.3 п.2 (меньше нового); значения — стенда, не продукта; ни одно не влияет на
+  продуктовый код.
+- Обратимость: константы в одном модуле.
+- Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
 - Требует подтверждения владельцем: нет
 
 ## Заблокировано
@@ -1119,6 +1145,7 @@ _(пусто)_
 | WP12 (часть 2) | проверка на неверной реализации (§8.9): `CURRENT_RULES_VERSION_NUM = 1` и вес «без ворот» × `strength` × `polarity_weight` модели; `uv run pytest -q tests/graph -k "rules2 or strength"` | 2 failed: `T-W7` (`projectorVersion = rules@1`), `test_model_strength_does_not_change_the_state` (сила модели меняет `pMastery`). Тесты написаны вместе с реализацией, отдельного красного коммита нет |
 | WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
 | WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
+| WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
 
 ## Правки тестов
 

@@ -42,7 +42,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC"]
 ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.pyright]
-include = ["quack", "tests", "migrations"]
+include = ["quack", "tests", "migrations", "loadtest"]
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 venvPath = "."
