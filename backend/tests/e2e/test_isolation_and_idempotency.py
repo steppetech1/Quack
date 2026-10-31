@@ -79,9 +79,10 @@ def _placeholder_ids(domain_id: UUID, topic_id: UUID) -> Ids:
     return Ids(domain_id, topic_id, zero, zero, zero, zero, zero, zero, 1)
 
 
-async def test_mutating_endpoints_are_idempotent(system: System) -> None:
+async def test_mutating_endpoints_are_idempotent(system_for_walk: System) -> None:
     """T-E2: repeat with the same key and body → same answer, no new events; same key with
     another body → 409. Endpoints without a key are listed with a reason."""
+    system = system_for_walk
     keyed = mutating_routes(system.app) - set(NO_IDEMPOTENCY_KEY)
     assert keyed == set(IDEMPOTENT_WALK), {
         "not walked": sorted(keyed - set(IDEMPOTENT_WALK)),

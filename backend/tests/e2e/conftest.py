@@ -21,6 +21,9 @@ from tests.support.llm import ScriptedFailure
 DEAD_REDIS_URL = "redis://127.0.0.1:1/0"
 # Enough failures for every call of a test: the provider is down for the whole test (T-E9).
 ALWAYS = 1_000_000
+# T-E2 walks every mutating endpoint three times as one learner: more than a minute's
+# `learner_actions_per_min`. The rate limit is not what T-E2 checks.
+WALK_ACTIONS_PER_MIN = 1_000
 
 
 @asynccontextmanager
@@ -43,6 +46,19 @@ async def system(
     redis: Redis,
 ) -> AsyncIterator[System]:
     async with _running(await build_system(settings, pg_engine, db, neo4j, redis)) as stand:
+        yield stand
+
+
+@pytest.fixture
+async def system_for_walk(
+    settings: Settings,
+    pg_engine: AsyncEngine,
+    db: SessionFactory,
+    neo4j: AsyncDriver,
+    redis: Redis,
+) -> AsyncIterator[System]:
+    walk = settings.model_copy(update={"learner_actions_per_min": WALK_ACTIONS_PER_MIN})
+    async with _running(await build_system(walk, pg_engine, db, neo4j, redis)) as stand:
         yield stand
 
 

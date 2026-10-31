@@ -1437,6 +1437,23 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `tests/artifacts/test_artifacts_search_export.py::test_notes_crud`, `T-E2`.
 - Требует подтверждения владельцем: нет (поведение задано `T-E2`; выбор только в способе)
 
+### D-C-028. Стенд e2e: обход T-E2 — с поднятым `learner_actions_per_min` и `settle()` после хода
+- Класс: C
+- WP / место: WP10.2 (`T-E2`); `tests/e2e/conftest.py::system_for_walk`,
+  `tests/e2e/test_isolation_and_idempotency.py::_advance`
+- Контекст: обход шлёт каждый изменяющий запрос три раза от одного ученика — больше 60 в минуту,
+  и `sessions/{id}/finish` получал 429. После шага `turns` фоновые задачи хода дописывали события
+  между замерами «до» и «после повтора».
+- Варианты (с уровнями §0.4.1): (а) поднять лимит для всего стенда — остальные тесты теряют
+  боевой лимит; (б) несколько учеников в обходе — шаги зависят от id предыдущих; (в) фикстура
+  `system_for_walk` с `learner_actions_per_min = 1000` только для `T-E2` и `settle()` после хода.
+- Решение: (в).
+- Почему: `T-E2` проверяет идемпотентность, а не лимит (лимит — `T-A4`/`T-A5`); утверждения теста
+  не меняются.
+- Обратимость: только стенд `tests/e2e`.
+- Тесты: `T-E2`.
+- Требует подтверждения владельцем: нет (стенд тестов)
+
 ## Заблокировано
 
 _(пусто)_
@@ -1476,6 +1493,7 @@ _(пусто)_
 | WP10.2 (стенд + `phase-3-b-workers-jobcontext`, WP2.1 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q` (ветка `phase-3-c-e2e-red`) | 3 failed, 598 passed. `T-E5` зелёный; размыкатель между тестами не переносится. Падают: `T-E1` — `turn.extract` без `required_seq`, задачи ставит не диспетчер (A, WP11); `T-E2` — Q9; `T-E10` — WP3.3 (A) |
 | WP10.2 (стенд на `phase-3` 6cefd3e, после #38/#40 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed → после правки стенда 3 failed, 7 passed. `T-E5` упал: обработчик зовёт модель со схемой `ExtractorOutputV2` (D-B-022), стенд сбивал `ExtractorOutput`; стенд переведён на `ExtractorOutputV2`. Красные: `T-E1` (WP11, A), `T-E2` (#37), `T-E10` (#34, A) |
 | WP10.2 (стенд на `phase-3` 320df09, после #31, #34, #37) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 3 failed, 7 passed → со стендом на `PeriodicScheduler` и `advance_time` (D-C-026) 2 failed, 8 passed. `T-E10` зелёный. Красные: `T-E1` — `turn.extract` без `required_seq` (WP11, A); `T-E2` — `structure/confirm` с тем же ключом и другой `structure_version` → 422 раньше проверки ключа (C, `domains/structure.py`) |
+| WP10.2 (стенд + `phase-3-c-confirm-409`, D-C-027, D-C-028) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | шаги `T-E2` по очереди: `confirm` 422, `PATCH structure` 409 на точный повтор, `diagnostic/finish` 404, `tasks/next`/`hint`/заметки 200 на другое тело, `sessions/{id}/finish` 429 (лимит) — исправлены; `T-E2` зелёный. Красный: `T-E1` — `turn.extract` без `required_seq` (WP11, A) |
 
 ## Правки тестов
 
