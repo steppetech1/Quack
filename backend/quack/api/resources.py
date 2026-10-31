@@ -20,7 +20,7 @@ from quack.db.neo4j import create_driver
 from quack.db.postgres import SessionFactory, create_engine, create_session_factory
 from quack.db.redis import create_redis
 from quack.llm.gateway import LLMGateway
-from quack.llm.provider import HttpLLMProvider
+from quack.llm.responses_client import ResponsesClient
 
 
 @dataclass
@@ -57,7 +57,7 @@ def create_app_resources(settings: Settings) -> AppResources:
     session_factory = create_session_factory(engine)
     neo4j = create_driver(settings)
     redis = create_redis(settings)
-    provider = HttpLLMProvider(settings.meta_api_base_url, settings.meta_api_key.get_secret_value())
+    provider = ResponsesClient(settings.meta_api_base_url, settings.meta_api_key.get_secret_value())
     return AppResources(
         settings=settings,
         engine=engine,
