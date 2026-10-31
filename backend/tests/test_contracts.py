@@ -33,14 +33,7 @@ ASSEMBLY_MODULES = ("quack.api.app", "quack.runtime", "quack.cli", "quack.ops")
 # does not touch it (ТЗ §7.3, PHASE3_NOTES D-C-014). Stream B moves them to
 # `quack.api.resources` in its own PRs (`artifacts/practice.py` goes away with WP6.2) and
 # deletes the entries; `test_layer_exceptions_are_still_needed` fails for a stale entry.
-PENDING_IMPORTS: dict[str, frozenset[str]] = {
-    "quack.artifacts.practice": frozenset({"quack.api.app"}),
-    "quack.session.context": frozenset({"quack.api.app"}),
-    "quack.session.lifecycle": frozenset({"quack.api.app"}),
-    "quack.session.router": frozenset({"quack.api.app"}),
-    "quack.session.stream": frozenset({"quack.api.app"}),
-    "quack.session.turns": frozenset({"quack.api.app"}),
-}
+PENDING_IMPORTS: dict[str, frozenset[str]] = {}
 
 
 def _module_name(path: Path) -> str:

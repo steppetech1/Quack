@@ -15,7 +15,7 @@ from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, task_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -68,12 +68,17 @@ async def test_second_turn_over_lagging_projector_does_not_reassign_task(
 
     # 2. First turn: LLM assigns first math task
     first_task_id = seeded_domain.math_task_ids[0]
+    # WP14.1: labels live for one call; turn 2 repeats the label of turn 1, which no longer
+    # names the first task (it is not offered again).
+    first_label = await task_label(
+        db, seeded_domain.learner_id, seeded_domain.topic_id, session_id, first_task_id
+    )
     fake_llm.push(
         "teacher",
         TeacherOutput(
             reply_text="Here is your first problem.",
             pedagogical_move="assign_task",
-            assign_task_id=first_task_id,
+            assign_task_label=first_label,
         ),
     )
 
@@ -105,7 +110,7 @@ async def test_second_turn_over_lagging_projector_does_not_reassign_task(
         TeacherOutput(
             reply_text="Let's do another problem.",
             pedagogical_move="assign_task",
-            assign_task_id=first_task_id,
+            assign_task_label=first_label,
         ),
     )
 

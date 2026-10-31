@@ -12,8 +12,8 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.db.neo4j import cypher
 from quack.db.redis import create_redis, presence_key

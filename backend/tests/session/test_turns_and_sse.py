@@ -11,13 +11,12 @@ from sqlalchemy import text
 
 from quack.config import FoldParams
 from quack.db.postgres import SessionFactory
-from quack.events.payloads import SkillRef
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
 from quack.session.schemas import ConceptExplainedDraft, TeacherOutput
 from tests.session.fixtures import SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label, task_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -61,20 +60,29 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     await _project_all(neo4j, db, seeded_domain.learner_id)
 
     # 2. Queue teacher LLM response with concept explained and task assigned
+    # WP14.1: the teacher answers with the labels of its context (topic T1, skills S…, tasks K…).
+    power = skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])
     concept_draft = ConceptExplainedDraft(
-        topic_id=seeded_domain.topic_id,
-        skills=[SkillRef(skill_id=seeded_domain.skill_ids[0])],
+        topic_label="T1",
+        explained_skill_labels=[power],
         depth=0.7,
         summary="Power rule explanation",
+    )
+    first_task = await task_label(
+        db,
+        seeded_domain.learner_id,
+        seeded_domain.topic_id,
+        session_id,
+        seeded_domain.math_task_ids[0],
     )
     fake_llm.push(
         "teacher",
         TeacherOutput(
             reply_text="Let's practice the power rule.",
             pedagogical_move="assign_task",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[power],
             concept_explained=concept_draft,
-            assign_task_id=seeded_domain.math_task_ids[0],
+            assign_task_label=first_task,
         ),
     )
 

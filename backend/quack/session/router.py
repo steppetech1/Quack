@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from quack.api.app import AppResources, get_resources
+from quack.api.resources import AppResources, get_resources
 from quack.api.sse import sse_response
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings

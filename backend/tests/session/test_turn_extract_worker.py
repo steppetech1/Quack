@@ -20,7 +20,7 @@ from quack.jobs.queue import claim_next_job, complete_job, enqueue_job
 from quack.jobs.runner import JobContext
 from quack.session.schemas import ExtractorOutput, TeacherOutput
 from quack.session.workers import run_turn_extract
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -55,7 +55,7 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
         TeacherOutput(
             reply_text="Remember to multiply by the exponent and subtract 1.",
             pedagogical_move="explain",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 

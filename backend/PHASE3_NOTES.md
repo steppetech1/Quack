@@ -386,6 +386,104 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 таблица `ops.turn_manifests` — поля по §6.1 и WP14.2, D-B-003) — владелец `quack/db`,
 `migrations/` не назван в §7.3, см. сигнал; заполнение `ScriptedLLMProvider` по S12 — C (S9).
 
+#### Красные прогоны потока B
+
+| WP | Команда | Итог |
+| :-- | :-- | :-- |
+| WP5.7 (препроцессор), WP14.1, §4.4 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py tests/llm/test_labels.py tests/session/test_phase3_hot_path.py` (ветка `phase-3-b-first-red`) | 46 failed, 0 passed: `T-L9` (11), `T-M1` (3), `T-H3` (32) — все `NotImplementedError` |
+| WP6.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py -k parity` (до переноса) | 2 failed: `T-H2[math]`, `T-H2[choice]` — `independence` ход 1.0 ≠ практика 0.5 |
+| WP6.1 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py -k outage` (до реализации) | 1 failed: `T-H1` — ход 2 падает с `ServiceUnavailable` из `read_consistent_slice` |
+
+`T-L9` здесь — только структура схемы. Часть «минимальный экземпляр проходит `jsonschema` и
+`model_validate_json`» ждёт генератора `meta-mock` (WP10.3, C) и D-B-004. `T-H2` (WP6.2)
+пишется в начале WP6.2: ему нужно одно приложение, где ход и `submit` идут через подменённые
+шлюз и compute.
+
+#### Состояние пакетов потока B
+
+| WP | Статус | Тесты |
+| :-- | :-- | :-- |
+| WP5.7 | препроцессор `to_strict_json_schema` — выполнено; адаптер `ResponsesClient` — не начат (после G1, D-B-004) | `T-L9` структура: 11 зелёных (`TaskGenOutput` без свободного словаря — D-B-010) |
+| WP14.1 | `LabelMap` — выполнено; метки в контексте и выходах ролей — не начаты: имена полей связаны с текстом промптов (`teacher@1` называет `focus_skill_ids`, `assign_task_id`, `topic_id`), правятся вместе с промптами | `T-M1`: 3 зелёных |
+| WP6.1 | часть B выполнена: `resolve_degraded_mode`; ход при ошибке связи Neo4j строится на пустом срезе + оверлей сессии, `degraded_mode = "memory_unavailable"`, маркер в слоте памяти (D-B-008). Часть C (шов S7) — обработчик ошибок Neo4j → `503 SERVICE_UNAVAILABLE` в `quack/api` — не начата | `T-H3` (32) зелёные; `T-H1` — ход зелёный, красное только последнее утверждение (`GET /v1/domains/{id}/graph` → 500 вместо 503, ждёт C) |
+| WP6.5 | функция `teacher_reasoning_effort` выполнена: `high` — первый ход сессии и два последних `task.evaluated` сессии с `is_correct = false`, у которых есть общий навык в `skill_scores`; `teacher_fallback` — всегда `low`. Ситуации `Т-§12.9` «смена цели», «построение плана», «разбор доказательства» в срезе Фазы 3 не возникают (плана сессии и доказательств нет — R9, R11). Передача уровня в шлюз, манифест и ledger — после параметра `reasoning_effort` шлюза (WP5) и WP14.2 | `T-H9` табличная часть (10) зелёная; часть с ходом через `ScriptedLLMProvider` — вместе с WP5/WP14.2 |
+| WP6.2 | выполнено: выбор задачи и каскад проверки — в `quack/practice/` (`evaluation.py`, `selection.py`); ход и `submit` вызывают `evaluate_answer`; `TaskGenOutput`, `EvaluatorOutput` — в `quack/practice/schemas.py` (D-C-013 п.2); пороги практики — в блоке B `Settings` (п.3) | `T-H2` (2) зелёные; тесты `tests/session`, `tests/artifacts` — 102 passed |
+
+Договорённость с C по WP6.2 и S4 — D-C-013 (раздел C), со стороны B принята целиком:
+перенос и удаление `TaskGenOutput`/`EvaluatorOutput` из `quack/artifacts/schemas.py` — в этом
+PR; поля `PracticeParams` практики удалены из `quack/artifacts/params.py`, поля `search_*`
+остались у C; поля с метками `CuratorOutput` B называет к G1 в `PROMPT_CONTRACTS.md`.
+`reference_solution` в `TaskGenOutput` пока `dict` — типизация ждёт D-B-001 и промпта
+`task_gen` (D-B-007).
+
+### D-B-006. Одна проверка ответа для хода и практики (WP6.2)
+- Класс: C
+- WP / место: WP6.2; `quack/practice/evaluation.py`, `quack/session/turns.py`; тесты
+  `tests/session/test_turn_submission_fields.py`, `test_turn_evaluation.py`,
+  `test_open_task_evaluation.py`
+- Контекст: аудит A13. Ход потока 2 проверял ответ иначе, чем практика потока 3:
+  `independence = max(0.1, 1 − Σ штрафов − 0.25·(hints_used − записанные))` по подсказкам
+  **только из оверлея** (подсказки, уже применённые проектором, ход не видел — `T-H2` на старом
+  коде: ход 1.0, практика 0.5); открытую задачу оценивал сам учитель
+  (`TeacherOutput.evaluated_*`, `evaluator="llm"`, actor `teacher@1`); при отказе compute —
+  эвристика по `pedagogical_move`; `tested_depth = task.difficulty`; свой текст `feedback`.
+  WP6.2: одна реализация, за основу — ТЗ-П3. Пять утверждений тестов Фазы 2 проверяют старое
+  поведение, в §8.9 их нет.
+- Варианты: (1) ход вызывает каскад практики целиком: подсказки — из журнала сессии,
+  `independence = round(1 − max(штрафов), 4)` (`Т-§7.4`, решение 1 ТЗ-П3), `hints_used`
+  клиента пишется в `task.submitted`, но не штрафует; открытый ответ и отказ compute —
+  `evaluator@1`; утверждения пяти тестов — под единое правило; (2) оставить в ходе свои
+  правила — нарушает WP6.2 и `T-H2`.
+- Решение: (1).
+- Почему: §0.4.1 уровень 2 — WP6.2 и `T-H2` — контракт ТЗ Ф3; §0.4.3 «Частые случаи», строка
+  «Два потока сделали одно и то же по-разному»; закон 4 — вердикт открытого ответа выносит
+  проверяющая роль, а не учитель в том же вызове.
+- Правки тестов (проверка не слабее — то же место, то же свойство; каждая падает на прежней
+  реализации хода):
+  1. `test_turn_submission_fields::test_compute_independence_with_hints_used_and_floor` →
+     `test_independence_counts_the_highest_logged_hint`: та же функция расчёта, правило
+     «наибольшая ступень»; на правиле «сумма» падает (`[0.6, 0.5]` → 0.4).
+  2. там же, `…writes_response_time_sec_and_independence`: `independence` 0.5 → 1.0
+     (подсказки клиента без события не штрафуют); `hints_used == 2` в `task.submitted` остался.
+  3. там же, `…combines_overlay_hint_penalties_and_hints_used`: 0.2 → 0.7.
+  4. `test_turn_evaluation::test_math_task_evaluated_in_turn_via_compute`: `feedback`
+     `"correct"` → `FEEDBACK_CORRECT` практики; `independence` 0.75 → 1.0 (как п.2).
+  5. `test_open_task_evaluation`: вход — ответ `evaluator@1` вместо полей учителя
+     (утверждения `evaluator == "llm"`, `score`, `is_correct` прежние); при отказе compute
+     `evaluator` `"compute"` → `"hybrid"` (каскад ТЗ-П3), добавлено `is_correct is True`.
+- Не меняется: поля `TeacherOutput.evaluated_*` остаются в схеме (имена связаны с промптом,
+  см. WP14.1), код их больше не читает.
+- Обратимость: функции хода в `turns.py` (один вызов `evaluate_answer`).
+- Тесты: `T-H2`; пять правок выше.
+- Требует подтверждения владельцем: да
+
+### D-B-007. `reference_solution` в `TaskGenOutput` остаётся `dict` до ответа по D-B-001
+- Класс: B
+- WP / место: WP6.2 / WP6.4, `quack/practice/schemas.py::TaskGenOutput`; `T-L9`
+- Контекст: D-C-013 п.2 предлагает типизировать `reference_solution` в том же PR. Формат ждёт
+  D-B-001 (класс C), а правило 5 промпта `task_gen@1` описывает ключи — текст промпта ведёт
+  владелец. WP6.2 требует переноса без изменения поведения.
+- Решение: перенос без изменения типа; типизация — отдельным PR вместе с промптом, до G1.
+  До этого `T-L9[TaskGenOutput]` красный (ветка B, не `phase-3`).
+- Обратимость: одна аннотация поля.
+- Требует подтверждения владельцем: нет
+
+### D-B-005. `title` и `default` в строгой схеме
+- Класс: B
+- WP / место: WP5.7, `quack/llm/strict_schema.py`
+- Контекст: `model_json_schema()` пишет `title` у каждого поля и `default` у необязательных.
+  `Т-§11.1` перечисляет правила строгого режима, но о этих ключах молчит; в строгом режиме
+  все свойства обязательны, и `default` модель не применяет.
+- Варианты: (1) отбрасывать `title` и `default`, остальные ключи (`enum`, `format`,
+  `minimum`, `maxLength`, `description`) сохранять; (2) передавать схему pydantic как есть.
+- Решение: (1).
+- Почему: §0.4.3 п.1 — меньше ключей, которые сервер может не принять в строгом режиме;
+  `description` нужен модели (`Т-§22.2`). Принимает ли Meta `format`, `minimum`,
+  `maxLength` в строгом режиме — \[ПРОВЕРИТЬ\] прогоном `meta_smoke.py` (DoD п.6a).
+- Обратимость: константа `_DROPPED_KEYS`.
+- Тесты: `T-L9`.
+- Требует подтверждения владельцем: нет
+
 ### D-B-004. SDK OpenAI и `jsonschema` не входят в зависимости
 - Класс: D
 - WP / место: WP5.7 (адаптер `ResponsesClient` поверх `AsyncOpenAI`, `Т-§11.5`), `T-L8`,
@@ -399,6 +497,196 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 - Не блокирует: Этап I и `to_strict_json_schema` (до G1). Блокирует: адаптер WP5.7 после G1,
   часть `T-L9` про `jsonschema`. До ответа `ResponsesClient` — сигнатура без импорта SDK.
 - Требует решения владельца: да
+
+### D-B-008. Ход при недоступном Neo4j: какие ошибки ловятся и куда идёт маркер (WP6.1)
+- Класс: B
+- WP / место: WP6.1; `quack/session/context.py` (`NEO4J_CONNECTION_ERRORS`,
+  `build_turn_context`), `quack/session/turns.py` (переменные `teacher@1`)
+- Контекст: WP6.1 называет «ошибку связи драйвера Neo4j (недоступен сервер, истекла сессия,
+  таймаут)» и маркер `memory temporarily unavailable` в слоте памяти (`Т-§20.7`). Конкретные
+  классы драйвера и место маркера в шаблоне не названы; текст промпта ведёт владелец.
+- Решение: (1) ловятся `ServiceUnavailable` (с подклассами), `SessionExpired`,
+  `ConnectionAcquisitionTimeoutError` и `TimeoutError`; прочие ошибки Neo4j (синтаксис,
+  ограничения) по-прежнему роняют ход. Срез — пустой `InMemoryGraph` с `applied_seq = 0`,
+  поэтому оверлей накладывает все события сессии и инвариант «задача сессии не назначается
+  повторно» сохраняется. (2) Маркер подставляется кодом как значение обеих переменных слота
+  памяти — `skills_slice_json` и `misconceptions_json`; текст `teacher/v1.md` не меняется.
+  `teacher_fallback` в `resolve_degraded_mode` пока `False` (роль — WP5.4).
+- Почему: §0.4.3 п.1 — минимальная правка без изменения текста промпта; классы — те, что
+  драйвер 6.x бросает при потере связи (`ServiceUnavailable`, `SessionExpired` уже считаются
+  временными в `graph/worker.py::TRANSIENT_ERRORS`).
+- Обратимость: кортеж `NEO4J_CONNECTION_ERRORS`; две строки в `turns.py`.
+- Тесты: `T-H1`, `T-H3`.
+- Требует подтверждения владельцем: нет. Сообщить: маркер в слотах памяти — часть контракта
+  `teacher@1` (§7.6), войдёт в `PROMPT_CONTRACTS.md`.
+
+### D-B-009. Промпты из пакета владельца: как они ложатся в репозиторий; `evaluator@1`
+- Класс: B
+- WP / место: §7.6; `quack/prompts/*`, `quack/prompts/build_manifest.py`,
+  `quack/practice/schemas.py::EvaluatorOutput`, `quack/practice/evaluation.py`, `Settings`
+  (`evaluator_verdict_scores`)
+- Контекст: владелец передал промпты Фазы 3 (пакет `phase3_handover`, 31.10): слой 1
+  (доктрина) проверен на стенде, слой 2 — заглушки `⟦…⟧`, тестовые контракты выходов — в
+  `scenarios/<роль>/_test_contract.md`. Указание владельца: промпты подгоняются под код,
+  критичных правок в них не вносить; решения принимает B.
+- Решение:
+  1. Слой 1 переносится побайтно; заменяется только раздел `## Output contract` (по тестовому
+     контракту роли и схеме кода) и добавляется `## Input blocks` с переменными `{{ }}`
+     загрузчика. Имена файлов — роли кода: `teacher/v6` → `teacher/v1.md`,
+     `evaluator/v2` → `evaluator/v1.md`, `task_generator/v3` → `task_gen/v1.md`,
+     `extractor/v2` → `extractor/v2.md` (WP12.1). До первой выкатки `@1` правится на месте
+     (§7.6 п.3). `manifest.json` пересобирает `uv run python -m quack.prompts.build_manifest`
+     (прежние хеши скрипт воспроизводит).
+  2. Параметры вызова из README пакета (`temperature`, `muse-spark-1.0`, лимиты) не берутся:
+     действуют WP5.7 и `Т-§1.3`.
+  3. LaTeX в `reply_text`: `$…$` в строке, `$$…$$` отдельной строкой (в документах
+     разделители не названы).
+  4. `teacher@1`: пункт `task_markup` пакета не переносится (разметка заданий — §2.2).
+     Поля `evaluated_*` остаются в схеме, промпт требует `null`. Маркер памяти описан в
+     блоке «What we know about the learner».
+  5. `evaluator@1`: схема выхода — контракт промпта (`items`, `verdict`, `confidence`,
+     `misconception`, `note`). Код переводит вердикт в поля `task.evaluated` (payload не
+     меняется): `is_correct = verdict == "correct"`, `score` — по
+     `Settings.evaluator_verdict_scores` (1.0 / 0.5 / 0.0), `skill_scores` — всем целевым
+     навыкам с этим `score` и `compute_tested_depth` (как вердикт кода, решение 8 ТЗ-П3),
+     `feedback` — тексты кода. `unclear` — «не проверено» (закон 8): тот же
+     детерминированный fallback, что при сбое LLM. Рубрика — `key_points` эталона
+     (`R1…`), без них эталон — один пункт R1. Известные заблуждения — имена задачи с
+     метками `M1…`; `new: …` — новое имя; неизвестная метка отбрасывается с логом.
+- Почему: §0.4.3 п.1 и указание владельца; закон 4 — чисел от модели (`score`,
+  `skill_scores`) больше нет.
+- Правки тестов (ожидания по новому контракту; проверяемое свойство то же):
+  `tests/artifacts/test_practice_engine.py::test_submit_falls_back_to_evaluator_on_parse_error`
+  (вход — вердикт `incorrect` + `new:` заблуждение; ожидаются поля, переведённые кодом,
+  `misconception_id = null`), `tests/session/test_open_task_evaluation.py` (два входа;
+  `score` 0.9 → 1.0 для `correct`), ответчик по умолчанию в `tests/support/llm.py` (файл C,
+  исключение §7.3 — уведомить C).
+- Обратимость: схема и одна функция `evaluate_answer`.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-010. `task_gen@1`: схема — контракт промпта, строку банка собирает код
+- Класс: B (затрагивает файл C `quack/artifacts/practice.py::next_task` — исключение §7.3)
+- WP / место: `quack/practice/schemas.py::TaskGenOutput`, `quack/practice/generation.py`,
+  `Settings.task_gen_target_level`
+- Решение: выход — контракт промпта (`statement`, `options` с `catches`, `answer`,
+  `solution`, `tests`, `method_named`, `variant_of`, `form`, `pair_task`) плюс одно поле
+  слоя 2 `hints` (три ступени; без него не работает лестница подсказок практики). Код:
+  `family_id` — своё семейство `gen-<12 hex id>` на задачу (меток задач модель не видит,
+  `variant_of` не разрешить); `difficulty` — `default_target_difficulty`; целевой навык
+  выбирает код (A7), модель видит его как `S1: <имя>` (WP14.1); `reference_solution` — в
+  ключах, которые сейчас читают ход и практика (`sympy` + `check_mode` по типу ответа,
+  `option`/`answer`/`options`, `answer`), плюс `solution`, `units`, `hints`. Тип ответа не
+  подходит к виду задачи или у выбора не ровно один верный вариант → `GeneratedTaskError`
+  → тот же откат на банк, что при сбое LLM. `pair_task` пока не показывается.
+- Закрывает D-B-007: свободного словаря в `TaskGenOutput` больше нет, `T-L9` зелёный.
+  D-B-001 (ключи WP6.4) остаётся: переход — один модуль `generation.py` и читатели.
+- Правки тестов: `test_practice_engine::test_next_task_targets_new_family` — `family_id`
+  ждётся от кода, вместо UUID навыка в промпте — `S1: <имя>` и отсутствие UUID (WP14.1);
+  добавлены проверки `sympy` и `check_mode` в банке. Ответчик по умолчанию в
+  `tests/support/llm.py`.
+- Требует подтверждения владельцем: нет (делегировано). Уведомить C (файл `next_task`).
+
+### D-B-011. `extractor@2`: схема — контракт промпта, элемент WP12.1 строит код
+- Класс: B
+- WP / место: WP12.1; `quack/session/schemas.py::ExtractorOutputV2`,
+  `quack/session/extraction.py`, `prompts/extractor/v2.md`
+- Решение: модель отвечает плоским списком `entries` по контракту промпта; чистая функция
+  `to_extracted_items` даёт элементы WP12.1: `success/failure/bypass` →
+  `correct/incorrect/partial` (+ `shown_solution` у `bypass`), три вида подсказки →
+  `hint` + `hint_step` 1–3, `after_example` → `none` (окно свежести считает код, WP12.2
+  п.4), коды пробела переименованы один к одному, у положительного — `none`. У гипотезы
+  заблуждения добавлено поле `misconception_label` (в списке WP12.1 его нет, без него
+  гипотеза не указывает заблуждение) — сообщить C (S5, событие v2).
+- Не сделано: обработчик `turn.extract` остаётся на `extractor@1`, пока C не добавит
+  `turn.extracted` v2 в каталог (WP12).
+- Тесты: `tests/session/test_extraction_v2.py`.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-012. `structurer`, `curator`, `artifact_writer` из пакета в Фазе 3 не подключаются
+- Класс: B
+- Контекст: код `structurer` строит карту по названию домена, целям и фону — текста
+  материала нет, а слой 1 пакета требует «бери только то, что есть в тексте» и кандидатов с
+  метками. `curator` в коде получает весь граф домена и ведёт ещё `promotions`; промпт
+  пакета решает готовые пары. `artifact_writer` отдаёт блоки с источниками и карточки, код
+  ждёт `title` + Markdown; схема и вызов — файлы C.
+- Решение: `structurer@1` и `curator@1` остаются прежними; промпты пакета ждут функций, под
+  которые написаны (материалы и кандидаты, пары по сходству) — следующая фаза (§2.1).
+  `artifacts` — отдельным шагом по согласованию с C: схема `{blocks, cards, review}`,
+  Markdown собирает код.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-013. Учитель на метках (WP14.1)
+- Класс: B
+- WP / место: WP14.1; `quack/session/schemas.py::TeacherOutput`,
+  `quack/session/teacher_labels.py`, `quack/session/turns.py`, `prompts/teacher/v1.md`
+- Решение: поля выхода `focus_skill_labels`, `assign_task_label`,
+  `concept_explained.topic_label`, `concept_explained.explained_skill_labels` (имена — по
+  примеру WP14.1 и списку пакета владельца). Контекст учителя: тема сессии — `T1`, навыки
+  среза — `S…` в порядке среза, их заблуждения — `M…`, задачи — `K…` в порядке
+  `get_available_tasks`; учителю предлагаются только задачи с меткой (`label_max_tasks`).
+  Свойства узлов, ключи которых — id (`id`, `*Id`, `*_id`, `seq`), в промпт не попадают;
+  оценка задачи и `related_task_id` прошлых ходов — по метке. Код переводит метки в id перед
+  записью событий; payload событий не меняется (`focus_skill_ids`, `topic_id`, `skills`).
+  Неизвестная метка: элемент отбрасывается с логом `teacher_unknown_label`, остальной ответ
+  применяется (закон 9). Однократный возврат модели с текстом ошибки (WP14.1) — через путь
+  исправления шлюза, вместе с WP5 (сейчас не сделан).
+- Правки тестов (подменный провайдер не меняется — очередь ответов, §8.1): ответы учителя
+  в тестах сессии заданы метками; помощники `skill_label`, `task_label` в
+  `tests/session/helpers.py` вычисляют метку по тому же порядку, что код. Утверждения «UUID
+  задачи есть в промпте» (`test_turn_evaluation`, `test_turn_submission_fields`) заменены
+  на «UUID нет, задача видна по метке / условию» — требование WP14.1 и `T-M3`. В
+  `test_turn_lag_and_checkpoints` и `T-H1` второй ход повторяет метку первого: она больше
+  не называет первую задачу — свойство «задача сессии не назначается повторно» то же.
+- Тесты: `tests/session/test_teacher_labels.py`.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-014. `PROMPT_CONTRACTS.md`, `T-M5`; имена полей с метками для `CuratorOutput`
+- Класс: B
+- WP / место: §7.6, S4, D-C-013 п.4; `backend/PROMPT_CONTRACTS.md`,
+  `tests/llm/prompt_contracts.py`, `tests/llm/test_labels.py`
+- Решение: реестр «промпт → схема», поля с метками, маркеры и точки правки — в
+  `tests/llm/prompt_contracts.py` (не в `quack/prompts`: ядро не импортирует продуктовые
+  схемы, `T-A6`). Файл собирается `uv run python -m tests.llm.prompt_contracts`; тест
+  `test_prompt_contracts_file_is_current` падает, если файл устарел. `T-M5` проверяет блок
+  `## Output contract` промптов, где он есть (`teacher@1`, `evaluator@1`, `task_gen@1`,
+  `extractor@2`).
+- Для C (D-C-013 п.4), имена полей с метками в `CuratorOutput` вместо UUID:
+  `promotions[].skill_label`, `promotions[].topic_label`; `skill_merges[]`,
+  `topic_merges[]`, `misconception_merges[]` — `source_label`, `target_label`. Промпт
+  `curator@1` остаётся прежним (D-B-012); после правки схемы C B добавляет поля в
+  `LABEL_FIELDS` и пересобирает файл.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-015. Надёжность шлюза (WP5.1–5.6) и переход хода на `teacher_fallback`
+- Класс: B
+- WP / место: WP5.1–5.6, WP6.5; `quack/llm/gateway.py`, `quack/llm/pressure.py`,
+  `quack/session/turns.py`
+- Решения:
+  1. `llm_semaphore_limit` (`С-§1.3`) остаётся в `Settings` и больше не используется (WP5.1):
+     семафор на модель по `llm_concurrency[process_role]`.
+  2. Шлюз получает `redis` в конструкторе (необязательный, по умолчанию `None`): флаг давления
+     и ключ размыкателя без Redis не ставятся, исключений нет. Передачу `resources.redis` в
+     `LLMGateway` при сборке ресурсов делают A/C (`quack/runtime`, `quack/api/resources`).
+  3. Допуск учителя (WP5.3): ход читает оставшийся TTL флага модели учителя; если он не
+     больше `teacher_admission_wait_ms` — ждёт ровно его, иначе сразу `teacher_fallback`
+     (без опроса — нет числа «интервал опроса»). Ожидание слота семафора у ролей горячего
+     пути ограничено тем же `teacher_admission_wait_ms`; не дождался — `LLMRateLimitedError`.
+  4. Размыкатель: 429, 400 и обрыв по лимиту выхода — не сбои; проба, получившая такой
+     ответ, заканчивается без вердикта, следующий вызов пробует снова.
+  5. Ход: `LLMRateLimitedError` или `circuit_open` у учителя → вызов `teacher_fallback`
+     (`prompt_role="teacher"`, ключ `…:teacher:fallback`), `degraded_mode =
+     "teacher_fallback"`; запасной не удался → детерминированная деградация Фазы 2.
+     Уровень рассуждения передаётся в шлюз (`teacher_reasoning_effort`, WP6.5).
+- Правки тестов (§8.9): `test_gateway_semaphore_limits_concurrency` — на семафоры по моделям
+  (п.4); проверка «не ослаблен»: с лимитом 1000 вместо настроенного тест падает.
+  Фикстуры: в общей `settings` (`tests/conftest.py`) `llm_retry_attempts=0` — тесты Фаз 1–2
+  подают один сбой и ждут деградации сразу, повторы WP5.2 проверяют T-L2/T-L3 со своими
+  настройками; `test_gateway_provider_unavailable` — `llm_retry_attempts=0`,
+  `test_gateway_session_budget` — `session_budget_exempt_roles=()` (WP5.6 освобождает
+  `extractor`, а тест проверяет сам бюджет). Утверждения не менялись.
+- Тесты: T-L1–T-L7, T-L11 (часть шлюза), T-L12, T-L13. T-L8, T-L10 — адаптер WP5.7 (ждёт
+  D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
+- Требует подтверждения владельцем: нет (делегировано).
 
 ### Поток C
 
