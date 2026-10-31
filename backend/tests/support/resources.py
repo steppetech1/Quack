@@ -41,7 +41,7 @@ def build_app_resources(
         engine=engine,
         session_factory=factory,
         neo4j=cast(AsyncDriver, neo4j),
-        redis=cast(Redis, redis),  # may be None: contract Redis | None (D-C-005)
+        redis=cast(Redis | None, redis),
         llm=LLMGateway(factory, provider or UnavailableLLMProvider(), settings),
         compute=compute or scripted_compute(ComputeScenario()),
     )

@@ -52,6 +52,8 @@ ALL_TABLES = (
     "ops.deletion_tombstones",
     "ops.projector_offsets",
     "ops.event_types_seen",
+    "ops.dispatcher_offsets",
+    "ops.turn_manifests",
 )
 
 
