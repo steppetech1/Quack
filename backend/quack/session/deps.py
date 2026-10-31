@@ -63,7 +63,7 @@ def _unauthorized(message: str) -> ApiError:
 
 
 async def current_learner_id(request: Request) -> UUID:
-    """Decode `Authorization: Bearer` (HS256, `sub` -> learner_id); 401 for tombstoned learners."""
+    """Decode `Authorization: Bearer` (HS256, `sub` -> learner_id); 401 for deleted learners."""
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
         raise _unauthorized("missing bearer token")
@@ -75,11 +75,15 @@ async def current_learner_id(request: Request) -> UUID:
     except (jwt.InvalidTokenError, KeyError, ValueError) as exc:
         raise _unauthorized("invalid token") from exc
     async with get_resources(request).session_factory() as session:
-        tombstoned = await session.scalar(
-            text("SELECT 1 FROM ops.deletion_tombstones WHERE learner_id = :l LIMIT 1"),
+        revoked = await session.scalar(
+            text(
+                "SELECT 1 WHERE EXISTS"
+                " (SELECT 1 FROM ops.deletion_tombstones WHERE learner_id = :l)"
+                " OR EXISTS (SELECT 1 FROM auth.users WHERE id = :l AND deleted_at IS NOT NULL)"
+            ),
             {"l": learner_id},
         )
-    if tombstoned is not None:
+    if revoked is not None:
         raise _unauthorized("learner is deleted")
     return learner_id
 

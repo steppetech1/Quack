@@ -6,6 +6,8 @@ import contextlib
 from typing import Any
 from uuid import UUID, uuid4
 
+import neo4j
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,9 +16,11 @@ from quack.api.app import AppResources
 from quack.api.errors import ApiError
 from quack.config import Settings
 from quack.db.neo4j import cypher
-from quack.db.redis import presence_key
+from quack.db.redis import create_redis, presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
+from quack.graph.neo4j_store import read_applied_seq
+from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.jobs import kinds
 from quack.jobs.queue import ClaimedJob, enqueue_job
 from quack.jobs.runner import JobContext, register_job_handler
@@ -41,38 +45,27 @@ _SESSION_COLUMNS = (
     "last_turn_index, last_checkpoint_turn"
 )
 
+_RELEASE_PRESENCE_LUA = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
 _TOPIC_QUERY = """
 MATCH (t:Topic) WHERE t.learnerId = $l AND t.domainId = $d
   AND ($t IS NULL OR t.id = $t) AND NOT t.status IN ['archived', 'merged', 'skipped']
-  AND ($t IS NOT NULL OR t.displayState IN $states)
 OPTIONAL MATCH (s:Skill)-[:PART_OF]->(t) WHERE NOT s.status IN ['archived', 'merged']
 WITH t, s ORDER BY s.id
 WITH t, collect(CASE WHEN s IS NULL THEN NULL ELSE {id: s.id, name: s.name} END) AS skills
 RETURN t.id AS id, t.name AS name, skills
-ORDER BY t.name, t.id LIMIT 1
+ORDER BY CASE WHEN t.displayState IN $states THEN 0 ELSE 1 END, t.name, t.id LIMIT 1
 """
 
 
-async def _default_plan(
-    resources: AppResources, learner_id: UUID, domain_id: UUID, topic_id: UUID | None
-) -> list[dict[str, Any]]:
-    """3-5 steps from the skills of the topic (or of the first open topic of the domain)."""
-    skills: list[dict[str, Any]] = []
-    topic_name = ""
-    async with resources.neo4j.session() as session:
-        result = await session.run(
-            cypher(_TOPIC_QUERY),
-            {
-                "l": str(learner_id),
-                "d": str(domain_id),
-                "t": str(topic_id) if topic_id else None,
-                "states": list(_PLAN_STATES),
-            },
-        )
-        record = await result.single()
-    if record is not None:
-        topic_name = str(record["name"] or "")
-        skills = [s for s in record["skills"] if s is not None]
+def _plan_from_skills(topic_name: str, skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """3-5 steps: learn each skill (at most 3), then practice and summary."""
     plan: list[dict[str, Any]] = [
         {"kind": "learn", "skill_id": s["id"], "title": s["name"]}
         for s in skills[: MAX_PLAN_STEPS - 2]
@@ -86,8 +79,68 @@ async def _default_plan(
     return [{"step": i, **step} for i, step in enumerate(plan)]
 
 
+async def _resolve_topic_and_plan(
+    resources: AppResources,
+    settings: Settings,
+    learner_id: UUID,
+    domain_id: UUID,
+    topic_id: UUID | None,
+    explicit_plan: list[dict[str, Any]] | None,
+) -> tuple[UUID | None, list[dict[str, Any]]]:
+    """Resolve the session topic and its plan from a consistent Neo4j slice (РТЗ S-3).
+
+    Without `topic_id` the first topic of the domain with an open `displayState` wins, else
+    any active topic of the domain. `explicit_plan` is kept as is.
+    """
+
+    async def load_topic() -> Any:
+        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as session:
+            result = await session.run(
+                cypher(_TOPIC_QUERY),
+                {
+                    "l": str(learner_id),
+                    "d": str(domain_id),
+                    "t": str(topic_id) if topic_id else None,
+                    "states": list(_PLAN_STATES),
+                },
+            )
+            return await result.single()
+
+    async def applied_seq_reader(learner: UUID) -> int:
+        return await read_applied_seq(resources.neo4j, str(learner))
+
+    deps = SliceDeps(
+        session_factory=resources.session_factory,
+        redis=resources.redis,
+        applied_seq_reader=applied_seq_reader,
+        snapshot_read_retries=settings.snapshot_read_retries,
+    )
+    graph_slice = await read_consistent_slice(
+        learner_id, None, load_topic, settings.projector_lag_timeout_ms, deps=deps
+    )
+    record = graph_slice.data
+    resolved = topic_id
+    topic_name = ""
+    skills: list[dict[str, Any]] = []
+    if record is not None:
+        resolved = UUID(str(record["id"]))
+        topic_name = str(record["name"] or "")
+        skills = [s for s in record["skills"] if s is not None]
+    if explicit_plan is not None:
+        return resolved, explicit_plan
+    return resolved, _plan_from_skills(topic_name, skills)
+
+
+def _idempotency_conflict() -> ApiError:
+    return ApiError(
+        "IDEMPOTENCY_CONFLICT",
+        "idempotency_key was already used with different parameters",
+        status_code=409,
+    )
+
+
 async def _started_by_key(
-    session: AsyncSession, learner_id: UUID, key: str
+    session: AsyncSession, learner_id: UUID, key: str, body: StartSessionRequest
 ) -> SessionStarted | None:
     row = (
         await session.execute(
@@ -101,12 +154,27 @@ async def _started_by_key(
     if row is None:
         return None
     p = row.payload
+    stored_topic_id = UUID(p["topic_id"]) if p["topic_id"] else None
+    if (
+        UUID(p["domain_id"]) != body.domain_id
+        or p["mode"] != body.mode
+        or p.get("goal") != body.goal
+        or (body.topic_id is not None and stored_topic_id != body.topic_id)
+    ):
+        raise _idempotency_conflict()
+    session_id = UUID(p["session_id"])
+    status = (
+        await session.execute(
+            text("SELECT status FROM core.sessions WHERE id = :id AND learner_id = :l"),
+            {"id": session_id, "l": learner_id},
+        )
+    ).scalar_one_or_none()
     return SessionStarted(
-        session_id=UUID(p["session_id"]),
+        session_id=session_id,
         domain_id=UUID(p["domain_id"]),
-        topic_id=UUID(p["topic_id"]) if p["topic_id"] else None,
+        topic_id=stored_topic_id,
         mode=p["mode"],
-        status="active",
+        status=status or "active",
         plan=p["plan"],
         start_seq=int(row.seq),
     )
@@ -122,17 +190,30 @@ async def _set_presence(
         )
 
 
+async def _release_presence(redis: Redis | None, learner_id: UUID, session_id: UUID) -> None:
+    """Delete the presence key only if it still holds `session_id` (atomic compare-and-delete)."""
+    if redis is None:
+        return
+    with contextlib.suppress(RedisError, OSError):
+        await redis.eval(  # type: ignore[misc]
+            _RELEASE_PRESENCE_LUA, 1, presence_key(learner_id), str(session_id)
+        )
+
+
 async def start_session(
     resources: AppResources, settings: Settings, learner_id: UUID, body: StartSessionRequest
 ) -> SessionStarted:
     event_key = f"session.start:{body.idempotency_key}"
     async with resources.session_factory() as session:
-        existing = await _started_by_key(session, learner_id, event_key)
+        existing = await _started_by_key(session, learner_id, event_key, body)
     if existing is not None:
-        await _set_presence(resources, settings, learner_id, existing.session_id)
+        if existing.status == "active":
+            await _set_presence(resources, settings, learner_id, existing.session_id)
         return existing
 
-    plan = await _default_plan(resources, learner_id, body.domain_id, body.topic_id)
+    topic_id, plan = await _resolve_topic_and_plan(
+        resources, settings, learner_id, body.domain_id, body.topic_id, body.plan
+    )
     session_id = uuid4()
     async with resources.session_factory() as session, session.begin():
         # Serialize with other writers of the learner, then re-check the key.
@@ -147,7 +228,7 @@ async def start_session(
             text("SELECT 1 FROM core.learner_seq WHERE learner_id = :l FOR UPDATE"),
             {"l": learner_id},
         )
-        existing = await _started_by_key(session, learner_id, event_key)
+        existing = await _started_by_key(session, learner_id, event_key, body)
         if existing is not None:
             return existing
         old = (
@@ -179,7 +260,7 @@ async def start_session(
                 payload={
                     "session_id": str(session_id),
                     "domain_id": str(body.domain_id),
-                    "topic_id": str(body.topic_id) if body.topic_id else None,
+                    "topic_id": str(topic_id) if topic_id else None,
                     "mode": body.mode,
                     "goal": body.goal,
                     "plan": plan,
@@ -194,7 +275,7 @@ async def start_session(
     return SessionStarted(
         session_id=session_id,
         domain_id=body.domain_id,
-        topic_id=body.topic_id,
+        topic_id=topic_id,
         mode=body.mode,
         status="active",
         plan=plan,
@@ -344,9 +425,9 @@ async def finish_session(
                 await session.execute(
                     text(
                         "SELECT COUNT(*) FROM core.events WHERE learner_id = :l "
-                        "AND session_id = :s AND type = ANY(:types)"
+                        "AND session_id = :s AND type = 'turn.student_replied'"
                     ),
-                    {"l": learner_id, "s": session_id, "types": list(TURN_EVENT_TYPES)},
+                    {"l": learner_id, "s": session_id},
                 )
             ).scalar_one()
         )
@@ -395,8 +476,7 @@ async def finish_session(
             ),
         )
 
-    with contextlib.suppress(RedisError, OSError):
-        await resources.redis.delete(presence_key(learner_id))
+    await _release_presence(resources.redis, learner_id, session_id)
     return FinishResponse(
         session_id=session_id,
         status="completed",
@@ -421,7 +501,9 @@ async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
                 {"mins": timeout_min},
             )
         ).all()
+        abandoned: list[tuple[UUID, UUID]] = []
         for row in stale_rows:
+            abandoned.append((row.learner_id, row.id))
             await append_events(
                 session,
                 row.learner_id,
@@ -439,3 +521,13 @@ async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
                 ],
                 publish_wakeup=False,
             )
+
+    if not abandoned:
+        return
+    redis = create_redis(ctx.settings)
+    try:
+        for learner_id, session_id in abandoned:
+            await _release_presence(redis, learner_id, session_id)
+    finally:
+        with contextlib.suppress(RedisError, OSError):
+            await redis.aclose()

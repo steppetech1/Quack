@@ -143,7 +143,7 @@ async def test_math_task_evaluated_in_turn_via_compute(
     assert evaluated_row.payload["evaluator"] == "compute"
     assert evaluated_row.payload["is_correct"] is True
     assert evaluated_row.payload["score"] == 1.0
-    assert evaluated_row.payload["independence"] == 1.0
+    assert evaluated_row.payload["independence"] == 0.75
     assert evaluated_row.payload["feedback"] == "correct"
     assert len(evaluated_row.payload["skill_scores"]) == 1
     assert UUID(evaluated_row.payload["skill_scores"][0]["skill_id"]) == seeded_domain.skill_ids[0]

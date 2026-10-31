@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from quack.api.app import get_resources
 from quack.config import Settings
-from quack.domains import auth, diagnostic, graph_view, learner, service, structure
+from quack.domains import auth, diagnostic, graph_view, learner, service, structure, topics
 from quack.domains.auth import get_current_learner_id
 from quack.domains.schemas import (
     AnswerDiagnosticRequest,
@@ -338,3 +338,37 @@ async def get_topic_detail_endpoint(
     return await graph_view.get_topic_detail_view(
         resources, settings, learner_id, domain_id, topic_id
     )
+
+
+# --- 6. Short topic routes (resolve `domain_id` from the learner's events) ---
+
+
+@router.get(
+    "/topics/{topic_id}",
+    response_model=TopicDetailResponse,
+    status_code=200,
+)
+async def get_topic_detail_short_endpoint(
+    topic_id: UUID,
+    request: Request,
+    learner_id: CurrentLearnerId,
+) -> TopicDetailResponse:
+    resources = get_resources(request)
+    domain_id = await topics.resolve_topic_domain_id(resources, learner_id, topic_id)
+    return await get_topic_detail_endpoint(domain_id, topic_id, request, learner_id)
+
+
+@router.patch(
+    "/topics/{topic_id}/status",
+    response_model=UpdateTopicStatusResponse,
+    status_code=200,
+)
+async def update_topic_status_short_endpoint(
+    topic_id: UUID,
+    req: UpdateTopicStatusRequest,
+    request: Request,
+    learner_id: CurrentLearnerId,
+) -> UpdateTopicStatusResponse:
+    resources = get_resources(request)
+    domain_id = await topics.resolve_topic_domain_id(resources, learner_id, topic_id)
+    return await update_topic_status_endpoint(domain_id, topic_id, req, request, learner_id)

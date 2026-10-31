@@ -5,9 +5,12 @@ read-time recomputation of `effective_mastery`, `is_rusty`, and `display_state`
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
+
+import neo4j
 
 from quack.api.app import AppResources
 from quack.api.errors import ApiError
@@ -25,13 +28,62 @@ from quack.domains.schemas import (
 from quack.graph.folds import SkillFoldResult, effective_mastery, skill_is_rusty
 from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
-from quack.graph.topic_display import PrereqSnapshot, SkillSnapshot, recompute_topic_display
+from quack.graph.topic_display import (
+    PrereqSnapshot,
+    SkillSnapshot,
+    TopicDisplayResult,
+    recompute_topic_display,
+)
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def to_ms(moment: datetime) -> int:
     return (moment - _EPOCH) // timedelta(milliseconds=1)
+
+
+def _skill_snapshot(sk_id: str, props: dict[str, Any], now_ms: int) -> SkillSnapshot:
+    """Skill snapshot whose `p_mastery` is the forgetting-adjusted `effective_mastery`."""
+    return SkillSnapshot(
+        skill_id=sk_id,
+        status=str(props.get("status", "unknown")),
+        p_mastery=effective_mastery(
+            float(props.get("pMastery", 0.0)),
+            float(props.get("stability", 0.0)),
+            int(props.get("lastReviewedAt", 0)),
+            now_ms,
+        ),
+        confidence=float(props.get("confidence", 0.0)),
+        evidence_count=int(props.get("evidenceCount", 0)),
+        exposure_count=int(props.get("exposureCount", 0)),
+        mastery_status=str(props.get("masteryStatus", "unknown")),
+        next_review_at=int(props.get("nextReviewAt", 0)),
+        last_practiced_at=int(props.get("lastPracticedAt", 0)),
+    )
+
+
+def _recompute_display(
+    skills: list[SkillSnapshot],
+    raw_p_mastery: dict[str, float],
+    dependents: dict[str, int],
+    prereqs: list[PrereqSnapshot],
+    now_ms: int,
+    settings: Settings,
+) -> TopicDisplayResult:
+    """`mastery` and the prerequisite unlock use decayed mastery; the solid/rusty gate keeps
+    the stored `pMastery` so that a once-solid topic whose review is overdue shows `rusty`
+    instead of falling back to `in_progress` (Т-§8.6).
+    """
+    disp = recompute_topic_display(
+        skills, dependents, prereqs, as_of_ms=now_ms, params=settings.fold
+    )
+    raw_skills = [replace(s, p_mastery=raw_p_mastery.get(s.skill_id, s.p_mastery)) for s in skills]
+    raw_disp = recompute_topic_display(
+        raw_skills, dependents, prereqs, as_of_ms=now_ms, params=settings.fold
+    )
+    if raw_disp.display_state in ("solid", "rusty"):
+        return replace(disp, display_state=raw_disp.display_state)
+    return disp
 
 
 async def get_domain_graph_view(
@@ -58,7 +110,7 @@ async def get_domain_graph_view(
         list[dict[str, Any]],
         dict[str, int],
     ]:
-        async with resources.neo4j.session() as s:
+        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as s:
             d_res = await s.run(
                 "MATCH (d:Domain {id: $d, learnerId: $l}) RETURN d.id AS id",
                 {"d": str(domain_id), "l": str(learner_id)},
@@ -105,19 +157,11 @@ async def get_domain_graph_view(
     now_ms = to_ms(datetime.now(UTC))
 
     skills_by_topic: dict[str, list[SkillSnapshot]] = {}
+    raw_p_mastery: dict[str, float] = {}
     for sk in skills_raw:
         props = sk["props"] or {}
-        snap = SkillSnapshot(
-            skill_id=sk["id"],
-            status=str(props.get("status", "unknown")),
-            p_mastery=float(props.get("pMastery", 0.0)),
-            confidence=float(props.get("confidence", 0.0)),
-            evidence_count=int(props.get("evidenceCount", 0)),
-            exposure_count=int(props.get("exposureCount", 0)),
-            mastery_status=str(props.get("masteryStatus", "unknown")),
-            next_review_at=int(props.get("nextReviewAt", 0)),
-            last_practiced_at=int(props.get("lastPracticedAt", 0)),
-        )
+        snap = _skill_snapshot(sk["id"], props, now_ms)
+        raw_p_mastery[sk["id"]] = float(props.get("pMastery", 0.0))
         skills_by_topic.setdefault(sk["topic_id"], []).append(snap)
 
     topic_mastery: dict[str, float] = {}
@@ -163,8 +207,8 @@ async def get_domain_graph_view(
             for p in prereqs_raw
             if p["to_id"] == t_id
         ]
-        disp = recompute_topic_display(
-            t_skills, dep_counts, prereq_snaps, as_of_ms=now_ms, params=settings.fold
+        disp = _recompute_display(
+            t_skills, raw_p_mastery, dep_counts, prereq_snaps, now_ms, settings
         )
         topic_node_views.append(
             TopicNodeView(
@@ -223,9 +267,10 @@ async def get_topic_detail_view(
         list[dict[str, Any]],
         list[dict[str, Any]],
         list[dict[str, Any]],
+        list[dict[str, Any]],
         dict[str, int],
     ]:
-        async with resources.neo4j.session() as s:
+        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as s:
             t_res = await s.run(
                 "MATCH (d:Domain {id: $d, learnerId: $l})-[:HAS_TOPIC]->(t:Topic {id: $tid}) "
                 "WHERE t.status <> 'merged' "
@@ -240,6 +285,7 @@ async def get_topic_detail_view(
             sk_res = await s.run(
                 "MATCH (t:Topic {id: $tid})<-[:PART_OF]-(sk:Skill) "
                 "WHERE t.domainId = $d AND t.learnerId = $l AND sk.status <> 'merged' "
+                "AND coalesce(sk.status, 'active') <> 'archived' "
                 "RETURN sk.id AS id, properties(sk) AS props",
                 {"d": str(domain_id), "l": str(learner_id), "tid": str(topic_id)},
             )
@@ -247,8 +293,11 @@ async def get_topic_detail_view(
 
             sd_res = await s.run(
                 "MATCH (a:Skill)-[r:DEPENDS_ON]->(b:Skill) "
-                "WHERE a.topicId = $tid AND a.domainId = $d AND a.learnerId = $l "
+                "WHERE a.topicId = $tid AND b.topicId = $tid "
+                "AND a.domainId = $d AND a.learnerId = $l "
                 "AND a.status <> 'merged' AND b.status <> 'merged' "
+                "AND coalesce(a.status, 'active') <> 'archived' "
+                "AND coalesce(b.status, 'active') <> 'archived' "
                 "RETURN a.id AS sid, b.id AS did",
                 {"d": str(domain_id), "l": str(learner_id), "tid": str(topic_id)},
             )
@@ -279,16 +328,37 @@ async def get_topic_detail_view(
             )
             prereqs = [rec.data() async for rec in p_res]
 
+            psk_res = await s.run(
+                "MATCH (p:Topic)-[:PREREQ_OF]->(:Topic {id: $tid}) "
+                "WHERE p.domainId = $d AND p.learnerId = $l AND p.status <> 'merged' "
+                "MATCH (p)<-[:PART_OF]-(sk:Skill) "
+                "WHERE sk.status <> 'merged' AND coalesce(sk.status, 'active') <> 'archived' "
+                "OPTIONAL MATCH (a:Skill)-[:DEPENDS_ON]->(sk) "
+                "WHERE a.status <> 'merged' AND coalesce(a.status, 'active') <> 'archived' "
+                "RETURN p.id AS topic_id, sk.id AS id, properties(sk) AS props, count(a) AS cnt",
+                {"d": str(domain_id), "l": str(learner_id), "tid": str(topic_id)},
+            )
+            prereq_skills = [rec.data() async for rec in psk_res]
+
             dep_res = await s.run(
                 "MATCH (a:Skill)-[:DEPENDS_ON]->(b:Skill) "
                 "WHERE b.topicId = $tid AND b.domainId = $d AND b.learnerId = $l "
-                "AND a.status <> 'merged' "
+                "AND a.status <> 'merged' AND coalesce(a.status, 'active') <> 'archived' "
                 "RETURN b.id AS id, count(a) AS cnt",
                 {"d": str(domain_id), "l": str(learner_id), "tid": str(topic_id)},
             )
             dep_counts = {rec["id"]: rec["cnt"] async for rec in dep_res}
 
-            return topic_dict, skills, skill_deps, misconceptions, artifacts, prereqs, dep_counts
+            return (
+                topic_dict,
+                skills,
+                skill_deps,
+                misconceptions,
+                artifacts,
+                prereqs,
+                prereq_skills,
+                dep_counts,
+            )
 
     slice_res = await read_consistent_slice(learner_id, min_seq=None, loader_fn=_loader, deps=deps)
     (
@@ -298,12 +368,14 @@ async def get_topic_detail_view(
         misc_raw,
         artifacts_raw,
         prereqs_raw,
+        prereq_skills_raw,
         dep_counts,
     ) = slice_res.data
     now_ms = to_ms(datetime.now(UTC))
 
     skill_views: list[SkillNodeView] = []
     skill_snaps: list[SkillSnapshot] = []
+    raw_p_mastery: dict[str, float] = {}
 
     for sk in skills_raw:
         props = sk["props"] or {}
@@ -354,30 +426,32 @@ async def get_topic_detail_view(
                 prior_source=str(props.get("priorSource", "none")),
             )
         )
-        skill_snaps.append(
-            SkillSnapshot(
-                skill_id=sk["id"],
-                status=str(props.get("status", "unknown")),
-                p_mastery=p_m,
-                confidence=float(props.get("confidence", 0.0)),
-                evidence_count=int(props.get("evidenceCount", 0)),
-                exposure_count=int(props.get("exposureCount", 0)),
-                mastery_status=m_stat,
-                next_review_at=n_rev,
-                last_practiced_at=int(props.get("lastPracticedAt", 0)),
-            )
-        )
+        skill_snaps.append(_skill_snapshot(sk["id"], props, now_ms))
+        raw_p_mastery[sk["id"]] = p_m
 
+    prereq_skills_by_topic: dict[str, list[SkillSnapshot]] = {}
+    prereq_dep_counts: dict[str, int] = {}
+    for psk in prereq_skills_raw:
+        prereq_skills_by_topic.setdefault(psk["topic_id"], []).append(
+            _skill_snapshot(psk["id"], psk["props"] or {}, now_ms)
+        )
+        prereq_dep_counts[psk["id"]] = int(psk["cnt"])
     prereq_snaps = [
         PrereqSnapshot(
             topic_id=p["id"],
             status=str(p["props"].get("status", "unknown")),
-            mastery=float(p["props"].get("mastery", 0.0)),
+            mastery=recompute_topic_display(
+                prereq_skills_by_topic.get(p["id"], []),
+                prereq_dep_counts,
+                [],
+                as_of_ms=now_ms,
+                params=settings.fold,
+            ).mastery,
         )
         for p in prereqs_raw
     ]
-    disp = recompute_topic_display(
-        skill_snaps, dep_counts, prereq_snaps, as_of_ms=now_ms, params=settings.fold
+    disp = _recompute_display(
+        skill_snaps, raw_p_mastery, dep_counts, prereq_snaps, now_ms, settings
     )
     t_props = topic_raw["props"] or {}
     topic_view = TopicNodeView(

@@ -199,7 +199,7 @@ async def test_second_start_with_new_key_abandons_old_session(
     assert new_id != old_id
     assert body["status"] == "active"
     assert body["mode"] == "practice"
-    assert body["topic_id"] is None
+    assert body["topic_id"] == str(seed.topic_id)
     _assert_plan_from_topic_skills(body["plan"], seed)
 
     # `session.abandoned` of the old session directly precedes `session.started` of the new.
