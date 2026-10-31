@@ -106,7 +106,7 @@
 | A25 | не проверено C (для B: формат diagnostic — `{"option", "answer", "options"}`, ремедиация T-016) | — | WP6.4 / B |
 | A26 | по STREAM3_NOTES §2 совпадает (проверить B) | `finish_session` ставит `kinds.session_finish_artifacts(learner, sid, {"domain_id", "topic_id"})`, его ждёт `run_finish_artifacts` | WP6.4 / B |
 | A27 | конфликт документов (проверить B) | порядок по ТЗ-П2: `task_evaluated` → `task_assigned`; С-§8.5 — наоборот (PHASE2_STREAM2_NOTES, «Конфликты» п.1) | WP6.4 / B |
-| A28 | подтверждено: Hypothesis-тестов нет | `hypothesis` нет ни в `pyproject.toml`, ни в `tests/` (`@given` не найден) | WP10, R16 / C |
+| A28 | подтверждено: Hypothesis-тестов нет, свойство покрыто частично | `hypothesis` нет ни в `pyproject.toml`, ни в `tests/` (`@given` не найден). Есть детерминированный тест Фазы 1 `tests/test_projector_determinism.py::test_batch_size_and_rebuild_equivalence`: один сценарий со всеми 36 типами событий, пачки по 1, одна пачка, случайные размеры 1–9 (`random.Random(7)`), полная пересборка — снимки равны; и `test_reapplying_already_applied_events_changes_nothing`. Не покрыто: случайные последовательности событий (`Т-§2.5`, ориентир) | WP10, R16 / C |
 | A29 | подтверждено, частично (проверить B) | `llm/provider.py`: `/chat/completions`, `response_format`, `temperature`; `config.py`: `llm_timeout_sec = 60.0`, модели `muse-wonder` / `muse-spark` | WP5.7 / B |
 
 ### Вызовы `enqueue_job` (вход для WP11, шов S11)
@@ -150,7 +150,7 @@
 | R3 | закрывается WP5.7 (A29 подтверждён: `/chat/completions`) |
 | R4 | закрывается WP5.7, WP9.2, WP10.3 |
 | R10 | ждёт аудита B (порядок слотов против `Т-§10.1`) |
-| R16 | подтверждено: Hypothesis-тестов нет, зависимости `hypothesis` в `pyproject.toml` нет. Добавление зависимости — класс D (§0.4.3: разрешён только `locust`), см. Q3 |
+| R16 | подтверждено: Hypothesis-тестов нет, зависимости `hypothesis` в `pyproject.toml` нет; свойство «пачки = пересборка» проверено детерминированно на одном сценарии в памяти (A28) плюс `T-E4` на Neo4j в WP10. Добавление зависимости — класс D (§0.4.3: разрешён только `locust`), см. Q3 |
 
 ## Журнал решений
 
@@ -215,7 +215,7 @@ _(пусто)_
 | :-- | :-- | :-- |
 | Q1 | ~~Подтвердить имена рабочих веток `phase-3-<поток>-<тема>`~~ — закрыто: подтверждено 2026-10-31 | D-C-001 |
 | Q2 | Порядок SSE `task_evaluated` / `task_assigned` | A27, O2, WP6.4 (B) |
-| Q3 | R16: Hypothesis-тестов нет, а добавить `hypothesis` исполнитель не вправе (класс D). Добавляем зависимость (группа `dev`) или R16 остаётся без property-тестов? | R16, A28 |
+| Q3 | R16: Hypothesis-тестов нет (есть детерминированный тест Фазы 1 на одном сценарии), а добавить `hypothesis` исполнитель не вправе (класс D). Варианты: (а) оставить как есть до тестировщиков, срок по R16; (б) разрешить `hypothesis` в группе `dev` и добавить property-тест на случайных последовательностях событий в памяти | R16, A28 |
 | Q4 | FTS по `core.events` находит удалённые заметки и старые версии артефактов: исключать или оставить как журнал | O5 |
 | Q5 | Склейка `artifact.refresh_cheatsheet` теряет `session_id` | O6 |
 | Q6 | Прод: `JWT_SECRET` не короче 32 байт (dev-секрет 20 байт) | STREAM3_NOTES §2 |
