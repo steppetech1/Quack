@@ -169,7 +169,91 @@
 
 ### Поток A
 
-_(пусто)_
+#### Аудит WP0, зона A (2026-10-31, `phase-3` `57eb4b9`)
+
+| # | Статус | Что в коде | Пакет |
+| :-- | :-- | :-- | :-- |
+| A2 | подтверждено | `cli.py::_worker` создаёт `JobRunner` с `JOB_HANDLERS`; регистрация идёт побочным импортом (`quack.session.*`, `domains.curation`, `artifacts.cheatsheets`), явного каталога и проверки полноты нет | WP2.2 |
+| A4 | подтверждено | `JobContext` несёт только `settings` и `session_factory`; `curation.py` и `session/workers.py` кэшируют драйвер, Redis и шлюз по `id(settings)`, `artifacts` строят клиентов в `build_worker_deps` | WP2.1 |
+| A5 | подтверждено | `domains/curation.py:209–222` пишет в `ops.jobs` напрямую (`UPDATE … run_after`, `UPDATE … status='queued'`) | WP3.2 |
+| A8 | подтверждено | `claim_next_job` не смотрит на `ops.projector_offsets`; в `ops.jobs` колонка `required_seq` уже есть (миграция `0002`), код её не пишет и не читает | WP3.1 |
+| A9 | подтверждено | `cli.py::_schedule_sweep` ставит только `session.sweep_inactive`, интервал `max(60, timeout/6)` не из `Settings`; `account.purge_deleted` нет | WP3.3 |
+| A10 | подтверждено | `JobRunner.run_forever` по `stop` ждёт циклы и выходит; недоделанные задачи остаются `running` до чистильщика (60 с) | WP3.5 |
+| A16 | подтверждено | команды `api`, `worker`, `ops migrate/verify-schema/rebuild/replay-dlq/purge-deleted`; ролей `projector`/`workers`, `ops status`, `event-registry`, `can-rollback`, `seed-learners`, `openapi` нет | WP8 |
+| A17 | подтверждено | Dockerfile, compose и `.github/` нет | WP9 |
+
+#### Шов S11: таблица правил диспетчера
+
+Таблица лежит в коде: `quack/jobs/dispatcher_rules.py::DISPATCHER_RULES`. Параметры задач
+берутся из фабрик `kinds.py`, то есть совпадают с тем, что ставят транзакции событий сегодня.
+
+| Событие | Задача | `required_seq` | Условие | Что правилу нужно сверх события | Заменяет |
+| :-- | :-- | :-: | :-- | :-- | :-- |
+| `turn.teacher_replied` | `turn.extract` | `seq` события | всегда | `seq` `turn.student_replied` того же `turn_id` (payload задачи `student_seq`) | `session/turns.py:554` |
+| `turn.teacher_replied` | `session.checkpoint` | `NULL` | `turn_index − last_checkpoint_turn ≥ checkpoint_every_turns` | `last_checkpoint_turn` сессии (D-A-003) | `session/turns.py:569` |
+| `session.completed` | `session.finish_artifacts` | `seq` события | всегда | `topic_id` сессии (в payload события его нет) | `session/lifecycle.py:459` |
+| `session.completed` | `graph.curate` | `seq` события | всегда | `domain_id` есть в payload | `session/lifecycle.py:470` |
+| `session.digest_created` | `artifact.refresh_cheatsheet` | `seq` события | `payload.topic_id` не `null` | `domain_id`, `session_id`, `topic_id` есть в payload | `artifacts/cheatsheets.py:250` |
+
+Не правила: `artifacts/cheatsheets.py:89` (`request_cheatsheet_refresh`) — остаётся прямой
+постановкой (исключение WP11.2); `cli.py:89` — планировщик WP3.3; `ops/commands.py:68` —
+повтор задач из DLQ, не триггер, остаётся (зона A).
+
+Найдено по ходу:
+
+- `domains/learner.py:85` отменяет задачи ученика прямым `UPDATE ops.jobs` при удалении
+  аккаунта; `T-Q9` запрещает SQL с `ops.jobs` в продуктовых пакетах. См. Q-A1.
+- Снимок задачи в `ops.dlq` (`queue._retry_or_dlq`) не содержит `required_seq`; `ops replay-dlq`
+  поставит задачу без него. Исправляется в WP3.1 (зона A).
+
+### D-A-001. Параметры `Settings` потока A
+
+Класс B. В блок `# --- stream A ---` добавлены все параметры §6.2, которые не отнесены к B и C:
+`process_role`, `quack_version`, `api_workers`, `api_graceful_shutdown_s`,
+`worker_shutdown_grace_s`, `scheduler_tick_s`, `session_sweep_interval_s`,
+`purge_deleted_interval_s`, `daily_budget_defer_jitter_s`, `dispatcher_concurrency`,
+`dispatcher_batch_size`, `dispatcher_restart_pause_s`. `process_role`, `quack_version` и
+`api_*` ТЗ ни за кем не закрепляет; взял поток A, потому что их потребляют CLI и compose
+(§7.3). `consumer_poll_ms` уже есть в `Settings`.
+
+### D-A-002. Необязательный `required_seq` и поля `JobContext` до Этапа III
+
+Класс C (спорное место: §6.5 и WP3.1 требуют обязательный `required_seq`, но вызовы фабрик
+стоят в `quack/session`, `quack/artifacts`, зоны B и C, и правятся только в WP11.4).
+Выбрано: `required_seq` — именованный аргумент фабрик `turn_extract`,
+`session_finish_artifacts`, `artifact_refresh_cheatsheet`, `graph_curate` со значением по
+умолчанию `None`; обязательным он становится в PR WP11.4, где вызовы всё равно переписываются.
+Тем же способом, что D-C-003 и D-C-005, `JobContext` получил поля `engine`, `neo4j`, `redis`,
+`llm`, `compute` со значением `None`: обработчики Фазы 2 и их тесты собирают контекст из двух
+полей. Значения по умолчанию снимаются в WP2.1. Тест `T-D3` проверит `required_seq` по факту.
+
+### D-A-003. Условие постановки `session.checkpoint` в диспетчере
+
+Класс C, вынесено в сигнал. Сегодня условие считается в транзакции хода по состоянию сессии
+(`last_checkpoint_turn`). Правило диспетчера должно воспроизвести его, читая то же состояние
+из реляционных таблиц (граф и модели диспетчер не трогает, WP11.1). Откуда берётся
+`last_checkpoint_turn`, уточню в Этапе III WP11; если окажется, что его нет вне транзакции
+хода, нужен вопрос к владельцу.
+
+### D-A-004. Исключения очереди живут в `queue.py`
+
+Класс B. `JobDeferred` и `JobFailedPermanently` определены в `quack/jobs/queue.py` (ядро
+очереди, §6.5) и реэкспортируются из `quack/jobs/kinds.py`, как требует шов S2.
+
+#### Этап I и красные тесты потока A к G0
+
+Сигнатуры: `JobSpec.required_seq`, `JobDeferred`, `JobFailedPermanently`, `JOB_KINDS`,
+`KIND_LLM_ROLES`, фабрика `account_purge_deleted`, поля `JobContext`, `quack.runtime`
+(`create_job_context`, `close_job_context`, `register_all_handlers`, `check_handlers_complete`,
+`JobHandlersMismatchError`), `dispatcher_rules.rules_for`. Красные тесты: `T-Q1`, `T-Q2`,
+`T-Q3`, `T-Q4`, `T-Q7`, `T-Q8`, `T-Q9` (`tests/test_jobs_phase3.py`).
+
+#### Вопросы потока A
+
+| # | Вопрос | Кому |
+| :-- | :-- | :-- |
+| Q-A1 | `domains/learner.py:85` отменяет задачи ученика прямым SQL по `ops.jobs`. Для `T-Q9` нужна функция ядра очереди (зона A, например `cancel_learner_jobs`) и вызов её из `domains` — правка зоны C одной строкой в WP11.4 | C |
+| Q-A2 | D-A-002 и D-A-003 — подтвердить | владелец |
 
 ### Поток B
 
@@ -534,6 +618,7 @@ _(пусто)_
 | :-- | :-- | :-- |
 | WP1.2–1.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py` (коммит `fd8d31b`) | 2 failed: `T-A2` — `GET /v1/domains is not mounted`; `T-A3` — `POST /v1/auth/register` → 404 |
 | WP10.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 6 failed, 4 passed. Падают: `T-E1` — нет колонки `ops.jobs.required_seq` (A, WP3.1/WP11); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200, ждали 409 (**дефект C**, `domains`); `T-E3` — `GET /v1/topics/{id}/cheatsheet` чужой темы → `200 null`, ждали 404 (**дефект C**, `artifacts`, STREAM3_NOTES риск 9); `T-E5` — обработчики задач не берут шлюз из `JobContext`, извлечение идёт мимо `ScriptedLLMProvider` (A, WP2.1); `T-E8` — ограничитель fail-open без Redis (C, WP1.5); `T-E10` — нет `purge_deleted_interval_s` и планировщика (A, WP3.3). Зелёные уже на текущем коде: `T-E4`, `T-E6`, `T-E7`, `T-E9` — проверяют поведение Фаз 1–2; DoD п.3 («были красными») для них не выполним, проверка «тест падает на заведомо неверной реализации» (§8.9) — не делалась |
+| WP2, WP3.1–3.2, WP3.4 (Этап II) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_jobs_phase3.py` | 7 failed, 0 passed: `T-Q1` (захват игнорирует `required_seq`), `T-Q2` (склейка не пишет `required_seq`), `T-Q3`/`T-Q4` (`JobDeferred` идёт по ветке повтора, `attempt` растёт), `T-Q7` (`register_all_handlers` — `NotImplementedError`), `T-Q8` (бюджет не маршрутизируется), `T-Q9` (нарушения в `domains`, `session`, `artifacts`). Остальной набор: 423 passed |
 
 ## Правки тестов
 
