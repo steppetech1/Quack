@@ -990,6 +990,36 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/session/test_checkpoint_law10.py` (`T-C1`…`T-C5` и видимая часть).
 - Требует подтверждения владельцем: нет
 
+### D-B-024. Промпты: сверка с пакетом владельца, блок причины повтора, снятие `checkpointer@1`
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01: «сверяясь с техдоком, прими
+  решения сама»)
+- WP / место: §7.6, WP13, WP15 (D-B-019 п.4); `quack/prompts/**`, `PROMPT_CONTRACTS.md`,
+  `tests/llm/prompt_contracts.py`
+- Контекст: владелец передал проверенные промпты (пакет от 2026-10-31, вне репозитория).
+  В пакете у каждого промпта слой 1 (доктрина), а слой 2 (`## Output contract` /
+  `## Input blocks`) — заготовка «заполняет поток B».
+- Решение:
+  1. Слой 1 `teacher`, `extractor@2`, `evaluator`, `task_gen` в репозитории совпадает с пакетом
+     дословно — менять нечего. Номера версий пакета (v6, v3…) — история прогонов владельца;
+     в коде версии `@1` правятся на месте до первой выкатки (§7.6 п.3).
+  2. `structurer`, `curator`, `artifacts` в пакете — другая постановка входа и выхода
+     (structurer — разметка куска материала по кандидатам `Т-§4.3`, curator — решения по парам,
+     artifacts — блоки, карточки и замечания), чем схемы и вызовы кода C (`StructurerOutput` по
+     интервью, `CuratorOutput` по всему графу, `ArtifactGenOutput`). Подменить текст без смены
+     кода C нельзя — не делается, вынесено к C.
+  3. `teacher@1`, слой 2: в конец добавлен входной блок «Check of your previous draft» с
+     `{{ guard_reason }}` — причина повтора идёт модели данными (`Т-§12.1`: «возврат в model с
+     причиной»). Блок в хвосте: на первой попытке он пуст и не рвёт кэш начала (`Т-§10.1`).
+     Доктрина не тронута, правило — ссылка на правило 4 слоя 1.
+  4. `checkpointer@1` удалён: файл, ключ манифеста (скрипт), запись в `PROMPT_SCHEMAS`.
+     `CheckpointerOutput` пока остаётся: его читают `tests/test_meta_mock.py` и `loadtest` (C),
+     `tests/support/llm.py`, `tests/test_support_scripted_llm.py`; снимается после C.
+- Замечание: у активной задачи метки обычно нет (таблица вызова строится по доступным задачам),
+  поэтому в причине чаще только `{"rule": "spoiler"}`. Текст блока это учитывает («when present»).
+- Тесты: `T-G1` дополнен — первая попытка без причины, повторы с ней (на коде без блока падал,
+  коммит `a99ac64`); `test_prompt_contracts_file_is_current`, манифест, `T-M5`.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1468,6 +1498,7 @@ _(пусто)_
 | WP12 (обработчик B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_turn_extract_worker.py tests/session/test_extract_quote_grounding.py tests/session/test_worker_pool_and_slice.py` (коммит `539f863`) | 3 failed, 1 passed: обработчик пишет `turn.extracted` v1 через `extractor@1` |
 | WP13 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_checkpoint_law10.py` (коммит `5f56772`) | 5 failed, 1 passed: `T-C1`…`T-C4` и видимая часть — `NotImplementedError` в `checkpoint_render`; `T-C5` зелёный (у `session.checkpoint` уже `required_seq = NULL`) |
 | WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
+| WP15 (причина повтора) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py -k retries_then` (коммит `a99ac64`) | 1 failed: в запросах повторов нет `{"rule": "spoiler"` — в `teacher@1` нет блока `{{ guard_reason }}` |
 
 ## Правки тестов
 
