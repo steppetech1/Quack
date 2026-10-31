@@ -6,6 +6,7 @@ LLM degradation fallback, confirmation, and manual structure editing
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from typing import Any
 from uuid import UUID, uuid5
 
 from sqlalchemy import text
@@ -401,19 +402,33 @@ async def propose_structure(
     )
 
 
+async def _recorded_event(session: AsyncSession, learner_id: UUID, key: str) -> Any | None:
+    """The learner's event under `key` (`payload_hash`, `payload`, `seq`), or `None`."""
+    return (
+        await session.execute(
+            text(
+                "SELECT payload_hash, payload, seq FROM core.events "
+                "WHERE learner_id = :l AND idempotency_key = :k"
+            ),
+            {"l": learner_id, "k": key},
+        )
+    ).first()
+
+
+def _check_same_payload(event: NewEvent, existing_hash: str) -> None:
+    """`IdempotencyConflictError` (409) if `event` hashes otherwise than the recorded one."""
+    model = validate_payload(event.type, event.payload, event.schema_version)
+    digest = payload_hash(model.model_dump(mode="json"))
+    if existing_hash != digest:
+        raise IdempotencyConflictError(event.idempotency_key, existing_hash, digest)
+
+
 async def _check_event_key(session: AsyncSession, learner_id: UUID, event: NewEvent) -> None:
     """`IdempotencyConflictError` (409) if the learner's event under this key has another
     payload hash; the same hash is left to `append_events`, which returns the stored event."""
-    existing = await session.scalar(
-        text("SELECT payload_hash FROM core.events WHERE learner_id = :l AND idempotency_key = :k"),
-        {"l": learner_id, "k": event.idempotency_key},
-    )
-    if existing is None:
-        return
-    model = validate_payload(event.type, event.payload, event.schema_version)
-    digest = payload_hash(model.model_dump(mode="json"))
-    if existing != digest:
-        raise IdempotencyConflictError(event.idempotency_key, existing, digest)
+    recorded = await _recorded_event(session, learner_id, event.idempotency_key)
+    if recorded is not None:
+        _check_same_payload(event, recorded.payload_hash)
 
 
 async def confirm_structure(
@@ -480,6 +495,28 @@ async def confirm_structure(
         )
 
 
+def _edit_event(domain_id: UUID, req: EditStructureRequest, version: int) -> NewEvent:
+    """`structure.edited` of the request at `version`."""
+    return NewEvent(
+        type="structure.edited",
+        actor="learner",
+        domain_id=domain_id,
+        idempotency_key=req.idempotency_key,
+        payload={
+            "domain_id": str(domain_id),
+            "structure_version": version,
+            "added_topics": [t.model_dump(mode="json") for t in req.added_topics],
+            "updated_topics": [t.model_dump(mode="json") for t in req.updated_topics],
+            "archived_topic_ids": [str(x) for x in req.archived_topic_ids],
+            "added_prereqs": [p.model_dump(mode="json") for p in req.added_prereqs],
+            "removed_prereqs": [p.model_dump(mode="json") for p in req.removed_prereqs],
+            "added_skills": [s.model_dump(mode="json") for s in req.added_skills],
+            "updated_skills": [s.model_dump(mode="json") for s in req.updated_skills],
+            "archived_skill_ids": [str(x) for x in req.archived_skill_ids],
+        },
+    )
+
+
 async def edit_structure(
     resources: AppResources,
     settings: Settings,
@@ -508,6 +545,19 @@ async def edit_structure(
             raise ApiError("NOT_FOUND", f"Domain {domain_id} not found", status_code=404)
         active_version = int(dom["active_structure_version"])
         new_version = active_version + 1
+        # A repeat after the edit was applied: the version has moved on, so the request is
+        # compared under the recorded version and the recorded result is returned (T-E2).
+        recorded = await _recorded_event(session, learner_id, req.idempotency_key)
+        if recorded is not None:
+            recorded_version = int(recorded.payload["structure_version"])
+            _check_same_payload(
+                _edit_event(domain_id, req, recorded_version), recorded.payload_hash
+            )
+            return EditStructureResponse(
+                domain_id=domain_id,
+                active_structure_version=recorded_version,
+                seq=int(recorded.seq),
+            )
 
     deps = SliceDeps(
         session_factory=resources.session_factory,
@@ -566,25 +616,7 @@ async def edit_structure(
             status_code=422,
         )
 
-    payload = {
-        "domain_id": str(domain_id),
-        "structure_version": new_version,
-        "added_topics": [t.model_dump(mode="json") for t in req.added_topics],
-        "updated_topics": [t.model_dump(mode="json") for t in req.updated_topics],
-        "archived_topic_ids": [str(x) for x in req.archived_topic_ids],
-        "added_prereqs": [p.model_dump(mode="json") for p in req.added_prereqs],
-        "removed_prereqs": [p.model_dump(mode="json") for p in req.removed_prereqs],
-        "added_skills": [s.model_dump(mode="json") for s in req.added_skills],
-        "updated_skills": [s.model_dump(mode="json") for s in req.updated_skills],
-        "archived_skill_ids": [str(x) for x in req.archived_skill_ids],
-    }
-    event = NewEvent(
-        type="structure.edited",
-        actor="learner",
-        domain_id=domain_id,
-        idempotency_key=req.idempotency_key,
-        payload=payload,
-    )
+    event = _edit_event(domain_id, req, new_version)
     async with resources.session_factory() as session, session.begin():
         stored = await append_events(
             session, learner_id, [event], publish_wakeup=True, redis=resources.redis
