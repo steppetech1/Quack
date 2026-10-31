@@ -8,12 +8,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from uuid import UUID, uuid5
 
-import neo4j
 from sqlalchemy import text
 
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources
 from quack.config import Settings
+from quack.db.neo4j import read_session
 from quack.domains.schemas import (
     ConfirmStructureRequest,
     ConfirmStructureResponse,
@@ -456,7 +456,7 @@ async def edit_structure(
     )
 
     async def _load_existing_dag() -> tuple[set[UUID], set[tuple[UUID, UUID]]]:
-        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as n_session:
+        async with read_session(resources.neo4j) as n_session:
             t_res = await n_session.run(
                 "MATCH (t:Topic {learnerId: $l, domainId: $d}) RETURN t.id AS id",
                 {"l": str(learner_id), "d": str(domain_id)},

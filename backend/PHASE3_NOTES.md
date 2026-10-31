@@ -58,7 +58,7 @@
 | WP1 | C | выполнено полностью (WP1.1–WP1.6); `create_app(resources=)`, единый JWT, единый AppResources, единый ratelimit, пороги в Settings | `T-A1`–`T-A6`, `test_ratelimit`, `test_thresholds_in_settings` зелёные; всего 452 passed |
 | WP2 | A | не начат | — |
 | WP3 | A | не начат | — |
-| WP4 | C | не начат | — |
+| WP4 | C | WP4.1: `read_session`, модули C переведены, `T-A9a`/`T-A9b` зелёные; **частично** — модули B в `PENDING_NEO4J_SESSIONS` и `_read` хранилища ждут правки B (D-C-016). WP4.2: шпаргалки чужой темы → 404 (D-C-017), `T-E3` зелёный на стенде | 461 passed |
 | WP5 | B | не начат | — |
 | WP6 | B | не начат | — |
 | WP7 | C | не начат | — |
@@ -954,6 +954,54 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   просьбе A в его сообщении о WP8.7; больше `cli.py` не менялся.
 - Требует подтверждения владельцем: нет
 
+### D-C-016. WP4.1: модули потока B вне `read_session` и чтение внутри `Neo4jGraphStore`
+- Класс: B
+- WP / место: WP4.1, §7.3; `tests/test_contracts.py::PENDING_NEO4J_SESSIONS`, `quack/graph/neo4j_store.py::_read`
+- Контекст: `quack/session/workers.py`, `quack/session/lifecycle.py` (B) и `quack/artifacts/practice.py`
+  (заморожен до WP6.2, D-C-013) открывают сессии на драйвере сами. Кроме того, `session/workers.py`
+  передаёт в `Neo4jGraphStore` обёртку `_ReadOnlyDriver`, которая сама добавляет
+  `default_access_mode`; если `_read` хранилища перейдёт на `read_session`, обёртка упадёт с
+  `TypeError` (аргумент передан дважды). Правки зоны B нет среди исключений §7.3.
+- Варианты: (1) список `PENDING_NEO4J_SESSIONS` в `T-A9a` (как `PENDING_IMPORTS` в D-C-014) и проверка
+  устаревших записей; `_read` переводится после того, как B уберёт обёртку; (2) поправить файлы B.
+- Решение: (1). B переводит свои модули на `read_session`, удаляет обёртку и записи из списка;
+  C затем переводит `_read` на `read_session` (одна строка). `neo4j_store` — разрешённый писатель
+  WP4.1, поэтому `T-A9a` от этого не зависит.
+- Почему: §0.4.4 п.11; §7.4 — `phase-3` зелёная.
+- Обратимость: строка в `_read`, записи списка.
+- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`.
+- Требует подтверждения владельцем: нет
+
+### D-C-017. WP4.2: принадлежность темы проверяется по журналу событий
+- Класс: B
+- WP / место: WP4.2; `quack/artifacts/store.py::require_topic_of_learner`, `quack/artifacts/cheatsheets.py`
+- Контекст: `GET /v1/topics/{topic_id}/cheatsheet` для чужой темы отвечал `200 null`,
+  `POST .../cheatsheet/refresh` ставил задачу на чужую тему (`T-E3`, STREAM3_NOTES риск 9). Тем в
+  Postgres нет отдельной таблицы; в Neo4j они есть, но проекция может отставать (закон 9).
+- Варианты: (1) тема ученика — та, что создана в его `structure.proposed` (`topics`) или
+  `structure.edited` (`added_topics`); запрос к `core.events` по `learner_id`; (2) узел `Topic` в
+  Neo4j — зависимость от Neo4j и отставания проектора у чтения, которое раньше её не имело.
+- Решение: (1). Шпаргалка есть → тема ученика, проверка не нужна; нет шпаргалки и темы → 404;
+  своя тема без шпаргалки → `200 null`, как раньше (ТЗ-П3 §3).
+- Почему: §0.4.1 уровень 1 (журнал — источник истины); §0.4.3 п.1.
+- Обратимость: функция `require_topic_of_learner`.
+- Тесты: `tests/artifacts/test_artifact_isolation.py`; `T-E3` — зелёный при прогоне на этом коде
+  (стенд `phase-3-c-e2e-red` с двумя правками стенда, см. «Вопросы»/WP10).
+### D-C-018. Шов S7: какие ошибки драйвера Neo4j дают `503 SERVICE_UNAVAILABLE`
+- Класс: B
+- WP / место: WP6.1 (часть C), §4.5; `quack/api/errors.py::NEO4J_OUTAGE_ERRORS`
+- Контекст: WP6.1 — эндпоинты, которым Neo4j нужен для ответа, при «ошибке связи драйвера (недоступен
+  сервер, истекла сессия, таймаут)» отвечают 503, а не 500. Перечня классов исключений ТЗ не даёт.
+- Варианты: (1) `ServiceUnavailable`, `SessionExpired`, `ConnectionAcquisitionTimeoutError` — общий
+  обработчик приложения; (2) любой `Neo4jError`/`DriverError` — тогда ошибка запроса (дефект кода)
+  тоже маскируется под недоступность.
+- Решение: (1). Ошибки запросов остаются 500 и видны как дефект. Обработчик пишет `neo4j_unavailable`
+  в лог.
+- Почему: §0.4.3 п.1, п.4.
+- Обратимость: кортеж `NEO4J_OUTAGE_ERRORS`.
+- Тесты: `tests/test_neo4j_outage.py` (граф и карточка темы → 503); ход учителя — `T-H1` у B.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -967,6 +1015,9 @@ _(пусто)_
 | WP10.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 6 failed, 4 passed. Падают: `T-E1` — нет колонки `ops.jobs.required_seq` (A, WP3.1/WP11); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200, ждали 409 (**дефект C**, `domains`); `T-E3` — `GET /v1/topics/{id}/cheatsheet` чужой темы → `200 null`, ждали 404 (**дефект C**, `artifacts`, STREAM3_NOTES риск 9); `T-E5` — обработчики задач не берут шлюз из `JobContext`, извлечение идёт мимо `ScriptedLLMProvider` (A, WP2.1); `T-E8` — ограничитель fail-open без Redis (C, WP1.5); `T-E10` — нет `purge_deleted_interval_s` и планировщика (A, WP3.3). Зелёные уже на текущем коде: `T-E4`, `T-E6`, `T-E7`, `T-E9` — проверяют поведение Фаз 1–2; DoD п.3 («были красными») для них не выполним, проверка «тест падает на заведомо неверной реализации» (§8.9) — не делалась |
 | WP2, WP3.1–3.2, WP3.4 (Этап II) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_jobs_phase3.py` | 7 failed, 0 passed: `T-Q1` (захват игнорирует `required_seq`), `T-Q2` (склейка не пишет `required_seq`), `T-Q3`/`T-Q4` (`JobDeferred` идёт по ветке повтора, `attempt` растёт), `T-Q7` (`register_all_handlers` — `NotImplementedError`), `T-Q8` (бюджет не маршрутизируется), `T-Q9` (нарушения в `domains`, `session`, `artifacts`). Остальной набор: 423 passed |
 | WP8.7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k "openapi or sse_endpoints"` (коммит `1eec6bd`) | 4 failed: `T-A7` — нет `backend/openapi.json`; `write_openapi` — `NotImplementedError`; схема — нет `ErrorResponse`, 422 описан `HTTPValidationError`; SSE-эндпоинты — `application/json` без модели |
+| WP4.1 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_read_session.py tests/test_contracts.py -k "neo4j or read_session"` (коммит `b692007`) | 3 failed, 1 passed: `read_session` — `NotImplementedError` (2); `T-A9a` — сессии вне `read_session` в 6 модулях C (`artifacts.cheatsheets`, `artifacts.search`, `domains.curation`, `domains.diagnostic`, `domains.graph_view`, `domains.structure`) |
+| WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
+| S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 
 ## Правки тестов
 
@@ -978,6 +1029,8 @@ _(пусто)_
 | `tests/domains/conftest.py`, `tests/session/fixtures.py`, `tests/artifacts/conftest.py`, `tests/test_infra.py` | `create_app(settings, connect=False)` → `create_app(settings, resources=build_app_resources(...))` | WP1.1: убран `connect=False`, введён явный `resources=`; тесты сохраняют владение пулами |
 | `tests/conftest.py` | добавлена autouse-фикстура `_clear_local_rate_limits` с вызовом `LOCAL_LIMITS.clear()` | Изоляция тестов ограничителя с локальным in-memory счётчиком при отказе Redis (WP1.5) |
 | `tests/test_infra.py::test_cli_parser` | добавлены проверки `ops openapi --out` | §8.9 п.3: тест дополняется новой командой, старые утверждения сохранены |
+| `tests/domains/test_curation_keys_and_actor.py::_FakeDriver.session` | принимает `**_config` | WP4.1: сессии открываются через `read_session(driver)` с `default_access_mode`; фикстура, утверждения не менялись |
+| `tests/domains/test_graph_view_fixes.py::test_graph_view_opens_every_neo4j_session_with_read_access` | шпион считает и сессии, открытые через `read_session`, вызванную из `graph_view.py` | WP4.1 перенёс место открытия сессии в `quack/db/neo4j.py`; утверждения (≥ 2 сессии, все READ) те же. Проверка «не ослаблен»: при `read_session` без READ тест падает |
 
 ## Вопросы к команде
 

@@ -222,3 +222,72 @@ def test_every_module_imports_in_a_clean_interpreter() -> None:
     with ThreadPoolExecutor(max_workers=8) as pool:
         failures = [r for r in pool.map(_import_in_clean_interpreter, _modules()) if r[1]]
     assert failures == []
+
+
+# --- WP4.1: one writer in Neo4j (T-A9a) --------------------------------------------------
+
+# Calls that open a Neo4j session or a write transaction on the driver.
+NEO4J_SESSION_CALLS = frozenset({"session", "execute_write", "begin_transaction"})
+# Modules allowed to write (WP4.1): the projector store, rebuild, and in `quack.db.neo4j`
+# only `verify_schema` and the implementation of `read_session`.
+NEO4J_WRITERS: dict[str, frozenset[str] | None] = {
+    "quack.graph.neo4j_store": None,
+    "quack.graph.rebuild": None,
+    "quack.db.neo4j": frozenset({"verify_schema", "read_session"}),
+}
+# Files of stream B that still open sessions on the driver themselves (ТЗ §7.3: stream C does
+# not edit them; PHASE3_NOTES D-C-016). B moves them to `read_session` and deletes the entry;
+# `test_neo4j_session_exceptions_are_still_needed` fails for a stale entry.
+PENDING_NEO4J_SESSIONS: frozenset[str] = frozenset(
+    {"quack.session.workers", "quack.session.lifecycle", "quack.artifacts.practice"}
+)
+
+
+def _neo4j_session_calls(path: Path) -> list[tuple[str, int, str | None]]:
+    """`(call, line, enclosing top-level function)` of every `.session(` / `.execute_write(` /
+    `.begin_transaction(` call in the file."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: list[tuple[str, int, str | None]] = []
+
+    def walk(node: ast.AST, function: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            scope = function
+            if function is None and isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                scope = child.name
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in NEO4J_SESSION_CALLS
+            ):
+                found.append((child.func.attr, child.lineno, scope))
+            walk(child, scope)
+
+    walk(tree, None)
+    return found
+
+
+def _neo4j_session_violations() -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+    for module, path in _modules().items():
+        allowed = NEO4J_WRITERS.get(module, frozenset())
+        for call, line, function in _neo4j_session_calls(path):
+            if module in NEO4J_WRITERS and (allowed is None or function in allowed):
+                continue
+            found.setdefault(module, []).append(f"{call}() at line {line}")
+    return found
+
+
+def test_neo4j_writes_only_from_projector_static() -> None:
+    """T-A9a: outside the writer modules of WP4.1 no code opens a Neo4j session or a write
+    transaction on the driver; everything else reads through `quack.db.neo4j.read_session`."""
+    unexpected = {
+        module: calls
+        for module, calls in _neo4j_session_violations().items()
+        if module not in PENDING_NEO4J_SESSIONS
+    }
+    assert unexpected == {}
+
+
+def test_neo4j_session_exceptions_are_still_needed() -> None:
+    stale = PENDING_NEO4J_SESSIONS - set(_neo4j_session_violations())
+    assert stale == set(), "remove these entries from PENDING_NEO4J_SESSIONS"
