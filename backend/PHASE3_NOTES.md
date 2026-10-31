@@ -1339,6 +1339,9 @@ _(пусто)_
 | WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
 | WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
 | WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
+| WP5.7 (процесс API на `ResponsesClient`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_api_llm_provider.py` | 1 failed: провайдер шлюза API — `HttpLLMProvider`, ждали `ResponsesClient` |
+| WP6.3 (кадры хода в `openapi`) | `uv run pytest -q tests/test_app_assembly.py -k turn_stream_documents` | 1 failed: в описании потока хода нет списка событий и `status {"state": "thinking"}` |
+| WP10.3 (`T-O5`) | `uv run pytest -q tests/test_meta_mock.py` | написан после адаптера WP5.7 и `meta-mock`, красного прогона нет; проверка на неверной реализации — тесты провода того же файла (27) были красными до `meta-mock` |
 | WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
 | WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
 | WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
