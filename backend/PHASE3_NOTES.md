@@ -493,6 +493,37 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 - Требует подтверждения владельцем: да — **владелец 2026-10-31 передал решение исполнителю;
   принят вариант (1)**
 
+### D-C-013. Шов с B: перенос практики (WP6.2), схемы `task_gen`, `evaluator`, `curator`
+- Класс: B (договорённость двух потоков на шве S4/S10, §0.4; B записывает со своей стороны)
+- WP / место: WP6.2, WP14.1, §7.3 п.3; `quack/artifacts/practice.py`, `quack/artifacts/schemas.py`,
+  `quack/artifacts/params.py`, `quack/domains/schemas.py::CuratorOutput`
+- Контекст: B переносит выбор задачи и проверку ответа из `quack/artifacts/` в `quack/practice/`
+  (§7.3 п.3) и к G1 замораживает схемы выходов (S4): `TaskGenOutput.reference_solution` —
+  типизированная `ReferenceSolution` (S10, D-B-001), поля с метками в `EvaluatorOutput` и
+  `CuratorOutput` (WP14.1). Схемы лежат в файлах C, а их потребители — в переносимом коде
+  (`task_gen`, `evaluator`) и в коде C (`curator`).
+- Решение:
+  1. **Заморозка.** C не правит `quack/artifacts/practice.py` до слияния PR WP6.2. WP1.4 (импорты)
+     и WP1.6 (пороги) потока C этот файл обходят; при переносе B сразу импортирует
+     `AppResources` из `quack.api.resources`.
+  2. **`TaskGenOutput`, `EvaluatorOutput`** переезжают в `quack/practice/` вместе со своим
+     единственным потребителем, в том же PR WP6.2 (часть переноса §7.3 п.3); там
+     `reference_solution: ReferenceSolution`, поля с метками — по S4. Из
+     `quack/artifacts/schemas.py` B их удаляет в том же PR. Ревью — C.
+  3. **Пороги практики** из `PracticeParams` (`default_target_difficulty`, `max_hint_level`,
+     `hint_penalties`, `compute_tested_depth`) B переносит в свой блок `Settings`
+     (`# --- stream B ---`); пороги поиска (`search_*`) остаются у C — блок C, WP1.6.
+     `quack/artifacts/params.py` удаляет C, когда в нём не останется полей.
+  4. **`CuratorOutput`** остаётся у C: B к G1 называет поля с метками (S4,
+     `PROMPT_CONTRACTS.md`), C меняет модель и перевод меток в id в `quack/domains/curation.py`
+     через `quack.llm.labels.LabelMap`.
+- Почему: §0.4.3 п.4 — схема живёт рядом с единственным кодом, который её читает; один PR на
+  перенос вместо двух согласованных правок в разных зонах; §7.3 п.3.
+- Обратимость: схемы возвращаются в `quack/artifacts/schemas.py` одной правкой импорта.
+- Тесты: тесты практики Фазы 2 (`tests/artifacts/test_practice_engine.py`) после переноса без
+  изменения утверждений; `T-M*` (метки) у B.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
