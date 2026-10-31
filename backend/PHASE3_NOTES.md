@@ -1011,7 +1011,10 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   WP4.1, поэтому `T-A9a` от этого не зависит.
 - Почему: §0.4.4 п.11; §7.4 — `phase-3` зелёная.
 - Обратимость: строка в `_read`, записи списка.
-- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`.
+- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`,
+  `test_graph_store_reads_through_read_session`.
+- Выполнено: B убрал `_ReadOnlyDriver`, список пуст (`0eccdba`); `_read` открывает сессию через
+  `read_session` (ветка `phase-3-c-wp41-store-read`).
 - Требует подтверждения владельцем: нет
 
 ### D-C-017. WP4.2: принадлежность темы проверяется по журналу событий
