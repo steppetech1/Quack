@@ -699,6 +699,19 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 - Обратимость: функция `require_topic_of_learner`.
 - Тесты: `tests/artifacts/test_artifact_isolation.py`; `T-E3` — зелёный при прогоне на этом коде
   (стенд `phase-3-c-e2e-red` с двумя правками стенда, см. «Вопросы»/WP10).
+### D-C-018. Шов S7: какие ошибки драйвера Neo4j дают `503 SERVICE_UNAVAILABLE`
+- Класс: B
+- WP / место: WP6.1 (часть C), §4.5; `quack/api/errors.py::NEO4J_OUTAGE_ERRORS`
+- Контекст: WP6.1 — эндпоинты, которым Neo4j нужен для ответа, при «ошибке связи драйвера (недоступен
+  сервер, истекла сессия, таймаут)» отвечают 503, а не 500. Перечня классов исключений ТЗ не даёт.
+- Варианты: (1) `ServiceUnavailable`, `SessionExpired`, `ConnectionAcquisitionTimeoutError` — общий
+  обработчик приложения; (2) любой `Neo4jError`/`DriverError` — тогда ошибка запроса (дефект кода)
+  тоже маскируется под недоступность.
+- Решение: (1). Ошибки запросов остаются 500 и видны как дефект. Обработчик пишет `neo4j_unavailable`
+  в лог.
+- Почему: §0.4.3 п.1, п.4.
+- Обратимость: кортеж `NEO4J_OUTAGE_ERRORS`.
+- Тесты: `tests/test_neo4j_outage.py` (граф и карточка темы → 503); ход учителя — `T-H1` у B.
 - Требует подтверждения владельцем: нет
 
 ## Заблокировано
@@ -716,6 +729,7 @@ _(пусто)_
 | WP8.7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k "openapi or sse_endpoints"` (коммит `1eec6bd`) | 4 failed: `T-A7` — нет `backend/openapi.json`; `write_openapi` — `NotImplementedError`; схема — нет `ErrorResponse`, 422 описан `HTTPValidationError`; SSE-эндпоинты — `application/json` без модели |
 | WP4.1 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_read_session.py tests/test_contracts.py -k "neo4j or read_session"` (коммит `b692007`) | 3 failed, 1 passed: `read_session` — `NotImplementedError` (2); `T-A9a` — сессии вне `read_session` в 6 модулях C (`artifacts.cheatsheets`, `artifacts.search`, `domains.curation`, `domains.diagnostic`, `domains.graph_view`, `domains.structure`) |
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
+| S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 
 ## Правки тестов
 
