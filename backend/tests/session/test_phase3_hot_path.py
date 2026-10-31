@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+from dataclasses import replace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,7 +13,7 @@ from fastapi import FastAPI
 from neo4j import AsyncDriver
 from sqlalchemy import text
 
-from quack.api.resources import get_compute, get_llm
+from quack.api.resources import AppResources, get_compute, get_llm
 from quack.config import FoldParams
 from quack.db.postgres import SessionFactory
 from quack.events import append_events
@@ -20,9 +21,11 @@ from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
 from quack.session.schemas import TeacherOutput
-from quack.session.turn_policy import resolve_degraded_mode
+from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER, resolve_degraded_mode
 from tests.factories import new_event
 from tests.session.fixtures import FakeComputeClient, FakeLLMProvider, SeededDomain
+from tests.session.helpers import parse_sse
+from tests.support.broken import BrokenNeo4jDriver
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -46,6 +49,104 @@ def test_resolve_degraded_mode_priority(combo: tuple[bool, ...]) -> None:
     flags = dict(zip(_ORDER, combo, strict=True))
     expected = next((name for name in _ORDER if flags[name]), None)
     assert resolve_degraded_mode(**flags) == expected
+
+
+# --- T-H1 --------------------------------------------------------------------------------
+
+
+async def test_turn_survives_neo4j_outage(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    session_app: FastAPI,
+    seeded_domain: SeededDomain,
+    db: SessionFactory,
+    neo4j: AsyncDriver,
+    fake_llm: FakeLLMProvider,
+) -> None:
+    """T-H1 (WP6.1, Т-§20.7): turn 1 assigns task X; with a broken Neo4j driver turn 2
+    returns the full SSE with `degraded_mode = "memory_unavailable"`, its events are written,
+    X is not assigned again, the memory slot carries the marker; the graph view → 503."""
+    learner = seeded_domain.learner_id
+    task_x = seeded_domain.math_task_ids[0]
+    start = await client.post(
+        "/v1/sessions",
+        json={
+            "domain_id": str(seeded_domain.domain_id),
+            "topic_id": str(seeded_domain.topic_id),
+            "idempotency_key": "outage-start",
+        },
+        headers=auth_headers,
+    )
+    assert start.status_code == 201, start.text
+    session_id = UUID(start.json()["session_id"])
+    await _project_all(neo4j, db, learner)
+
+    fake_llm.push(
+        "teacher",
+        TeacherOutput(
+            reply_text="Try this task.", pedagogical_move="assign_task", assign_task_id=task_x
+        ),
+    )
+    await _turn(client, auth_headers, session_id, "outage-turn-1", "Give me a task.")
+    await _project_all(neo4j, db, learner)
+
+    resources: AppResources = session_app.state.resources
+    session_app.state.resources = replace(resources, neo4j=BrokenNeo4jDriver())  # type: ignore[arg-type]  # stand-in driver
+
+    # The teacher asks for X again: the overlay must keep it out (session invariant).
+    fake_llm.push(
+        "teacher",
+        TeacherOutput(
+            reply_text="One more task.", pedagogical_move="assign_task", assign_task_id=task_x
+        ),
+    )
+    response = await client.post(
+        f"/v1/sessions/{session_id}/turns",
+        json={"text": "Another one?", "idempotency_key": "outage-turn-2"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+    sse = parse_sse(response.text)
+    names = [name for name, _ in sse]
+    assert names[0] == "turn_started"
+    assert names[-1] == "done"
+    data = dict(sse)
+    assert data["turn_completed"]["degraded_mode"] == "memory_unavailable"
+    if "task_assigned" in data:
+        assert UUID(data["task_assigned"]["task_id"]) != task_x
+
+    async with db() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT type, payload FROM core.events WHERE learner_id = :l "
+                    "AND idempotency_key LIKE 'outage-turn-2%' ORDER BY seq"
+                ),
+                {"l": learner},
+            )
+        ).all()
+        assigned = (
+            await session.execute(
+                text(
+                    "SELECT payload->>'task_id' AS task_id FROM core.events "
+                    "WHERE learner_id = :l AND type = 'task.assigned' "
+                    "AND payload->>'session_id' = :s"
+                ),
+                {"l": learner, "s": str(session_id)},
+            )
+        ).all()
+    assert rows[0].type == "turn.student_replied"
+    replied = [r.payload for r in rows if r.type == "turn.teacher_replied"]
+    assert len(replied) == 1
+    assert replied[0]["degraded_mode"] == "memory_unavailable"
+    assert [r.task_id for r in assigned].count(str(task_x)) == 1
+
+    prompt = fake_llm.calls_for("teacher")[-1].prompt
+    assert MEMORY_UNAVAILABLE_MARKER in prompt
+
+    graph = await client.get(f"/v1/domains/{seeded_domain.domain_id}/graph", headers=auth_headers)
+    assert graph.status_code == 503, graph.text
+    assert graph.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
 
 
 # --- T-H2 --------------------------------------------------------------------------------
