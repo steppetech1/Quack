@@ -703,6 +703,21 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-016. `extractor@2` → `turn.extracted` v2 (швы S5/S6)
+- Класс: B
+- WP / место: WP12.1–12.2; `quack/session/extraction.py`, `quack/llm/labels.py`
+- Решение: `extraction_context` собирает `ExtractionContext` из таблицы меток вызова
+  (`LabelMap.labels(kind)`), эпизода и темы сессии; `extracted_elements` прогоняет каждый
+  элемент через `to_extracted_element` (отклонённые остаются с `rejected_reason`);
+  `turn_extracted_v2` — payload `schema_version = 2`. В `episode` — только события ученика
+  (`turn.student_replied.text`, `task.submitted.answer`): цитата из реплики учителя получает
+  `source_outside_episode` (правило 9 промпта). Префикс `new: ` нового навыка и
+  заблуждения снимается при переводе ответа.
+- Не сделано: вызов в обработчике `turn.extract` (`session/workers.py`) — после PR потока A
+  по WP2.1 (A просил не трогать файл до него); там же снятие `_ReadOnlyDriver` (WP4.1).
+- Тесты: `tests/session/test_extraction_v2.py`.
+- Требует подтверждения владельцем: нет (делегировано).
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
