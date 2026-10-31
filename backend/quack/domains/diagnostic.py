@@ -4,6 +4,7 @@ upward and downward along prerequisite edges (ТЗ §2.3, §3, §4; Т-§3.3).
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -37,8 +38,11 @@ from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
 from quack.llm.gateway import LLMGateway
+from quack.practice.schemas import ChoiceReference, reference_solution_payload
 
 DIAGNOSTIC_FAMILY_PREFIX = "diag_"
+# Options of the deterministic question of code (no model, or no valid reference).
+FALLBACK_OPTIONS: tuple[str, ...] = ("A", "B", "C")
 
 type PriorSource = Literal["tested", "self_report"]
 
@@ -324,7 +328,10 @@ class _BankTask:
 
 
 def _reference_solution(correct_answer: str, options: list[str]) -> dict[str, Any]:
-    return {"option": correct_answer, "answer": correct_answer, "options": list(options)}
+    """`ChoiceReference` of WP6.4 as stored in the bank; `ValueError` if the correct option is
+    not among the options or there are fewer than two."""
+    reference = ChoiceReference(option=correct_answer, answer=correct_answer, options=options)
+    return reference_solution_payload(reference)
 
 
 def _unit(value: float) -> float:
@@ -640,18 +647,29 @@ async def _generate_question(
         )
         diag_out = res.value
     except Exception:
+        diag_out = None
+
+    options: list[str] = []
+    correct_ans = ""
+    reference: dict[str, Any] | None = None
+    if diag_out is not None:
+        options = diag_out.options or list(FALLBACK_OPTIONS)
+        correct_ans = diag_out.correct_answer or options[0]
+        # WP6.4 п.1: an answer without a valid reference does not reach the bank.
+        with contextlib.suppress(ValueError):
+            reference = _reference_solution(correct_ans, options)
+    if diag_out is None or reference is None:
         actor = "code"
         diag_out = DiagnosticOutput(
             prompt_text=fallback_prompt,
-            options=["A", "B", "C"],
-            correct_answer="A",
+            options=list(FALLBACK_OPTIONS),
+            correct_answer=FALLBACK_OPTIONS[0],
             is_correct=False,
             score=0.0,
             tested_depth=params.default_tested_depth,
         )
-
-    options = diag_out.options if diag_out.options else ["A", "B", "C"]
-    correct_ans = diag_out.correct_answer or options[0]
+        options, correct_ans = list(FALLBACK_OPTIONS), FALLBACK_OPTIONS[0]
+        reference = _reference_solution(correct_ans, options)
     event = NewEvent(
         type="task.generated",
         actor=actor,
@@ -666,7 +684,7 @@ async def _generate_question(
             "difficulty": diag_out.tested_depth,
             "kind": "choice",
             "prompt_text": diag_out.prompt_text or "Diagnostic question",
-            "reference_solution": _reference_solution(correct_ans, options),
+            "reference_solution": reference,
             "target_skills": [{"skill": {"skill_id": str(skill_id)}, "weight": 1.0}],
             "target_misconceptions": [],
         },

@@ -940,6 +940,114 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   умолчанию `{"entries": []}` в `tests/support/llm.py` (S9).
 - Требует подтверждения владельцем: нет
 
+### D-B-023. WP13: сводка сессии кодом, строки эпизодов и видимая часть разговора
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP13, A22; `quack/session/checkpoint_render.py`,
+  `quack/session/workers.py::run_session_checkpoint`, `quack/session/context.py`,
+  `quack/jobs/kinds.py::KIND_LLM_ROLES`
+- Контекст: аудит A22 подтвердил нарушение закона 10 (`checkpointer@1` получал прошлую сводку).
+  Схема `session.checkpointed`, вид задачи, ключи и `required_seq = NULL` не меняются.
+- Решение:
+  1. Ход — пара реплик с одним `turn_id` (`turn_index` событий считает реплики). Число
+     свёрнутых ходов: 0, пока ходов ≤ `conversation_verbatim_max_turns` (24); дальше —
+     `conversation_collapse_turns` (12) × число начатых пачек (`Т-§10.3`).
+  2. `rolling_summary` — строки эпизодов свёрнутых ходов, по одной на ход:
+     `Turn 3, give hint: task 1 assigned; level 4 incorrect after hint 2 gap: when to apply`.
+     Эпизодов в смысле `Т-§7.5` в Фазе 3 нет (`episode.closed` — следующая фаза), поэтому
+     единица строки — ход. Имён навыков нет: события несут только id, а id модели не видят
+     (`Т-§4.5`); задачи нумеруются по порядку выдачи в сессии.
+  3. `open_threads` — задачи сессии без верного ответа: `Task 1 is open` /
+     `Task 1 is open: last answer not solved`. `key_observations` — гипотезы заблуждений и
+     неверные/частичные элементы извлечения с цитатой ученика, сработавшие ловушки задач.
+  4. Вход — только события сессии `turn.*_replied`, `task.assigned`, `task.evaluated`,
+     `turn.extracted` (v1 и v2) до `up_to_turn_index`; прошлые `session.checkpointed` не
+     читаются (их `up_to_turn_index` лишь отмечает, что задача уже сделана). actor —
+     `renderer@1` (D-B-002). `KIND_LLM_ROLES["session.checkpoint"] = ()`.
+  5. Контекст учителя: целиком показываются все ходы, которые сводка не свернула (а не
+     последние `active_window_turns` реплик после неё) — иначе ходы между свёрнутой частью и
+     `up_to_turn_index` пропадали бы. Начало видимой части меняется раз в пачку (кэш,
+     `Т-§10.3`); при отставании сводки окно просто длиннее (закон 9).
+     `active_window_turns` контекстом больше не читается (его читает `artifacts`).
+- Не сделано (работа с промптами, за пользователем): удаление `prompts/checkpointer/v1.md`,
+  ключа `checkpointer@1` в `manifest.json`, `CheckpointerOutput` и его следов в тестах
+  (`tests/llm/prompt_contracts.py`, `tests/support/llm.py`, `tests/session/fixtures.py`,
+  `tests/test_meta_mock.py` — C, `tests/test_support_scripted_llm.py`). В `llm_role_models`
+  записи `checkpointer` нет.
+- Правки тестов (§8.9 п.8): `test_session_checkpoint_worker` — вместо ответа и промпта
+  `checkpointer@1` проверяются отсутствие вызовов модели и строк `llm_outbox`, payload, равный
+  `render_checkpoint` по событиям сессии, actor и ключ события; вид задачи, ключ, одно событие
+  на `up_to_turn_index`, поля payload, `last_checkpoint_turn` и повтор без эффекта остались.
+  `test_worker_pool_and_slice` — обработчик сводки не берёт шлюз. Проверка «не ослаблен»:
+  со сворачиванием по одному ходу `T-C4` и `test_visible_part_follows_the_checkpoint` падают.
+- Тесты: `tests/session/test_checkpoint_law10.py` (`T-C1`…`T-C5` и видимая часть).
+- Требует подтверждения владельцем: нет
+
+### D-B-024. Промпты: сверка с пакетом владельца, блок причины повтора, снятие `checkpointer@1`
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01: «сверяясь с техдоком, прими
+  решения сама»)
+- WP / место: §7.6, WP13, WP15 (D-B-019 п.4); `quack/prompts/**`, `PROMPT_CONTRACTS.md`,
+  `tests/llm/prompt_contracts.py`
+- Контекст: владелец передал проверенные промпты (пакет от 2026-10-31, вне репозитория).
+  В пакете у каждого промпта слой 1 (доктрина), а слой 2 (`## Output contract` /
+  `## Input blocks`) — заготовка «заполняет поток B».
+- Решение:
+  1. Слой 1 `teacher`, `extractor@2`, `evaluator`, `task_gen` в репозитории совпадает с пакетом
+     дословно — менять нечего. Номера версий пакета (v6, v3…) — история прогонов владельца;
+     в коде версии `@1` правятся на месте до первой выкатки (§7.6 п.3).
+  2. `structurer`, `curator`, `artifacts` в пакете — другая постановка входа и выхода
+     (structurer — разметка куска материала по кандидатам `Т-§4.3`, curator — решения по парам,
+     artifacts — блоки, карточки и замечания), чем схемы и вызовы кода C (`StructurerOutput` по
+     интервью, `CuratorOutput` по всему графу, `ArtifactGenOutput`). Подменить текст без смены
+     кода C нельзя — не делается, вынесено к C.
+  3. `teacher@1`, слой 2: в конец добавлен входной блок «Check of your previous draft» с
+     `{{ guard_reason }}` — причина повтора идёт модели данными (`Т-§12.1`: «возврат в model с
+     причиной»). Блок в хвосте: на первой попытке он пуст и не рвёт кэш начала (`Т-§10.1`).
+     Доктрина не тронута, правило — ссылка на правило 4 слоя 1.
+  4. `checkpointer@1` удалён: файл, ключ манифеста (скрипт), запись в `PROMPT_SCHEMAS`.
+     `CheckpointerOutput` пока остаётся: его читают `tests/test_meta_mock.py` и `loadtest` (C),
+     `tests/support/llm.py`, `tests/test_support_scripted_llm.py`; снимается после C.
+- Замечание: у активной задачи метки обычно нет (таблица вызова строится по доступным задачам),
+  поэтому в причине чаще только `{"rule": "spoiler"}`. Текст блока это учитывает («when present»).
+- Тесты: `T-G1` дополнен — первая попытка без причины, повторы с ней (на коде без блока падал,
+  коммит `a99ac64`); `test_prompt_contracts_file_is_current`, манифест, `T-M5`.
+- Требует подтверждения владельцем: нет
+
+### D-B-025. WP6.4: `ReferenceSolution` в коде B, payload `finish_artifacts`, порядок кадров
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01; разделение с C — вариант (б)
+  по ответу C 2026-11-01)
+- WP / место: WP6.4 п.1–3, A25–A27, D-B-001 (1); `quack/practice/schemas.py`,
+  `quack/practice/generation.py`, `quack/practice/evaluation.py`, `quack/session/spoiler_guard.py`,
+  `quack/session/lifecycle.py`
+- Решение:
+  1. `ReferenceSolution` — по таблице WP6.4 плюс `hints` и `latex`; `extra="forbid"`, у `choice`
+     верный вариант обязан быть среди `options`, у `open` — хотя бы один `key_points`.
+     `parse_reference_solution(kind, data)` → `ValueError` на неверном формате;
+     `reference_solution_payload` — словарь для банка (`None` не пишется).
+  2. Вид `code` (есть в `task.generated`, в таблице нет) читается как `open`: исполнителя кода в
+     Фазе 3 нет, ответ проверяет `evaluator@1` по `key_points`.
+  3. `task_gen@1` → банк (D-B-010): `math` — `expression` = ответ модели, `mode` по типу ответа;
+     `open`/`code` — `key_points` = непустые строки `solution`, иначе `[answer]`, `sample_answer` =
+     ответ. Ключи `solution` и `units` больше не пишутся (читателей нет). Неверный формат —
+     `GeneratedTaskError`, практика уходит на банк, как при ошибке модели.
+  4. Читатели: проверка `math` — `expression`, `mode`, `variables`, `tolerance`; запасной вердикт —
+     `sample_answer` / `answer` / `expression`; защита от спойлера — `expression` (`math`),
+     `answer` (`choice`), `open` не проверяется.
+  5. WP6.4 п.2: `finish_session` ставит `session.finish_artifacts` с
+     `{"session_id", "domain_id", "topic_id"}`. Обработчик C пока берёт `session_id` из
+     `lock_key` — совместимо.
+  6. WP6.4 п.3: порядок `task_evaluated` → `task_assigned` в коде уже такой (A27) — тест `T-H7`.
+- Остаётся у C (ветка `phase-3-c-wp64-diagnostic`, вливается в эту до PR): `diagnostic.py`
+  пишет `reference_solution_payload(ChoiceReference(...))`/`OpenReference`; отказ неверного
+  формата при записи в банк (`task.generated`, `quack/events/**`); вторая половина `T-H8` (а) —
+  ответы `diagnostic@1`; обработчик `finish_artifacts` по `payload["session_id"]`.
+- Правки тестов (§8.9): фикстуры с ключами Фазы 2 `sympy`/`check_mode` → `expression`/`mode`
+  (`tests/session/fixtures.py`, `test_phase3_hot_path.py`, `test_spoiler_guard.py`,
+  `tests/artifacts/test_practice_engine.py`, `test_artifacts_search_export.py` — фикстуры C по
+  договорённости); утверждения те же. Запись `CheckpointerOutput` снята из `SCHEMA_ROLES`.
+- Тесты: `tests/practice/test_reference_solution.py` (14), `tests/session/test_phase2_seams.py`
+  (`T-H7`, `T-H8` (а) — сторона `task_gen@1`, (б) — сторона `finish_session`).
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1221,7 +1329,10 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   WP4.1, поэтому `T-A9a` от этого не зависит.
 - Почему: §0.4.4 п.11; §7.4 — `phase-3` зелёная.
 - Обратимость: строка в `_read`, записи списка.
-- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`.
+- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`,
+  `test_graph_store_reads_through_read_session`.
+- Выполнено: B убрал `_ReadOnlyDriver`, список пуст (`0eccdba`); `_read` открывает сессию через
+  `read_session` (ветка `phase-3-c-wp41-store-read`).
 - Требует подтверждения владельцем: нет
 
 ### D-C-017. WP4.2: принадлежность темы проверяется по журналу событий
@@ -1361,6 +1472,23 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
 - Требует подтверждения владельцем: нет
 
+### D-C-024. §2.3 п.8, R4: ID моделей и имена `META_API_*` в `Settings`
+- Класс: B
+- WP / место: §2.3 п.8, R4, §6.2; `quack/config.py`, `quack/api/resources.py`, `quack/artifacts/deps.py`, `quack/domains/curation.py`
+- Контекст: в `Settings` были два набора полей: `llm_api_key`/`llm_api_base_url` (env `LLM_API_*`) и
+  `meta_api_key`/`meta_api_base_url` (блок B, env `META_API_*` с запасными `LLM_API_*`). Код A
+  (`quack/runtime`) и B (`session/workers.py`) читает старые поля: при одном `META_API_KEY` в env они
+  получали бы пустой ключ. Модели по умолчанию — условные `muse-wonder`/`muse-spark`.
+- Варианты: (1) старые поля удалить, оставить их имена свойствами над `meta_api_*`, читателей C
+  перевести на новые имена; (2) править файлы A и B (нет среди исключений §7.3).
+- Решение: (1). `llm_default_model = muse-spark-1.3`, `llm_role_models` = `teacher: muse-wonder-1.0`,
+  `teacher_fallback: muse-spark-1.3` (распределение ролей то же). Прод требует `META_API_KEY`;
+  маскируется `meta_api_key`. A и B переходят на `meta_api_*` в своих файлах, после чего свойства
+  удаляются. `.env.example` (только новые имена, WP5.7) — у B.
+- Почему: §2.3 п.8, R4, §0.4.3 п.2.
+- Обратимость: два свойства и значения по умолчанию в `config.py`.
+- Тесты: `tests/test_settings_meta_api.py` (4).
+- Требует подтверждения владельцем: нет
 ### D-C-025. `structure/propose`: ключ события выводится из клиентского ключа и хэша ввода (Q9, T-E2)
 - Класс: C
 - WP / место: WP10.2 (`T-E2`); `quack/domains/structure.py::proposal_key`, `_check_proposal_key`
@@ -1436,6 +1564,45 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `tests/artifacts/test_practice_engine.py` (`tasks/next`, `hint`, `submit`),
   `tests/artifacts/test_artifacts_search_export.py::test_notes_crud`, `T-E2`.
 - Требует подтверждения владельцем: нет (поведение задано `T-E2`; выбор только в способе)
+### D-C-029. T-O5: `CheckpointerOutput` заменён на `ExtractorOutputV2`
+- Класс: C
+- WP / место: WP10.3 (`T-O5`); `tests/test_meta_mock.py::OUTPUT_MODELS`,
+  `tests/support/llm.py`, `tests/test_support_scripted_llm.py`
+- Контекст: `T-O5` перечисляет девять моделей вывода, среди них `CheckpointerOutput`. WP13 (B, #43)
+  строит `session.checkpoint` кодом, #45 удалил `checkpointer@1` из промптов и манифеста; B
+  снимет класс, когда его перестанут читать тесты. `extractor@2` (D-B-022) отвечает
+  `ExtractorOutputV2`, которого в списке нет.
+- Варианты (с уровнями §0.4.1): (а) оставить `CheckpointerOutput` — тест держит удалённую роль и
+  мешает снять класс; (б) убрать без замены — восемь моделей, ослабление теста, класс D;
+  (в) заменить на `ExtractorOutputV2`.
+- Решение: (в). Девять моделей: все модели вывода промптов манифеста (`extractor@1` и `@2`).
+- Почему: `T-O5` проверяет, что подменный сервер отдаёт валидный ответ для каждой модели вывода
+  (уровень 2 §0.4.1); список следует манифесту после WP13.
+- Обратимость: список в тесте.
+- Тесты: `T-O5`, `tests/test_support_scripted_llm.py`.
+- Требует подтверждения владельцем: да (класс C, расходится с буквой таблицы `T-O5`)
+### D-C-030. WP6.4 п.1: неверный `reference_solution` отклоняется у того, кто пишет в банк, а не в `quack/events`
+- Класс: C
+- WP / место: WP6.4 (`T-H8` (а)); `quack/domains/diagnostic.py::_generate_question`,
+  `_reference_solution`
+- Контекст: «запись неправильного формата отклоняется при записи в банк». `core.task_bank` пишет
+  проекция `task.generated` в `quack/events` (слой core), а модель `ReferenceSolution` — в
+  `quack/practice/schemas.py` (слой product), который сам импортирует `quack.events.payloads`.
+  B предложил валидатор `TaskGenerated.reference_solution` через `parse_reference_solution`.
+- Варианты (с уровнями §0.4.1): (а) валидатор в `quack/events/payloads.py` — импорт product из
+  core нарушает §4.1 (`T-A6`) и даёт цикл импортов; (б) регистрация проверки из `practice` в
+  `events` при импорте — проверка зависит от того, импортирован ли `practice` в процессе;
+  (в) перенести модели в core — ТЗ называет место `quack/practice/schemas.py`; (г) отклонять у
+  каждого, кто пишет `task.generated`: `task_gen@1` — `GeneratedTaskError` (B), `diagnostic@1` —
+  `ChoiceReference`, ответ без верного варианта среди вариантов → детерминированный вопрос кода.
+- Решение: (г). Как у `task_gen@1` в тесте B `test_wrong_reference_of_task_gen_is_rejected`.
+  Фикстуры с ключами Фазы 2 не трогаются: проекция их принимает, читатели B их не получают от
+  кода.
+- Почему: §4.1 и `T-A6` (уровень 2 §0.4.1); одна модель в `quack/practice/schemas.py` (WP6.4).
+- Обратимость: код записи в `diagnostic.py`.
+- Тесты: `tests/domains/test_diag_state_from_events.py::test_diagnostic_reference_is_a_choice_reference`,
+  `::test_diagnostic_question_without_a_valid_reference_is_not_banked`.
+- Требует подтверждения владельцем: да (класс C, вместо валидатора в `events` из предложения B)
 
 ### D-C-028. Стенд e2e: обход T-E2 — с поднятым `learner_actions_per_min` и `settle()` после хода
 - Класс: C
@@ -1476,13 +1643,21 @@ _(пусто)_
 | WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
 | WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
 | WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
+| WP5.7 (процесс API на `ResponsesClient`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_api_llm_provider.py` | 1 failed: провайдер шлюза API — `HttpLLMProvider`, ждали `ResponsesClient` |
+| WP6.3 (кадры хода в `openapi`) | `uv run pytest -q tests/test_app_assembly.py -k turn_stream_documents` | 1 failed: в описании потока хода нет списка событий и `status {"state": "thinking"}` |
+| WP10.3 (`T-O5`) | `uv run pytest -q tests/test_meta_mock.py` | написан после адаптера WP5.7 и `meta-mock`, красного прогона нет; проверка на неверной реализации — тесты провода того же файла (27) были красными до `meta-mock` |
 | WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
 | WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
 | WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
 | WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
 | WP5.7 (адаптер) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py` (коммит `3d76160`) | 10 failed, 23 passed: `T-L8` ×9 и `T-L10` — `NotImplementedError` в `ResponsesClient`; `T-L9` (экземпляр, `jsonschema`) зелёный |
 | WP12 (обработчик B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_turn_extract_worker.py tests/session/test_extract_quote_grounding.py tests/session/test_worker_pool_and_slice.py` (коммит `539f863`) | 3 failed, 1 passed: обработчик пишет `turn.extracted` v1 через `extractor@1` |
+| WP13 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_checkpoint_law10.py` (коммит `5f56772`) | 5 failed, 1 passed: `T-C1`…`T-C4` и видимая часть — `NotImplementedError` в `checkpoint_render`; `T-C5` зелёный (у `session.checkpoint` уже `required_seq = NULL`) |
 | WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
+| WP15 (причина повтора) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py -k retries_then` (коммит `a99ac64`) | 1 failed: в запросах повторов нет `{"rule": "spoiler"` — в `teacher@1` нет блока `{{ guard_reason }}` |
+| WP6.4 (схема) | `uv run pytest -q tests/practice` (коммит `a9aa6ee`) | 14 failed: `NotImplementedError` в `parse_reference_solution` / `reference_solution_payload` |
+| WP6.4 (стыки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase2_seams.py` (тесты `ac949b8` на коде `47f3fc1`) | 4 failed: читатели ждут `sympy`, `task_gen@1` пишет ключи Фазы 2, в payload нет `session_id`. `T-H7` упал из-за фикстур в новом формате (без проверки `compute` нет `task_evaluated`); сам порядок кадров уже верный (A27) |
+| WP6.4 (C: `diagnostic`, `finish_artifacts`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py tests/artifacts/test_artifacts_search_export.py` (коммит `edd0bf9`) | 2 failed: ответ `diagnostic@1` с верным вариантом вне вариантов записан в банк (`actor = diagnostic@1`); обработчик `session.finish_artifacts` берёт `session_id` из lock key (`badly formed hexadecimal UUID string`) |
 | WP10.2 (`confirm`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `1b209a3`) | 1 failed: тот же ключ с другой `structure_version` → 422 `VALIDATION_ERROR` (проверка версии раньше ключа), ждали 409 |
 | WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
 | WP10.2 (`diagnostic/finish`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py -k same_key_other_session` (коммит `619219c`) | 1 failed: тот же ключ с другим `session_id` → 404 `NOT_FOUND` (сессия ищется раньше ключа), ждали 409 |
@@ -1512,6 +1687,7 @@ _(пусто)_
 | `tests/domains/test_curation_slice_and_pool.py` | тест кэша клиентов по `id(settings)` заменён тестом «ресурсы из `JobContext`, ничего не создаётся и не закрывается» | D-A-007, класс C: свойство сохранено, кэша больше нет |
 | `tests/domains/conftest.py`, `tests/domains/test_diagnostic_and_graph_view.py` | `fake_llm_provider` не пишет в `curation.llm_provider_override`; контекст — `build_job_context` | §8.9: фикстуры и импорты |
 | `tests/test_app_assembly.py::PENDING_ROUTES` | убран `GET /v1/learner/stream` | WP7 смонтирован (`test_pending_routes_are_still_pending` требует удалить запись) |
+| `tests/session/test_session_checkpoint_worker.py`, `tests/session/test_worker_pool_and_slice.py` | ответ и промпт `checkpointer@1` → отсутствие вызова модели и payload по `render_checkpoint`; обработчик сводки без шлюза | §8.9 п.8, D-B-023; с неверной реализацией сворачивания `T-C4` падает |
 
 ## Вопросы к команде
 

@@ -1,16 +1,16 @@
 """`core.task_bank.reference_solution` — one shared model (WP6.4 п.1, seam S10).
 
 Keys by task kind follow the table of WP6.4; `hints` (hint ladder of practice) and `latex`
-(display) are a compatible extension of that table. Pending owner confirmation: D-B-001.
+(display) are a compatible extension of that table. Decided: D-B-001 (1).
 A record of a wrong format is rejected when written to the bank, not when an answer is
 checked.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from quack.compute_client.client import MathMode
 from quack.events.payloads import Unit
@@ -98,6 +98,8 @@ class EvaluatorOutput(BaseModel):
 
 type TaskKind = Literal["math", "choice", "open"]
 
+_Text = Annotated[str, Field(min_length=1)]
+
 
 class _Reference(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -106,7 +108,7 @@ class _Reference(BaseModel):
 
 
 class MathReference(_Reference):
-    expression: str
+    expression: _Text
     mode: MathMode = "expression_equiv"
     variables: list[str] = ["x"]
     tolerance: float = 1e-6
@@ -114,19 +116,45 @@ class MathReference(_Reference):
 
 
 class ChoiceReference(_Reference):
-    option: str
-    answer: str
-    options: list[str]
+    option: _Text
+    answer: _Text
+    options: Annotated[list[_Text], Field(min_length=2)]
+
+    @model_validator(mode="after")
+    def _option_is_listed(self) -> ChoiceReference:
+        if self.option not in self.options:
+            raise ValueError("the correct option is not among the options")
+        return self
 
 
 class OpenReference(_Reference):
-    key_points: list[str]
-    sample_answer: str
+    key_points: Annotated[list[_Text], Field(min_length=1)]
+    sample_answer: _Text
 
 
 type ReferenceSolution = MathReference | ChoiceReference | OpenReference
 
+# `code` tasks are checked like `open` ones in Phase 3: no runner, the evaluator reads the
+# key points (D-B-025).
+REFERENCE_MODELS: dict[str, type[MathReference | ChoiceReference | OpenReference]] = {
+    "math": MathReference,
+    "choice": ChoiceReference,
+    "open": OpenReference,
+    "code": OpenReference,
+}
+
 
 def parse_reference_solution(kind: str, data: dict[str, object]) -> ReferenceSolution:
     """The model of `kind` validated from the stored dict; `ValueError` on a wrong format."""
-    raise NotImplementedError
+    model = REFERENCE_MODELS.get(kind)
+    if model is None:
+        raise ValueError(f"unknown task kind {kind!r}")
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        raise ValueError(f"reference_solution of a {kind} task: {exc}") from exc
+
+
+def reference_solution_payload(reference: ReferenceSolution) -> dict[str, object]:
+    """The dict stored in `core.task_bank.reference_solution` and in `task.generated`."""
+    return reference.model_dump(mode="json", exclude_none=True)

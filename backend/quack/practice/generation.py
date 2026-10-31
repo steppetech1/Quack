@@ -2,8 +2,8 @@
 
 The model writes the problem in the contract of its prompt; code decides everything the
 bank keeps: the family, the difficulty, the target skill, and `reference_solution` in the
-keys the readers use today (`sympy`/`check_mode`, `option`, `answer`, `hints`). The move to
-the keys of WP6.4 is one change of this module and of the readers (D-B-001).
+format of WP6.4 (`ReferenceSolution`, D-B-001). An empty answer or a wrong format raises
+`ValueError` here, before the bank.
 """
 
 from __future__ import annotations
@@ -13,8 +13,18 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from quack.compute_client.client import MathMode
-from quack.practice.schemas import AnswerType, TaskGenOutput
+from quack.practice.schemas import (
+    AnswerType,
+    ChoiceReference,
+    MathReference,
+    OpenReference,
+    ReferenceSolution,
+    TaskGenOutput,
+    reference_solution_payload,
+)
 
 # Answer types allowed for each task kind of the bank, and the compute mode of math types.
 KIND_ANSWER_TYPES: dict[str, frozenset[AnswerType]] = {
@@ -67,31 +77,43 @@ def build_generated_task(
     answer = output.answer
     if answer.type not in KIND_ANSWER_TYPES.get(kind, frozenset()):
         raise GeneratedTaskError(f"answer type {answer.type!r} does not fit kind {kind!r}")
+    try:
+        reference, prompt_text = _reference(output, kind)
+    except ValidationError as exc:
+        raise GeneratedTaskError(f"reference_solution of a {kind} task: {exc}") from exc
+    caught = (_label_name(o.catches, misconception_names) for o in output.options)
+    return GeneratedTask(
+        family_id=generated_family_id(task_id),
+        prompt_text=prompt_text,
+        reference_solution=reference_solution_payload(reference),
+        target_misconceptions=sorted({name for name in caught if name is not None}),
+    )
+
+
+def _reference(output: TaskGenOutput, kind: str) -> tuple[ReferenceSolution, str]:
+    answer = output.answer
     hints = [h for h in output.hints if h]
-    reference: dict[str, Any]
+    reference: ReferenceSolution
     prompt_text = output.statement
     if kind == "choice":
         correct = [o for o in output.options if o.correct]
         if len(correct) != 1 or correct[0].label != answer.value:
             raise GeneratedTaskError("a choice task needs exactly one correct option")
         prompt_text += "\n\n" + "\n".join(f"{o.label}. {o.text}" for o in output.options)
-        reference = {
-            "option": answer.value,
-            "answer": correct[0].text,
-            "options": [o.label for o in output.options],
-        }
+        reference = ChoiceReference(
+            option=answer.value,
+            answer=correct[0].text,
+            options=[o.label for o in output.options],
+            hints=hints,
+        )
     elif kind == "math":
-        reference = {"sympy": answer.value, "check_mode": MATH_CHECK_MODES[answer.type]}
+        reference = MathReference(
+            expression=answer.value, mode=MATH_CHECK_MODES[answer.type], hints=hints
+        )
     else:
-        reference = {"answer": answer.value}
-    reference["solution"] = output.solution
-    if answer.units is not None:
-        reference["units"] = answer.units
-    reference["hints"] = hints
-    caught = (_label_name(o.catches, misconception_names) for o in output.options)
-    return GeneratedTask(
-        family_id=generated_family_id(task_id),
-        prompt_text=prompt_text,
-        reference_solution=reference,
-        target_misconceptions=sorted({name for name in caught if name is not None}),
-    )
+        # D-B-025: the key points of an open task are the lines of the model's solution.
+        points = [line.strip() for line in output.solution.splitlines() if line.strip()]
+        reference = OpenReference(
+            key_points=points or [answer.value], sample_answer=answer.value, hints=hints
+        )
+    return reference, prompt_text
