@@ -9,6 +9,7 @@ from collections.abc import Iterable, Sequence
 from uuid import UUID, uuid5
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources
@@ -32,6 +33,8 @@ from quack.domains.schemas import (
 )
 from quack.domains.service import slugify_domain_name
 from quack.events.append import append_events
+from quack.events.errors import IdempotencyConflictError
+from quack.events.hashing import payload_hash
 from quack.events.models import NewEvent
 from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.neo4j_store import read_applied_seq
@@ -243,6 +246,41 @@ def build_degraded_structure(
     return topics, skills, prereqs, [], []
 
 
+def proposal_key(domain_id: UUID, req: ProposeStructureRequest) -> str:
+    """Key of `structure.proposed` and of its structurer call, derived from the source (Т-§2.3):
+    the client key and the hash of the request input. The payload of the event is the model's
+    answer, so its hash alone cannot tell another request from a repeat (Т-§2.1, D-C-025)."""
+    digest = payload_hash(
+        {
+            "domain_id": str(domain_id),
+            "goals": req.goals,
+            "background": req.background,
+            "focus_areas": req.focus_areas,
+        }
+    )
+    return f"{req.idempotency_key}:{digest}"
+
+
+async def _check_proposal_key(
+    session: AsyncSession, learner_id: UUID, req: ProposeStructureRequest, key: str
+) -> None:
+    """`IdempotencyConflictError` (409) if the client key was used for another request."""
+    prefix = f"{req.idempotency_key}:"
+    rows = await session.execute(
+        text(
+            "SELECT idempotency_key FROM core.events WHERE learner_id = :l "
+            "AND type = 'structure.proposed' AND left(idempotency_key, :n) = :p "
+            "AND length(idempotency_key) = :m"
+        ),
+        {"l": learner_id, "n": len(prefix), "p": prefix, "m": len(key)},
+    )
+    for (existing,) in rows:
+        if existing != key:
+            raise IdempotencyConflictError(
+                req.idempotency_key, existing.rsplit(":", 1)[1], key.rsplit(":", 1)[1]
+            )
+
+
 async def propose_structure(
     resources: AppResources,
     settings: Settings,
@@ -273,6 +311,8 @@ async def propose_structure(
             raise ApiError("NOT_FOUND", f"Domain {domain_id} not found", status_code=404)
         domain_name = dom["name"]
         domain_status = dom["status"]
+        key = proposal_key(domain_id, req)
+        await _check_proposal_key(session, learner_id, req, key)
 
     structure_version = 1
 
@@ -293,7 +333,7 @@ async def propose_structure(
             learner_id=learner_id,
             session_id=None,
             turn_id=None,
-            idempotency_key=req.idempotency_key,
+            idempotency_key=key,
         )
         topics, skills, prereqs, skill_deps, misconceptions = sanitize_structurer_output(
             domain_id, structure_version, res.value
@@ -332,7 +372,7 @@ async def propose_structure(
             type="structure.proposed",
             actor="code" if degraded else "structurer@1",
             domain_id=domain_id,
-            idempotency_key=req.idempotency_key,
+            idempotency_key=key,
             payload={
                 "domain_id": str(domain_id),
                 "structure_version": structure_version,
