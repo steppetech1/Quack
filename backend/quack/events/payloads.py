@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -314,6 +315,53 @@ class TurnExtracted(Payload):
     turn_id: UUID
     observations: list[ExtractedObservation]
     misconceptions: list[ExtractedMisconception] = []
+
+
+# `turn.extracted` schema_version 2 (ТЗ Фазы 3 WP12, law 4): elements of `extractor@2` with
+# closed enumerations only; tier and weight are assigned by code, never stored here.
+
+type ExtractionOutcome = Literal["correct", "incorrect", "partial"]
+type ExtractionAssistance = Literal["none", "hint", "shown_solution"]
+type GapType = Literal[
+    "none", "no_idea", "when_to_apply", "confusion", "execution", "slip", "misconception"
+]
+# Why code did not apply an element (WP12.2 п.1, Т-§7.6).
+type ElementRejection = Literal[
+    "unknown_label",
+    "unclear_skill",
+    "quote_not_in_source",
+    "source_outside_episode",
+    "level_above_task",
+    "missing_quote",
+    "incomplete_element",
+]
+
+
+class ExtractedElement(Payload):
+    """One element of `extractor@2` as written by code: the model's labels resolved to ids,
+    the time taken from the source events, and the verdict of code validation
+    (`rejected_reason`; `None` = applied)."""
+
+    kind: Literal["evidence", "misconception_hypothesis"]
+    skill_label: str
+    skill: SkillRef | None = None
+    misconception_label: str | None = None
+    misconception_id: UUID | None = None
+    level: Annotated[int, Field(ge=1, le=6)] | None = None
+    outcome: ExtractionOutcome | None = None
+    assistance: ExtractionAssistance | None = None
+    hint_step: Annotated[int, Field(ge=1, le=3)] | None = None
+    gap_type: GapType | None = None
+    quote: str = ""
+    source_seqs: list[int]
+    occurred_at: datetime | None = None
+    rejected_reason: ElementRejection | None = None
+
+
+class TurnExtractedV2(Payload):
+    session_id: UUID
+    turn_id: UUID
+    elements: list[ExtractedElement]
 
 
 # --- 5. Practice and tasks (5) ---

@@ -66,7 +66,7 @@
 | WP9 | A | не начат | — |
 | WP10 | C | WP10.1 стенд `system` и WP10.2 `T-E1`…`T-E10` — написаны (красные, ветка `phase-3-c-e2e-red`); WP10.3 — не начат | 6 красных, 4 зелёных на текущем коде |
 | WP11 | A | не начат | — |
-| WP12 | C | не начат | — |
+| WP12 | C | **частично**: швы S5/S6 — `turn.extracted` v2, проверка элемента, ярус и вес, применение v2 проектором (D-C-019); вес в свёртке и `rules@2` (`T-W7`) — вторая часть | `T-W1`…`T-W6` зелёные; 490 passed |
 | WP13 | B | не начат | — |
 | WP14 | B | не начат | — |
 | WP15 | B | не начат | — |
@@ -714,6 +714,32 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 - Тесты: `tests/test_neo4j_outage.py` (граф и карточка темы → 503); ход учителя — `T-H1` у B.
 - Требует подтверждения владельцем: нет
 
+### D-C-019. WP12, швы S5/S6: элемент `turn.extracted` v2, проверка и вес
+- Класс: B
+- WP / место: WP12.1–12.2; `quack/events/payloads.py::ExtractedElement`, `TurnExtractedV2`,
+  `quack/events/catalog.py::EVENT_TYPE_VERSIONS`, `quack/graph/evidence_validation.py`,
+  `quack/graph/evidence_weights.py`, `quack/graph/phase_a.py::_turn_extracted_v2`, `Settings.hot_window_factor`
+- Контекст: WP12.1 перечисляет поля элемента, но не говорит, как в событии хранить метки, время и
+  итог проверки; B (D-B-011) добавил `misconception_label`; множитель «окна» 0.5 (`Т-§7.4`) в §6.2 не назван.
+- Решение:
+  1. Элемент события: поля WP12.1 + `skill` (`SkillRef`: метка → `skill_id`, описание нового навыка →
+     `new_skill` темы сессии, `Т-§4.4`), `misconception_label`/`misconception_id`, `occurred_at`
+     (самое позднее из исходных событий, WP12.2 п.2), `rejected_reason` (итог проверки кода; `None` —
+     применён). Числовых полей, кроме `level`, `hint_step`, `source_seqs`, нет (`T-W1`).
+  2. Проверка (`to_extracted_element`, S6): `unclear` → `unclear_skill`; неизвестная метка `S…`/`M…` →
+     `unknown_label`; номер вне эпизода → `source_outside_episode`; отрицательный элемент или гипотеза
+     без цитаты → `missing_quote`; цитата не из исходных событий → `quote_not_in_source`; уровень выше
+     разметки задачи → `level_above_task`; без полей своего вида → `incomplete_element`.
+  3. Ярус и вес — чистые `assign_tier`, `evidence_weight` по `Т-§7.4`/`Т-§7.8`; все числа из `Settings`;
+     `hot_window_factor = 0.5` — новый параметр (# Phase 3 decision D-C-019).
+  4. Проектор: `turn.extracted` v2 → свидетельство T3 со временем элемента, без чисел модели;
+     отклонённые и неполные элементы не применяются (поток не останавливается); v1 читается как раньше.
+- Не сделано (вторая часть WP12): вес в свёртке фазы Б и `rules@2` (WP12.3, `T-W7`).
+- Почему: §0.4.3 п.1, п.2 (новая версия схемы, старая читается); п.5.
+- Обратимость: модели v2 и одна запись каталога; обработчик v2; параметр `hot_window_factor`.
+- Тесты: `tests/graph/test_evidence_law4.py` — `T-W1`…`T-W6` (27 тестов).
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -730,6 +756,7 @@ _(пусто)_
 | WP4.1 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_read_session.py tests/test_contracts.py -k "neo4j or read_session"` (коммит `b692007`) | 3 failed, 1 passed: `read_session` — `NotImplementedError` (2); `T-A9a` — сессии вне `read_session` в 6 модулях C (`artifacts.cheatsheets`, `artifacts.search`, `domains.curation`, `domains.diagnostic`, `domains.graph_view`, `domains.structure`) |
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
+| WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
 
 ## Правки тестов
 
@@ -743,6 +770,7 @@ _(пусто)_
 | `tests/test_infra.py::test_cli_parser` | добавлены проверки `ops openapi --out` | §8.9 п.3: тест дополняется новой командой, старые утверждения сохранены |
 | `tests/domains/test_curation_keys_and_actor.py::_FakeDriver.session` | принимает `**_config` | WP4.1: сессии открываются через `read_session(driver)` с `default_access_mode`; фикстура, утверждения не менялись |
 | `tests/domains/test_graph_view_fixes.py::test_graph_view_opens_every_neo4j_session_with_read_access` | шпион считает и сессии, открытые через `read_session`, вызванную из `graph_view.py` | WP4.1 перенёс место открытия сессии в `quack/db/neo4j.py`; утверждения (≥ 2 сессии, все READ) те же. Проверка «не ослаблен»: при `read_session` без READ тест падает |
+| `tests/factories.py::EventLog.add` | необязательный параметр `schema_version` (по умолчанию 1) | WP12: события `turn.extracted` v2 в сценариях; фикстура, утверждения не менялись |
 
 ## Вопросы к команде
 
