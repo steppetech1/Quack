@@ -19,7 +19,7 @@ from quack.db.postgres import SessionFactory, create_session_factory
 from quack.llm.gateway import LLMGateway
 from quack.llm.provider import LLMProvider
 from tests.support.compute import ComputeScenario, scripted_compute
-from tests.support.llm import ScriptedLLMProvider
+from tests.support.llm import UnavailableLLMProvider
 
 
 def build_app_resources(
@@ -33,7 +33,7 @@ def build_app_resources(
     compute: ComputeClient | None = None,
 ) -> AppResources:
     """`AppResources` over the test pools. `neo4j` / `redis` may be the broken doubles of
-    `tests.support.broken`; by default the LLM is a `ScriptedLLMProvider` and compute is an
+    `tests.support.broken`; by default the LLM is down (`UnavailableLLMProvider`) and compute is an
     empty `ComputeScenario` (answers 503)."""
     factory = session_factory or create_session_factory(engine)
     return AppResources(
@@ -42,6 +42,6 @@ def build_app_resources(
         session_factory=factory,
         neo4j=cast(AsyncDriver, neo4j),
         redis=cast(Redis | None, redis),
-        llm=LLMGateway(factory, provider or ScriptedLLMProvider(), settings),
+        llm=LLMGateway(factory, provider or UnavailableLLMProvider(), settings),
         compute=compute or scripted_compute(ComputeScenario()),
     )

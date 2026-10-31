@@ -15,6 +15,7 @@ from typing import Any
 import orjson
 from pydantic import BaseModel
 
+from quack.llm.errors import ProviderUnavailableError
 from quack.llm.provider import ProviderRequest, ProviderResponse
 
 type QueuedLLMItem = dict[str, Any] | BaseModel | str | Exception
@@ -54,6 +55,18 @@ class FakeLLMProvider:
             cached_tokens=0,
             model=request.model,
         )
+
+
+class UnavailableLLMProvider:
+    """`LLMProvider` that is always down (`ProviderUnavailableError`): the default of
+    `build_app_resources`, like a deployment without a reachable model API."""
+
+    def __init__(self) -> None:
+        self.calls: list[ProviderRequest] = []
+
+    async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
+        self.calls.append(request)
+        raise ProviderUnavailableError("test provider is unavailable")
 
 
 type Responder = Callable[[ProviderRequest], QueuedLLMItem]
