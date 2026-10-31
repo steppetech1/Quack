@@ -10,55 +10,37 @@ from uuid import UUID, uuid5
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.events.append import append_events
 from quack.events.models import NewEvent
-from quack.events.payloads import TaskEvaluated
+from quack.events.payloads import TaskEvaluated, TaskSubmitted
 from quack.graph.ids import QUACK_UUID_NS
 from quack.jobs import kinds
 from quack.jobs.queue import enqueue_job
 from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
 from quack.llm.gateway import LLMGateway
+from quack.practice.evaluation import (
+    TASK_COLUMNS,
+    AnswerVerdict,
+    TaskToCheck,
+    evaluate_answer,
+    hint_penalties,
+    load_task,
+    task_from_row,
+)
+from quack.practice.selection import pick_task
 from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
 from quack.session.schemas import TeacherOutput, TurnRequest
-from quack.session.tasks import (
-    _TB_COLUMNS,
-    SubmissionOutcome,
-    TaskBankRow,
-    _row,
-    _skill_scores,
-    assigned_task_ids_from_overlay,
-    compute_independence,
-    evaluate_submission,
-    hint_penalties,
-    load_task,
-    pick_task,
-    solved_families_from_overlay,
-)
+from quack.session.tasks import assigned_task_ids_from_overlay, solved_families_from_overlay
+
+_TB_COLUMNS = ", ".join(f"tb.{c.strip()}" for c in TASK_COLUMNS.split(","))
 
 
-def _code_evaluation(
-    task: TaskBankRow, student_answer: str, pedagogical_move: str
-) -> tuple[bool, float, str]:
-    ref = task.reference_solution
-    option = ref.get("option") if "option" in ref else ref.get("answer")
-    if option is not None:
-        norm_student = "".join(student_answer.split()).casefold()
-        norm_ref = "".join(str(option).split()).casefold()
-        ok = norm_student == norm_ref
-        return ok, 1.0 if ok else 0.0, "correct" if ok else f"the correct option is {option}"
-    if pedagogical_move in ("give_feedback", "remedy_misconception", "praise"):
-        return True, 1.0, "correct"
-    if pedagogical_move in ("scaffold", "probe"):
-        return False, 0.5, "partially correct"
-    return False, 0.0, "incorrect"
-
-
-def degraded_reply_text(task: TaskBankRow | None) -> str:
+def degraded_reply_text(task: TaskToCheck | None) -> str:
     """Template teacher reply used while the LLM is unavailable or over budget (Т-§17.1)."""
     if task is None:
         return (
@@ -78,7 +60,7 @@ async def get_available_tasks(
     exclude_task_ids: Collection[UUID] = (),
     *,
     session_id: UUID | None = None,
-) -> list[TaskBankRow]:
+) -> list[TaskToCheck]:
     """All unassigned tasks of the topic for available_tasks_json in teacher prompt."""
     if topic_id is None:
         return []
@@ -101,7 +83,7 @@ async def get_available_tasks(
         params["s"] = session_id
     sql += " ORDER BY tb.difficulty, tb.created_seq, tb.id"
     rows = (await session.execute(text(sql), params)).all()
-    return [_row(r) for r in rows]
+    return [task_from_row(r) for r in rows]
 
 
 async def open_turn(
@@ -267,7 +249,7 @@ async def open_turn(
 
         available_tasks_data = [
             {
-                "task_id": str(t.id),
+                "task_id": str(t.task_id),
                 "family_id": t.family_id,
                 "kind": t.kind,
                 "difficulty": t.difficulty,
@@ -276,40 +258,47 @@ async def open_turn(
             for t in available_tasks
         ]
 
-        # 4. In-turn task evaluation (ТЗ §2.3.4) and Teacher call via LLMGateway
+        # 4. In-turn task evaluation (ТЗ-П2 §2.3.4) through the one cascade of quack.practice
+        #    (WP6.2, D-B-006), then the teacher call via LLMGateway.
         turn_id = uuid5(QUACK_UUID_NS, f"turn:{learner_id}:{session_id}:{body.idempotency_key}")
-        submitted_task: TaskBankRow | None = None
-        submission_outcome: SubmissionOutcome | None = None
+        submitted_task: TaskToCheck | None = None
+        verdict: AnswerVerdict | None = None
         task_evaluation_json = "null"
         if body.related_task_id is not None:
             async with resources.session_factory() as session:
                 submitted_task = await load_task(session, learner_id, body.related_task_id)
+                given = (
+                    await hint_penalties(session, learner_id, session_id, submitted_task.task_id)
+                    if submitted_task is not None
+                    else []
+                )
             if submitted_task is not None:
-                penalties = hint_penalties(context.overlay, submitted_task.id)
-                submission_outcome = await evaluate_submission(
-                    compute,
+                verdict = await evaluate_answer(
                     submitted_task,
                     body.text,
-                    session_id,
-                    turn_id,
-                    body.hints_used,
-                    penalties,
-                    body.response_time_sec,
+                    [penalty for _, penalty in given],
+                    learner_id=learner_id,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    idempotency_key=(
+                        f"evaluator:{session_id}:{submitted_task.task_id}:{body.idempotency_key}"
+                    ),
+                    gateway=gateway,
+                    compute=compute,
+                    settings=settings,
                 )
-                if submission_outcome.evaluated is not None:
-                    ev = submission_outcome.evaluated
-                    task_evaluation_json = json.dumps(
-                        {
-                            "task_id": str(ev.task_id),
-                            "evaluator": ev.evaluator,
-                            "is_correct": ev.is_correct,
-                            "score": ev.score,
-                            "independence": ev.independence,
-                            "feedback": ev.feedback,
-                            "skill_scores": [s.model_dump(mode="json") for s in ev.skill_scores],
-                        },
-                        ensure_ascii=False,
-                    )
+                task_evaluation_json = json.dumps(
+                    {
+                        "task_id": str(submitted_task.task_id),
+                        "evaluator": verdict.evaluator,
+                        "is_correct": verdict.is_correct,
+                        "score": verdict.score,
+                        "independence": verdict.independence,
+                        "feedback": verdict.feedback,
+                        "skill_scores": verdict.skill_scores,
+                    },
+                    ensure_ascii=False,
+                )
 
         variables = {
             "mode": context.mode,
@@ -325,7 +314,7 @@ async def open_turn(
 
         # Deterministic degradation (Т-§17.1): the turn never fails with 503 on LLM errors.
         llm_degraded_mode: str | None = None
-        fallback_task: TaskBankRow | None = None
+        fallback_task: TaskToCheck | None = None
         try:
             teacher_result = await gateway.generate_structured(
                 role="teacher",
@@ -356,7 +345,7 @@ async def open_turn(
             teacher_output = TeacherOutput(
                 reply_text=degraded_reply_text(fallback_task),
                 pedagogical_move="assign_task" if fallback_task is not None else "explain",
-                assign_task_id=fallback_task.id if fallback_task is not None else None,
+                assign_task_id=fallback_task.task_id if fallback_task is not None else None,
             )
 
         # 5. Events to commit
@@ -381,11 +370,19 @@ async def open_turn(
             )
         ]
 
-        if submission_outcome is not None:
+        final_evaluated: TaskEvaluated | None = None
+        if submitted_task is not None and verdict is not None:
             events.append(
                 NewEvent(
                     type="task.submitted",
-                    payload=submission_outcome.submitted,
+                    payload=TaskSubmitted(
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        task_id=submitted_task.task_id,
+                        answer=body.text,
+                        hints_used=max(0, body.hints_used),
+                        response_time_sec=body.response_time_sec,
+                    ),
                     actor="learner",
                     idempotency_key=f"{body.idempotency_key}:submitted",
                     session_id=session_id,
@@ -393,56 +390,25 @@ async def open_turn(
                     domain_id=domain_id,
                 )
             )
-            # S-4.4: ensure task.evaluated is always produced
-            eval_actor = "code"
-            if submission_outcome.evaluated is not None:
-                final_evaluated = submission_outcome.evaluated
-                eval_actor = "compute"
-            else:
-                assert submitted_task is not None
-                penalties = hint_penalties(context.overlay, submitted_task.id)
-                indep = compute_independence(penalties, body.hints_used)
-                if (
-                    llm_degraded_mode is None
-                    and teacher_output.evaluated_score is not None
-                    and teacher_output.evaluated_is_correct is not None
-                ):
-                    eval_actor = "llm"
-                    score = float(teacher_output.evaluated_score)
-                    is_corr = bool(teacher_output.evaluated_is_correct)
-                    fb = teacher_output.evaluated_feedback or (
-                        "correct" if is_corr else "incorrect"
-                    )
-                else:
-                    eval_actor = "compute"
-                    is_corr, score, fb = _code_evaluation(
-                        submitted_task, body.text, teacher_output.pedagogical_move
-                    )
-
-                final_evaluated = TaskEvaluated(
-                    session_id=session_id,
-                    turn_id=turn_id,
-                    task_id=submitted_task.id,
-                    evaluator=eval_actor,
-                    is_correct=is_corr,
-                    score=score,
-                    independence=indep,
-                    feedback=fb,
-                    skill_scores=_skill_scores(submitted_task, score),
-                )
-                submission_outcome = SubmissionOutcome(
-                    submission_outcome.submitted, final_evaluated
-                )
-
+            final_evaluated = TaskEvaluated.model_validate(
+                {
+                    "session_id": str(session_id),
+                    "turn_id": str(turn_id),
+                    "task_id": str(submitted_task.task_id),
+                    "evaluator": verdict.evaluator,
+                    "is_correct": verdict.is_correct,
+                    "score": verdict.score,
+                    "independence": verdict.independence,
+                    "feedback": verdict.feedback,
+                    "skill_scores": verdict.skill_scores,
+                    "triggered_misconceptions": verdict.triggered_misconceptions,
+                }
+            )
             events.append(
                 NewEvent(
                     type="task.evaluated",
                     payload=final_evaluated,
-                    actor=(
-                        "code"
-                        if (eval_actor == "compute" or llm_degraded_mode is not None)
-                        else "teacher@1"
-                    ),
+                    actor=verdict.actor,
                     idempotency_key=f"{body.idempotency_key}:evaluated",
                     session_id=session_id,
                     turn_id=turn_id,
@@ -473,18 +439,19 @@ async def open_turn(
             )
 
         # Task assignment when pedagogical_move is "assign_task" or mode is "practice"
-        assigned_task: TaskBankRow | None = fallback_task
+        assigned_task: TaskToCheck | None = fallback_task
         if llm_degraded_mode is None and (
             teacher_output.pedagogical_move == "assign_task" or mode == "practice"
         ):
-            avail_ids = {t.id for t in available_tasks}
+            avail_ids = {t.task_id for t in available_tasks}
             if (
                 teacher_output.assign_task_id is not None
                 and teacher_output.assign_task_id in avail_ids
                 and teacher_output.assign_task_id not in assigned_task_ids
             ):
                 assigned_task = next(
-                    (t for t in available_tasks if t.id == teacher_output.assign_task_id), None
+                    (t for t in available_tasks if t.task_id == teacher_output.assign_task_id),
+                    None,
                 )
             if assigned_task is None and topic_id is not None:
                 async with resources.session_factory() as session:
@@ -508,7 +475,7 @@ async def open_turn(
                     payload={
                         "session_id": str(session_id),
                         "turn_id": str(turn_id),
-                        "task_id": str(assigned_task.id),
+                        "task_id": str(assigned_task.task_id),
                         "topic_id": str(assigned_task.topic_id),
                     },
                     actor=teacher_actor,
@@ -593,16 +560,15 @@ async def open_turn(
                 {"delta": teacher_output.reply_text},
             ),
         ]
-        if submission_outcome is not None and submission_outcome.evaluated is not None:
-            ev = submission_outcome.evaluated
+        if final_evaluated is not None:
             sse_events.append(
                 (
                     "task_evaluated",
                     {
-                        "task_id": str(ev.task_id),
-                        "is_correct": ev.is_correct,
-                        "score": ev.score,
-                        "feedback": ev.feedback,
+                        "task_id": str(final_evaluated.task_id),
+                        "is_correct": final_evaluated.is_correct,
+                        "score": final_evaluated.score,
+                        "feedback": final_evaluated.feedback,
                     },
                 )
             )
@@ -611,7 +577,7 @@ async def open_turn(
                 (
                     "task_assigned",
                     {
-                        "task_id": str(assigned_task.id),
+                        "task_id": str(assigned_task.task_id),
                         "kind": assigned_task.kind,
                         "prompt_text": assigned_task.prompt_text,
                     },

@@ -14,8 +14,8 @@ from quack.events import append_events
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
+from quack.practice.evaluation import independence_from_hints
 from quack.session.schemas import TeacherOutput
-from quack.session.tasks import compute_independence
 from tests.factories import new_event
 from tests.session.fixtures import FakeComputeClient, FakeLLMProvider, SeededDomain
 from tests.session.helpers import parse_sse
@@ -36,18 +36,16 @@ async def _project_all(neo4j: AsyncDriver, db: SessionFactory, learner_id: UUID)
     assert outcome.applied_seq == events[-1].seq
 
 
-def test_compute_independence_with_hints_used_and_floor() -> None:
-    """S-4.2: compute_independence accounts for hints_used and enforces the 0.1 floor."""
-    assert compute_independence([], 3) == 0.25
-    assert compute_independence([0.3], 1) == 0.7
-    assert compute_independence([0.3], 3) == 0.2
-    # Floor at 0.1
-    assert compute_independence([], 4) == 0.1
-    assert compute_independence([0.8], 3) == 0.1
-    assert compute_independence([0.6, 0.5], 2) == 0.1
-    # Default hints_used=0
-    assert compute_independence([]) == 1.0
-    assert compute_independence([0.3]) == 0.7
+def test_independence_counts_the_highest_logged_hint() -> None:
+    """S-4.2 under WP6.2 (D-B-006): one rule for the turn and practice — the highest
+    logged hint level counts, not the sum (Т-§7.4, ТЗ-П3 decision 1)."""
+    assert independence_from_hints([]) == 1.0
+    assert independence_from_hints([0.3]) == 0.7
+    assert independence_from_hints([0.25, 0.5]) == 0.5
+    assert independence_from_hints([0.5, 0.25]) == 0.5
+    assert independence_from_hints([0.25, 0.5, 0.75]) == 0.25
+    # Not the sum: two hints never cost more than the higher of them.
+    assert independence_from_hints([0.6, 0.5]) == 0.4
 
 
 async def test_turn_math_submission_writes_response_time_sec_and_independence(
@@ -118,7 +116,8 @@ async def test_turn_math_submission_writes_response_time_sec_and_independence(
 
     assert by_type["task.submitted"]["response_time_sec"] == 12.5
     assert by_type["task.submitted"]["hints_used"] == 2
-    assert by_type["task.evaluated"]["independence"] == 0.5
+    # D-B-006: client-counted hints without a `task.hint_given` event cost nothing.
+    assert by_type["task.evaluated"]["independence"] == 1.0
 
 
 async def test_turn_math_submission_combines_overlay_hint_penalties_and_hints_used(
@@ -211,7 +210,8 @@ async def test_turn_math_submission_combines_overlay_hint_penalties_and_hints_us
     by_type = {r.type: r.payload for r in rows}
     assert by_type["task.submitted"]["response_time_sec"] == 9.75
     assert by_type["task.submitted"]["hints_used"] == 3
-    assert by_type["task.evaluated"]["independence"] == 0.2
+    # D-B-006: the logged hint (penalty 0.3) counts; client-counted hints do not.
+    assert by_type["task.evaluated"]["independence"] == 0.7
 
 
 async def test_turns_pass_session_id_to_get_available_tasks_and_pick_task(

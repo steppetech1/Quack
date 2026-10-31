@@ -7,9 +7,10 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from quack.artifacts.schemas import ArtifactGenOutput, EvaluatorOutput, TaskGenOutput
+from quack.artifacts.schemas import ArtifactGenOutput
 from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOutput
 from quack.llm.strict_schema import StrictSchemaError, to_strict_json_schema
+from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.session.schemas import ExtractorOutput, TeacherOutput
 
 # Output models of the eight roles of Phase 3 after WP13 (§7.6).

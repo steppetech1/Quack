@@ -10,11 +10,11 @@ import httpx
 from neo4j import READ_ACCESS, AsyncDriver
 from sqlalchemy import text
 
-from quack.artifacts.schemas import EvaluatorOutput, TaskGenOutput
 from quack.db.postgres import SessionFactory
 from quack.events.payloads import MisconceptionEvalHit, SkillEvalScore
 from quack.graph.ids import QUACK_UUID_NS
 from quack.llm.errors import ProviderUnavailableError
+from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 
 if TYPE_CHECKING:
     from tests.artifacts.conftest import (

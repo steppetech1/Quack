@@ -1,36 +1,30 @@
-"""Practice loop (ТЗ §2.2): task selection and generation, hint ladder, hybrid evaluation."""
+"""Practice loop (ТЗ §2.2): task selection and generation, hint ladder, hybrid evaluation.
+
+The task pick and the answer check cascade live in `quack.practice` (WP6.2): the same code
+serves the teacher turn. This module keeps the endpoints and their events.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any, LiteralString
 from uuid import UUID, uuid5
 
 import orjson
 from neo4j import READ_ACCESS
-from pydantic import ValidationError
 from sqlalchemy import text
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
-from quack.artifacts.params import PARAMS
+from quack.api.resources import AppResources
 from quack.artifacts.schemas import (
-    EvaluatorOutput,
     HintRequest,
     HintResponse,
     NextTaskRequest,
     NextTaskResponse,
     SubmitRequest,
     SubmitResponse,
-    TaskGenOutput,
 )
-from quack.compute_client.client import (
-    ComputeClient,
-    ComputeUnavailableError,
-    MathCheckRequest,
-    MathCheckResponse,
-)
+from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.events import NewEvent, StoredEvent, append_events
 from quack.events.reader import EVENT_COLUMNS, row_to_event
@@ -38,17 +32,22 @@ from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.graph.topic_display import INACTIVE_SKILL_STATUSES
-from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
 from quack.llm.gateway import LLMGateway
+from quack.practice import selection
+from quack.practice.evaluation import (
+    LLM_ERRORS,
+    TaskToCheck,
+    evaluate_answer,
+    hint_penalties,
+    load_task,
+    task_from_row,
+)
+from quack.practice.schemas import TaskGenOutput
 
-# Errors after which practice switches to its deterministic fallbacks (Т-§22.7, decision 4).
-LLM_ERRORS = (LLMUnavailableError, LLMBudgetExceededError, LLMSchemaError)
+__all__ = ["LLM_ERRORS", "give_hint", "next_task", "submit_answer"]
 
 # Decision 9: the hint when `reference_solution` has no text for the level (no LLM call).
 HINT_TEMPLATE = "Hint {level}: think about which rule applies to this task."
-# Feedback of verdicts given without the LLM (compute, choice, decision 4).
-FEEDBACK_CORRECT = "Correct: your answer matches the reference answer."
-FEEDBACK_INCORRECT = "Not quite: your answer does not match the reference answer."
 
 # ТЗ §2.2 п.1: the weight of the single target skill of a generated task.
 TARGET_SKILL_WEIGHT = 1.0
@@ -61,31 +60,12 @@ _TOPIC_SKILLS: LiteralString = (
     "collect(s {.id, .name, .pMastery, .masteryStatus, .distinctFamilies}) AS skills"
 )
 
-# Correlated conditions on a `core.task_bank b` row.
 _ASSIGNED_IN_SESSION = (
     "EXISTS (SELECT 1 FROM core.events e WHERE e.learner_id = b.learner_id "
     "AND e.session_id = :s AND e.type = 'task.assigned' "
     "AND e.payload->>'task_id' = CAST(b.id AS TEXT))"
 )
-_EVALUATED = (
-    "EXISTS (SELECT 1 FROM core.events e WHERE e.learner_id = b.learner_id "
-    "AND e.type = 'task.evaluated' AND e.payload->>'task_id' = CAST(b.id AS TEXT))"
-)
-_NEW_FAMILY_FOR_SKILL = (
-    "(b.target_skills @> CAST(:target AS JSONB) AND NOT (b.family_id = ANY(:excluded)))"
-)
 _BANK_COLUMNS = "b.id, b.topic_id, b.family_id, b.difficulty, b.kind, b.prompt_text"
-
-
-@dataclass(frozen=True)
-class _Verdict:
-    evaluator: str
-    is_correct: bool
-    score: float
-    feedback: str
-    skill_scores: list[dict[str, Any]]
-    triggered_misconceptions: list[dict[str, Any]]
-    actor: str
 
 
 # --- shared reads and writes ----------------------------------------------------------
@@ -145,12 +125,13 @@ async def _session_domain(resources: AppResources, learner_id: UUID, session_id:
 
 async def _assigned_task(
     resources: AppResources, learner_id: UUID, session_id: UUID, task_id: UUID
-) -> dict[str, Any]:
+) -> TaskToCheck:
     """A12: the bank row of a task assigned in this session, else 404."""
     rows = await _rows(
         resources,
-        "SELECT b.kind, b.prompt_text, b.reference_solution, b.target_skills, "
-        "b.target_misconceptions FROM core.task_bank b "
+        "SELECT b.id, b.topic_id, b.family_id, b.difficulty, b.kind, b.prompt_text, "
+        "b.reference_solution, b.target_skills, b.target_misconceptions "
+        "FROM core.task_bank b "
         f"WHERE b.id = :t AND b.learner_id = :l AND {_ASSIGNED_IN_SESSION}",
         t=task_id,
         l=learner_id,
@@ -158,24 +139,15 @@ async def _assigned_task(
     )
     if not rows:
         raise ApiError("NOT_FOUND", "task is not assigned in this session", status_code=404)
-    return rows[0]
+    return task_from_row(rows[0])
 
 
 async def _hint_penalties(
     resources: AppResources, learner_id: UUID, session_id: UUID, task_id: UUID
 ) -> list[tuple[int, float]]:
     """`(hint_level, independence_penalty)` of every `task.hint_given` for the task."""
-    rows = await _rows(
-        resources,
-        "SELECT payload FROM core.events WHERE learner_id = :l AND session_id = :s "
-        "AND type = 'task.hint_given' AND payload->>'task_id' = :t ORDER BY seq",
-        l=learner_id,
-        s=session_id,
-        t=str(task_id),
-    )
-    return [
-        (int(r["payload"]["hint_level"]), float(r["payload"]["independence_penalty"])) for r in rows
-    ]
+    async with resources.session_factory() as session:
+        return await hint_penalties(session, learner_id, session_id, task_id)
 
 
 # --- next_task ------------------------------------------------------------------------
@@ -223,75 +195,6 @@ def _target_skill(skills: list[dict[str, Any]]) -> dict[str, Any]:
     return (candidates or ordered)[0]
 
 
-async def _excluded_families(resources: AppResources, learner_id: UUID, skill_id: str) -> list[str]:
-    """A8: families of tasks with a `task.evaluated` that scores this skill."""
-    rows = await _rows(
-        resources,
-        "SELECT DISTINCT b.family_id FROM core.events e JOIN core.task_bank b "
-        "ON b.learner_id = e.learner_id AND CAST(b.id AS TEXT) = e.payload->>'task_id' "
-        "WHERE e.learner_id = :l AND e.type = 'task.evaluated' "
-        "AND e.payload->'skill_scores' @> CAST(:score AS JSONB) ORDER BY b.family_id",
-        l=learner_id,
-        score=_json([{"skill_id": skill_id}]),
-    )
-    return [r["family_id"] for r in rows]
-
-
-def _target_pattern(skill_id: str) -> str:
-    return _json([{"skill": {"skill_id": skill_id}}])
-
-
-async def _bank_task_for_skill(
-    resources: AppResources,
-    learner_id: UUID,
-    session_id: UUID,
-    skill_id: str,
-    kind: str,
-    excluded: list[str],
-) -> dict[str, Any] | None:
-    """ТЗ §2.2 п.1, A8: an unsolved task of a new family for the skill, earliest first."""
-    rows = await _rows(
-        resources,
-        f"SELECT {_BANK_COLUMNS} FROM core.task_bank b "
-        f"WHERE b.learner_id = :l AND b.kind = :kind AND {_NEW_FAMILY_FOR_SKILL} "
-        f"AND NOT {_ASSIGNED_IN_SESSION} AND NOT {_EVALUATED} "
-        "ORDER BY b.created_seq LIMIT 1",
-        l=learner_id,
-        s=session_id,
-        kind=kind,
-        target=_target_pattern(skill_id),
-        excluded=excluded,
-    )
-    return rows[0] if rows else None
-
-
-async def _fallback_bank_task(
-    resources: AppResources,
-    learner_id: UUID,
-    session_id: UUID,
-    topic_id: UUID,
-    skill_id: str,
-    kind: str,
-    excluded: list[str],
-) -> dict[str, Any] | None:
-    """Any task of the topic and kind not assigned in the session: a new family for the
-    skill first, then unsolved before solved, then by `created_seq` (Т-§22.7)."""
-    rows = await _rows(
-        resources,
-        f"SELECT {_BANK_COLUMNS} FROM core.task_bank b "
-        "WHERE b.learner_id = :l AND b.topic_id = :topic AND b.kind = :kind "
-        f"AND NOT {_ASSIGNED_IN_SESSION} "
-        f"ORDER BY {_NEW_FAMILY_FOR_SKILL} DESC, {_EVALUATED}, b.created_seq LIMIT 1",
-        l=learner_id,
-        s=session_id,
-        topic=topic_id,
-        kind=kind,
-        target=_target_pattern(skill_id),
-        excluded=excluded,
-    )
-    return rows[0] if rows else None
-
-
 def _assigned_event(
     session_id: UUID, body: NextTaskRequest, task_id: UUID, topic_id: UUID
 ) -> NewEvent:
@@ -308,13 +211,13 @@ def _assigned_event(
     )
 
 
-def _bank_response(row: dict[str, Any], *, degraded: bool) -> NextTaskResponse:
+def _bank_response(task: TaskToCheck, *, degraded: bool) -> NextTaskResponse:
     return NextTaskResponse(
-        task_id=row["id"],
-        family_id=row["family_id"],
-        difficulty=row["difficulty"],
-        kind=row["kind"],
-        prompt_text=row["prompt_text"],
+        task_id=task.task_id,
+        family_id=task.family_id,
+        difficulty=task.difficulty,
+        kind=task.kind,
+        prompt_text=task.prompt_text,
         degraded=degraded,
     )
 
@@ -338,12 +241,9 @@ async def _replay_next_task(
             prompt_text=p["prompt_text"],
             degraded=False,
         )
-    [row] = await _rows(
-        resources,
-        f"SELECT {_BANK_COLUMNS} FROM core.task_bank b WHERE b.id = :t AND b.learner_id = :l",
-        t=UUID(assigned.payload["task_id"]),
-        l=learner_id,
-    )
+    async with resources.session_factory() as session:
+        row = await load_task(session, learner_id, UUID(assigned.payload["task_id"]))
+    assert row is not None, "task.assigned of a task missing from core.task_bank"
     failed = await _rows(
         resources,
         "SELECT 1 FROM core.llm_outbox WHERE learner_id = :l AND idempotency_key = :k "
@@ -375,14 +275,16 @@ async def next_task(
     topic_name, skills = topic
     skill = _target_skill(skills)
     skill_id: str = skill["id"]
-    excluded = await _excluded_families(resources, learner_id, skill_id)
-
-    bank = await _bank_task_for_skill(
-        resources, learner_id, session_id, skill_id, body.kind, excluded
-    )
+    async with resources.session_factory() as session:
+        excluded = await selection.excluded_families(session, learner_id, skill_id)
+        bank = await selection.bank_task_for_skill(
+            session, learner_id, session_id, skill_id, body.kind, excluded
+        )
     if bank is not None:
         await _append(
-            resources, learner_id, [_assigned_event(session_id, body, bank["id"], bank["topic_id"])]
+            resources,
+            learner_id,
+            [_assigned_event(session_id, body, bank.task_id, bank.topic_id)],
         )
         return _bank_response(bank, degraded=False)
 
@@ -396,7 +298,7 @@ async def next_task(
                 "target_skills_json": [{"skill_id": skill_id, "name": skill["name"]}],
                 "excluded_families_json": excluded,
                 "kind": body.kind,
-                "target_difficulty": PARAMS.default_target_difficulty,
+                "target_difficulty": settings.default_target_difficulty,
             },
             learner_id=learner_id,
             session_id=session_id,
@@ -404,15 +306,16 @@ async def next_task(
             idempotency_key=_task_gen_key(session_id, body.idempotency_key),
         )
     except LLM_ERRORS:
-        fallback = await _fallback_bank_task(
-            resources, learner_id, session_id, body.topic_id, skill_id, body.kind, excluded
-        )
+        async with resources.session_factory() as session:
+            fallback = await selection.fallback_bank_task(
+                session, learner_id, session_id, body.topic_id, skill_id, body.kind, excluded
+            )
         if fallback is None:
             raise
         await _append(
             resources,
             learner_id,
-            [_assigned_event(session_id, body, fallback["id"], fallback["topic_id"])],
+            [_assigned_event(session_id, body, fallback.task_id, fallback.topic_id)],
         )
         return _bank_response(fallback, degraded=True)
 
@@ -490,7 +393,7 @@ async def give_hint(
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)
     given = await _hint_penalties(resources, learner_id, session_id, task_id)
-    level = min(PARAMS.max_hint_level, max((lv for lv, _ in given), default=0) + 1)
+    level = min(settings.max_hint_level, max((lv for lv, _ in given), default=0) + 1)
     event = NewEvent(
         type="task.hint_given",
         payload={
@@ -498,8 +401,8 @@ async def give_hint(
             "turn_id": str(body.turn_id),
             "task_id": str(task_id),
             "hint_level": level,
-            "hint_text": _hint_text(task["reference_solution"], level),
-            "independence_penalty": PARAMS.hint_penalties[level - 1],
+            "hint_text": _hint_text(task.reference_solution, level),
+            "independence_penalty": settings.hint_penalties[level - 1],
         },
         actor="system",
         idempotency_key=_key(body.idempotency_key, "task.hint_given"),
@@ -509,123 +412,6 @@ async def give_hint(
 
 
 # --- submit_answer --------------------------------------------------------------------
-
-
-def _skill_ids(task: dict[str, Any]) -> list[str]:
-    return [t["skill"]["skill_id"] for t in task["target_skills"] if t["skill"].get("skill_id")]
-
-
-def _code_verdict(task: dict[str, Any], evaluator: str, is_correct: bool) -> _Verdict:
-    """Verdict without the LLM: every target skill gets the score (decision 8)."""
-    score = 1.0 if is_correct else 0.0
-    return _Verdict(
-        evaluator=evaluator,
-        is_correct=is_correct,
-        score=score,
-        feedback=FEEDBACK_CORRECT if is_correct else FEEDBACK_INCORRECT,
-        skill_scores=[
-            {"skill_id": s, "score": score, "tested_depth": PARAMS.compute_tested_depth}
-            for s in _skill_ids(task)
-        ],
-        triggered_misconceptions=[],
-        actor="code",
-    )
-
-
-def _squash(value: str) -> str:
-    """Decision 4: no whitespace at all, casefolded."""
-    return "".join(value.split()).casefold()
-
-
-def _matches(answer: str, reference: Any, normalize: Callable[[str], str]) -> bool:
-    return reference is not None and normalize(answer) == normalize(str(reference))
-
-
-def _strip_fold(value: str) -> str:
-    return value.strip().casefold()
-
-
-async def _check_math(
-    compute: ComputeClient, reference: dict[str, Any], answer: str
-) -> MathCheckResponse | None:
-    """A1. None when compute gives no verdict: an invalid request (an answer over 1000
-    characters counts as `parse_error`) or `ComputeUnavailableError`."""
-    try:
-        request = MathCheckRequest.model_validate(
-            {
-                "mode": reference.get("check_mode", "expression_equiv"),
-                "student_expr": answer,
-                "reference_expr": reference.get("sympy"),
-                "variables": reference.get("variables", ["x"]),
-            }
-        )
-    except ValidationError:
-        return None
-    try:
-        return await compute.check_math(request)
-    except ComputeUnavailableError:
-        return None
-
-
-async def _evaluate(
-    learner_id: UUID,
-    session_id: UUID,
-    task_id: UUID,
-    task: dict[str, Any],
-    body: SubmitRequest,
-    gateway: LLMGateway,
-    compute: ComputeClient,
-) -> _Verdict:
-    """Cascade compute → `evaluator@1` → normalized string match (ТЗ §2.2 п.3, Т-§22.7)."""
-    reference: dict[str, Any] = task["reference_solution"]
-    if task["kind"] == "choice":
-        return _code_verdict(
-            task, "compute", _matches(body.answer, reference.get("option"), _strip_fold)
-        )
-    if task["kind"] == "math":
-        checked = await _check_math(compute, reference, body.answer)
-        if checked is not None and checked.status == "completed":
-            return _code_verdict(task, "compute", bool(checked.is_equivalent))
-        evaluator = "hybrid"
-    else:
-        evaluator = "llm"
-
-    skill_ids = _skill_ids(task)
-    try:
-        result = await gateway.generate_structured(
-            role="evaluator",
-            prompt_version=1,
-            response_model=EvaluatorOutput,
-            variables={
-                "prompt_text": task["prompt_text"],
-                "reference_solution_json": reference,
-                "student_answer": body.answer,
-                "target_skills_json": [{"skill_id": s} for s in skill_ids],
-                "known_misconceptions_json": task["target_misconceptions"],
-            },
-            learner_id=learner_id,
-            session_id=session_id,
-            turn_id=body.turn_id,
-            idempotency_key=f"evaluator:{session_id}:{task_id}:{body.idempotency_key}",
-        )
-    except LLM_ERRORS:
-        expected = reference.get("answer") or reference.get("sympy")
-        return _code_verdict(task, "hybrid", _matches(body.answer, expected, _squash))
-
-    verdict = result.value
-    return _Verdict(
-        evaluator=evaluator,
-        is_correct=verdict.is_correct,
-        score=verdict.score,
-        feedback=verdict.feedback,
-        skill_scores=[
-            s.model_dump(mode="json") for s in verdict.skill_scores if str(s.skill_id) in skill_ids
-        ],
-        triggered_misconceptions=[
-            m.model_dump(mode="json") for m in verdict.triggered_misconceptions
-        ],
-        actor="evaluator@1",
-    )
 
 
 def _submit_response(event: StoredEvent) -> SubmitResponse:
@@ -662,9 +448,18 @@ async def submit_answer(
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)
     given = await _hint_penalties(resources, learner_id, session_id, task_id)
-    # Decision 1 (Т-§7.4): the highest hint level counts, not the sum.
-    independence = round(1.0 - max((penalty for _, penalty in given), default=0.0), 4)
-    verdict = await _evaluate(learner_id, session_id, task_id, task, body, gateway, compute)
+    verdict = await evaluate_answer(
+        task,
+        body.answer,
+        [penalty for _, penalty in given],
+        learner_id=learner_id,
+        session_id=session_id,
+        turn_id=body.turn_id,
+        idempotency_key=f"evaluator:{session_id}:{task_id}:{body.idempotency_key}",
+        gateway=gateway,
+        compute=compute,
+        settings=settings,
+    )
 
     submitted = NewEvent(
         type="task.submitted",
@@ -688,7 +483,7 @@ async def submit_answer(
             "evaluator": verdict.evaluator,
             "is_correct": verdict.is_correct,
             "score": verdict.score,
-            "independence": independence,
+            "independence": verdict.independence,
             "feedback": verdict.feedback,
             "skill_scores": verdict.skill_scores,
             "triggered_misconceptions": verdict.triggered_misconceptions,

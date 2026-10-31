@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from pydantic import BaseModel
 
-from quack.artifacts.schemas import ArtifactGenOutput, EvaluatorOutput, TaskGenOutput
+from quack.artifacts.schemas import ArtifactGenOutput
 from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOutput
 from quack.llm.errors import (
     ProviderBadRequestError,
@@ -16,6 +16,7 @@ from quack.llm.errors import (
     ProviderUnavailableError,
 )
 from quack.llm.provider import ProviderRequest
+from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.session.schemas import CheckpointerOutput, ExtractorOutput, TeacherOutput
 from tests.support.llm import ScriptedFailure, ScriptedLLMProvider
 

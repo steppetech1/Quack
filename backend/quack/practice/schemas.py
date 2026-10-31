@@ -8,11 +8,37 @@ checked.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from quack.compute_client.client import MathMode
+from quack.events.payloads import MisconceptionEvalHit, SkillEvalScore, Unit
+
+# --- Prompt output schemas of practice (moved from quack/artifacts/schemas.py, D-C-013) ---
+
+
+class TaskGenOutput(BaseModel):
+    """task_gen@1. `reference_solution` becomes `ReferenceSolution` before G1 (D-B-001)."""
+
+    family_id: str
+    difficulty: Unit
+    prompt_text: str
+    reference_solution: dict[str, Any]
+    target_misconceptions: list[str] = []
+
+
+class EvaluatorOutput(BaseModel):
+    """evaluator@1."""
+
+    is_correct: bool
+    score: Unit
+    feedback: str
+    skill_scores: list[SkillEvalScore]
+    triggered_misconceptions: list[MisconceptionEvalHit] = []
+
+
+# --- core.task_bank.reference_solution (WP6.4) ---
 
 type TaskKind = Literal["math", "choice", "open"]
 

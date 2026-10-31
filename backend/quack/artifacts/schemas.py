@@ -4,12 +4,10 @@ and the domain export model (ТЗ §2.3 п.4)."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
-
-from quack.events.payloads import MisconceptionEvalHit, SkillEvalScore, Unit
 
 # --- Practice (ТЗ §3, §2.2) ---
 
@@ -192,26 +190,7 @@ class ExportJson(BaseModel):
 
 
 # --- Prompt output schemas (ТЗ §4) ---
-
-
-class TaskGenOutput(BaseModel):
-    """task_gen@1."""
-
-    family_id: str
-    difficulty: Unit
-    prompt_text: str
-    reference_solution: dict[str, Any]
-    target_misconceptions: list[str] = []
-
-
-class EvaluatorOutput(BaseModel):
-    """evaluator@1."""
-
-    is_correct: bool
-    score: Unit
-    feedback: str
-    skill_scores: list[SkillEvalScore]
-    triggered_misconceptions: list[MisconceptionEvalHit] = []
+# `TaskGenOutput` and `EvaluatorOutput` live in `quack.practice.schemas` (D-C-013).
 
 
 class ArtifactGenOutput(BaseModel):

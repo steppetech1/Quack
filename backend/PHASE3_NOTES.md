@@ -292,6 +292,7 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 | WP | Команда | Итог |
 | :-- | :-- | :-- |
 | WP5.7 (препроцессор), WP14.1, §4.4 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py tests/llm/test_labels.py tests/session/test_phase3_hot_path.py` (ветка `phase-3-b-first-red`) | 46 failed, 0 passed: `T-L9` (11), `T-M1` (3), `T-H3` (32) — все `NotImplementedError` |
+| WP6.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py -k parity` (до переноса) | 2 failed: `T-H2[math]`, `T-H2[choice]` — `independence` ход 1.0 ≠ практика 0.5 |
 
 `T-L9` здесь — только структура схемы. Часть «минимальный экземпляр проходит `jsonschema` и
 `model_validate_json`» ждёт генератора `meta-mock` (WP10.3, C) и D-B-004. `T-H2` (WP6.2)
@@ -304,6 +305,66 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 | :-- | :-- | :-- |
 | WP5.7 | препроцессор `to_strict_json_schema` — выполнено; адаптер `ResponsesClient` — не начат (после G1, D-B-004) | `T-L9` структура: 10 зелёных, 1 красный — `TaskGenOutput.reference_solution` (свободный словарь, файл зоны C, D-B-001) |
 | WP14.1 | `LabelMap` — выполнено; метки в контексте и выходах ролей — не начаты: имена полей связаны с текстом промптов (`teacher@1` называет `focus_skill_ids`, `assign_task_id`, `topic_id`), правятся вместе с промптами | `T-M1`: 3 зелёных |
+| WP6.2 | выполнено: выбор задачи и каскад проверки — в `quack/practice/` (`evaluation.py`, `selection.py`); ход и `submit` вызывают `evaluate_answer`; `TaskGenOutput`, `EvaluatorOutput` — в `quack/practice/schemas.py` (D-C-013 п.2); пороги практики — в блоке B `Settings` (п.3) | `T-H2` (2) зелёные; тесты `tests/session`, `tests/artifacts` — 102 passed |
+
+Договорённость с C по WP6.2 и S4 — D-C-013 (раздел C), со стороны B принята целиком:
+перенос и удаление `TaskGenOutput`/`EvaluatorOutput` из `quack/artifacts/schemas.py` — в этом
+PR; поля `PracticeParams` практики удалены из `quack/artifacts/params.py`, поля `search_*`
+остались у C; поля с метками `CuratorOutput` B называет к G1 в `PROMPT_CONTRACTS.md`.
+`reference_solution` в `TaskGenOutput` пока `dict` — типизация ждёт D-B-001 и промпта
+`task_gen` (D-B-007).
+
+### D-B-006. Одна проверка ответа для хода и практики (WP6.2)
+- Класс: C
+- WP / место: WP6.2; `quack/practice/evaluation.py`, `quack/session/turns.py`; тесты
+  `tests/session/test_turn_submission_fields.py`, `test_turn_evaluation.py`,
+  `test_open_task_evaluation.py`
+- Контекст: аудит A13. Ход потока 2 проверял ответ иначе, чем практика потока 3:
+  `independence = max(0.1, 1 − Σ штрафов − 0.25·(hints_used − записанные))` по подсказкам
+  **только из оверлея** (подсказки, уже применённые проектором, ход не видел — `T-H2` на старом
+  коде: ход 1.0, практика 0.5); открытую задачу оценивал сам учитель
+  (`TeacherOutput.evaluated_*`, `evaluator="llm"`, actor `teacher@1`); при отказе compute —
+  эвристика по `pedagogical_move`; `tested_depth = task.difficulty`; свой текст `feedback`.
+  WP6.2: одна реализация, за основу — ТЗ-П3. Пять утверждений тестов Фазы 2 проверяют старое
+  поведение, в §8.9 их нет.
+- Варианты: (1) ход вызывает каскад практики целиком: подсказки — из журнала сессии,
+  `independence = round(1 − max(штрафов), 4)` (`Т-§7.4`, решение 1 ТЗ-П3), `hints_used`
+  клиента пишется в `task.submitted`, но не штрафует; открытый ответ и отказ compute —
+  `evaluator@1`; утверждения пяти тестов — под единое правило; (2) оставить в ходе свои
+  правила — нарушает WP6.2 и `T-H2`.
+- Решение: (1).
+- Почему: §0.4.1 уровень 2 — WP6.2 и `T-H2` — контракт ТЗ Ф3; §0.4.3 «Частые случаи», строка
+  «Два потока сделали одно и то же по-разному»; закон 4 — вердикт открытого ответа выносит
+  проверяющая роль, а не учитель в том же вызове.
+- Правки тестов (проверка не слабее — то же место, то же свойство; каждая падает на прежней
+  реализации хода):
+  1. `test_turn_submission_fields::test_compute_independence_with_hints_used_and_floor` →
+     `test_independence_counts_the_highest_logged_hint`: та же функция расчёта, правило
+     «наибольшая ступень»; на правиле «сумма» падает (`[0.6, 0.5]` → 0.4).
+  2. там же, `…writes_response_time_sec_and_independence`: `independence` 0.5 → 1.0
+     (подсказки клиента без события не штрафуют); `hints_used == 2` в `task.submitted` остался.
+  3. там же, `…combines_overlay_hint_penalties_and_hints_used`: 0.2 → 0.7.
+  4. `test_turn_evaluation::test_math_task_evaluated_in_turn_via_compute`: `feedback`
+     `"correct"` → `FEEDBACK_CORRECT` практики; `independence` 0.75 → 1.0 (как п.2).
+  5. `test_open_task_evaluation`: вход — ответ `evaluator@1` вместо полей учителя
+     (утверждения `evaluator == "llm"`, `score`, `is_correct` прежние); при отказе compute
+     `evaluator` `"compute"` → `"hybrid"` (каскад ТЗ-П3), добавлено `is_correct is True`.
+- Не меняется: поля `TeacherOutput.evaluated_*` остаются в схеме (имена связаны с промптом,
+  см. WP14.1), код их больше не читает.
+- Обратимость: функции хода в `turns.py` (один вызов `evaluate_answer`).
+- Тесты: `T-H2`; пять правок выше.
+- Требует подтверждения владельцем: да
+
+### D-B-007. `reference_solution` в `TaskGenOutput` остаётся `dict` до ответа по D-B-001
+- Класс: B
+- WP / место: WP6.2 / WP6.4, `quack/practice/schemas.py::TaskGenOutput`; `T-L9`
+- Контекст: D-C-013 п.2 предлагает типизировать `reference_solution` в том же PR. Формат ждёт
+  D-B-001 (класс C), а правило 5 промпта `task_gen@1` описывает ключи — текст промпта ведёт
+  владелец. WP6.2 требует переноса без изменения поведения.
+- Решение: перенос без изменения типа; типизация — отдельным PR вместе с промптом, до G1.
+  До этого `T-L9[TaskGenOutput]` красный (ветка B, не `phase-3`).
+- Обратимость: одна аннотация поля.
+- Требует подтверждения владельцем: нет
 
 ### D-B-005. `title` и `default` в строгой схеме
 - Класс: B
