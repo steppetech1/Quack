@@ -270,6 +270,23 @@
 C и WP11.4, плюс Q-A1) лежат в `tests/test_jobs_phase3_pending.py` на ветке
 `phase-3-a-pending-red` и перейдут в основной файл, когда позеленеют (§7.4).
 
+### D-A-007. WP2.1 в `domains/curation.py` и `artifacts`; тесты `tests/domains`
+
+Класс C. Часть WP2.1 в зонах C (`domains`, `artifacts`) сделана потоком A после слияния WP4 и
+подтверждения C (ответ 2026-11-01: `artifacts` свободен, `curation.py` после WP4). Ресурсы
+берутся из `JobContext`: `handle_graph_curate` и `curate_domain_graph` — `ctx.neo4j`,
+`ctx.redis`, `ctx.llm`; обработчики `artifacts` — `worker_deps(ctx)`. Удалены `_RESOURCES`,
+`_ProviderProxy`, `llm_provider_override`, `build_worker_deps`. `Redis = None` в контексте
+значит «без Redis» (§4.2): информации о `presence` нет, курация идёт сразу. Шлюз LLM
+требуется только на шаге модели `curator@1`.
+`graph.curate` при активном `presence` бросает `JobDeferred(curation_defer_min * 60,
+"learner_present")` (WP3.2). Тесты (правки перечислены в «Правки тестов»):
+- `test_graph_curate_defer_uses_curation_defer_min`, `test_graph_curate_defers_when_learner_presence_active` — §8.9 п.2: идут через `JobRunner`, проверяют статус `queued`, `attempt = 0`, `run_after`. Проверка «тест не ослаблен»: если вернуть `pass` вместо `JobDeferred`, оба падают.
+- `test_handle_graph_curate_creates_driver_redis_and_gateway_once` → `test_handle_graph_curate_uses_context_resources_without_creating_any` — класс C: свойство «клиенты не создаются на каждую задачу» сохранено и усилено (обработчик не создаёт и не закрывает ничего, использует ресурсы того контекста, который получил). Утверждения про счёт `create_*` заменены, потому что функций `create_*` в `curation` больше нет.
+- Фикстура `fake_llm_provider` больше не пишет в модульную переменную; контекст собирает `tests/support/resources.py::build_job_context`.
+Значения `None` у полей `JobContext` остаются до перевода `session/workers.py` потоком B
+(`phase-3-b-workers-jobcontext`); снимаются отдельным PR A.
+
 #### Этап I и красные тесты потока A к G0
 
 Сигнатуры: `JobSpec.required_seq`, `JobDeferred`, `JobFailedPermanently`, `JOB_KINDS`,
@@ -1075,6 +1092,9 @@ _(пусто)_
 | `tests/domains/test_curation_keys_and_actor.py::_FakeDriver.session` | принимает `**_config` | WP4.1: сессии открываются через `read_session(driver)` с `default_access_mode`; фикстура, утверждения не менялись |
 | `tests/domains/test_graph_view_fixes.py::test_graph_view_opens_every_neo4j_session_with_read_access` | шпион считает и сессии, открытые через `read_session`, вызванную из `graph_view.py` | WP4.1 перенёс место открытия сессии в `quack/db/neo4j.py`; утверждения (≥ 2 сессии, все READ) те же. Проверка «не ослаблен»: при `read_session` без READ тест падает |
 | `tests/factories.py::EventLog.add` | необязательный параметр `schema_version` (по умолчанию 1) | WP12: события `turn.extracted` v2 в сценариях; фикстура, утверждения не менялись |
+| `tests/domains/test_curation_thresholds.py::test_graph_curate_defer_uses_curation_defer_min`, `tests/domains/test_diagnostic_and_graph_view.py::test_graph_curate_defers_when_learner_presence_active` | отложение проверяется результатом `JobDeferred` через `JobRunner` (статус, `attempt`, `run_after`) вместо прямого `UPDATE` | §8.9 п.2; на заведомо неверной реализации (без `JobDeferred`) оба падают |
+| `tests/domains/test_curation_slice_and_pool.py` | тест кэша клиентов по `id(settings)` заменён тестом «ресурсы из `JobContext`, ничего не создаётся и не закрывается» | D-A-007, класс C: свойство сохранено, кэша больше нет |
+| `tests/domains/conftest.py`, `tests/domains/test_diagnostic_and_graph_view.py` | `fake_llm_provider` не пишет в `curation.llm_provider_override`; контекст — `build_job_context` | §8.9: фикстуры и импорты |
 
 ## Вопросы к команде
 
