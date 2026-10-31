@@ -1,0 +1,528 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-28T19:40:30.215Z",
+  "title": "Design System: Quack!",
+  "extensions": {
+    "colorMeta": {
+      "cloth": {
+        "role": "neutral",
+        "displayName": "Коленкор",
+        "canonical": "oklch(21.5% 0.009 75.1)",
+        "tonalRamp": [
+          "#0d0b08",
+          "#27231f",
+          "#433f3b",
+          "#615d58",
+          "#83807a",
+          "#a8a49e",
+          "#cdcac6",
+          "#f0eeec"
+        ]
+      },
+      "cloth-deep": {
+        "role": "neutral",
+        "displayName": "Глубокий коленкор",
+        "canonical": "oklch(19.3% 0.009 75.1)",
+        "tonalRamp": [
+          "#0d0b08",
+          "#27231f",
+          "#433f3a",
+          "#615d58",
+          "#837f7a",
+          "#a8a49e",
+          "#cdcac6",
+          "#f0eeec"
+        ]
+      },
+      "cloth-raised": {
+        "role": "neutral",
+        "displayName": "Приподнятый коленкор",
+        "canonical": "oklch(24.6% 0.013 78.0)",
+        "tonalRamp": [
+          "#0d0b07",
+          "#27231d",
+          "#433f38",
+          "#625d56",
+          "#847f78",
+          "#a9a49c",
+          "#cecac4",
+          "#f0eeeb"
+        ]
+      },
+      "cloth-hover": {
+        "role": "neutral",
+        "displayName": "Коленкор под рукой",
+        "canonical": "oklch(27.6% 0.015 76.3)",
+        "tonalRamp": [
+          "#0e0b07",
+          "#28231c",
+          "#443f37",
+          "#625d55",
+          "#857f77",
+          "#aaa49b",
+          "#cecac3",
+          "#f0eeeb"
+        ]
+      },
+      "seam": {
+        "role": "neutral",
+        "displayName": "Шов",
+        "canonical": "oklch(32.5% 0.020 76.7)",
+        "tonalRamp": [
+          "#0e0a06",
+          "#2a2319",
+          "#463f34",
+          "#645c51",
+          "#877f73",
+          "#aca397",
+          "#d0c9c1",
+          "#f1eee9"
+        ]
+      },
+      "seam-soft": {
+        "role": "neutral",
+        "displayName": "Мягкий шов",
+        "canonical": "oklch(28.4% 0.016 79.6)",
+        "tonalRamp": [
+          "#0e0b06",
+          "#28231b",
+          "#443f36",
+          "#625d54",
+          "#857f76",
+          "#aaa49a",
+          "#cecac2",
+          "#f0eeea"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Бумага",
+        "canonical": "oklch(89.8% 0.025 81.1)",
+        "tonalRamp": [
+          "#0f0a04",
+          "#2a2316",
+          "#473f31",
+          "#655c4e",
+          "#887f70",
+          "#ada393",
+          "#d1cabe",
+          "#f2eee8"
+        ]
+      },
+      "paper-dim": {
+        "role": "neutral",
+        "displayName": "Бумага поблёкшая",
+        "canonical": "oklch(70.3% 0.030 81.4)",
+        "tonalRamp": [
+          "#0f0a03",
+          "#2b2313",
+          "#483e2e",
+          "#665c4b",
+          "#897f6c",
+          "#aea390",
+          "#d2c9bb",
+          "#f2eee7"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Линейка",
+        "canonical": "oklch(51.4% 0.026 80.6)",
+        "tonalRamp": [
+          "#0f0a04",
+          "#2a2316",
+          "#473e31",
+          "#655c4e",
+          "#887f6f",
+          "#ada393",
+          "#d1cabe",
+          "#f2eee8"
+        ]
+      },
+      "duck": {
+        "role": "neutral",
+        "displayName": "Утиный пух",
+        "canonical": "oklch(81.7% 0.031 83.6)",
+        "tonalRamp": [
+          "#0f0a03",
+          "#2b2312",
+          "#483e2d",
+          "#665c4a",
+          "#897f6b",
+          "#aea38f",
+          "#d1cabb",
+          "#f2eee6"
+        ]
+      },
+      "ribbon": {
+        "role": "primary",
+        "displayName": "Ляссе",
+        "canonical": "oklch(70.9% 0.146 55.5)",
+        "tonalRamp": [
+          "#190500",
+          "#421e00",
+          "#6e3701",
+          "#9e5208",
+          "#cd7020",
+          "#f6964c",
+          "#ffcba9",
+          "#ffeee3"
+        ]
+      },
+      "ribbon-hover": {
+        "role": "primary",
+        "displayName": "Светлое ляссе",
+        "canonical": "oklch(75.6% 0.129 58.3)",
+        "tonalRamp": [
+          "#190500",
+          "#421e00",
+          "#6e3701",
+          "#9e5208",
+          "#cd7020",
+          "#f6964c",
+          "#ffcba9",
+          "#ffeee3"
+        ]
+      },
+      "ribbon-soft": {
+        "role": "primary",
+        "displayName": "Мягкое ляссе",
+        "canonical": "oklch(70.9% 0.146 55.5)",
+        "tonalRamp": [
+          "#190500",
+          "#421e00",
+          "#6e3701",
+          "#9e5208",
+          "#cd7020",
+          "#f6964c",
+          "#ffcba9",
+          "#ffeee3"
+        ]
+      },
+      "on-ribbon": {
+        "role": "primary",
+        "displayName": "Коленкор на ляссе",
+        "canonical": "oklch(21.5% 0.009 75.1)",
+        "tonalRamp": [
+          "#0d0b08",
+          "#27231f",
+          "#433f3b",
+          "#615d58",
+          "#83807a",
+          "#a8a49e",
+          "#cdcac6",
+          "#f0eeec"
+        ]
+      },
+      "st-solid": {
+        "role": "state",
+        "displayName": "Шалфей — решаешь сам",
+        "canonical": "oklch(72.2% 0.065 141.4)",
+        "tonalRamp": [
+          "#020f01",
+          "#0f2b0b",
+          "#2b4827",
+          "#496744",
+          "#6b8a66",
+          "#8eaf89",
+          "#bad3b7",
+          "#e6f3e4"
+        ]
+      },
+      "st-review": {
+        "role": "state",
+        "displayName": "Приглушённый синий — пора повторить",
+        "canonical": "oklch(71.7% 0.058 245.4)",
+        "tonalRamp": [
+          "#000c1a",
+          "#06263e",
+          "#24435c",
+          "#41617c",
+          "#6384a1",
+          "#87a9c7",
+          "#b5cee4",
+          "#e4f0fc"
+        ]
+      },
+      "st-confused": {
+        "role": "state",
+        "displayName": "Кирпичная роза — путаешь",
+        "canonical": "oklch(66.8% 0.125 14.7)",
+        "tonalRamp": [
+          "#200004",
+          "#520117",
+          "#7d2132",
+          "#a44652",
+          "#cc6974",
+          "#f68e98",
+          "#ffc7ca",
+          "#ffedee"
+        ]
+      },
+      "st-new": {
+        "role": "state",
+        "displayName": "Контур — ещё не изучал",
+        "canonical": "oklch(65.5% 0.029 80.2)",
+        "tonalRamp": [
+          "#0f0a03",
+          "#2b2313",
+          "#483e2e",
+          "#665c4b",
+          "#897f6d",
+          "#aea391",
+          "#d2c9bc",
+          "#f2eee7"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Название домена в шапке вида домена; одно на экран."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Заголовки глав «§ N Название» в колонтитуле графа и в списке тем на телефоне."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Заголовки поверхностей («Сегодня», «Сессии»), название темы в карточке, текст главной кнопки."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Текст интерфейса, поле ввода, строка дедлайна."
+      },
+      "label": {
+        "displayName": "Small",
+        "purpose": "Подписи тем, легенда, причины, действия карточки, подпункты сайдбара."
+      },
+      "numeral": {
+        "displayName": "Numeral",
+        "purpose": "Все числа и знаки § / №: JetBrains Mono, табличные цифры."
+      }
+    },
+    "shadows": [
+      {
+        "name": "popover",
+        "value": "0 12px 32px -12px rgb(0 0 0 / 0.7)",
+        "purpose": "Карточка темы над графом и список результатов поиска."
+      },
+      {
+        "name": "toast",
+        "value": "0 8px 24px -8px rgb(0 0 0 / 0.6)",
+        "purpose": "Плашка «Скоро: …»."
+      },
+      {
+        "name": "dot-halo",
+        "value": "0 0 0 4px rgb(230 220 203 / 0.12)",
+        "purpose": "Наведение на точку темы в графе."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Кольцо найденной темы и появление тоста."
+      },
+      {
+        "name": "found",
+        "value": "1.6s × 2, r 7→26, opacity 0.9→0",
+        "purpose": "Бумажное кольцо вокруг темы, найденной поиском."
+      },
+      {
+        "name": "toast",
+        "value": "0.35s, translateY 8px→0 + fade",
+        "purpose": "Появление плашки «Скоро»; держится 2.6s."
+      },
+      {
+        "name": "panel",
+        "value": "300ms ease-out",
+        "purpose": "Сворачивание панели сессий, выезд шторок и затемнения на телефоне."
+      },
+      {
+        "name": "node",
+        "value": "200ms",
+        "purpose": "Размер, гало и затухание точек графа."
+      },
+      {
+        "name": "card-linger",
+        "value": "160ms",
+        "purpose": "Задержка скрытия карточки темы после ухода курсора."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "prefers-reduced-motion: все анимации и переходы схлопываются."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px",
+        "purpose": "Шапка в строку, поиск справа."
+      },
+      {
+        "name": "md",
+        "value": "768px",
+        "purpose": "Граф и боковые панели вместо списка тем и шторок."
+      },
+      {
+        "name": "xl",
+        "value": "1280px",
+        "purpose": "Панель сессий развёрнута по умолчанию."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Единственная оранжевая кнопка экрана — «Начать» в поле ввода.",
+      "html": "<button class=\"ds-btn-primary\">Начать</button>",
+      "css": ".ds-btn-primary{height:40px;padding:0 16px;border:0;border-radius:11px;background:var(--ribbon,#e5863b);color:var(--on-ribbon,#1c1915);font:600 .9375rem/1.45 'Golos Text',system-ui,sans-serif;cursor:pointer;transition:background-color .15s}.ds-btn-primary:hover{background:var(--ribbon-hover,#ec9a57)}.ds-btn-primary:focus-visible{outline:2px solid var(--ribbon,#e5863b);outline-offset:2px}"
+    },
+    {
+      "name": "Card Action Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Действия карточки темы: Изучать, Практиковать, Повторять, История.",
+      "html": "<div class=\"ds-actions\"><button class=\"ds-btn-outline\">Изучать</button><button class=\"ds-btn-outline\">Практиковать</button><button class=\"ds-btn-outline\">Повторять</button><button class=\"ds-btn-outline\">История</button></div>",
+      "css": ".ds-actions{display:flex;flex-wrap:wrap;gap:6px;padding:12px;background:var(--cloth-raised,#24201a)}.ds-btn-outline{height:40px;padding:0 12px;border:1px solid var(--seam,#3a3329);border-radius:10px;background:transparent;color:var(--paper,#e6dccb);font:400 .8125rem/1.35 'Golos Text',system-ui,sans-serif;cursor:pointer;transition:background-color .15s,border-color .15s}.ds-btn-outline:hover{border-color:var(--rule,#6f6657);background:var(--cloth-hover,#2c2720)}.ds-btn-outline:focus-visible{outline:2px solid var(--ribbon,#e5863b);outline-offset:2px}"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "Кнопка-иконка 40×40 с обязательной подписью для скринридера.",
+      "html": "<button class=\"ds-btn-icon\" aria-label=\"Приблизить\" title=\"Приблизить\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"><path d=\"M5 12h14M12 5v14\"/></svg></button>",
+      "css": ".ds-btn-icon{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:0;border-radius:11px;background:transparent;color:var(--paper-dim,#a99e8b);cursor:pointer;transition:background-color .15s,color .15s}.ds-btn-icon:hover{background:var(--cloth-hover,#2c2720);color:var(--paper,#e6dccb)}.ds-btn-icon:focus-visible{outline:2px solid var(--ribbon,#e5863b);outline-offset:2px}"
+    },
+    {
+      "name": "Topic Search",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "Поле «Найти тему» в шапке вида домена.",
+      "html": "<label class=\"ds-search\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m20 20-3.5-3.5\"/></svg><input type=\"search\" placeholder=\"Найти тему\" aria-label=\"Найти тему\"></label>",
+      "css": ".ds-search{position:relative;display:block;width:256px}.ds-search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--paper-dim,#a99e8b);pointer-events:none}.ds-search input{box-sizing:border-box;width:100%;height:40px;padding:0 12px 0 36px;border:1px solid var(--seam,#3a3329);border-radius:11px;background:var(--cloth-deep,#171410);color:var(--paper,#e6dccb);font:400 .9375rem/1.45 'Golos Text',system-ui,sans-serif;outline:none;caret-color:var(--ribbon,#e5863b);transition:border-color .15s}.ds-search input::placeholder{color:var(--paper-dim,#a99e8b)}.ds-search input:hover{border-color:var(--rule,#6f6657)}.ds-search input:focus-visible{border-color:rgb(229 134 59 / .7)}"
+    },
+    {
+      "name": "Domain Navigation",
+      "kind": "nav",
+      "refersTo": "nav-row",
+      "description": "Панель доменов: активный домен раскрыт до глав с §-номерами.",
+      "html": "<nav class=\"ds-nav\"><p class=\"ds-logo\">Quack!</p><button class=\"ds-row ds-on\"><span class=\"ds-chev\">›</span>Матанализ</button><button class=\"ds-row ds-sub\"><span class=\"ds-num\">§ 0</span>Основы</button><button class=\"ds-row ds-sub\"><span class=\"ds-num\">§ IV</span>Ряды</button><button class=\"ds-row ds-sub\"><span class=\"ds-num\">§ V</span><i>Интегралы</i></button><button class=\"ds-row\"><span class=\"ds-chev\">›</span>Линейная алгебра</button></nav>",
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:2px;width:248px;padding:16px 12px;background:var(--cloth-deep,#171410);font:400 .9375rem/1.45 'Golos Text',system-ui,sans-serif}.ds-logo{margin:0;padding:0 12px 20px;font:700 .9375rem 'PT Serif',Georgia,serif;color:var(--paper,#e6dccb)}.ds-row{display:flex;align-items:center;gap:8px;min-height:40px;padding:0 12px;border:0;border-radius:11px;background:transparent;color:var(--paper-dim,#a99e8b);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s,color .15s}.ds-row:hover{background:var(--cloth-hover,#2c2720)}.ds-row:focus-visible{outline:2px solid var(--ribbon,#e5863b);outline-offset:2px}.ds-on{background:var(--cloth-raised,#24201a);color:var(--paper,#e6dccb);font-weight:500}.ds-chev{display:inline-block;width:14px}.ds-on .ds-chev{transform:rotate(90deg)}.ds-sub{padding-left:32px;font-size:.8125rem}.ds-sub:hover{color:var(--paper,#e6dccb)}.ds-num{width:48px;font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em}"
+    },
+    {
+      "name": "Today List",
+      "kind": "card",
+      "refersTo": "card-surface",
+      "description": "«Сегодня»: 1–3 нумерованные задачи с минутами и итогом.",
+      "html": "<section class=\"ds-today\"><div class=\"ds-today-h\"><b>Сегодня</b><span class=\"ds-mono\">≈ 75 мин</span></div><button class=\"ds-task\"><span class=\"ds-mono\">№ 1</span><span class=\"ds-t\"><b>Продолжить степенные ряды</b> <span class=\"ds-dim\">— остановились на радиусе сходимости</span></span><span class=\"ds-mono\">25 мин</span></button><button class=\"ds-task\"><span class=\"ds-mono\">№ 2</span><span class=\"ds-t\"><b>Подготовка к коллоквиуму</b> <span class=\"ds-dim\">— в «Рядах» не изучены 3 темы</span></span><span class=\"ds-mono\">40 мин</span></button></section>",
+      "css": ".ds-today{width:560px;padding:10px 8px 6px;border:1px solid var(--seam,#3a3329);border-radius:16px;background:var(--cloth-raised,#24201a);color:var(--paper,#e6dccb);font:400 .9375rem/1.45 'Golos Text',system-ui,sans-serif}.ds-today-h{display:flex;justify-content:space-between;align-items:baseline;padding:0 12px 4px}.ds-today-h b{font-weight:600}.ds-mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em;font-size:.8125rem;color:var(--paper-dim,#a99e8b);flex-shrink:0}.ds-task{display:flex;align-items:baseline;gap:12px;width:100%;min-height:44px;padding:8px 12px;border:0;border-top:1px solid var(--seam-soft,#2e2921);border-radius:10px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background-color .15s}.ds-today-h + .ds-task{border-top:0}.ds-task:hover{background:var(--cloth-hover,#2c2720)}.ds-task:focus-visible{outline:2px solid var(--ribbon,#e5863b);outline-offset:2px}.ds-t{flex:1}.ds-t b{font-weight:500}.ds-dim{font-size:.8125rem;color:var(--paper-dim,#a99e8b)}"
+    },
+    {
+      "name": "Topic Card",
+      "kind": "card",
+      "refersTo": "topic-card",
+      "description": "Карточка темы при наведении: строка о теме, состояние, активное заблуждение, четыре действия.",
+      "html": "<div class=\"ds-topic\"><div class=\"ds-topic-h\"><h3>Признак Даламбера</h3><span class=\"ds-mono\">§ IV</span></div><p class=\"ds-dim\">Сходимость по пределу отношения соседних членов.</p><p class=\"ds-state\"><span class=\"ds-dot\"></span>Путаешь</p><p class=\"ds-mis\">Считаешь, что предел, равный 1, гарантирует сходимость.</p><div class=\"ds-acts\"><button>Изучать</button><button>Практиковать</button><button>Повторять</button><button>История</button></div></div>",
+      "css": ".ds-topic{width:320px;box-sizing:border-box;padding:16px;border:1px solid var(--seam,#3a3329);border-radius:16px;background:var(--cloth-raised,#24201a);box-shadow:0 12px 32px -12px rgb(0 0 0 / .7);color:var(--paper,#e6dccb);font:400 .9375rem/1.45 'Golos Text',system-ui,sans-serif}.ds-topic-h{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.ds-topic h3{margin:0;font-size:inherit;font-weight:600}.ds-mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em;font-size:.8125rem;color:var(--paper-dim,#a99e8b)}.ds-dim{margin:4px 0 0;font-size:.8125rem;color:var(--paper-dim,#a99e8b)}.ds-state{display:flex;align-items:center;gap:8px;margin:12px 0 0;font-size:.8125rem}.ds-dot{width:10px;height:10px;border-radius:9999px;background:var(--st-confused,#d6727c)}.ds-mis{margin:6px 0 0;font-size:.8125rem;color:var(--st-confused,#d6727c)}.ds-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}.ds-acts button{height:40px;padding:0 12px;border:1px solid var(--seam,#3a3329);border-radius:10px;background:transparent;color:var(--paper,#e6dccb);font:400 .8125rem 'Golos Text',system-ui,sans-serif;cursor:pointer;transition:background-color .15s,border-color .15s}.ds-acts button:hover{border-color:var(--rule,#6f6657);background:var(--cloth-hover,#2c2720)}.ds-acts button:focus-visible{outline:2px solid var(--ribbon,#e5863b);outline-offset:2px}"
+    },
+    {
+      "name": "State Legend",
+      "kind": "chip",
+      "refersTo": "state-dot",
+      "description": "Четыре состояния темы: три сплошные точки и контур.",
+      "html": "<ul class=\"ds-legend\"><li><span class=\"ds-d ds-solid\"></span>решаешь сам</li><li><span class=\"ds-d ds-review\"></span>пора повторить</li><li><span class=\"ds-d ds-confused\"></span>путаешь</li><li><span class=\"ds-d ds-new\"></span>ещё не изучал</li></ul>",
+      "css": ".ds-legend{display:flex;gap:16px;margin:0;padding:8px;list-style:none;background:var(--cloth,#1c1915);color:var(--paper-dim,#a99e8b);font:400 .8125rem/1.35 'Golos Text',system-ui,sans-serif}.ds-legend li{display:flex;align-items:center;gap:6px}.ds-d{width:10px;height:10px;border-radius:9999px}.ds-solid{background:var(--st-solid,#8fb08a)}.ds-review{background:var(--st-review,#86a8c6)}.ds-confused{background:var(--st-confused,#d6727c)}.ds-new{box-shadow:inset 0 0 0 1.5px var(--st-new,#9a8f7d)}"
+    },
+    {
+      "name": "Composer",
+      "kind": "input",
+      "refersTo": "composer",
+      "description": "Поле ввода внизу вида домена с единственной оранжевой кнопкой.",
+      "html": "<form class=\"ds-composer\" onsubmit=\"return false\"><textarea rows=\"1\" placeholder=\"Спроси или закинь лекцию…\" aria-label=\"Сообщение\"></textarea><div class=\"ds-bar\"><button type=\"button\" class=\"ds-ib\" aria-label=\"Прикрепить файл\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7L10 17.4a1.7 1.7 0 0 1-2.4-2.4l8-8\"/></svg></button><button type=\"submit\" class=\"ds-go\">Начать</button></div></form>",
+      "css": ".ds-composer{width:560px;padding:8px;border:1px solid var(--seam,#3a3329);border-radius:16px;background:var(--cloth-raised,#24201a);transition:border-color .15s}.ds-composer:focus-within{border-color:var(--rule,#6f6657)}.ds-composer textarea{display:block;box-sizing:border-box;width:100%;padding:8px 10px 4px;border:0;resize:none;background:transparent;color:var(--paper,#e6dccb);font:400 .9375rem/1.45 'Golos Text',system-ui,sans-serif;outline:none;caret-color:var(--ribbon,#e5863b)}.ds-composer textarea::placeholder{color:var(--paper-dim,#a99e8b)}.ds-bar{display:flex;align-items:center;gap:4px}.ds-ib{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:0;border-radius:11px;background:transparent;color:var(--paper-dim,#a99e8b);cursor:pointer;transition:background-color .15s,color .15s}.ds-ib:hover{background:var(--cloth-hover,#2c2720);color:var(--paper,#e6dccb)}.ds-go{margin-left:auto;height:40px;padding:0 16px;border:0;border-radius:11px;background:var(--ribbon,#e5863b);color:var(--on-ribbon,#1c1915);font:600 .9375rem 'Golos Text',system-ui,sans-serif;cursor:pointer;transition:background-color .15s}.ds-go:hover{background:var(--ribbon-hover,#ec9a57)}.ds-ib:focus-visible,.ds-go:focus-visible{outline:2px solid var(--ribbon,#e5863b);outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Переплёт задачника",
+    "overview": "Домен — это задачник, а не дашборд. Предмет открывается как книга в тёмном коленкоровом переплёте: хабы — главы с §-нумерацией, темы — параграфы-точки, «Сегодня» — нумерованные задачи № 1–3 с минутами и итогом. Ранг задаёт аппарат (номер главы, колонтитул, состояние точки), а не размер и не цветные плашки. Бумажный текст на тёплом тёмном фоне, тонкие линии-средники между главами, моноширинные цифры, как в оглавлении.\n\nПлотность — рабочая: экран читается за секунды, без карточек-метрик над графом и без декоративной глубины. Цвет почти весь нейтральный; оранжевое ляссе заливает ровно одно главное действие экрана и отмечает короткими метками то, что требует внимания, а четыре приглушённых цвета состояний — единственный «информационный» цвет. Тон — спокойная ирония для студентов, не детское приложение: утка-маскот одна и стоит на фиксированных местах.\n\nСознательно отвергнуто (подтверждено в `CLAUDE.md`): градиентные фоны, glassmorphism, эмодзи вместо иконок, карточки с цветной полосой слева, однотипные сетки одинаковых карточек, узлы графа в виде прямоугольников.",
+    "keyCharacteristics": [
+      "Тёплый тёмный коленкор (`cloth`) вместо чёрного; текст бумажный, не белый.",
+      "Оранжевый ляссе — заливка главного действия и короткая метка внимания; не больше двух меток на экран, не рядом с главной кнопкой.",
+      "Три кегля на весь экран + дисплей для названия домена.",
+      "Все числа и знаки § / № — моноширинные с табличными цифрами.",
+      "Граф — главы-колонки, темы-точки, тонкие линии; состояние темы — цвет или контур точки.",
+      "Плоско: глубина — тоном фона и швами, тени только у всплывающих слоёв."
+    ],
+    "rules": [
+      {
+        "name": "The Ribbon Rule",
+        "body": "Оранжевый — заливка ровно одной главной кнопки на экране плюс короткие метки внимания (дедлайн, текущий шаг, найденная тема), не больше двух меток на экран. Метка никогда не стоит на главной кнопке и рядом с ней; ничего другого оранжевым не заливают. Фокус, каретка и выделение — служебные исключения, не второе действие.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper Not White Rule",
+        "body": "Самый светлый текст — `paper`. Чисто белого (#fff) и чисто чёрного (#000) в системе нет, кроме затемнения под шторкой (чёрный 50%).",
+        "section": "colors"
+      },
+      {
+        "name": "The Rule Is For Strokes Rule",
+        "body": "`rule` рисует линии и рамки; текст, которому нужно читаться, никогда не бывает темнее `paper-dim`.",
+        "section": "colors"
+      },
+      {
+        "name": "The Three Sizes Rule",
+        "body": "На экране три кегля — small (0.8125rem), body (0.9375rem), display (1.875rem). Иерархия — гарнитурой и насыщенностью, не новыми размерами.",
+        "section": "typography"
+      },
+      {
+        "name": "The Mono Numeral Rule",
+        "body": "Любое число и знаки § / № набираются моноширинным с `tabular-nums`; § и номер главы — `paper-dim` нормального начертания, даже внутри полужирного серифного заголовка.",
+        "section": "typography"
+      },
+      {
+        "name": "The Serif Is Binding Rule",
+        "body": "PT Serif — только логотип, название домена и главы. Интерфейсные заголовки — гротеск.",
+        "section": "typography"
+      },
+      {
+        "name": "The Running Head Rule",
+        "body": "Колонтитул «в кадре» — подпись реального кадра, а не статичный заголовок: он всегда отражает, какие главы видны целиком и сколько тем в кадре.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Binding Rule",
+        "body": "Поверхности в покое лежат плоско и отделяются швом `seam` и тоном `cloth-raised`. Тень — только у того, что всплыло поверх графа или страницы.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Dot Not Box Rule",
+        "body": "Тема в графе — всегда точка (8/11/14px в зависимости от масштаба) внутри круглой зоны нажатия 40px. Никаких подложек, прямоугольников и бейджей вокруг узла.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "**Do** заливать оранжевым (`ribbon`) ровно одну главную кнопку на экране, с текстом `on-ribbon`.",
+      "**Do** набирать все числа, даты, минуты, проценты и знаки § / № моноширинным JetBrains Mono с табличными цифрами.",
+      "**Do** держаться трёх кеглей (0.8125 / 0.9375 / 1.875rem) и различать уровни гарнитурой и насыщенностью.",
+      "**Do** показывать состояние темы только цветом/контуром точки и словами («решаешь сам», «пора повторить», «путаешь», «ещё не изучал»).",
+      "**Do** отделять поверхности тоном коленкора и швом 1px; тень — только у всплывающих слоёв.",
+      "**Do** делать кликабельные зоны не меньше 40px (строки списков на телефоне — 44px) и ставить `aria-label` у кнопок-иконок.",
+      "**Do** оставлять кольцо фокуса 2px `ribbon`, выделение — оранжевый 32%, полосу прокрутки — тонкую `seam` на прозрачном.",
+      "**Do** уважать `prefers-reduced-motion`: все анимации и переходы схлопываются."
+    ],
+    "donts": [
+      "**Don't** ставить оранжевую метку на главную кнопку или вплотную к ней и заливать оранжевым что-либо, кроме неё.",
+      "**Don't** ставить чисто белый текст или чисто чёрный фон.",
+      "**Don't** рисовать узлы графа карточками, прямоугольниками или бейджами.",
+      "**Don't** ставить карточки-метрики над графом и однотипные сетки одинаковых карточек.",
+      "**Don't** использовать градиентные фоны, glassmorphism, эмодзи вместо иконок и карточки с цветной полосой слева.",
+      "**Don't** ставить больше одной крупной утки на экран.",
+      "**Don't** набирать читаемый текст цветом `rule`."
+    ]
+  }
+}
