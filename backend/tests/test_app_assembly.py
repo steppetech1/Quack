@@ -533,6 +533,7 @@ def test_turn_stream_documents_status_after_turn_started() -> None:
         "token",
         "task_evaluated",
         "task_assigned",
+        "turn_completed",
         "done",
     ]
     positions = [schema["description"].find(f"`{name}`") for name in order]

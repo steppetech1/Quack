@@ -39,7 +39,8 @@ SSE_EVENTS = {
         '`status` {"state": "thinking"} once, right after `turn_started`, before the model '
         "call (WP6.3); `token` {delta}, one or more; `task_evaluated` when the turn checks a "
         "task answer; `task_assigned` when the turn assigns a task, after `task_evaluated` "
-        "(WP6.4); `done` last"
+        "(WP6.4); `turn_completed` {turn_id, committed_seq, degraded_mode} after the turn is "
+        "committed; `done` last"
     ),
 }
 # FastAPI's default validation models, replaced by `ErrorResponse` (VALIDATION_ERROR).
