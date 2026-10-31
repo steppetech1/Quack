@@ -26,6 +26,17 @@ def event_key(idempotency_key: str, event_type: str) -> str:
     return f"{idempotency_key}:{event_type}"
 
 
+def check_replay(stored: dict[str, Any], request: dict[str, Any], endpoint: str) -> None:
+    """T-E2, D-C-027: a used key with another body is 409 `IDEMPOTENCY_CONFLICT`. `request`
+    holds the fields of the stored payload the request fixes."""
+    if any(stored.get(k) != v for k, v in request.items()):
+        raise ApiError(
+            "IDEMPOTENCY_CONFLICT",
+            f"Idempotency key was used for another {endpoint} request",
+            status_code=409,
+        )
+
+
 async def fetch_rows(db: SessionFactory, sql: str, **params: Any) -> list[dict[str, Any]]:
     async with db() as session:
         return [dict(r) for r in (await session.execute(text(sql), params)).mappings()]

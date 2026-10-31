@@ -23,6 +23,7 @@ from quack.artifacts.schemas import (
     SubmitRequest,
     SubmitResponse,
 )
+from quack.artifacts.store import check_replay
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.neo4j import read_session
@@ -224,17 +225,6 @@ def _bank_response(task: TaskToCheck, *, degraded: bool) -> NextTaskResponse:
     )
 
 
-def _check_replay(stored: dict[str, Any], request: dict[str, Any], endpoint: str) -> None:
-    """T-E2, D-C-027: a used key with another body is 409. `request` holds the fields of the
-    stored payload the request fixes."""
-    if any(stored.get(k) != v for k, v in request.items()):
-        raise ApiError(
-            "IDEMPOTENCY_CONFLICT",
-            f"Idempotency key was used for another {endpoint} request",
-            status_code=409,
-        )
-
-
 def _check_same_request(
     body: NextTaskRequest,
     session_id: UUID,
@@ -254,7 +244,7 @@ def _check_same_request(
     if topic_id is not None:
         stored["topic_id"] = topic_id
         request["topic_id"] = str(body.topic_id)
-    _check_replay(stored, request, "tasks/next")
+    check_replay(stored, request, "tasks/next")
 
 
 async def _replay_next_task(
@@ -434,7 +424,7 @@ async def give_hint(
             "turn_id": str(body.turn_id),
             "task_id": str(task_id),
         }
-        _check_replay(replay.payload, request, "hint")
+        check_replay(replay.payload, request, "hint")
         return _hint_response(replay)
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)
@@ -500,7 +490,7 @@ async def submit_answer(
             "answer": body.answer,
             "response_time_sec": body.response_time_sec,
         }
-        _check_replay(submitted.payload if submitted else {}, request, "submit")
+        check_replay(submitted.payload if submitted else {}, request, "submit")
         return _submit_response(replay)
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)
