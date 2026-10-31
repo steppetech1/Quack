@@ -20,6 +20,7 @@ from quack.graph.neo4j_store import Neo4jGraphStore, read_applied_seq
 from quack.graph.overlay import SessionOverlay, build_session_overlay
 from quack.graph.slice import ConsistentSlice, SliceDeps, read_consistent_slice
 from quack.logging import get_logger
+from quack.session.checkpoint_render import visible_replies
 
 TURN_EVENT_TYPES = ("turn.student_replied", "turn.teacher_replied")
 
@@ -99,12 +100,12 @@ async def read_active_window(
     learner_id: UUID,
     session_id: UUID,
     after_turn: int,
-    limit: int,
+    limit: int | None,
     *,
     before_seq: int | None = None,
 ) -> list[StoredEvent]:
-    """The last `limit` replies of the session with `turn_index > after_turn` (and `seq` below
-    `before_seq` when given), oldest first."""
+    """The last `limit` replies (all with `None`) of the session with `turn_index > after_turn`
+    (and `seq` below `before_seq` when given), oldest first."""
     result = await session.execute(
         text(
             f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l "
@@ -118,7 +119,7 @@ async def read_active_window(
             "types": list(TURN_EVENT_TYPES),
             "after": after_turn,
             "before": before_seq if before_seq is not None else 2**62,
-            "limit": max(0, limit),
+            "limit": None if limit is None else max(0, limit),
         },
     )
     return [row_to_event(row) for row in reversed(result.all())]
@@ -174,7 +175,8 @@ async def build_turn_context(
     *,
     before_seq: int | None = None,
 ) -> TurnContext:
-    """Consistent slice (<= projector_lag_timeout_ms) + overlay + last checkpoint + <= 12 turns.
+    """Consistent slice (<= projector_lag_timeout_ms) + overlay + last checkpoint + the turns
+    it did not fold (Т-§10.3).
 
     `before_seq` — `seq` of the learner's reply of this turn (D-B-018): the slice waits for the
     projector only up to the event before it (the reply itself is overlaid, law 9), and the
@@ -221,14 +223,12 @@ async def build_turn_context(
         checkpoint = await last_checkpoint(session, learner_id, session_id)
         cp = checkpoint.payload if checkpoint is not None else {}
         last_cp_turn = int(cp.get("up_to_turn_index", -1))
-        window = await read_active_window(
-            session,
-            learner_id,
-            session_id,
-            last_cp_turn,
-            settings.active_window_turns,
-            before_seq=before_seq,
+        # WP13 (Т-§10.3): the turns the checkpoint folded into episode lines are its
+        # `rolling_summary`; every later turn is shown in full (D-B-023).
+        replies = await read_active_window(
+            session, learner_id, session_id, -1, None, before_seq=before_seq
         )
+        window = visible_replies(replies, last_cp_turn, settings)
 
     topic_name, skills, misconceptions = _topic_slice(overlay.graph, row.topic_id)
     return TurnContext(

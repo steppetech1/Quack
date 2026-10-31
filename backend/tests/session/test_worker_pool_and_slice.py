@@ -39,8 +39,9 @@ def _job(kind: str, payload: dict[str, Any]) -> ClaimedJob:
 async def test_handlers_share_driver_redis_and_gateway(
     db: SessionFactory, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """WP2.1: both handlers take the Redis client and the LLM gateway of `JobContext`, the same
-    objects for every job; without the driver or the gateway the handler raises `RuntimeError`,
+    """WP2.1: both handlers take the Redis client of `JobContext` and `turn.extract` its LLM
+    gateway (`session.checkpoint` calls no model, WP13), the same objects for every job;
+    without the driver or the gateway `turn.extract` raises `RuntimeError`,
     without Redis it runs with `redis = None` (§4.2)."""
     seen: list[tuple[str, Any, Any]] = []
 
@@ -48,8 +49,8 @@ async def test_handlers_share_driver_redis_and_gateway(
         seen.append(("extract", gateway, redis))
         return 1
 
-    async def fake_checkpoint(job: ClaimedJob, ctx: JobContext, *, gateway: Any, redis: Any) -> int:
-        seen.append(("checkpoint", gateway, redis))
+    async def fake_checkpoint(job: ClaimedJob, ctx: JobContext, *, redis: Any) -> int:
+        seen.append(("checkpoint", None, redis))  # WP13: no model, no gateway
         return 1
 
     monkeypatch.setattr(workers, "run_turn_extract", fake_extract)
@@ -62,7 +63,8 @@ async def test_handlers_share_driver_redis_and_gateway(
     await workers.handle_session_checkpoint(_job("session.checkpoint", {}), ctx)
 
     assert len(seen) == 3
-    assert {(id(g), id(r)) for _, g, r in seen} == {(id(ctx.llm), id(ctx.redis))}
+    assert {(id(g), id(r)) for k, g, r in seen if k == "extract"} == {(id(ctx.llm), id(ctx.redis))}
+    assert seen[-1] == ("checkpoint", None, ctx.redis)
 
     with pytest.raises(RuntimeError):
         await workers.handle_turn_extract(extract_job, JobContext(settings, db))
@@ -71,7 +73,7 @@ async def test_handlers_share_driver_redis_and_gateway(
     # §4.2: `redis = None` is work without Redis, the handler runs and passes it on.
     no_redis = build_job_context(settings, db, object(), None)
     await workers.handle_session_checkpoint(_job("session.checkpoint", {}), no_redis)
-    assert seen[-1] == ("checkpoint", no_redis.llm, None)
+    assert seen[-1] == ("checkpoint", None, None)
 
 
 async def test_topic_context_read_uses_teacher_seq_as_min_seq(

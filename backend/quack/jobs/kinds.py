@@ -34,10 +34,10 @@ JOB_KINDS: tuple[str, ...] = (
 )
 
 # WP5.3/T-Q10: the roles whose models a kind calls; a kind waits while any of them is pressured.
-# `session.checkpoint` loses its role in WP13 (deterministic summary).
+# `session.checkpoint` calls no model since WP13 (deterministic summary, law 10).
 KIND_LLM_ROLES: dict[str, tuple[str, ...]] = {
     "turn.extract": ("extractor",),
-    "session.checkpoint": ("checkpointer",),
+    "session.checkpoint": (),
     "session.finish_artifacts": ("artifacts",),
     "artifact.refresh_cheatsheet": ("artifacts",),
     "graph.curate": ("curator",),

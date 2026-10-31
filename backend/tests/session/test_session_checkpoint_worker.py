@@ -9,6 +9,7 @@ import httpx
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from quack.config import FoldParams, Settings
 from quack.db.postgres import SessionFactory
@@ -18,7 +19,8 @@ from quack.graph.projector import run_projector_batch
 from quack.jobs import kinds
 from quack.jobs.queue import ClaimedJob, claim_next_job, complete_job, enqueue_job
 from quack.jobs.runner import JOB_HANDLERS, JobContext
-from quack.session.schemas import CheckpointerOutput, TeacherOutput
+from quack.session.checkpoint_render import RENDERER_VERSION, render_checkpoint
+from quack.session.schemas import TeacherOutput
 from quack.session.workers import handle_session_checkpoint
 from tests.support.resources import build_job_context
 
@@ -61,10 +63,10 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
     settings: Settings,
     fake_llm: FakeLLMProvider,
 ) -> None:
-    """ТЗ worker test 4: `session.checkpoint` folds replies up to `up_to_turn_index` via
-    `checkpointer@1` (`idempotency_key=f"checkpoint:{session_id}:{up_to_turn_index}"`),
-    appends `session.checkpointed` and updates `core.sessions.last_checkpoint_turn`, and on a
-    subsequent checkpoint reads the previous `session.checkpointed`."""
+    """ТЗ worker test 4 (rewritten for WP13, §8.9 p.8): `session.checkpoint` renders the
+    summary up to `up_to_turn_index` by code (`renderer@1`, no model call), appends one
+    `session.checkpointed` per `up_to_turn_index` and updates
+    `core.sessions.last_checkpoint_turn`; a job already covered is a no-op."""
     assert JOB_HANDLERS.get("session.checkpoint") is handle_session_checkpoint
 
     # 1. Start session
@@ -133,58 +135,18 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
         ).scalar_one()
     assert int(before_cp_turn) == -1
 
-    # 4. Queue checkpointer@1 output for cp_job_1 (up_to_turn_index=5) and run the handler
-    cp_out_1 = CheckpointerOutput(
-        rolling_summary="Covered the power rule (x^3 -> 3x^2) and constant rule.",
-        open_threads=["Practice power rule with negative exponents"],
-        key_observations=["Correctly differentiated x^3", "Asked about constants"],
-    )
-    fake_llm.push("checkpointer", cp_out_1)
-
+    # 4. Run the handler for cp_job_1 (up_to_turn_index=5): no model call (WP13, law 10)
+    calls_before = len(fake_llm.calls)
     ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
     await _invoke_checkpoint(cp_job_1, ctx, fake_llm)
     async with db() as session, session.begin():
         await complete_job(session, cp_job_1.id, "test-cp-worker")
-
-    # Verify checkpointer@1 prompt received replies 0..5 and NOT replies 6..7
-    cp_calls = fake_llm.calls_for("checkpointer")
-    assert len(cp_calls) == 1
-    prompt_1 = cp_calls[0].prompt
-    for s_text, t_text in exchanges:
-        assert s_text in prompt_1
-        assert t_text in prompt_1
-    assert turn4_student not in prompt_1
-    assert turn4_teacher not in prompt_1
-
-    # Verify LLM outbox recorded idempotency_key = f"checkpoint:{session_id}:5"
-    async with db() as session:
-        outbox_keys = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT idempotency_key FROM core.llm_outbox "
-                        "WHERE learner_id = :l AND role = 'checkpointer' ORDER BY created_at"
-                    ),
-                    {"l": seeded_domain.learner_id},
-                )
-            )
-            .scalars()
-            .all()
-        )
-    assert outbox_keys == [f"checkpoint:{session_id}:5"]
+    assert len(fake_llm.calls) == calls_before
 
     # Verify session.checkpointed event written in core.events and core.sessions updated
     async with db() as session:
-        cp_events = (
-            await session.execute(
-                text(
-                    "SELECT seq, type, session_id, payload FROM core.events "
-                    "WHERE learner_id = :l AND session_id = :s AND type = 'session.checkpointed' "
-                    "ORDER BY seq"
-                ),
-                {"l": seeded_domain.learner_id, "s": session_id},
-            )
-        ).all()
+        cp_events = await _checkpoints(session, seeded_domain.learner_id, session_id)
+        session_events = await _render_inputs(session, seeded_domain.learner_id, session_id)
         sess_row = (
             await session.execute(
                 text(
@@ -195,14 +157,17 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
         ).one()
 
     assert len(cp_events) == 1
-    ev1: Any = cp_events[0]
+    ev1 = cp_events[0]
     assert ev1.session_id == session_id
+    assert ev1.actor == RENDERER_VERSION
+    assert ev1.idempotency_key == f"session.checkpointed:{session_id}:5"
+    expected_1 = render_checkpoint(session_events, 5, settings)
     assert ev1.payload == {
         "session_id": str(session_id),
         "up_to_turn_index": 5,
-        "rolling_summary": cp_out_1.rolling_summary,
-        "open_threads": cp_out_1.open_threads,
-        "key_observations": cp_out_1.key_observations,
+        "rolling_summary": expected_1.rolling_summary,
+        "open_threads": expected_1.open_threads,
+        "key_observations": expected_1.key_observations,
     }
     assert int(sess_row.last_turn_index) == 7
     assert int(sess_row.last_checkpoint_turn) == 5
@@ -214,12 +179,12 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
     assert detail["last_checkpoint_turn"] == 5
     assert detail["checkpoint"] == {
         "up_to_turn_index": 5,
-        "rolling_summary": cp_out_1.rolling_summary,
-        "open_threads": cp_out_1.open_threads,
-        "key_observations": cp_out_1.key_observations,
+        "rolling_summary": expected_1.rolling_summary,
+        "open_threads": expected_1.open_threads,
+        "key_observations": expected_1.key_observations,
     }
 
-    # 5. Run a second checkpoint (up_to_turn_index = 7) to verify reading previous checkpoint
+    # 5. A second checkpoint (up_to_turn_index = 7) appends one more event
     async with db() as session, session.begin():
         await enqueue_job(
             session,
@@ -233,54 +198,25 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
     assert cp_job_2 is not None
     assert int(cp_job_2.payload["up_to_turn_index"]) == 7
 
-    cp_out_2 = CheckpointerOutput(
-        rolling_summary="Covered power rule, constants, and started chain rule.",
-        open_threads=["Chain rule practice problem"],
-        key_observations=[
-            "Correctly differentiated x^3",
-            "Asked how chain rule applies to composite functions",
-        ],
-    )
-    fake_llm.push("checkpointer", cp_out_2)
-
     await _invoke_checkpoint(cp_job_2, ctx, fake_llm)
     async with db() as session, session.begin():
         await complete_job(session, cp_job_2.id, "test-cp-worker")
+    # The same job again is a no-op: a checkpoint covering turn 7 exists.
+    await _invoke_checkpoint(cp_job_2, ctx, fake_llm)
+    assert len(fake_llm.calls) == calls_before
 
-    # Verify second checkpointer@1 call received previous_summary, previous_open_threads, and turn 4
-    cp_calls = fake_llm.calls_for("checkpointer")
-    assert len(cp_calls) == 2
-    prompt_2 = cp_calls[1].prompt
-    assert cp_out_1.rolling_summary in prompt_2
-    assert "Practice power rule with negative exponents" in prompt_2
-    assert turn4_student in prompt_2
-    assert turn4_teacher in prompt_2
-
-    # Verify second outbox key and second session.checkpointed event + updated last_checkpoint_turn
     async with db() as session:
-        outbox_keys = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT idempotency_key FROM core.llm_outbox "
-                        "WHERE learner_id = :l AND role = 'checkpointer' ORDER BY created_at"
-                    ),
-                    {"l": seeded_domain.learner_id},
-                )
-            )
-            .scalars()
-            .all()
-        )
-        cp_events_after = (
+        cp_events_after = await _checkpoints(session, seeded_domain.learner_id, session_id)
+        session_events = await _render_inputs(session, seeded_domain.learner_id, session_id)
+        outbox = (
             await session.execute(
                 text(
-                    "SELECT seq, payload FROM core.events "
-                    "WHERE learner_id = :l AND session_id = :s AND type = 'session.checkpointed' "
-                    "ORDER BY seq"
+                    "SELECT count(*) FROM core.llm_outbox "
+                    "WHERE learner_id = :l AND role = 'checkpointer'"
                 ),
-                {"l": seeded_domain.learner_id, "s": session_id},
+                {"l": seeded_domain.learner_id},
             )
-        ).all()
+        ).scalar_one()
         last_cp_after = (
             await session.execute(
                 text("SELECT last_checkpoint_turn FROM core.sessions WHERE id = :s"),
@@ -288,17 +224,38 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
             )
         ).scalar_one()
 
-    assert set(outbox_keys) == {
-        f"checkpoint:{session_id}:5",
-        f"checkpoint:{session_id}:7",
-    }
+    assert outbox == 0
     assert len(cp_events_after) == 2
     assert cp_events_after[1].seq > cp_events_after[0].seq
+    assert cp_events_after[1].idempotency_key == f"session.checkpointed:{session_id}:7"
+    expected_2 = render_checkpoint(session_events, 7, settings)
     assert cp_events_after[1].payload == {
         "session_id": str(session_id),
         "up_to_turn_index": 7,
-        "rolling_summary": cp_out_2.rolling_summary,
-        "open_threads": cp_out_2.open_threads,
-        "key_observations": cp_out_2.key_observations,
+        "rolling_summary": expected_2.rolling_summary,
+        "open_threads": expected_2.open_threads,
+        "key_observations": expected_2.key_observations,
     }
     assert int(last_cp_after) == 7
+
+
+async def _checkpoints(session: AsyncSession, learner_id: UUID, session_id: UUID) -> list[Any]:
+    result = await session.execute(
+        text(
+            f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l AND session_id = :s "
+            "AND type = 'session.checkpointed' ORDER BY seq"
+        ),
+        {"l": learner_id, "s": session_id},
+    )
+    return [row_to_event(r) for r in result.all()]
+
+
+async def _render_inputs(session: AsyncSession, learner_id: UUID, session_id: UUID) -> list[Any]:
+    result = await session.execute(
+        text(
+            f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l AND session_id = :s "
+            "ORDER BY seq"
+        ),
+        {"l": learner_id, "s": session_id},
+    )
+    return [row_to_event(r) for r in result.all()]
