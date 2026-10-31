@@ -1270,6 +1270,19 @@
         "title": "HealthReady",
         "type": "object"
       },
+      "Healthz": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "Healthz",
+        "type": "object"
+      },
       "HeartbeatResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2974,6 +2987,37 @@
           }
         },
         "summary": "Ready",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Healthz"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Healthz"
+                }
+              }
+            },
+            "description": "Postgres is unreachable"
+          }
+        },
+        "summary": "Healthz",
         "tags": [
           "health"
         ]

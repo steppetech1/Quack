@@ -14,7 +14,7 @@ from neo4j import AsyncDriver
 from sqlalchemy import text
 
 import quack.graph.slice as slice_mod
-from quack.api.app import AppResources
+from quack.api.resources import AppResources
 from quack.config import FoldParams, Settings
 from quack.db.neo4j import cypher
 from quack.db.postgres import SessionFactory
