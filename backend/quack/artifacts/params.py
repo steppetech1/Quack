@@ -20,12 +20,6 @@ class PracticeParams(BaseModel):
     compute_tested_depth: float = 0.5
     # A6: target_difficulty passed to task_gen@1.
     default_target_difficulty: float = 0.5
-    # ТЗ §2.3 п.3: `q` has at least 2 characters.
-    search_min_query_len: int = 2
-    # ТЗ §2.3 п.3, ТЗ §3: `limit: int = 20`.
-    search_default_limit: int = 20
-    # A13: `limit` is between 1 and 100.
-    search_max_limit: int = 100
 
 
 PARAMS = PracticeParams()

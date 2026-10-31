@@ -11,7 +11,7 @@ import orjson
 from neo4j import READ_ACCESS
 from redis.exceptions import RedisError
 
-from quack.api.app import AppResources
+from quack.api.resources import AppResources
 from quack.artifacts.deps import WorkerDeps, build_worker_deps
 from quack.artifacts.practice import LLM_ERRORS
 from quack.artifacts.schemas import (

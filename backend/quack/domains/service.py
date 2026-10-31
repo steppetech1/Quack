@@ -7,8 +7,8 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import text
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.domains.schemas import (
     ArchiveDomainRequest,
     ArchiveDomainResponse,

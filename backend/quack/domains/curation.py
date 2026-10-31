@@ -33,8 +33,6 @@ from quack.logging import get_logger
 
 log = get_logger(__name__)
 
-CURATION_DEFER_MINUTES = 10
-CURATION_MIN_EVIDENCE_FOR_PROMOTION = 2
 
 # Module-level hook allowing tests to inject a FakeLLMProvider when running via JobRunner.
 llm_provider_override: LLMProvider | None = None
@@ -174,8 +172,8 @@ async def curate_domain_graph(
     redis: Redis | None = None,
     llm: LLMGateway | None = None,
 ) -> None:
-    """Execute `graph.curate` for a domain: defer by 10 minutes if `presence:learner:{id}` is
-    active in Redis; otherwise run deterministic promotion/deduplication and `curator@1`
+    """Execute `graph.curate` for a domain: defer by `curation_defer_min` if `presence:learner:{id}`
+    is active in Redis; otherwise run deterministic promotion/deduplication and `curator@1`
     merges, emitting `skill.promoted`, `skill.merged`, `topic.merged`, `misconception.merged`
     (ТЗ §2.5, §4; Т-§10).
     """
@@ -201,7 +199,7 @@ async def curate_domain_graph(
     try:
         is_active = bool(await redis.exists(presence_key(learner_id)))
         if is_active:
-            run_after = datetime.now(UTC) + timedelta(minutes=CURATION_DEFER_MINUTES)
+            run_after = datetime.now(UTC) + timedelta(minutes=ctx.settings.curation_defer_min)
             async with ctx.session_factory() as session, session.begin():
                 if job.coalesce_key is not None:
                     existing_queued = await session.execute(
@@ -273,12 +271,12 @@ async def curate_domain_graph(
                 )
                 handled_skill_ids.add(pid)
 
-        # 2. Deterministic promotion for evidenceCount >= 2
+        # 2. Deterministic promotion for evidenceCount >= curation_min_evidence_for_promotion
         for pid, pprops in provisional_skills.items():
             if pid in handled_skill_ids:
                 continue
             ev_count = int(pprops.get("evidenceCount", 0))
-            if ev_count >= CURATION_MIN_EVIDENCE_FOR_PROMOTION:
+            if ev_count >= ctx.settings.curation_min_evidence_for_promotion:
                 events_to_append.append(
                     NewEvent(
                         type="skill.promoted",

@@ -1,5 +1,6 @@
-"""Registration, login, Argon2id password hashing and Redis rate limiting (ТЗ §2.1, Т-§16.3,
-Т-§19, Т-§22.2). JWT is issued and verified only in `quack.api.auth` (ТЗ Фазы 3 WP1.2).
+"""Registration, login and Argon2id password hashing (ТЗ §2.1, Т-§16.3, Т-§22.2). JWT is issued
+and verified only in `quack.api.auth`; the per-IP limit is `quack.api.ratelimit` (ТЗ Фазы 3
+WP1.2, WP1.5).
 """
 
 from __future__ import annotations
@@ -9,7 +10,6 @@ from uuid import UUID, uuid4
 import orjson
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
-from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -19,7 +19,6 @@ from quack.api.auth import issue_access_token
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources
 from quack.config import Settings
-from quack.db.redis import ratelimit_key
 from quack.domains.schemas import (
     AuthResponse,
     LearnerMeResponse,
@@ -31,9 +30,6 @@ from quack.events.models import NewEvent
 from quack.logging import get_logger
 
 log = get_logger(__name__)
-
-AUTH_RATE_LIMIT_MAX_REQUESTS = 10
-AUTH_RATE_LIMIT_TTL_SEC = 60
 
 _pwd_hasher = PasswordHash((Argon2Hasher(),))
 
@@ -63,45 +59,14 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-async def check_auth_rate_limit(redis: Redis | None, client_ip: str) -> None:
-    """Enforce 10 req/min rate limit per IP on `/v1/auth/*` with fail-open on Redis error
-    (ТЗ §2.1, Т-§17.3, Т-§19).
-    """
-    if redis is None:
-        return
-    key = ratelimit_key("auth", client_ip)
-    try:
-        count = await redis.incr(key)
-        if count == 1:
-            await redis.expire(key, AUTH_RATE_LIMIT_TTL_SEC)
-        if count > AUTH_RATE_LIMIT_MAX_REQUESTS:
-            ttl = await redis.ttl(key)
-            if ttl < 1:
-                ttl = AUTH_RATE_LIMIT_TTL_SEC
-                await redis.expire(key, AUTH_RATE_LIMIT_TTL_SEC)
-            raise ApiError(
-                "RATE_LIMITED",
-                "too many authentication attempts",
-                status_code=429,
-                details={"retry_after_sec": ttl},
-            )
-    except ApiError:
-        raise
-    except Exception as exc:
-        log.warning("redis_rate_limit_failed", error=str(exc), client_ip=client_ip)
-
-
 async def register_learner(
     resources: AppResources,
     settings: Settings,
     req: RegisterRequest,
-    *,
-    client_ip: str = "unknown",
 ) -> AuthResponse:
     """Register a new learner in `auth.users` and emit `learner.registered` in one transaction
     (ТЗ §2.1, §3; Т-§16.3).
     """
-    await check_auth_rate_limit(resources.redis, client_ip)
     email = normalize_email(req.email)
     pw_hash = hash_password(req.password)
     learner_id = uuid4()
@@ -174,11 +139,8 @@ async def login_learner(
     resources: AppResources,
     settings: Settings,
     req: LoginRequest,
-    *,
-    client_ip: str = "unknown",
 ) -> AuthResponse:
     """Authenticate an existing active learner and issue a JWT (ТЗ §2.1, §3; Т-§16.3, Т-§19)."""
-    await check_auth_rate_limit(resources.redis, client_ip)
     email = normalize_email(req.email)
 
     async with resources.session_factory() as session:

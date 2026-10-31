@@ -11,8 +11,8 @@ from uuid import UUID, uuid5
 import neo4j
 from sqlalchemy import text
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.domains.schemas import (
     ConfirmStructureRequest,
