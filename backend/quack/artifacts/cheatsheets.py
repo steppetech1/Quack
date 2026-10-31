@@ -240,9 +240,10 @@ async def _digest_event(
 
 async def run_finish_artifacts(job: ClaimedJob, deps: WorkerDeps) -> None:
     """`session.digest_created` (`artifacts@1`, mode digest, or a template) and, for a session
-    with a topic, `artifact.refresh_cheatsheet` in the same transaction (decision 3, A15)."""
+    with a topic, `artifact.refresh_cheatsheet` in the same transaction (decision 3, A15). The
+    payload is the one of `finish_session`: `{"session_id", "domain_id", "topic_id"}` (WP6.4)."""
     learner_id = _learner(job)
-    session_id = _id_from_lock_key(job, "session:", ":finish")
+    session_id = UUID(job.payload["session_id"])
     domain_id = UUID(job.payload["domain_id"])
     topic = job.payload.get("topic_id")
     topic_id = None if topic is None else UUID(topic)

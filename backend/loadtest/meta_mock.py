@@ -51,6 +51,8 @@ REASONING_TOKENS = {"low": 256, "high": 1024}
 CHARS_PER_TOKEN = 4
 SHORT_TEXT = "text"
 RETRY_AFTER_S = 1
+# An HTTP date has whole seconds: 1 s ahead may already be past when parsed.
+RETRY_AFTER_DATE_S = 2
 RETRY_CYCLE: tuple[RetryAfterFormat, ...] = ("seconds", "http-date", "none")
 FIXED_UUID = "00000000-0000-4000-8000-000000000000"
 FIXED_DATETIME = "2026-01-01T00:00:00Z"
@@ -295,7 +297,8 @@ def _retry_after(fmt: RetryAfterFormat, seconds: float) -> dict[str, str]:
     if fmt == "seconds":
         return {"retry-after": str(wait)}
     if fmt == "http-date":
-        return {"retry-after": format_datetime(datetime.now(UTC) + timedelta(seconds=wait), True)}
+        at = datetime.now(UTC) + timedelta(seconds=max(wait, RETRY_AFTER_DATE_S))
+        return {"retry-after": format_datetime(at, True)}
     return {}
 
 

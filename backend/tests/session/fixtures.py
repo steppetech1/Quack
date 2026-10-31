@@ -51,7 +51,6 @@ SCHEMA_ROLES = {
     "TeacherOutput": "teacher",
     "ExtractorOutput": "extractor",
     "ExtractorOutputV2": "extractor",
-    "CheckpointerOutput": "checkpointer",
     # WP6.2: the turn checks open answers and compute outages with `evaluator@1`.
     "EvaluatorOutput": "evaluator",
 }
@@ -309,7 +308,7 @@ async def seeded_domain(learner: UUID, db: SessionFactory, neo4j: AsyncDriver) -
                 "power-rule",
                 power,
                 prompt_text="Find d/dx x^3",
-                reference_solution={"sympy": "3*x**2", "hints": ["a", "b", "c"]},
+                reference_solution={"expression": "3*x**2", "hints": ["a", "b", "c"]},
                 target_misconceptions=[str(seed.misconception_id)],
             ),
         ),
@@ -322,7 +321,7 @@ async def seeded_domain(learner: UUID, db: SessionFactory, neo4j: AsyncDriver) -
                 "chain-rule",
                 chain,
                 prompt_text="Find d/dx sin(2x)",
-                reference_solution={"sympy": "2*cos(2*x)", "hints": ["a", "b", "c"]},
+                reference_solution={"expression": "2*cos(2*x)", "hints": ["a", "b", "c"]},
             ),
         ),
         new_event(

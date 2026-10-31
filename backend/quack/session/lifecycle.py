@@ -463,7 +463,9 @@ async def finish_session(
             kinds.session_finish_artifacts(
                 learner_id,
                 session_id,
+                # WP6.4 п.2: the payload of the seam `finish_session` → `session.finish_artifacts`.
                 {
+                    "session_id": str(session_id),
                     "domain_id": str(domain_id),
                     "topic_id": str(topic_id) if topic_id else None,
                 },
