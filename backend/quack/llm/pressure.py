@@ -14,13 +14,34 @@ from datetime import datetime
 from typing import Literal
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
+from quack.db.redis import llm_pressure_key
+from quack.logging import get_logger
 
 type PressureReason = Literal["429", "headers"]
+
+log = get_logger(__name__)
 
 
 async def pressured_models(redis: Redis | None) -> frozenset[str]:
     """IDs of the models whose `llm:pressure:{model}` flag is set; empty on `None` or error."""
-    raise NotImplementedError
+    if redis is None:
+        return frozenset()
+    prefix = llm_pressure_key("")
+    keys: list[bytes | str] = []
+    try:
+        cursor = 0
+        while True:
+            cursor, batch = await redis.scan(cursor=cursor, match=f"{prefix}*")
+            keys.extend(batch)
+            if cursor == 0:
+                break
+    except RedisError:
+        log.warning("pressure_flags_unreadable")
+        return frozenset()
+    names = (key.decode() if isinstance(key, bytes) else str(key) for key in keys)
+    return frozenset(name.removeprefix(prefix) for name in names if name != prefix)
 
 
 async def set_pressure_flag(

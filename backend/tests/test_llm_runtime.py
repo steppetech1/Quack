@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
+from redis.asyncio import Redis
 
 from quack.artifacts.schemas import ArtifactGenOutput
+from quack.db.redis import llm_pressure_key
 from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOutput
+from quack.llm.pressure import pressured_models
 from quack.llm.strict_schema import StrictSchemaError, to_strict_json_schema
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.session.schemas import ExtractorOutput, TeacherOutput
+from tests.support.broken import BrokenRedis
 
 # Output models of the eight roles of Phase 3 after WP13 (§7.6).
 ROLE_OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
@@ -100,3 +105,19 @@ def test_strict_schema_rejects_free_dict_with_field_name() -> None:
     with pytest.raises(StrictSchemaError) as exc:
         to_strict_json_schema(FreeDict)
     assert "payload" in exc.value.field_path
+
+
+async def test_pressured_models_reads_flags(redis: Redis) -> None:
+    """Seam S3 (WP5.3): the runner sees exactly the models with a pressure flag; without
+    Redis or on a Redis error no model counts as pressured."""
+    flagged, other = f"model-{uuid4().hex}", f"model-{uuid4().hex}"
+    await redis.set(llm_pressure_key(flagged), "429", ex=30)
+    try:
+        models = await pressured_models(redis)
+        assert flagged in models
+        assert other not in models
+    finally:
+        await redis.delete(llm_pressure_key(flagged))
+    assert flagged not in await pressured_models(redis)
+    assert await pressured_models(None) == frozenset()
+    assert await pressured_models(BrokenRedis()) == frozenset()  # type: ignore[arg-type]  # stand-in client
