@@ -274,10 +274,10 @@ async def test_unknown_label_returns_to_model_once(
     names = list(dict.fromkeys(name for name, _ in events))
     text_out = "".join(data["delta"] for name, data in events if name == "token")
     assert text_out == "Second draft."
+    # `assign_task` is applied either way: without a resolved label code picks the task.
+    assert names == ["turn_started", "status", "token", "task_assigned", "turn_completed", "done"]
     dropped = [e for e in logs if e.get("event") == "teacher_unknown_label"]
     if second_valid:
-        assert "task_assigned" in names
         assert not dropped
     else:
-        assert names == ["turn_started", "status", "token", "turn_completed", "done"]
         assert dropped and dropped[-1]["label"] == "K99"
