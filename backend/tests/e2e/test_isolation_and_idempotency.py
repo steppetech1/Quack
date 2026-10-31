@@ -101,6 +101,8 @@ async def test_mutating_endpoints_are_idempotent(system_for_walk: System) -> Non
         body = body_for(method, path, ids, key)
         first_response = await _send(system, learner, method, url, body)
         assert first_response.status_code < 300, f"{method} {path}: {first_response.text}"
+        # Background jobs of the step (turn, session finish) write events; let them land.
+        await system.settle()
         before = await _events(system, learner.learner_id)
         again = await _send(system, learner, method, url, body)
         assert again.status_code == first_response.status_code, f"{method} {path}: {again.text}"
@@ -136,8 +138,6 @@ async def _advance(system: System, ids: Ids, method: str, path: str, payload: An
     if (method, path) == ("POST", "/v1/sessions"):
         return replace(ids, session_id=UUID(payload["session_id"]))
     if path.endswith("/turns"):
-        # The turn's background jobs write events; the next step counts them.
-        await system.settle()
         started = first(payload, "turn_started")
         assert started is not None
         return replace(ids, turn_id=UUID(started["turn_id"]))
