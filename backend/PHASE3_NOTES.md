@@ -61,12 +61,12 @@
 | WP4 | C | WP4.1: `read_session`, модули C переведены, `T-A9a`/`T-A9b` зелёные; **частично** — модули B в `PENDING_NEO4J_SESSIONS` и `_read` хранилища ждут правки B (D-C-016). WP4.2: шпаргалки чужой темы → 404 (D-C-017), `T-E3` зелёный на стенде | 461 passed |
 | WP5 | B | не начат | — |
 | WP6 | B | не начат | — |
-| WP7 | C | не начат | — |
-| WP8 | A, C | WP8.7 (C): выполнено — `ops openapi` (функция `write_openapi`), снимок `backend/openapi.json`, `ErrorResponse` и SSE в схеме (D-C-015); остальное — не начато | `T-A7` + 3 теста схемы зелёные; всего 456 passed |
+| WP7 | C | выполнено: `GET /v1/learner/stream` (Redis, опрос без Redis, keepalive), снимок `openapi.json` обновлён (D-C-021, D-C-022) | `T-H4` + keepalive + 401 зелёные |
+| WP8 | A, C | WP8.3 (C): выполнено — `GET /healthz` только по Postgres, `T-A8`; WP8.7 (C): выполнено — `ops openapi` (функция `write_openapi`), снимок `backend/openapi.json`, `ErrorResponse` и SSE в схеме (D-C-015); остальное — не начато | `T-A7` + 3 теста схемы зелёные; всего 456 passed |
 | WP9 | A | не начат | — |
 | WP10 | C | WP10.1 стенд `system` и WP10.2 `T-E1`…`T-E10` — написаны (красные, ветка `phase-3-c-e2e-red`); WP10.3 — не начат | 6 красных, 4 зелёных на текущем коде |
 | WP11 | A | не начат | — |
-| WP12 | C | **частично**: швы S5/S6 — `turn.extracted` v2, проверка элемента, ярус и вес, применение v2 проектором (D-C-019); вес в свёртке и `rules@2` (`T-W7`) — вторая часть | `T-W1`…`T-W6` зелёные; 490 passed |
+| WP12 | C | выполнено: S5/S6, `turn.extracted` v2, вес по коду в свёртке, `rules@2` (D-C-019, D-C-020) | `T-W1`…`T-W7` зелёные; 492 passed |
 | WP13 | B | не начат | — |
 | WP14 | B | не начат | — |
 | WP15 | B | не начат | — |
@@ -378,8 +378,7 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
   банке нет (хакатон), старые события `task.generated` есть только в тестах.
 - Обратимость: одна модель `quack/practice/schemas.py` и правило 5 промпта.
 - Тесты: `T-H8` (а).
-- Требует подтверждения владельцем: да. Отдельно — какой формат `reference_solution` уже
-  заложен в готовящийся промпт `task_gen` (промпт пишет владелец).
+- Требует подтверждения владельцем: нет — **2026-11-01 владелец передал решение исполнителю; принят вариант (1)**: таблица WP6.4 помечена \[КОНТРАКТ\], `hints` и `latex` — совместимое расширение. Строку банка собирает код (D-B-010), текст промпта `task_gen` не меняется. Переход — пакет WP6.4 (затрагивает `domains/diagnostic.py` потока C).
 
 ### D-B-002. Версия отрисовщика в `session.checkpointed`
 - Класс: C
@@ -395,7 +394,7 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
   моделей (`teacher@1`, `extractor@1`), `Т-§10.6` требует только версию отрисовщика.
 - Обратимость: одна строка в обработчике.
 - Тесты: `T-C2` (payload и actor детерминированы).
-- Требует подтверждения владельцем: да
+- Требует подтверждения владельцем: нет — **2026-11-01 решено исполнителем по поручению владельца: вариант (1)** (§0.4.4 п.2 — схема события не меняется).
 
 ### D-B-003. `cached_input_tokens` при существующей `cached_tokens`
 - Класс: C
@@ -411,7 +410,7 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
   и запросы по `cached_tokens` не ломаются.
 - Обратимость: убрать колонку из `0002` до слияния в `main`.
 - Тесты: `T-L10`.
-- Требует подтверждения владельцем: да (колонка-дубль — на выбор владельца между (1) и (2))
+- Требует подтверждения владельцем: нет — **2026-11-01 решено исполнителем по поручению владельца: вариант (1)**; имя колонки задано контрактом §6.1, колонка уже в миграции `0002_phase3`.
 
 #### Этап I потока B к G0 (ветка `phase-3-b-stage1-llm`)
 
@@ -504,7 +503,7 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   см. WP14.1), код их больше не читает.
 - Обратимость: функции хода в `turns.py` (один вызов `evaluate_answer`).
 - Тесты: `T-H2`; пять правок выше.
-- Требует подтверждения владельцем: да
+- Требует подтверждения владельцем: нет — **2026-11-01 решено исполнителем по поручению владельца: вариант (1)** (WP6.2 и `T-H2` — контракт).
 
 ### D-B-007. `reference_solution` в `TaskGenOutput` остаётся `dict` до ответа по D-B-001
 - Класс: B
@@ -545,7 +544,7 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `T-L9` — только `model_validate_json`.
 - Не блокирует: Этап I и `to_strict_json_schema` (до G1). Блокирует: адаптер WP5.7 после G1,
   часть `T-L9` про `jsonschema`. До ответа `ResponsesClient` — сигнатура без импорта SDK.
-- Требует решения владельца: да
+- Требует решения владельца: нет — **2026-11-01 решено исполнителем по поручению владельца: вариант (1)**. `AsyncOpenAI` назван в `Т-§11.5`, `jsonschema` — в описании `T-L9`; `backend/CLAUDE.md` разрешает зависимости, названные в документах или задаче. `openai` — основные зависимости, `jsonschema` — группа `dev`. WP5.7 (адаптер) разблокирован.
 
 ### D-B-008. Ход при недоступном Neo4j: какие ошибки ловятся и куда идёт маркер (WP6.1)
 - Класс: B
@@ -734,8 +733,212 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `test_gateway_session_budget` — `session_budget_exempt_roles=()` (WP5.6 освобождает
   `extractor`, а тест проверяет сам бюджет). Утверждения не менялись.
 - Тесты: T-L1–T-L7, T-L11 (часть шлюза), T-L12, T-L13. T-L8, T-L10 — адаптер WP5.7 (ждёт
-  D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
+  D-B-004). T-H6 (`test_teacher_fallback_on_pressure_and_429`, `test_phase3_hot_path.py`)
+  — добавлен отдельным коммитом и сразу зелёный: поведение реализовано в этом же решении
+  (п.3, п.5), красного прогона нет. Шлюз теста собирается с `redis` (п.2), иначе флаг
+  давления в (б) не ставится.
 - Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-017. `session/workers.py` на ресурсах `JobContext` (WP2.1, по просьбе A)
+- Класс: B
+- WP / место: WP2.1 (пересечение №2, §7.3); `quack/session/workers.py`,
+  `tests/support/resources.py`
+- Решение: драйвер Neo4j, Redis и шлюз берутся только из `ctx` (`ctx.neo4j`, `ctx.redis`,
+  `ctx.llm`); модульный кэш `_RESOURCES`, `_worker_resources`, вызовы `create_driver`,
+  `create_redis`, `HttpLLMProvider(` удалены. Пока поля `JobContext` необязательны (D-A-002),
+  один хелпер `_job_resources(ctx)` проверяет драйвер и шлюз и бросает `RuntimeError`;
+  убирается, когда A снимет `None`. `ctx.redis = None` допустим — работа без Redis (§4.2),
+  обработчики его уже принимают (ревью A). `compute` обработчики `workers.py` не используют и не проверяют. Логика
+  обработчиков не менялась. Сборщик `build_job_context` в `tests/support/resources.py`
+  (§2.3 конфликт 20: тесты собирают контекст сборщиком).
+- Правки тестов (§8.9): `test_worker_pool_and_slice::test_handlers_share_driver_redis_and_gateway`
+  — вместо «`create_driver`/`create_redis`/`LLMGateway` вызваны по одному разу» проверяется,
+  что все три вызова получают те же `ctx.llm` и `ctx.redis`, и что без ресурсов в контексте
+  обработчик бросает `RuntimeError`. Свойство то же (общие ресурсы на все задачи), критерий
+  строже; проверка «не ослаблен»: если обработчик создаёт свой шлюз, тест падает.
+  Фикстуры: `JobContext(settings=…, session_factory=db)` → `build_job_context(...)` в
+  `test_session_checkpoint_worker`, `test_turn_extract_worker`, `test_extract_quote_grounding`,
+  `test_worker_pool_and_slice`; из `test_session_checkpoint_worker` убрана подмена
+  `HttpLLMProvider`/`LLMGateway` (шлюз приходит из контекста).
+- Снятие `_ReadOnlyDriver` (D-C-016, отдельный коммит): `workers.py` отдаёт `ctx.neo4j` в
+  `Neo4jGraphStore` и `read_applied_seq` как есть, своих сессий на драйвере не открывает;
+  запись `quack.session.workers` удалена из `PENDING_NEO4J_SESSIONS` (список пуст). До того как
+  C переведёт `Neo4jGraphStore._read` на `read_session`, чтение графа в `turn.extract` идёт без
+  `READ_ACCESS` — ход C по D-C-016.
+- Требует подтверждения владельцем: нет (поручение A).
+### D-B-016. `extractor@2` → `turn.extracted` v2 (швы S5/S6)
+- Класс: B
+- WP / место: WP12.1–12.2; `quack/session/extraction.py`, `quack/llm/labels.py`
+- Решение: `extraction_context` собирает `ExtractionContext` из таблицы меток вызова
+  (`LabelMap.labels(kind)`), эпизода и темы сессии; `extracted_elements` прогоняет каждый
+  элемент через `to_extracted_element` (отклонённые остаются с `rejected_reason`);
+  `turn_extracted_v2` — payload `schema_version = 2`. В `episode` — только события ученика
+  (`turn.student_replied.text`, `task.submitted.answer`): цитата из реплики учителя получает
+  `source_outside_episode` (правило 9 промпта). Префикс `new: ` нового навыка и
+  заблуждения снимается при переводе ответа.
+- Не сделано: вызов в обработчике `turn.extract` (`session/workers.py`) — после PR потока A
+  по WP2.1 (A просил не трогать файл до него); там же снятие `_ReadOnlyDriver` (WP4.1).
+- Тесты: `tests/session/test_extraction_v2.py`.
+- Требует подтверждения владельцем: нет (делегировано).
+
+### D-B-018. WP6.3: keepalive в зоне B; событие `status` и ранняя запись реплики ученика
+- Класс: C (keepalive), конфликт документов (статус) — решён исполнителем по поручению владельца
+  2026-11-01
+- WP / место: WP6.3; `quack/session/keepalive.py`, `quack/session/router.py`,
+  `quack/session/turns.py`, `quack/session/context.py`
+- Решение (keepalive): `with_keepalive` / `sse_keepalive_response` — после `sse_keepalive_s`
+  тишины поток шлёт `: ping` и пустую строку; шаг потока событий между пингами не
+  отменяется. Подключено к `GET /v1/sessions/{id}/events` и к потоку хода. Общий
+  `sse_response` лежит в `quack/api/sse.py` (зона C), поэтому обёртка — в `quack/session`;
+  C может перенести её в `quack/api/sse.py` и подключить к `GET /v1/learner/stream` (WP7).
+- Конфликт (статус хода): WP6.3 требует `status` «первым после `turn_started`» и до вызова
+  модели, а `turn_started.user_seq` (`С-§8.5`) — `seq` реплики ученика, которую код Фазы 2
+  писал одной транзакцией с ответом учителя после модели. Варианты: (1) `status` до
+  `turn_started`; (2) `turn_started` без `user_seq` — меняет `С-§8.5`; (3) реплика ученика —
+  своей транзакцией до модели.
+- Решение: (3). `Т-§1.4` п.1: «API в одной транзакции выдаёт номер ученика и пишет событие
+  действия», сборка контекста и модель — после; `Т-§2.2` «хода в журнале нет» относится к
+  ходу учителя (`turn.committed` и его последствия пишутся вместе). Основной документ выше
+  `С-§` и кода Фазы 2 (§0.3 п.2). Формат `С-§8.5` не меняется.
+  - До ответа: блокировка, проверка сессии, идемпотентность, запись `turn.student_replied`
+    (ключ — ключ хода). Поток: `turn_started` → допуск учителя (WP5.3) → `status`
+    `{"state": "thinking"}` → остальной ход без изменений; ход учителя и его события
+    (`task.submitted`, `task.evaluated`, `task.assigned`, `turn.teacher_replied`, манифест,
+    задачи) — одной транзакцией, как раньше. Отказ допуска переводит ход на
+    `teacher_fallback` после `status` — событие одно.
+  - Повтор с тем же ключом: ход записан — повтор кадров (с `status`); записана только реплика —
+    ход возобновляется на ней (тот же `turn_id`, `user_seq`, без второй реплики).
+  - `build_turn_context(before_seq=…)`: срез ждёт проектор до события перед репликой (сама
+    реплика — в наложении, закон 9), окно разговора кончается перед ней (реплика — отдельная
+    переменная промпта). Без этого каждый ход ждал бы `projector_lag_timeout_ms`.
+  - Ошибка хода после первого кадра обрывает поток (как `Т-§12.1`, «обрыв до commit»), а не
+    отвечает JSON; клиент повторяет ход и получает его возобновление.
+- Правки тестов (§8.9 п.6 — новое событие контракта `С-§8.5`, не ослабление): в
+  `test_turn_evaluation::test_math_task_evaluated_in_turn_via_compute`,
+  `test_turns_and_sse::test_full_turn_sse_order_format_events_and_extract_job`,
+  `…::test_turn_without_concept_or_task`,
+  `…::test_practice_mode_assigns_task_even_if_move_is_not_assign_task` в точный список кадров
+  добавлен `status` после `turn_started` (индексы кадров сдвинуты); в первом из `turns_and_sse`
+  добавлена проверка `{"state": "thinking"}`. `T-M4` (свой, WP14.2): «сбой записи манифеста →
+  событий хода нет» считает события хода учителя (ключи `<ключ>:…`), реплика ученика по
+  решению пишется раньше — свойство «ход учителя и манифест атомарны» то же.
+- Тесты: `T-H5`, `T-H10` (`test_turn_status_before_text`, вместо задержки 0,5 с провайдер
+  держит ответ до чтения `status` — «раньше, чем провайдер вернул ответ» без таймингов),
+  `test_turn_resumes_on_the_stored_reply`.
+- `openapi.json`: у потока хода общее описание без перечня событий; добавить `status` в текст —
+  `quack/api/openapi.py` (C), фронтенду — на G1 (R-F).
+- Требует решения владельца: нет (поручено исполнителю 2026-11-01).
+
+### D-B-019. WP15: защита от спойлера — что считается активной задачей и как сравнивается ответ
+- Класс: C
+- WP / место: WP15; `quack/session/spoiler_guard.py`, `quack/session/turns.py::_guard_spoiler`
+- Решение:
+  1. Активная задача — выдана в этой сессии (`task.assigned`) до текущего хода, по ней нет
+     верного `task.evaluated` и нет подсказки ступени `max_hint_level` (признак просьбы
+     решения по аудиту WP0). Задача, которую этот ход проверил как верную, закрыта.
+  2. Ответ — из ключей банка D-B-010: `math` — `sympy`, `choice` — `answer` (текст верного
+     варианта; у задач банка без `answer` не проверяется), `open` — не проверяется.
+     Сравнение — локальная нормализация (без вызова `compute` на каждую попытку): регистр,
+     `**` → `^`, степени-индексы, пробелы у операторов, без `*`; число — по значению,
+     выражение и текст варианта — целым токеном. Целые с модулем меньше
+     `spoiler_ignore_abs_below` и однобуквенные ответы не проверяются.
+  3. Повтор — та же роль (`teacher` или `teacher_fallback`), тот же уровень рассуждения,
+     ключ `…:guard<N>`; до `guard_max_retries`, затем удаляется предложение с ответом.
+     `LLMBudgetExceededError` на повторе → `budget_exceeded`, недоступность → `llm_unavailable`
+     (общий обработчик хода). Лог `guard_violation`: правило, сессия, ход, задача, попытка,
+     действие; без текста ученика и ответа.
+  4. Причина повтора идёт модели данными в переменной `guard_reason` (JSON `{"rule":
+     "spoiler", "task_label": "K…"}`; метки нет, если задача вне таблицы вызова; пустая строка
+     на первой попытке). **В `teacher@1` места `{{ guard_reason }}` нет** — лишняя переменная
+     не подставляется, модель причину не видит. Добавить блок в промпт — работа владельца
+     (промпты).
+- Тесты: `T-G1`–`T-G4` (`tests/session/test_spoiler_guard.py`).
+- Требует подтверждения владельцем: п.1 — нет, **2026-11-01 решено исполнителем по поручению
+  владельца**: признак `ТЗ-П2` «подсказка высшей ступени», события `solution.requested`
+  (`Т-§2.2`) в коде нет. П.4 — блок `{{ guard_reason }}` в `teacher@1` пишет владелец (промпты).
+### D-B-020. WP14.2: значения полей манифеста хода
+- Класс: C
+- WP / место: WP14.2; `quack/session/manifest.py`, `quack/session/turns.py`
+- Решение: строка пишется в транзакции `append_events` хода, после события. Типы
+  `TurnManifest` приведены к колонкам миграции `0002_phase3` (версии — числа `N` из
+  `name@N`). `prompt_version` — `TEACHER_PROMPT_VERSION` (1); `renderer_version` — номер
+  `RENDERER_VERSION` (`renderer@1`, D-B-002): другой версии отрисовки контекста учителя в
+  Фазе 3 нет. `role` — `teacher_fallback`, если ответ дал запасной, иначе `teacher` (и при
+  детерминированной деградации); `model` — модель этой роли; `reasoning_effort` — уровень этой
+  роли (WP6.5); `projected_seq` — `applied_seq` среза; `overlay_seqs` — `seq` событий
+  наложения; `label_table` — `LabelMap.table()`; `degraded_mode` — итог хода.
+- В красном коммите `T-M4` ждал `degraded_mode = None`; в фикстуре проектор не применил
+  `session.started`, ход честно идёт в `projector_lag`. Ожидание исправлено до зелёного
+  коммита: манифест равен `turn_completed.degraded_mode` (проверка не слабее — точное
+  совпадение с итогом хода).
+- Тесты: `T-M4` (`tests/llm/test_labels.py`).
+### D-B-021. WP5.7: адаптер `ResponsesClient` на `AsyncOpenAI`
+- Класс: C
+- WP / место: WP5.7; `quack/llm/responses_client.py`, `quack/llm/provider.py`,
+  `quack/llm/gateway.py`, `pyproject.toml`
+- Решение:
+  1. Зависимости по D-B-004: `openai` (основные), `jsonschema` (`dev`). SDK 3.x работает на
+     `httpx2`, поэтому `http_client` адаптера — `httpx2.AsyncClient`, в тестах —
+     `httpx2.MockTransport` (`T-L8` называет `httpx.MockTransport` — тот же приём для этой
+     версии SDK).
+  2. Запрос — по таблице WP5.7; схема — `to_strict_json_schema` (шлюз строит её для каждого
+     вызова), `prompt_cache_key` = `{prompt_role или role}@{версия}`. Сообщение исправления
+     схемы — текст провайдера Фазы 1 без изменений.
+  3. Ответ читается сырым (`with_raw_response`): заголовки `retry-after` и `x-ratelimit-*` —
+     шлюзу; `reasoning` возвращается как есть в `output_items`; `message` с `phase:
+     commentary` — в лог `llm_commentary`, ответ — текст последнего `message` без этой фазы;
+     нет ответа → пустой текст → ошибка схемы и одно исправление (WP5.2). Ошибки: 429 →
+     `ProviderRateLimitedError`, 400 → `ProviderBadRequestError`, прочие статусы, таймаут,
+     соединение → `ProviderUnavailableError`, `status: incomplete` → `ProviderIncompleteError`.
+  4. Ledger: `cached_input_tokens` (= `cached_tokens`, D-B-003), `reasoning_tokens`,
+     `reasoning_effort` вызова.
+  5. `HttpLLMProvider` остаётся тонкой обёрткой над адаптером (импорт внутри конструктора —
+     без цикла модулей): его вызывают `quack/runtime` (A), `quack/api/resources`,
+     `quack/domains/curation`, `quack/artifacts/deps` (C); атрибут `client` с `aclose()`
+     сохранён для `artifacts/deps`. Убирается, когда A и C перейдут на `ResponsesClient(`
+     (`T-Q9`).
+  6. SDK не принимает пустой ключ; без ключа (dev, тесты) адаптер передаёт заглушку,
+     вызов получает 401 → «недоступен», как у провайдера Фазы 1.
+- Не сделано (зона C, `quack/config.py`): ID моделей по умолчанию `muse-wonder-1.0`,
+  `muse-spark-1.3` (§2.3 п.8) и имена `META_API_*` (реестр R4) — `llm_role_models` и
+  `llm_api_*` в общем блоке `Settings`.
+- Правки тестов (§8.9 п.11): `test_jobs_and_llm_gateway::test_gateway_call_writes_ledger_outbox_and_session_tokens`
+  — в запросе ждётся `to_strict_json_schema(Answer)` вместо `model_json_schema()`: запрос
+  по-прежнему несёт схему вывода, она строгая по контракту WP5.7.
+- Тесты: `T-L8` (9 ролей), `T-L9` (экземпляр через `minimal_instance` из `loadtest.meta_mock`
+  и `jsonschema`), `T-L10`.
+- Требует подтверждения владельцем: нет
+
+### D-B-022. `turn.extract` на `extractor@2`: эпизод, окно и входные блоки
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP12 (сторона B, §7.3 п.5); `quack/session/workers.py::run_turn_extract`,
+  `quack/session/extraction.py`, `Settings.episode_context_turns`
+- Решение:
+  1. Эпизод. `episode.closed` в Фазе 3 нет (`Т-§7.5` — диспетчер следующей фазы), задача
+     ставится на ход. Эпизод — события сессии после предыдущего `turn.teacher_replied` до
+     `teacher_seq` хода включительно (реплика и ответ ученика, подсказки, проверки, ответ
+     учителя и выданная задача). Окно — `episode_context_turns` = 3 хода перед ним (`Т-§7.5`,
+     стартовое значение), только для понимания.
+  2. Строки событий собирает код (`Т-§10`, на английском): `[seq] learner: …`,
+     `[seq] learner's answer to the problem: …`, `[seq] teacher: …`, `[seq] problem given: …
+     (tests: S1)`, `[seq] automatic check of the learner's answer: correct|incorrect`,
+     `[seq] hint, step k of 3: …`; пусто — `(none)`. Кандидаты — навыки темы сессии
+     (`S1: <имя>`), заблуждения — `M1 (skill S1): <имя>`; ID в запрос не попадают (`Т-§4.5`).
+     «Ближайших по вектору» (`Т-§7.6`) в срезе нет.
+  3. Уровней разметки задач (1–6, `Т-§5.2`) в банке нет — `task_levels` пуст (R9).
+  4. Вызов: `extractor@2`, ключ `extract:{turn_id}:v2`; элементы — `extracted_elements`
+     (C, шов S6), отклонённые пишутся с причиной; событие `turn.extracted` `schema_version = 2`,
+     actor `extractor@2`; повтор — `evidence.superseded` прежнего, как раньше.
+- Правки тестов (§8.9 п.9): `test_turn_extract_worker` — ответ `ExtractorOutputV2`, проверки
+  v2 (элементы, `schema_version`, actor, ключ `…:v2`, строки промпта по меткам и отсутствие ID);
+  событие, публикация `extractor_done` и вытеснение при повторе — как раньше.
+  `test_extract_quote_grounding` (`…_are_dropped` → `…_are_not_applied`): цитата не из реплик
+  ученика и цитата из реплики учителя записываются с `quote_not_in_source` /
+  `source_outside_episode` и не применяются (`Т-§7.6`), обоснованный элемент применяется —
+  проверка строже прежней (причина видна). `test_worker_pool_and_slice` — ответ v2.
+  Фикстуры: `ExtractorOutputV2` в `SCHEMA_ROLES` (`tests/session/fixtures.py`) и ответ по
+  умолчанию `{"entries": []}` в `tests/support/llm.py` (S9).
+- Требует подтверждения владельцем: нет
 
 ### Поток C
 
@@ -1077,6 +1280,87 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/graph/test_evidence_law4.py` — `T-W1`…`T-W6` (27 тестов).
 - Требует подтверждения владельцем: нет
 
+### D-C-020. WP12.2 п.4, WP12.3: вес в свёртке под `rules@2`
+- Класс: B
+- WP / место: `quack/graph/folds.py::_weight`, `recompute_skill_fold`, `quack/graph/ids.py`,
+  `quack/config.py::FoldParams` и `Settings._evidence_weights_into_fold`, `quack/graph/phase_a.py` (`optionsCount`)
+- Контекст: WP12.2 п.4 — вес = база яруса × угадывание × окно × подсказка (`Т-§7.4`), его считает
+  свёртка. В Фазе 1 вес = база × `independence` × множитель глубины проверки; ветка «без ворот»
+  умножала на `strength` и `polarity_weight` — числа модели из `extractor@1`.
+- Решение:
+  1. `_weight` = `evidence_weight` (ярус, угадывание по `optionsCount` задачи с выбором, окно «горит» по
+     показам навыка, ступень подсказки элемента v2, показанное решение → 0) × `independence` (штраф
+     подсказок задачи, его считает код). Ветка «без ворот» берёт тот же вес — `strength` и
+     `polarity_weight` модели больше ни на что не влияют.
+  2. Множитель глубины проверки (`depth_weight_floor`) сохранён **только у свидетельств за воротами**
+     (T1/T2): глубину там задаёт код по задаче; без него менялись бы формулы Фазы 1 и три её теста
+     (не входят в §8.9). У T3/T4 глубины модели в весе нет.
+  3. Числа одни: `Settings` копирует `evidence_tier_weights`, `hint_step_penalty`, `hot_window_min`,
+     `hot_window_factor` в `FoldParams`; `evidence_weight` и свёртка читают одно и то же.
+  4. `CURRENT_RULES_VERSION = "rules@2"`; после выкатки — `ops rebuild` (данных пока нет).
+- Почему: закон 4, §0.4.3 п.1; п.4 (Фаза 1 без изменений там, где ТЗ не требует).
+- Обратимость: `_weight` в `folds.py`; номер правил в `ids.py`.
+- Тесты: `T-W7` `test_rules2_rebuild_equals_incremental`, `test_model_strength_does_not_change_the_state`;
+  тесты свёрток Фазы 1 без изменений.
+- Требует подтверждения владельцем: нет. Если владелец хочет `Т-§7.4` буквально (без глубины и у
+  T1/T2) — убрать строку множителя в `_weight` и переписать `test_deeper_testing_gives_larger_gain` (класс C).
+### D-C-021. WP7: где живёт канал и тест `T-H4`
+- Класс: B
+- WP / место: WP7; `quack/api/learner_stream.py`, `tests/test_learner_stream.py`, `tests/support/sse.py`
+- Контекст: канал не относится ни к одному продуктовому пакету; `T-H4` перечислен в §8.5 (файл горячего
+  пути — зона B); `httpx.ASGITransport` буферизует весь ответ, бесконечный SSE так не прочитать.
+- Варианты: (1) роутер в `quack.api` (основание API, зона C), монтируется в `create_app`; тест — отдельный
+  файл C; потоковый транспорт — в `tests/support/` (S9); (2) роутер в `quack/session/` — зона B.
+- Решение: (1). Транспорт повторяет тот, что B написал в `tests/session/test_session_events_stream.py`;
+  B может перейти на общий из `tests/support/sse.py`.
+- Почему: §7.3 (зона C), §4.1 (основание API импортирует только ядро и API).
+- Обратимость: одна строка `include_router`, модуль канала.
+- Тесты: `T-H4` (`test_learner_stream`, `test_learner_stream_polls_without_redis`), keepalive, 401.
+- Требует подтверждения владельцем: нет
+
+### D-C-022. WP7: поведение канала в пограничных случаях и keepalive
+- Класс: B
+- WP / место: WP7, WP6.3; `quack/api/learner_stream.py`, `quack/api/sse.py::KEEPALIVE_COMMENT`, `sse_bytes_response`
+- Контекст: ТЗ не говорит, что делать после обрыва подписки в середине потока и как слать keepalive, пока
+  общий keepalive WP6.3 (поток B) не сделан.
+- Решение: подписка на `projector:applied:{id}` оформляется до первого чтения смещений (событие между
+  ними не теряется); ошибка Redis в середине → подписка закрывается, канал переходит на опрос
+  `ops.projector_offsets` раз в `learner_stream_poll_ms` и шлёт событие только при росте `applied_seq`;
+  каждое сообщение Redis → `projection_advanced {"applied_seq"}`; молчание дольше `sse_keepalive_s` →
+  `: ping`. Соединение с Postgres берётся на один запрос; при отключении клиента подписка закрывается
+  под `asyncio.shield`. Кадр keepalive и ответ из готовых кадров — общие в `quack/api/sse.py`: B может
+  взять их для WP6.3.
+- Почему: §0.4.3 п.1 (событие не теряется), п.4.
+- Обратимость: функция `learner_stream`.
+- Тесты: `tests/test_learner_stream.py`.
+### D-C-023. WP10.3: `meta-mock` — значения, которых нет в документах
+- Класс: C
+- WP / место: WP10.3, `Д-§11`, `Т-§11.8`; `backend/loadtest/meta_mock.py`, `tests/test_meta_mock.py`
+- Контекст: WP10.3 задаёт поведение подменного сервера, но не все значения: имя и значение
+  параметра длины ответа учителя, число токенов рассуждения, счёт токенов «по длине», вид
+  «короткого текста», выбор доли ответов, тела ошибок. Адаптер `ResponsesClient` (WP5.7, B) —
+  пока только сигнатура (D-B-004), поэтому формат на проводе берётся из контракта Responses API
+  (`Т-§11.1`, `T-L8`), а не из адаптера (по ответу B).
+- Варианты: (1) взять значения из кода стенда и записать здесь, менять без правки контракта;
+  (2) ждать владельца.
+- Решение: (1). `META_MOCK_TEACHER_CHARS` = 600 (длина `reply_text` в ответе на
+  `TeacherOutput`; относится ко всем свободным строкам этой схемы); токены рассуждения: `low` —
+  256, `high` — 1024; токены = ⌈символы / 4⌉ (вход — JSON поля `input`); короткий текст —
+  `text`; `boolean` — `false`; число без границ — 0, с одной границей — граница; `uuid`,
+  `date-time`, `date` — фиксированные значения; `minItems` соблюдается. Доля 429 и доля
+  обрывов — детерминированный счётчик (доля 0,5 — каждый второй), чтобы тесты не зависели от
+  случая. `retry-after` для доли 429 — 1 с, для пустого ведра — время до пополнения; формат
+  `mixed` идёт по кругу `seconds` → `http-date` → `none`. С `tools` шаги чередуют один и два
+  `function_call`, аргументы — минимальный экземпляр `parameters` инструмента. Уровень, кроме
+  `high`, считается `low` (в `Settings` других нет). Процесс — Starlette, запуск
+  `uvicorn --factory loadtest.meta_mock:app_from_env`; `loadtest` добавлен в `include` pyright.
+  `minimal_instance` — общий генератор для `T-L9` (B импортирует его из `loadtest.meta_mock`).
+- Почему: §0.4.3 п.2 (меньше нового); значения — стенда, не продукта; ни одно не влияет на
+  продуктовый код.
+- Обратимость: константы в одном модуле.
+- Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -1095,6 +1379,16 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP12 (часть 2) | проверка на неверной реализации (§8.9): `CURRENT_RULES_VERSION_NUM = 1` и вес «без ворот» × `strength` × `polarity_weight` модели; `uv run pytest -q tests/graph -k "rules2 or strength"` | 2 failed: `T-W7` (`projectorVersion = rules@1`), `test_model_strength_does_not_change_the_state` (сила модели меняет `pMastery`). Тесты написаны вместе с реализацией, отдельного красного коммита нет |
+| WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
+| WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
+| WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
+| WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
+| WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
+| WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
+| WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
+| WP5.7 (адаптер) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py` (коммит `3d76160`) | 10 failed, 23 passed: `T-L8` ×9 и `T-L10` — `NotImplementedError` в `ResponsesClient`; `T-L9` (экземпляр, `jsonschema`) зелёный |
+| WP12 (обработчик B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_turn_extract_worker.py tests/session/test_extract_quote_grounding.py tests/session/test_worker_pool_and_slice.py` (коммит `539f863`) | 3 failed, 1 passed: обработчик пишет `turn.extracted` v1 через `extractor@1` |
 
 ## Правки тестов
 
@@ -1112,6 +1406,7 @@ _(пусто)_
 | `tests/domains/test_curation_thresholds.py::test_graph_curate_defer_uses_curation_defer_min`, `tests/domains/test_diagnostic_and_graph_view.py::test_graph_curate_defers_when_learner_presence_active` | отложение проверяется результатом `JobDeferred` через `JobRunner` (статус, `attempt`, `run_after`) вместо прямого `UPDATE` | §8.9 п.2; на заведомо неверной реализации (без `JobDeferred`) оба падают |
 | `tests/domains/test_curation_slice_and_pool.py` | тест кэша клиентов по `id(settings)` заменён тестом «ресурсы из `JobContext`, ничего не создаётся и не закрывается» | D-A-007, класс C: свойство сохранено, кэша больше нет |
 | `tests/domains/conftest.py`, `tests/domains/test_diagnostic_and_graph_view.py` | `fake_llm_provider` не пишет в `curation.llm_provider_override`; контекст — `build_job_context` | §8.9: фикстуры и импорты |
+| `tests/test_app_assembly.py::PENDING_ROUTES` | убран `GET /v1/learner/stream` | WP7 смонтирован (`test_pending_routes_are_still_pending` требует удалить запись) |
 
 ## Вопросы к команде
 

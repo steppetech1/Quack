@@ -27,8 +27,13 @@ from quack.graph.evidence_weights import (
     assign_tier,
     evidence_weight,
 )
+from quack.graph.folds import _weight  # pyright: ignore[reportPrivateUsage]
 from quack.graph.memory import InMemoryGraph
-from quack.graph.projector import project_in_memory
+from quack.graph.projector import (
+    _evidence_trace,  # pyright: ignore[reportPrivateUsage]
+    project_in_memory,
+)
+from quack.session.schemas import ExtractorOutputV2
 from tests.factories import EventLog
 
 P = FoldParams()
@@ -86,6 +91,18 @@ def test_extractor_schema_has_no_weights() -> None:
     }
 
 
+def test_extractor_output_schema_has_no_weights() -> None:
+    """T-W1 on the prompt-side schema of stream B (`ExtractorOutputV2`, D-B-011): numbers are
+    only the level and the source event numbers (`events`); everything else is closed or text."""
+    schema, defs = _schema(ExtractorOutputV2)
+    assert _numeric_fields(schema, defs) == {"entries.level", "entries.events"}
+    assert _open_strings(schema, defs) == {
+        "entries.skill",
+        "entries.misconception",
+        "entries.quote",
+    }
+
+
 def test_turn_extracted_v2_is_in_the_catalog() -> None:
     assert payload_model("turn.extracted", 2) is TurnExtractedV2
     assert payload_model("turn.extracted", 1).__name__ == "TurnExtracted"
@@ -113,7 +130,7 @@ AT = 10 * 24 * 60 * MS_PER_MINUTE
 
 
 def _params(**overrides: Any) -> EvidenceWeightParams:
-    return EvidenceWeightParams.from_settings(Settings().model_copy(update=overrides))
+    return EvidenceWeightParams.from_settings(Settings(**overrides))
 
 
 @pytest.mark.parametrize(
@@ -381,3 +398,77 @@ async def test_v1_and_v2_extracted_events_both_apply() -> None:
     assert len(_evidence(graph)) == 2
     learner = graph.get("Learner", str(h.log.learner_id))
     assert learner is not None and learner["appliedSeq"] == h.log.events[-1].seq
+
+
+# --- T-W7 and law 4 in the fold ------------------------------------------------------------
+
+
+async def test_rules2_rebuild_equals_incremental() -> None:
+    """T-W7: a history with v2 events — batches of any size equal a rebuild; `rules@2`."""
+    h = _history()
+    for i in range(4):
+        seq, at, turn = _reply(h, f"answer {i}: x = 4")
+        outcome = "correct" if i % 2 == 0 else "incorrect"
+        gap = "none" if outcome == "correct" else "execution"
+        _extracted(h, turn, [_element(h, seq, at, outcome=outcome, gap_type=gap)], hours_later=0.5)
+    by_one = await project_in_memory(h.log.learner_id, h.log.events, P, batch_size=1)
+    by_four = await project_in_memory(h.log.learner_id, h.log.events, P, batch_size=4)
+    rebuilt = await project_in_memory(
+        h.log.learner_id, h.log.events, P, batch_size=len(h.log.events)
+    )
+    assert by_one.snapshot() == by_four.snapshot() == rebuilt.snapshot()
+    learner = rebuilt.get("Learner", str(h.log.learner_id))
+    assert learner is not None and learner["projectorVersion"] == "rules@2"
+    assert len(_evidence(rebuilt)) == 4
+
+
+def _v1_history(strength: float, polarity_weight: float) -> History:
+    h = _history()
+    _, _, turn = _reply(h, "x = 4")
+    h.log.add(
+        "turn.extracted",
+        {
+            "session_id": str(h.session),
+            "turn_id": turn,
+            "observations": [
+                {
+                    "skill": {"skill_id": str(h.skill)},
+                    "direction": "positive",
+                    "strength": strength,
+                    "independence": 1.0,
+                    "tested_depth": 0.5,
+                    "polarity_weight": polarity_weight,
+                    "evidence_text": "x = 4",
+                }
+            ],
+        },
+        actor="extractor@1",
+    )
+    return h
+
+
+async def test_model_strength_does_not_change_the_state() -> None:
+    """Law 4 under rules@2: the strength and polarity weight the model put into a v1
+    observation do not change the skill state; the code weight of tier T3 does."""
+    weak, strong = _v1_history(0.1, 0.1), _v1_history(1.0, 1.0)
+    weak_skill = (await _project(weak)).get("Skill", str(weak.skill))
+    strong_skill = (await _project(strong)).get("Skill", str(strong.skill))
+    assert weak_skill is not None and strong_skill is not None
+    assert weak_skill["pMastery"] == strong_skill["pMastery"]
+    assert float(str(strong_skill["pMastery"])) > 0
+    assert weak_skill["confidence"] == strong_skill["confidence"]
+
+
+async def test_v2_hint_penalty_is_counted_once() -> None:
+    """Review of B on #26: an `extractor@2` element with a hint carries no `independence` (the
+    trace keeps 1.0), so the hint penalty enters the weight once — through `hint_step`."""
+    h = _history()
+    seq, at, turn = _reply(h, "x = 4")
+    _extracted(h, turn, [_element(h, seq, at, assistance="hint", hint_step=2)], hours_later=0)
+    graph = await _project(h)
+    ((evidence_id, evidence),) = graph.nodes_with_label("Evidence")
+    assert evidence["independence"] == 1.0
+    assert evidence["hintStep"] == 2
+    # T3 × (1 − 0.25 · 2): the tier weight and the hint step only, nothing from the model.
+    trace = _evidence_trace(evidence_id, evidence)
+    assert _weight(trace, P, []) == pytest.approx(0.4 * (1 - 0.25 * 2))

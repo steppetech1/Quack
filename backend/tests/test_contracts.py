@@ -238,9 +238,7 @@ NEO4J_WRITERS: dict[str, frozenset[str] | None] = {
 # Files of stream B that still open sessions on the driver themselves (ТЗ §7.3: stream C does
 # not edit them; PHASE3_NOTES D-C-016). B moves them to `read_session` and deletes the entry;
 # `test_neo4j_session_exceptions_are_still_needed` fails for a stale entry.
-PENDING_NEO4J_SESSIONS: frozenset[str] = frozenset(
-    {"quack.session.workers", "quack.session.lifecycle", "quack.artifacts.practice"}
-)
+PENDING_NEO4J_SESSIONS: frozenset[str] = frozenset()
 
 
 def _neo4j_session_calls(path: Path) -> list[tuple[str, int, str | None]]:

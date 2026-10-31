@@ -18,8 +18,13 @@ class FoldParams(BaseModel):
 
     model_config = {"frozen": True}
 
-    # Т-§7.4: base weight by evidence tier T1..T4.
+    # Т-§7.4: base weight by evidence tier T1..T4, hint step penalty and the hot window. Settings
+    # copies them from `evidence_tier_weights`, `hint_step_penalty`, `hot_window_min`,
+    # `hot_window_factor` (ТЗ Фазы 3 §6.2, WP12), so the fold and `evidence_weight` agree.
     tier_base_weights: tuple[float, float, float, float] = (1.0, 0.8, 0.4, 0.15)
+    hint_step_penalty: float = 0.25
+    hot_window_min: int = 10
+    hot_window_factor: float = 0.5
     # Т-§8.2: w_eff = w * λ^k, k = number of later gated evidence items.
     level_recency_factor: float = 0.6
     # Т-§8.2: proof_min_weight / fail_min_weight.
@@ -170,6 +175,8 @@ class Settings(BaseSettings):
     dispatcher_restart_pause_s: float = 5.0
 
     # --- stream B ---
+    # Т-§7.5: turns before the episode given to the extractor for understanding only (WP12).
+    episode_context_turns: int = 3
     # WP5.7 (Д-§7, R4): Meta API credentials; the old LLM_API_* names are read as fallbacks.
     meta_api_key: SecretStr = Field(
         default=SecretStr(""), validation_alias=AliasChoices("META_API_KEY", "LLM_API_KEY")
@@ -293,6 +300,20 @@ class Settings(BaseSettings):
     hot_window_factor: float = 0.5
 
     fold: FoldParams = Field(default_factory=FoldParams)
+
+    @model_validator(mode="after")
+    def _evidence_weights_into_fold(self) -> Settings:
+        """WP12: the fold weighs evidence with the §6.2 parameters (one source of numbers)."""
+        tiers = self.evidence_tier_weights
+        self.fold = self.fold.model_copy(
+            update={
+                "tier_base_weights": (tiers["T1"], tiers["T2"], tiers["T3"], tiers["T4"]),
+                "hint_step_penalty": self.hint_step_penalty,
+                "hot_window_min": self.hot_window_min,
+                "hot_window_factor": self.hot_window_factor,
+            }
+        )
+        return self
 
     @model_validator(mode="after")
     def _require_secrets_in_prod(self) -> Settings:

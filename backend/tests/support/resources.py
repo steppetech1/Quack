@@ -1,7 +1,7 @@
 """Builders of process resources with test dependencies (ТЗ Фазы 3 §4.2, §8.1, seam S1).
 
-`build_app_resources` assembles `quack.api.resources.AppResources` from the test pools.
-`build_job_context` assembles `quack.jobs.runner.JobContext` the same way (stream A, WP2.1).
+`build_app_resources` assembles `quack.api.resources.AppResources` from the test pools,
+`build_job_context` assembles `quack.jobs.runner.JobContext` (WP2.1, conflict 20 of §2.3).
 """
 
 from __future__ import annotations
@@ -55,17 +55,19 @@ def build_job_context(
     redis: Redis | Any | None,
     *,
     engine: AsyncEngine | None = None,
+    llm: LLMGateway | None = None,
     provider: LLMProvider | None = None,
     compute: ComputeClient | None = None,
 ) -> JobContext:
-    """`JobContext` over the test pools; by default the LLM is down (`UnavailableLLMProvider`)
-    and compute is an empty `ComputeScenario`."""
+    """`JobContext` over the test pools. `llm` is used as is (e.g. `FakeLLMProvider.gateway`);
+    otherwise a gateway over `provider`, by default the LLM is down (`UnavailableLLMProvider`).
+    Compute defaults to an empty `ComputeScenario` (answers 503)."""
     return JobContext(
         settings=settings,
         session_factory=session_factory,
         engine=engine,
         neo4j=cast(AsyncDriver, neo4j),
         redis=cast(Redis | None, redis),
-        llm=LLMGateway(session_factory, provider or UnavailableLLMProvider(), settings),
+        llm=llm or LLMGateway(session_factory, provider or UnavailableLLMProvider(), settings),
         compute=compute or scripted_compute(ComputeScenario()),
     )

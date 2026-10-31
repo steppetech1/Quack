@@ -6,7 +6,8 @@ from uuid import UUID, uuid5
 
 QUACK_UUID_NS = UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
-CURRENT_RULES_VERSION_NUM = 1
+# WP12.3: rules@2 — evidence weight by code (Т-§7.4), the only rules change of Phase 3.
+CURRENT_RULES_VERSION_NUM = 2
 CURRENT_RULES_VERSION = f"rules@{CURRENT_RULES_VERSION_NUM}"
 
 

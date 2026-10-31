@@ -11,12 +11,16 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import httpx2
+import jsonschema
+import orjson
 import pytest
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy import text
 from structlog.testing import capture_logs
 
+from loadtest.meta_mock import minimal_instance
 from quack.artifacts.schemas import ArtifactGenOutput
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
@@ -31,10 +35,11 @@ from quack.llm.errors import (
 from quack.llm.gateway import LLMGateway
 from quack.llm.pressure import pressured_models, set_pressure_flag
 from quack.llm.provider import ProviderRequest, ProviderResponse
+from quack.llm.responses_client import ResponsesClient
 from quack.llm.strict_schema import StrictSchemaError, to_strict_json_schema
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.build_manifest import write_manifest
-from quack.prompts.registry import PromptRegistry
+from quack.prompts.registry import PromptRegistry, PromptTemplate
 from quack.session.schemas import ExtractorOutput, TeacherOutput
 from tests.support.broken import BrokenRedis
 from tests.support.llm import ScriptedFailure, ScriptedLLMProvider
@@ -541,3 +546,235 @@ async def test_pressure_flag_from_ratelimit_headers(
     await answer(0.1)
     assert await _ttl(redis, model) > 20
     await redis.delete(llm_pressure_key(model))
+
+
+# --- WP5.7: ResponsesClient (T-L8, T-L9 instance, T-L10) --------------------------------
+
+
+def test_strict_schema_minimal_instance_validates() -> None:
+    """T-L9 (instance): the minimal valid instance of each strict schema (the generator of
+    `meta-mock`) passes the schema (`jsonschema`) and `model_validate_json`."""
+    for model in ROLE_OUTPUT_MODELS:
+        schema = to_strict_json_schema(model)
+        instance = minimal_instance(schema)
+        jsonschema.validate(instance, schema)
+        model.model_validate_json(orjson.dumps(instance))
+
+
+class _OneTemplateRegistry(PromptRegistry):
+    """Every `role@version` renders the same short template (T-L8 checks the request)."""
+
+    def load(self, role: str, version: int) -> PromptTemplate:
+        return PromptTemplate(role, version, "Answer as {{ role }}.", "0" * 64)
+
+
+def _responses_body(
+    answer: str,
+    *,
+    commentary: str | None = None,
+    status: str = "completed",
+    cached: int = 0,
+    reasoning: int = 0,
+) -> dict[str, Any]:
+    output: list[dict[str, Any]] = [
+        {"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []}
+    ]
+    if commentary is not None:
+        output.append(
+            {
+                "type": "message",
+                "phase": "commentary",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": commentary}],
+            }
+        )
+    if answer:
+        output.append(
+            {
+                "type": "message",
+                "role": "assistant",
+                "status": status,
+                "content": [{"type": "output_text", "text": answer}],
+            }
+        )
+    return {
+        "id": "resp_1",
+        "object": "response",
+        "model": "m",
+        "status": status,
+        "output": output,
+        "usage": {
+            "input_tokens": 100,
+            "input_tokens_details": {"cached_tokens": cached},
+            "output_tokens": 40,
+            "output_tokens_details": {"reasoning_tokens": reasoning},
+            "total_tokens": 140,
+        },
+    }
+
+
+class _MockResponses:
+    """`httpx2.MockTransport` handler: records requests, answers from a queue (the last
+    answer repeats)."""
+
+    def __init__(self, *answers: httpx2.Response) -> None:
+        self.answers = list(answers)
+        self.requests: list[httpx2.Request] = []
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        self.requests.append(request)
+        return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+
+    def bodies(self) -> list[dict[str, Any]]:
+        return [orjson.loads(r.content) for r in self.requests]
+
+
+def _client(handler: _MockResponses) -> ResponsesClient:
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    return ResponsesClient("http://meta.test/v1", "key", http_client=http)
+
+
+def _minimal_answer(model: type[BaseModel]) -> str:
+    return orjson.dumps(minimal_instance(to_strict_json_schema(model))).decode()
+
+
+# Roles of Phase 3 and their output models (§7.6); `teacher_fallback` uses the teacher prompt.
+ROLE_CALLS: tuple[tuple[str, type[BaseModel], str | None], ...] = (
+    ("structurer", StructurerOutput, None),
+    ("diagnostic", DiagnosticOutput, None),
+    ("curator", CuratorOutput, None),
+    ("teacher", TeacherOutput, None),
+    ("teacher_fallback", TeacherOutput, "teacher"),
+    ("extractor", ExtractorOutput, None),
+    ("task_gen", TaskGenOutput, None),
+    ("evaluator", EvaluatorOutput, None),
+    ("artifacts", ArtifactGenOutput, None),
+)
+
+
+@pytest.mark.parametrize(
+    ("role", "model", "prompt_role"), ROLE_CALLS, ids=[c[0] for c in ROLE_CALLS]
+)
+async def test_responses_request_contract(
+    db: SessionFactory,
+    settings: Settings,
+    role: str,
+    model: type[BaseModel],
+    prompt_role: str | None,
+) -> None:
+    """T-L8: one `POST /responses` per call of each role; `model`, `store: false`,
+    `text.format` (strict JSON Schema of the output), `reasoning.effort` and
+    `max_output_tokens` of the role, `prompt_cache_key` = `{role}@{version}` (`teacher@N` for
+    `teacher_fallback`); none of the forbidden keys. A 500 → exactly one HTTP request."""
+    handler = _MockResponses(httpx2.Response(200, json=_responses_body(_minimal_answer(model))))
+    gateway = LLMGateway(db, _client(handler), settings, _OneTemplateRegistry())
+    await gateway.generate_structured(
+        role=role,
+        prompt_version=1,
+        response_model=model,
+        variables={"role": role},
+        learner_id=uuid4(),
+        session_id=None,
+        turn_id=None,
+        idempotency_key=f"tl8:{role}:{uuid4()}",
+        prompt_role=prompt_role,
+    )
+    (request,) = handler.requests
+    assert request.method == "POST"
+    assert request.url.path.endswith("/responses")
+    (body,) = handler.bodies()
+    assert body["model"] == settings.model_for_role(role)
+    assert body["store"] is False
+    assert body["text"]["format"] == {
+        "type": "json_schema",
+        "name": model.__name__,
+        "strict": True,
+        "schema": to_strict_json_schema(model),
+    }
+    assert body["reasoning"] == {"effort": settings.llm_role_reasoning[role]}
+    assert body["max_output_tokens"] == settings.llm_role_max_output_tokens[role]
+    assert body["prompt_cache_key"] == f"{prompt_role or role}@1"
+    forbidden = {
+        "temperature",
+        "response_format",
+        "prompt_cache_retention",
+        "previous_response_id",
+        "tools",
+        "tool_choice",
+    }
+    assert forbidden.isdisjoint(body)
+
+    failing = _MockResponses(httpx2.Response(500, json={"error": {"message": "boom"}}))
+    gateway = LLMGateway(db, _client(failing), settings, _OneTemplateRegistry())
+    with pytest.raises(LLMUnavailableError):
+        await gateway.generate_structured(
+            role=role,
+            prompt_version=1,
+            response_model=model,
+            variables={"role": role},
+            learner_id=uuid4(),
+            session_id=None,
+            turn_id=None,
+            idempotency_key=f"tl8-500:{role}:{uuid4()}",
+            prompt_role=prompt_role,
+        )
+    assert len(failing.requests) == 1  # settings.llm_retry_attempts = 0; SDK max_retries = 0
+
+
+async def test_output_items_parsing(db: SessionFactory, settings: Settings) -> None:
+    """T-L10: `output` = [reasoning, commentary «Let me check…», message with JSON] → parsed
+    from the last item, the commentary in the log, not in the parse; only a commentary → a
+    schema error and one repair; JSON keys not in schema order → parsed; usage cached 120 and
+    reasoning 300 → ledger `cached_input_tokens`, `reasoning_tokens`, `reasoning_effort`."""
+    learner = uuid4()
+    reordered = '{"reply_text": "Hi.", "pedagogical_move": "explain"}'
+    handler = _MockResponses(
+        httpx2.Response(
+            200,
+            json=_responses_body(reordered, commentary="Let me check…", cached=120, reasoning=300),
+        )
+    )
+    gateway = LLMGateway(db, _client(handler), settings, _OneTemplateRegistry())
+    with capture_logs() as logs:
+        result = await gateway.generate_structured(
+            role="teacher",
+            prompt_version=1,
+            response_model=TeacherOutput,
+            variables={"role": "teacher"},
+            learner_id=learner,
+            session_id=None,
+            turn_id=None,
+            idempotency_key=f"tl10:{uuid4()}",
+        )
+    assert result.value.reply_text == "Hi."
+    assert any("Let me check" in repr(entry) for entry in logs)
+    async with db() as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT cached_input_tokens, reasoning_tokens, reasoning_effort "
+                    "FROM ops.llm_ledger WHERE learner_id = :l"
+                ),
+                {"l": learner},
+            )
+        ).one()
+    assert (row.cached_input_tokens, row.reasoning_tokens) == (120, 300)
+    assert row.reasoning_effort == settings.llm_role_reasoning["teacher"]
+
+    only_commentary = _MockResponses(
+        httpx2.Response(200, json=_responses_body("", commentary="Thinking it over.")),
+        httpx2.Response(200, json=_responses_body(reordered)),
+    )
+    gateway = LLMGateway(db, _client(only_commentary), settings, _OneTemplateRegistry())
+    result = await gateway.generate_structured(
+        role="teacher",
+        prompt_version=1,
+        response_model=TeacherOutput,
+        variables={"role": "teacher"},
+        learner_id=uuid4(),
+        session_id=None,
+        turn_id=None,
+        idempotency_key=f"tl10-repair:{uuid4()}",
+    )
+    assert result.value.reply_text == "Hi."
+    assert len(only_commentary.requests) == 2  # the answer and one repair
