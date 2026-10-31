@@ -341,6 +341,12 @@ async def test_hints_progress_and_reduce_independence(
     count = await _last_seq(db, learner)
     assert await _hint(client, headers, sid, task, bodies[2]) == hints[2]  # A10
     assert await _last_seq(db, learner) == count
+    # T-E2: the same key with another turn is 409 and writes nothing.
+    other = {**bodies[2], "turn_id": str(uuid4())}
+    r = await client.post(f"/v1/sessions/{sid}/tasks/{task}/hint", json=other, headers=headers)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
 
     fourth = await _hint(client, headers, sid, task, _hint_body("hint-4"))
     assert (fourth["hint_level"], fourth["hint_text"], fourth["independence_penalty"]) == (
@@ -393,6 +399,15 @@ async def test_submit_math_uses_compute_tier1(
     assert result["independence"] == 1.0
     assert [x["skill_id"] for x in result["skill_scores"]] == [str(s.skill_a)]
     assert result["skill_scores"][0]["tested_depth"] == 0.5  # decision 8
+
+    count = await _last_seq(db, learner)
+    body = {"turn_id": str(uuid4()), "answer": "t^2", "idempotency_key": "submit-1"}
+    r = await client.post(
+        f"/v1/sessions/{sid}/tasks/{task}/submit", json=body, headers=auth(learner)
+    )
+    assert r.status_code == 409, r.text  # T-E2: the same key with another answer
+    assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
 
     submitted, evaluated = await _events_after(db, learner, before)
     assert (submitted["type"], submitted["actor"]) == ("task.submitted", "learner")
