@@ -130,3 +130,8 @@ type ReferenceSolution = MathReference | ChoiceReference | OpenReference
 def parse_reference_solution(kind: str, data: dict[str, object]) -> ReferenceSolution:
     """The model of `kind` validated from the stored dict; `ValueError` on a wrong format."""
     raise NotImplementedError
+
+
+def reference_solution_payload(reference: ReferenceSolution) -> dict[str, object]:
+    """The dict stored in `core.task_bank.reference_solution` and in `task.generated`."""
+    raise NotImplementedError
