@@ -840,6 +840,12 @@ def _turn_extracted_v2(ctx: _Ctx, e: p.TurnExtractedV2) -> None:
         ctx.dirty_skill(skill_id)
 
 
+def _options_count(e: p.TaskGenerated) -> int:
+    """k of a choice task (Т-§7.4 guessing `1 − 1/k`); 0 when the task is not a choice."""
+    options = e.reference_solution.get("options") if e.kind == "choice" else None
+    return len(options) if isinstance(options, list) else 0
+
+
 def _task_generated(ctx: _Ctx, e: p.TaskGenerated) -> None:
     task_id = str(e.task_id)
     topic = ctx.node("Topic", e.topic_id)
@@ -854,6 +860,7 @@ def _task_generated(ctx: _Ctx, e: p.TaskGenerated) -> None:
             "familyId": e.family_id,
             "difficulty": e.difficulty,
             "kind": e.kind,
+            "optionsCount": _options_count(e),
             "status": "generated",
             "assignedSessionId": "",
             "assignedTurnId": "",
@@ -916,6 +923,7 @@ def _task_evaluated(ctx: _Ctx, e: p.TaskEvaluated) -> None:
     task_id, family = (
         (task[0], prop_str(task[1], "familyId", "unknown")) if task else ("", "unknown")
     )
+    options_count = prop_int(task[1], "optionsCount") if task else 0
     if task is not None:
         ctx.set(
             "Task",
@@ -948,6 +956,7 @@ def _task_evaluated(ctx: _Ctx, e: p.TaskEvaluated) -> None:
             tested_depth=item.tested_depth,
             family_id=family,
             task_id=task_id,
+            extra={"optionsCount": options_count},
         )
         ctx.dirty_skill(skill[0])
     for j, hit in enumerate(e.triggered_misconceptions):

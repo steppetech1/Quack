@@ -66,7 +66,7 @@
 | WP9 | A | не начат | — |
 | WP10 | C | WP10.1 стенд `system` и WP10.2 `T-E1`…`T-E10` — написаны (красные, ветка `phase-3-c-e2e-red`); WP10.3 — не начат | 6 красных, 4 зелёных на текущем коде |
 | WP11 | A | не начат | — |
-| WP12 | C | **частично**: швы S5/S6 — `turn.extracted` v2, проверка элемента, ярус и вес, применение v2 проектором (D-C-019); вес в свёртке и `rules@2` (`T-W7`) — вторая часть | `T-W1`…`T-W6` зелёные; 490 passed |
+| WP12 | C | выполнено: S5/S6, `turn.extracted` v2, вес по коду в свёртке, `rules@2` (D-C-019, D-C-020) | `T-W1`…`T-W7` зелёные; 492 passed |
 | WP13 | B | не начат | — |
 | WP14 | B | не начат | — |
 | WP15 | B | не начат | — |
@@ -1043,6 +1043,31 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/graph/test_evidence_law4.py` — `T-W1`…`T-W6` (27 тестов).
 - Требует подтверждения владельцем: нет
 
+### D-C-020. WP12.2 п.4, WP12.3: вес в свёртке под `rules@2`
+- Класс: B
+- WP / место: `quack/graph/folds.py::_weight`, `recompute_skill_fold`, `quack/graph/ids.py`,
+  `quack/config.py::FoldParams` и `Settings._evidence_weights_into_fold`, `quack/graph/phase_a.py` (`optionsCount`)
+- Контекст: WP12.2 п.4 — вес = база яруса × угадывание × окно × подсказка (`Т-§7.4`), его считает
+  свёртка. В Фазе 1 вес = база × `independence` × множитель глубины проверки; ветка «без ворот»
+  умножала на `strength` и `polarity_weight` — числа модели из `extractor@1`.
+- Решение:
+  1. `_weight` = `evidence_weight` (ярус, угадывание по `optionsCount` задачи с выбором, окно «горит» по
+     показам навыка, ступень подсказки элемента v2, показанное решение → 0) × `independence` (штраф
+     подсказок задачи, его считает код). Ветка «без ворот» берёт тот же вес — `strength` и
+     `polarity_weight` модели больше ни на что не влияют.
+  2. Множитель глубины проверки (`depth_weight_floor`) сохранён **только у свидетельств за воротами**
+     (T1/T2): глубину там задаёт код по задаче; без него менялись бы формулы Фазы 1 и три её теста
+     (не входят в §8.9). У T3/T4 глубины модели в весе нет.
+  3. Числа одни: `Settings` копирует `evidence_tier_weights`, `hint_step_penalty`, `hot_window_min`,
+     `hot_window_factor` в `FoldParams`; `evidence_weight` и свёртка читают одно и то же.
+  4. `CURRENT_RULES_VERSION = "rules@2"`; после выкатки — `ops rebuild` (данных пока нет).
+- Почему: закон 4, §0.4.3 п.1; п.4 (Фаза 1 без изменений там, где ТЗ не требует).
+- Обратимость: `_weight` в `folds.py`; номер правил в `ids.py`.
+- Тесты: `T-W7` `test_rules2_rebuild_equals_incremental`, `test_model_strength_does_not_change_the_state`;
+  тесты свёрток Фазы 1 без изменений.
+- Требует подтверждения владельцем: нет. Если владелец хочет `Т-§7.4` буквально (без глубины и у
+  T1/T2) — убрать строку множителя в `_weight` и переписать `test_deeper_testing_gives_larger_gain` (класс C).
+
 ## Заблокировано
 
 _(пусто)_
@@ -1061,6 +1086,7 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP12 (часть 2) | проверка на неверной реализации (§8.9): `CURRENT_RULES_VERSION_NUM = 1` и вес «без ворот» × `strength` × `polarity_weight` модели; `uv run pytest -q tests/graph -k "rules2 or strength"` | 2 failed: `T-W7` (`projectorVersion = rules@1`), `test_model_strength_does_not_change_the_state` (сила модели меняет `pMastery`). Тесты написаны вместе с реализацией, отдельного красного коммита нет |
 | WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
 
 ## Правки тестов

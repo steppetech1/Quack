@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from quack.config import Settings
+from quack.config import FoldParams, Settings
 
 type Tier = Literal[1, 2, 3, 4]
 # Where the evidence came from (`Т-§7.8`).
@@ -29,12 +29,16 @@ class EvidenceWeightParams:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> EvidenceWeightParams:
-        tiers = settings.evidence_tier_weights
+        return cls.from_fold(settings.fold)
+
+    @classmethod
+    def from_fold(cls, fold: FoldParams) -> EvidenceWeightParams:
+        """`Settings` copies the §6.2 parameters into `FoldParams` (WP12)."""
         return cls(
-            tier_weights=(tiers["T1"], tiers["T2"], tiers["T3"], tiers["T4"]),
-            hint_step_penalty=settings.hint_step_penalty,
-            hot_window_ms=settings.hot_window_min * MS_PER_MINUTE,
-            hot_window_factor=settings.hot_window_factor,
+            tier_weights=fold.tier_base_weights,
+            hint_step_penalty=fold.hint_step_penalty,
+            hot_window_ms=fold.hot_window_min * MS_PER_MINUTE,
+            hot_window_factor=fold.hot_window_factor,
         )
 
 
