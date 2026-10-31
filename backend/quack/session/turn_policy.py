@@ -56,5 +56,19 @@ def teacher_reasoning_effort(
     is_first_turn: bool,
     session_evaluations: Sequence[TaskEvaluated],
 ) -> Literal["low", "high"]:
-    """Effort of the teacher call (`T-H9`); `session_evaluations` in `seq` order."""
-    raise NotImplementedError
+    """Effort of the teacher call (`T-H9`); `session_evaluations` in `seq` order.
+
+    `high` on the first turn of the session and when the two latest `task.evaluated` of the
+    session both failed on one skill (Т-§12.9); `teacher_fallback` is always `low`.
+    """
+    if role == "teacher_fallback":
+        return "low"
+    if is_first_turn:
+        return "high"
+    if len(session_evaluations) < 2:
+        return "low"
+    previous, last = session_evaluations[-2], session_evaluations[-1]
+    if previous.is_correct or last.is_correct:
+        return "low"
+    shared = {s.skill_id for s in previous.skill_scores} & {s.skill_id for s in last.skill_scores}
+    return "high" if shared else "low"
