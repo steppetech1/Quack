@@ -124,7 +124,9 @@ async def _turn_events(db: SessionFactory, learner: UUID, key: str) -> int:
                         "SELECT count(*) FROM core.events WHERE learner_id = :l "
                         "AND idempotency_key LIKE :k"
                     ),
-                    {"l": learner, "k": f"{key}%"},
+                    # D-B-018: the learner's reply (key = `key`) is written before the teacher;
+                    # the events of the teacher turn carry `key:<suffix>`.
+                    {"l": learner, "k": f"{key}:%"},
                 )
             ).scalar_one()
         )
