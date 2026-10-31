@@ -661,6 +661,9 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 - Обратимость: таблицы и `_error_statuses` в `quack/api/openapi.py`; перегенерировать снимок.
 - Тесты: `T-A7` `test_openapi_snapshot_is_current`, `test_write_openapi_is_deterministic`,
   `test_openapi_documents_every_response`, `test_sse_endpoints_document_event_stream`.
+- Правка зоны A: в `quack/cli.py` (PR #17 потока A) импорт заменён на
+  `from quack.api.app import write_openapi`, снят `# pyright: ignore[reportMissingImports]` — по
+  просьбе A в его сообщении о WP8.7; больше `cli.py` не менялся.
 - Требует подтверждения владельцем: нет
 
 ## Заблокировано

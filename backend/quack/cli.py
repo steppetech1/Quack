@@ -177,7 +177,7 @@ async def _ops(settings: Settings, args: argparse.Namespace) -> int:
         return 0
     if args.op == "openapi":
         # Imported here: the function is stream C's (WP8.7) and needs no resources.
-        from quack.api.openapi import write_openapi  # pyright: ignore[reportMissingImports]
+        from quack.api.app import write_openapi
 
         write_openapi(Path(args.out))
         return 0
