@@ -289,6 +289,8 @@ class Settings(BaseSettings):
     )
     hint_step_penalty: float = 0.25
     hot_window_min: int = 10
+    # Т-§7.4 «окно горит» ×0.5; ТЗ §6.2 не называет параметр — Phase 3 decision D-C-019.
+    hot_window_factor: float = 0.5
 
     fold: FoldParams = Field(default_factory=FoldParams)
 
