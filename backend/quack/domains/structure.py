@@ -33,6 +33,7 @@ from quack.domains.schemas import (
 )
 from quack.domains.service import slugify_domain_name
 from quack.events.append import append_events
+from quack.events.catalog import validate_payload
 from quack.events.errors import IdempotencyConflictError
 from quack.events.hashing import payload_hash
 from quack.events.models import NewEvent
@@ -400,6 +401,21 @@ async def propose_structure(
     )
 
 
+async def _check_event_key(session: AsyncSession, learner_id: UUID, event: NewEvent) -> None:
+    """`IdempotencyConflictError` (409) if the learner's event under this key has another
+    payload hash; the same hash is left to `append_events`, which returns the stored event."""
+    existing = await session.scalar(
+        text("SELECT payload_hash FROM core.events WHERE learner_id = :l AND idempotency_key = :k"),
+        {"l": learner_id, "k": event.idempotency_key},
+    )
+    if existing is None:
+        return
+    model = validate_payload(event.type, event.payload, event.schema_version)
+    digest = payload_hash(model.model_dump(mode="json"))
+    if existing != digest:
+        raise IdempotencyConflictError(event.idempotency_key, existing, digest)
+
+
 async def confirm_structure(
     resources: AppResources,
     learner_id: UUID,
@@ -421,6 +437,20 @@ async def confirm_structure(
         if not dom:
             raise ApiError("NOT_FOUND", f"Domain {domain_id} not found", status_code=404)
 
+        event = NewEvent(
+            type="structure.confirmed",
+            actor="learner",
+            domain_id=domain_id,
+            idempotency_key=req.idempotency_key,
+            payload={
+                "domain_id": str(domain_id),
+                "structure_version": req.structure_version,
+            },
+        )
+        # The key is checked before the request (T-E2): another body under a used key is 409,
+        # also when that body would fail validation.
+        await _check_event_key(session, learner_id, event)
+
         proposed = (
             await session.execute(
                 text(
@@ -438,16 +468,6 @@ async def confirm_structure(
                 status_code=422,
             )
 
-        event = NewEvent(
-            type="structure.confirmed",
-            actor="learner",
-            domain_id=domain_id,
-            idempotency_key=req.idempotency_key,
-            payload={
-                "domain_id": str(domain_id),
-                "structure_version": req.structure_version,
-            },
-        )
         stored = await append_events(
             session, learner_id, [event], publish_wakeup=True, redis=resources.redis
         )
