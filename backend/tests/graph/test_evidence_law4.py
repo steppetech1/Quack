@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from quack.config import FoldParams, Settings
 from quack.events.catalog import payload_model
-from quack.events.payloads import ExtractedElement, TurnExtractedV2
+from quack.events.payloads import ExtractedElement, GapType, TurnExtractedV2
 from quack.graph.evidence_validation import (
     UNCLEAR_SKILL,
     ExtractionContext,
@@ -62,7 +62,8 @@ def _open_strings(schema: dict[str, Any], defs: dict[str, Any], path: str = "") 
         found |= _open_strings(branch, defs, path)
     if schema.get("type") == "array" and "items" in schema:
         found |= _open_strings(schema["items"], defs, path)
-    if schema.get("type") == "string" and "enum" not in schema and "const" not in schema:
+    closed = "enum" in schema or "const" in schema or "format" in schema  # ids and times
+    if schema.get("type") == "string" and not closed:
         found.add(path)
     for name, sub in schema.get("properties", {}).items():
         found |= _open_strings(sub, defs, f"{path}.{name}" if path else name)
@@ -164,7 +165,7 @@ class Item:
     outcome: Literal["correct", "incorrect", "partial"] | None = "correct"
     assistance: Literal["none", "hint", "shown_solution"] | None = "none"
     hint_step: int | None = None
-    gap_type: str | None = "none"
+    gap_type: GapType | None = "none"
     quote: str = "x = 4"
     source_seqs: list[int] = field(default_factory=lambda: [7])
 

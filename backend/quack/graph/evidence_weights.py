@@ -29,7 +29,13 @@ class EvidenceWeightParams:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> EvidenceWeightParams:
-        raise NotImplementedError
+        tiers = settings.evidence_tier_weights
+        return cls(
+            tier_weights=(tiers["T1"], tiers["T2"], tiers["T3"], tiers["T4"]),
+            hint_step_penalty=settings.hint_step_penalty,
+            hot_window_ms=settings.hot_window_min * MS_PER_MINUTE,
+            hot_window_factor=settings.hot_window_factor,
+        )
 
 
 @dataclass(frozen=True)
@@ -47,10 +53,29 @@ class WeightedEvidence:
 def assign_tier(source: EvidenceSource, second_opinion: SecondOpinion = "not_requested") -> Tier:
     """`Т-§7.8`: code verdict → T1; model verdict without or with an agreeing second opinion →
     T2, with a disagreeing one → T3; extractor element → T3; conversation → T4."""
-    raise NotImplementedError
+    match source:
+        case "code_verdict":
+            return 1
+        case "model_verdict":
+            return 3 if second_opinion == "disagreed" else 2
+        case "extractor":
+            return 3
+        case "conversation":
+            return 4
 
 
 def evidence_weight(evidence: WeightedEvidence, params: EvidenceWeightParams) -> float:
     """`Т-§7.4`: tier base × guessing `1 − 1/k` × hot window × hint `1 − penalty·k`; a shown
     solution gives no weight of understanding."""
-    raise NotImplementedError
+    if evidence.shown_solution:
+        return 0.0
+    weight = params.tier_weights[evidence.tier - 1]
+    k = evidence.options_count
+    if k is not None and k >= 2:
+        weight *= 1.0 - 1.0 / k
+    exposure = evidence.last_exposure_at_ms
+    if exposure > 0 and 0 <= evidence.at_ms - exposure <= params.hot_window_ms:
+        weight *= params.hot_window_factor
+    if evidence.hint_step is not None:
+        weight *= max(0.0, 1.0 - params.hint_step_penalty * evidence.hint_step)
+    return weight

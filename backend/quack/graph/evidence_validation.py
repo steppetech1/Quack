@@ -10,7 +10,13 @@ from datetime import datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
-from quack.events.payloads import ExtractedElement
+from quack.events.payloads import (
+    ElementRejection,
+    ExtractedElement,
+    GapType,
+    NewSkillRef,
+    SkillRef,
+)
 
 # The extractor's word for "skill not clear" (`Т-§7.6`): no evidence.
 UNCLEAR_SKILL = "unclear"
@@ -35,7 +41,7 @@ class ExtractedItemLike(Protocol):
     @property
     def hint_step(self) -> int | None: ...
     @property
-    def gap_type(self) -> str | None: ...
+    def gap_type(self) -> GapType | None: ...
     @property
     def quote(self) -> str: ...
     @property
@@ -72,4 +78,71 @@ def to_extracted_element(item: ExtractedItemLike, ctx: ExtractionContext) -> Ext
     """The element as written into `turn.extracted` v2: ids resolved from labels, `occurred_at`
     from the latest source event, and `rejected_reason` when a check of `Т-§7.6` fails
     (the element is then kept in the observation but not applied)."""
-    raise NotImplementedError
+    skill, skill_reason = _skill_ref(item.skill_label, ctx)
+    misconception_id = None
+    if item.misconception_label is not None:
+        misconception_id = ctx.misconception_labels.get(item.misconception_label)
+    sources = [ctx.episode[seq] for seq in item.source_seqs if seq in ctx.episode]
+    occurred_at = max((e.occurred_at for e in sources), default=None)
+    element = ExtractedElement(
+        kind=item.kind,
+        skill_label=item.skill_label,
+        skill=skill,
+        misconception_label=item.misconception_label,
+        misconception_id=misconception_id,
+        level=item.level,
+        outcome=item.outcome,
+        assistance=item.assistance,
+        hint_step=item.hint_step,
+        gap_type=item.gap_type,
+        quote=item.quote,
+        source_seqs=list(item.source_seqs),
+        occurred_at=occurred_at,
+    )
+    reason = skill_reason or _check(item, ctx, misconception_id)
+    return element.model_copy(update={"rejected_reason": reason}) if reason else element
+
+
+def _looks_like_label(text: str, prefix: str) -> bool:
+    return len(text) >= 2 and text[0] == prefix and text[1:].isdigit()
+
+
+def _skill_ref(
+    label: str, ctx: ExtractionContext
+) -> tuple[SkillRef | None, ElementRejection | None]:
+    """A label `S…` → its skill; a description → a new skill of `new_skill_topic_id`
+    (`Т-§4.4`); `unclear` → no evidence."""
+    if label.strip().lower() == UNCLEAR_SKILL:
+        return None, "unclear_skill"
+    if label in ctx.skill_labels:
+        return SkillRef(skill_id=ctx.skill_labels[label]), None
+    if _looks_like_label(label, "S") or ctx.new_skill_topic_id is None or not label.strip():
+        return None, "unknown_label"
+    return SkillRef(
+        new_skill=NewSkillRef(name=label.strip(), topic_id=ctx.new_skill_topic_id)
+    ), None
+
+
+def _check(
+    item: ExtractedItemLike, ctx: ExtractionContext, misconception_id: UUID | None
+) -> ElementRejection | None:
+    """The checks of `Т-§7.6`, in the order of the contract."""
+    if item.kind == "misconception_hypothesis":
+        label = item.misconception_label
+        if label is None or not label.strip():
+            return "incomplete_element"
+        if misconception_id is None and _looks_like_label(label, "M"):
+            return "unknown_label"
+    elif item.level is None or item.outcome is None or item.assistance is None:
+        return "incomplete_element"
+    if not item.source_seqs or any(seq not in ctx.episode for seq in item.source_seqs):
+        return "source_outside_episode"
+    negative = item.kind == "misconception_hypothesis" or item.outcome == "incorrect"
+    if not item.quote.strip():
+        return "missing_quote" if negative else None
+    if not any(item.quote in ctx.episode[seq].text for seq in item.source_seqs):
+        return "quote_not_in_source"
+    caps = [ctx.task_levels[seq] for seq in item.source_seqs if seq in ctx.task_levels]
+    if item.level is not None and caps and item.level > min(caps):
+        return "level_above_task"
+    return None
