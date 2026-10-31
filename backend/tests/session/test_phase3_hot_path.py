@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -11,16 +12,21 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from neo4j import AsyncDriver
+from redis.asyncio import Redis
 from sqlalchemy import text
 
 from quack.api.resources import AppResources, get_compute, get_llm
-from quack.config import FoldParams
+from quack.config import FoldParams, Settings
 from quack.db.postgres import SessionFactory
+from quack.db.redis import llm_pressure_key
 from quack.events import append_events
 from quack.events.payloads import SkillEvalScore, TaskEvaluated
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
+from quack.llm.errors import ProviderRateLimitedError
+from quack.llm.gateway import LLMGateway
+from quack.llm.pressure import set_pressure_flag
 from quack.session.schemas import TeacherOutput
 from quack.session.turn_policy import (
     MEMORY_UNAVAILABLE_MARKER,
@@ -382,3 +388,99 @@ async def test_turn_and_submit_evaluation_parity(
     for name in PARITY_FIELDS:
         assert turn_eval[name] == submit_eval[name], name
     assert turn_eval["is_correct"] is True
+
+
+# --- T-H6 --------------------------------------------------------------------------------
+
+
+async def test_teacher_fallback_on_pressure_and_429(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    session_app: FastAPI,
+    seeded_domain: SeededDomain,
+    db: SessionFactory,
+    redis: Redis,
+    settings: Settings,
+    fake_llm: FakeLLMProvider,
+) -> None:
+    """T-H6 (WP5.3, WP5.4): (а) the pressure flag of the teacher model is set and
+    `teacher_admission_wait_ms = 100` → the turn goes to `teacher_fallback` (ledger role,
+    `degraded_mode`); (б) no flag, the main call gets 429 → the same, the flag is set;
+    (в) the fallback is down too → `degraded_mode = "llm_unavailable"`, a bank task is
+    assigned (ТЗ-П2)."""
+    cfg = settings.model_copy(update={"teacher_admission_wait_ms": 100})
+    gateway = LLMGateway(db, fake_llm, cfg, redis=redis)
+    session_app.state.settings = cfg
+    session_app.dependency_overrides[get_llm] = lambda: gateway
+    learner = seeded_domain.learner_id
+    teacher_flag = llm_pressure_key(cfg.model_for_role("teacher"))
+
+    start = await client.post(
+        "/v1/sessions",
+        json={
+            "domain_id": str(seeded_domain.domain_id),
+            "topic_id": str(seeded_domain.topic_id),
+            "idempotency_key": "fallback-start",
+        },
+        headers=auth_headers,
+    )
+    assert start.status_code == 201, start.text
+    session_id = UUID(start.json()["session_id"])
+
+    async def turn(key: str) -> dict[str, Any]:
+        response = await client.post(
+            f"/v1/sessions/{session_id}/turns",
+            json={"text": "What next?", "idempotency_key": key},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        return dict(parse_sse(response.text))
+
+    async def fallback_rows() -> int:
+        async with db() as session:
+            return int(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT count(*) FROM ops.llm_ledger WHERE learner_id = :l "
+                            "AND role = 'teacher_fallback' AND status = 'ok'"
+                        ),
+                        {"l": learner},
+                    )
+                ).scalar_one()
+            )
+
+    # (а) The flag outlives the admission wait: no call to the main model.
+    await set_pressure_flag(redis, cfg.model_for_role("teacher"), 30, "429", datetime.now(UTC))
+    fake_llm.push("teacher", TeacherOutput(reply_text="Fallback (a).", pedagogical_move="explain"))
+    data = await turn("fallback-a")
+    assert data["turn_completed"]["degraded_mode"] == "teacher_fallback"
+    calls = fake_llm.calls_for("teacher")
+    assert [c.model for c in calls] == [cfg.model_for_role("teacher_fallback")]
+    assert await fallback_rows() == 1
+
+    # (б) No flag; the main call gets 429 → fallback, and the flag is set by the gateway.
+    await redis.delete(teacher_flag)
+    fake_llm.push(
+        "teacher",
+        ProviderRateLimitedError(30.0),
+        TeacherOutput(reply_text="Fallback (b).", pedagogical_move="explain"),
+    )
+    data = await turn("fallback-b")
+    assert data["turn_completed"]["degraded_mode"] == "teacher_fallback"
+    calls = fake_llm.calls_for("teacher")[1:]
+    assert [c.model for c in calls] == [
+        cfg.model_for_role("teacher"),
+        cfg.model_for_role("teacher_fallback"),
+    ]
+    assert await fallback_rows() == 2
+    assert await redis.pttl(teacher_flag) > 0
+
+    # (в) The fallback is down too → deterministic degradation of Phase 2 with a bank task.
+    await redis.delete(teacher_flag)
+    fake_llm.push("teacher", ProviderRateLimitedError(30.0))
+    fake_llm.fail("teacher")
+    data = await turn("fallback-c")
+    assert data["turn_completed"]["degraded_mode"] == "llm_unavailable"
+    assert UUID(data["task_assigned"]["task_id"]) in set(seeded_domain.math_task_ids)
+    assert await fallback_rows() == 2
