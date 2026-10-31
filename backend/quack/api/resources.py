@@ -57,7 +57,7 @@ def create_app_resources(settings: Settings) -> AppResources:
     session_factory = create_session_factory(engine)
     neo4j = create_driver(settings)
     redis = create_redis(settings)
-    provider = HttpLLMProvider(settings.llm_api_base_url, settings.llm_api_key.get_secret_value())
+    provider = HttpLLMProvider(settings.meta_api_base_url, settings.meta_api_key.get_secret_value())
     return AppResources(
         settings=settings,
         engine=engine,

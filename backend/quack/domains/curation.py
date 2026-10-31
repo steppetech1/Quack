@@ -324,8 +324,8 @@ async def curate_domain_graph(
         if remaining_provisional:
             if llm is None:
                 provider = llm_provider_override or HttpLLMProvider(
-                    ctx.settings.llm_api_base_url,
-                    ctx.settings.llm_api_key.get_secret_value(),
+                    ctx.settings.meta_api_base_url,
+                    ctx.settings.meta_api_key.get_secret_value(),
                 )
                 llm = LLMGateway(
                     session_factory=ctx.session_factory,
@@ -544,8 +544,8 @@ def _curator_resources(ctx: JobContext) -> _CuratorResources:
                 session_factory=ctx.session_factory,
                 provider=_ProviderProxy(
                     HttpLLMProvider(
-                        ctx.settings.llm_api_base_url,
-                        ctx.settings.llm_api_key.get_secret_value(),
+                        ctx.settings.meta_api_base_url,
+                        ctx.settings.meta_api_key.get_secret_value(),
                     )
                 ),
                 settings=ctx.settings,
