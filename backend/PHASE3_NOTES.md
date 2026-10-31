@@ -1409,12 +1409,12 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 ### D-C-027. Повтор запроса с занятым ключом: ключ сверяется раньше проверки запроса (T-E2)
 - Класс: C
 - WP / место: WP10.2 (`T-E2`); `quack/domains/structure.py` (`confirm_structure`, `edit_structure`),
-  `quack/domains/diagnostic.py::finish_diagnostic`, `quack/artifacts/practice.py::_replay_next_task`
-- Контекст: `T-E2` ждёт 409 `IDEMPOTENCY_CONFLICT` на тот же ключ с другим телом. Четыре
-  эндпоинта отвечали иначе: `confirm` и `diagnostic/finish` проверяли версию или сессию раньше
+  `quack/domains/diagnostic.py::finish_diagnostic`, `quack/artifacts/practice.py` (`tasks/next`, `hint`, `submit`)
+- Контекст: `T-E2` ждёт 409 `IDEMPOTENCY_CONFLICT` на тот же ключ с другим телом. Шесть
+  эндпоинтов отвечали иначе: `confirm` и `diagnostic/finish` проверяли версию или сессию раньше
   ключа (422, 404); `PATCH structure` писал в нагрузку `structure_version` = активная + 1, и
-  точный повтор после применения правки давал 409; `tasks/next` отдавал записанный ответ, не
-  сверяя тело.
+  точный повтор после применения правки давал 409; `tasks/next`, `hint`, `submit` отдавали
+  записанный ответ, не сверяя тело.
 - Варианты (с уровнями §0.4.1): (а) общий слой в `api` — сверка хэша тела по ключу в отдельной
   таблице — новая схема БД, вне ТЗ; (б) выводить ключ события из хэша тела, как в D-C-025 —
   меняет ключи уже записанных событий; (в) в каждом эндпоинте сначала искать событие по ключу и
@@ -1424,12 +1424,14 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   и сверяется по хэшу, ответ — записанный. `diagnostic/finish`: `diagnostic.completed` по ключу
   с другой сессией или доменом → 409. `tasks/next`: сверяются сессия, `turn_id`, вид задачи и
   тема сгенерированной задачи; тема задачи из банка не сверяется — её выбирают по навыку, и она
-  может не совпасть с запрошенной, а ложный 409 на честный повтор хуже.
+  может не совпасть с запрошенной, а ложный 409 на честный повтор хуже. `hint`: сессия, `turn_id`,
+  задача из `task.hint_given`. `submit`: сессия, `turn_id`, задача, ответ и `response_time_sec`
+  из `task.submitted`.
 - Почему: `T-E2` (уровень 2 §0.4.1), `Т-§2.1`; схемы событий и ключи не меняются.
 - Обратимость: код эндпоинтов; данных учеников нет.
 - Тесты: `tests/domains/test_confirm_idempotency.py`,
   `tests/domains/test_diag_state_from_events.py::test_finish_same_key_other_session_is_conflict`,
-  `tests/artifacts/test_practice_engine.py::test_next_task_targets_new_family`, `T-E2`.
+  `tests/artifacts/test_practice_engine.py` (`tasks/next`, `hint`, `submit`), `T-E2`.
 - Требует подтверждения владельцем: нет (поведение задано `T-E2`; выбор только в способе)
 
 ## Заблокировано
@@ -1465,6 +1467,7 @@ _(пусто)_
 | WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
 | WP10.2 (`diagnostic/finish`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py -k same_key_other_session` (коммит `619219c`) | 1 failed: тот же ключ с другим `session_id` → 404 `NOT_FOUND` (сессия ищется раньше ключа), ждали 409 |
 | WP10.2 (`tasks/next`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py -k targets_new_family` (коммит `49a03fb`) | 1 failed: тот же ключ с другим `kind` → 200 с записанной задачей, ждали 409 |
+| WP10.2 (`hint`, `submit`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py` (коммит `ea60717`) | 2 failed, 3 passed: тот же ключ с другим `turn_id` (`hint`) и другим ответом (`submit`) → 200 с записанным ответом, ждали 409 |
 | WP10.2 (стенд на `phase-3` после WP1, WP2, WP3.1–3.4, WP4, WP6.2) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed. Падают: `T-E1`, `T-E5` — `turn.extract` идёт мимо `ScriptedLLMProvider`: `quack/session/workers.py` строит свой шлюз (`_worker_resources`), а не берёт `JobContext.llm` (WP2.1, A/B); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200 (Q9); `T-E10` — нет обработчика `account.purge_deleted` и планировщика (A, WP3.3). Стенд: обработчики — `quack.runtime.register_all_handlers`, один `JobContext` над ресурсами стенда, `create_app(resources=)`. Побочно: кэш `_worker_resources` по `id(settings)` переносит открытый размыкатель из e2e в `tests/session/test_session_checkpoint_worker.py` при полном прогоне (уйдёт с WP2.1) |
 | WP10.2 (стенд + `phase-3-b-workers-jobcontext`, WP2.1 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q` (ветка `phase-3-c-e2e-red`) | 3 failed, 598 passed. `T-E5` зелёный; размыкатель между тестами не переносится. Падают: `T-E1` — `turn.extract` без `required_seq`, задачи ставит не диспетчер (A, WP11); `T-E2` — Q9; `T-E10` — WP3.3 (A) |
 | WP10.2 (стенд на `phase-3` 6cefd3e, после #38/#40 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed → после правки стенда 3 failed, 7 passed. `T-E5` упал: обработчик зовёт модель со схемой `ExtractorOutputV2` (D-B-022), стенд сбивал `ExtractorOutput`; стенд переведён на `ExtractorOutputV2`. Красные: `T-E1` (WP11, A), `T-E2` (#37), `T-E10` (#34, A) |
