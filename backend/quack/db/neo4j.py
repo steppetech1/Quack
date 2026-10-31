@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import LiteralString, cast
 
-from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession, Query
+from neo4j import READ_ACCESS, AsyncDriver, AsyncGraphDatabase, AsyncSession, Query
 
 from quack.config import Settings
 
@@ -69,8 +69,8 @@ def schema_statements() -> list[str]:
 async def read_session(driver: AsyncDriver) -> AsyncIterator[AsyncSession]:
     """A Neo4j session in READ access mode (law 3, ТЗ Фазы 3 WP4.1). Code outside the
     projector, ops rebuild/purge and `verify_schema` opens Neo4j sessions only through this."""
-    raise NotImplementedError
-    yield  # pragma: no cover - makes this an async generator for the context manager
+    async with driver.session(default_access_mode=READ_ACCESS) as session:
+        yield session
 
 
 async def verify_schema(driver: AsyncDriver) -> list[str]:

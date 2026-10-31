@@ -9,12 +9,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID, uuid4, uuid5
 
-import neo4j
 from sqlalchemy import text
 
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources
 from quack.config import DiagnosticParams, Settings
+from quack.db.neo4j import read_session
 from quack.db.postgres import SessionFactory
 from quack.domains.schemas import (
     AnswerDiagnosticRequest,
@@ -202,7 +202,7 @@ async def _load_domain_dag(
         list[PrereqEdge],
         list[SkillDepEdge],
     ]:
-        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as s:
+        async with read_session(resources.neo4j) as s:
             t_res = await s.run(
                 "MATCH (d:Domain {id: $d, learnerId: $l})-[:HAS_TOPIC]->(t:Topic) "
                 "WHERE t.status = 'active' "
