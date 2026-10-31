@@ -666,6 +666,21 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
   просьбе A в его сообщении о WP8.7; больше `cli.py` не менялся.
 - Требует подтверждения владельцем: нет
 
+### D-C-018. Шов S7: какие ошибки драйвера Neo4j дают `503 SERVICE_UNAVAILABLE`
+- Класс: B
+- WP / место: WP6.1 (часть C), §4.5; `quack/api/errors.py::NEO4J_OUTAGE_ERRORS`
+- Контекст: WP6.1 — эндпоинты, которым Neo4j нужен для ответа, при «ошибке связи драйвера (недоступен
+  сервер, истекла сессия, таймаут)» отвечают 503, а не 500. Перечня классов исключений ТЗ не даёт.
+- Варианты: (1) `ServiceUnavailable`, `SessionExpired`, `ConnectionAcquisitionTimeoutError` — общий
+  обработчик приложения; (2) любой `Neo4jError`/`DriverError` — тогда ошибка запроса (дефект кода)
+  тоже маскируется под недоступность.
+- Решение: (1). Ошибки запросов остаются 500 и видны как дефект. Обработчик пишет `neo4j_unavailable`
+  в лог.
+- Почему: §0.4.3 п.1, п.4.
+- Обратимость: кортеж `NEO4J_OUTAGE_ERRORS`.
+- Тесты: `tests/test_neo4j_outage.py` (граф и карточка темы → 503); ход учителя — `T-H1` у B.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -679,6 +694,7 @@ _(пусто)_
 | WP10.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 6 failed, 4 passed. Падают: `T-E1` — нет колонки `ops.jobs.required_seq` (A, WP3.1/WP11); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200, ждали 409 (**дефект C**, `domains`); `T-E3` — `GET /v1/topics/{id}/cheatsheet` чужой темы → `200 null`, ждали 404 (**дефект C**, `artifacts`, STREAM3_NOTES риск 9); `T-E5` — обработчики задач не берут шлюз из `JobContext`, извлечение идёт мимо `ScriptedLLMProvider` (A, WP2.1); `T-E8` — ограничитель fail-open без Redis (C, WP1.5); `T-E10` — нет `purge_deleted_interval_s` и планировщика (A, WP3.3). Зелёные уже на текущем коде: `T-E4`, `T-E6`, `T-E7`, `T-E9` — проверяют поведение Фаз 1–2; DoD п.3 («были красными») для них не выполним, проверка «тест падает на заведомо неверной реализации» (§8.9) — не делалась |
 | WP2, WP3.1–3.2, WP3.4 (Этап II) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_jobs_phase3.py` | 7 failed, 0 passed: `T-Q1` (захват игнорирует `required_seq`), `T-Q2` (склейка не пишет `required_seq`), `T-Q3`/`T-Q4` (`JobDeferred` идёт по ветке повтора, `attempt` растёт), `T-Q7` (`register_all_handlers` — `NotImplementedError`), `T-Q8` (бюджет не маршрутизируется), `T-Q9` (нарушения в `domains`, `session`, `artifacts`). Остальной набор: 423 passed |
 | WP8.7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k "openapi or sse_endpoints"` (коммит `1eec6bd`) | 4 failed: `T-A7` — нет `backend/openapi.json`; `write_openapi` — `NotImplementedError`; схема — нет `ErrorResponse`, 422 описан `HTTPValidationError`; SSE-эндпоинты — `application/json` без модели |
+| S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 
 ## Правки тестов
 
