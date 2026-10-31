@@ -659,6 +659,7 @@ _(пусто)_
 | фикстуры `tests/domains/conftest.py`, `tests/session/fixtures.py`, `tests/artifacts/conftest.py` | ресурсы — `build_app_resources`; роутеры не монтируются повторно; удалены переопределения `get_llm_gateway`/`get_compute_client` (`artifacts`) и запасной разбор JWT (`domains`); хук пользователей в `client` (`session`) | §8.1, §8.9 (фикстуры и импорты); D-C-006 |
 | `tests/domains/conftest.py`, `tests/session/fixtures.py`, `tests/artifacts/conftest.py`, `tests/test_infra.py` | `create_app(settings, connect=False)` → `create_app(settings, resources=build_app_resources(...))` | WP1.1: убран `connect=False`, введён явный `resources=`; тесты сохраняют владение пулами |
 | `tests/conftest.py` | добавлена autouse-фикстура `_clear_local_rate_limits` с вызовом `LOCAL_LIMITS.clear()` | Изоляция тестов ограничителя с локальным in-memory счётчиком при отказе Redis (WP1.5) |
+| `tests/test_infra.py::test_cli_parser` | добавлены проверки `ops openapi --out` | §8.9 п.3: тест дополняется новой командой, старые утверждения сохранены |
 
 ## Вопросы к команде
 

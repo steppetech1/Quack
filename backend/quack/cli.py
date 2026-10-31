@@ -9,6 +9,7 @@ import signal
 import socket
 import sys
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import text
@@ -48,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     replay = ops_sub.add_parser("replay-dlq", help="replay DLQ entries")
     replay.add_argument("--id", action="append", dest="ids", help="DLQ entry id (repeatable)")
     ops_sub.add_parser("purge-deleted", help="physically delete learners with tombstones")
+    openapi = ops_sub.add_parser("openapi", help="write the OpenAPI snapshot of the API")
+    openapi.add_argument("--out", required=True, help="path of the openapi.json to write")
     return parser
 
 
@@ -171,6 +174,12 @@ async def _ops(settings: Settings, args: argparse.Namespace) -> int:
             log.error("neo4j_schema_missing", missing=missing)
             return 1
         log.info("neo4j_schema_ok")
+        return 0
+    if args.op == "openapi":
+        # Imported here: the function is stream C's (WP8.7) and needs no resources.
+        from quack.api.openapi import write_openapi  # pyright: ignore[reportMissingImports]
+
+        write_openapi(Path(args.out))
         return 0
     if args.op == "rebuild":
         return await _rebuild(settings, args)
