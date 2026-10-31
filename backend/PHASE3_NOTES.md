@@ -703,6 +703,29 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-018. WP6.3: keepalive в зоне B; событие `status` упирается в формат `turn_started`
+- Класс: C (keepalive), конфликт документов (статус)
+- WP / место: WP6.3; `quack/session/keepalive.py`, `quack/session/router.py`
+- Решение (keepalive): `with_keepalive` / `sse_keepalive_response` — после `sse_keepalive_s`
+  тишины поток шлёт `: ping` и пустую строку; шаг потока событий между пингами не
+  отменяется. Подключено к `GET /v1/sessions/{id}/events` и к потоку хода. Общий
+  `sse_response` лежит в `quack/api/sse.py` (зона C), поэтому обёртка — в `quack/session`;
+  C может перенести её в `quack/api/sse.py` и подключить к `GET /v1/learner/stream` (WP7).
+  Формат именованных событий и `openapi.json` не меняются.
+- Конфликт (статус хода): WP6.3 требует `status` «первым после `turn_started`» и до вызова
+  модели. `turn_started` по `С-§8.5` несёт `user_seq` — `seq` события `turn.student_replied`,
+  а оно пишется одной транзакцией с ответом учителя после вызова модели (`Т-§12.1`: до commit
+  хода в журнале нет; закон 7). До вызова модели `user_seq` неизвестен; номер заранее не
+  резервируется (`seq` общий на ученика, его пишут и фоновые задачи). Варианты:
+  (1) `status` до `turn_started`; (2) `turn_started` до модели без `user_seq` (или с `null`),
+  `user_seq` — в `turn_completed`: меняет формат `С-§8.5`, что WP6.3 запрещает; (3) писать
+  реплику ученика отдельной транзакцией до модели — против `Т-§12.1`. По `backend/CLAUDE.md`
+  исполнитель не выбирает. До решения `status` не сделан, `T-H10` не написан. Любой вариант
+  требует, чтобы поток хода начинался до вызова учителя (сейчас `open_turn` выполняет весь
+  ход до первого кадра).
+- Тесты: `T-H5` (`tests/session/test_session_events_stream.py::test_sse_keepalive`).
+- Требует решения владельца: да (статус хода).
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1061,6 +1084,7 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
 
 ## Правки тестов
 

@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from quack.api.resources import AppResources, get_resources
-from quack.api.sse import sse_response
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.llm.gateway import LLMGateway
@@ -21,6 +20,7 @@ from quack.session.deps import (
     get_llm_gateway,
     get_settings_dep,
 )
+from quack.session.keepalive import sse_keepalive_response
 from quack.session.schemas import (
     ActiveSession,
     FinishResponse,
@@ -94,11 +94,12 @@ async def post_turn(
         body,
         str(getattr(request.state, "request_id", "")),
     )
-    return sse_response(events)
+    return sse_keepalive_response(events, settings.sse_keepalive_s)
 
 
 @router.get("/sessions/{session_id}/events")
 async def session_events(
-    session_id: UUID, learner_id: LearnerId, resources: Resources
+    session_id: UUID, learner_id: LearnerId, resources: Resources, settings: SettingsDep
 ) -> StreamingResponse:
-    return sse_response(await stream.stream_session_events(resources, learner_id, session_id))
+    events = await stream.stream_session_events(resources, learner_id, session_id)
+    return sse_keepalive_response(events, settings.sse_keepalive_s)
