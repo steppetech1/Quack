@@ -1270,6 +1270,19 @@
         "title": "HealthReady",
         "type": "object"
       },
+      "Healthz": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "Healthz",
+        "type": "object"
+      },
       "HeartbeatResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2974,6 +2987,37 @@
           }
         },
         "summary": "Ready",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Healthz"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Healthz"
+                }
+              }
+            },
+            "description": "Postgres is unreachable"
+          }
+        },
+        "summary": "Healthz",
         "tags": [
           "health"
         ]
@@ -5094,6 +5138,49 @@
         "summary": "Update Preferences Endpoint",
         "tags": [
           "domains"
+        ]
+      }
+    },
+    "/v1/learner/stream": {
+      "get": {
+        "description": "SSE `projection_advanced` (WP7); data are fetched with ordinary GETs.",
+        "operationId": "get_learner_stream_v1_learner_stream_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "description": "named events `event: <name>\\ndata: <json>` (С-§8.5)",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHORIZED: missing, invalid or revoked token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Get Learner Stream",
+        "tags": [
+          "learner"
         ]
       }
     },
