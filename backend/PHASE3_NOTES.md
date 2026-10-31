@@ -657,6 +657,37 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `LABEL_FIELDS` и пересобирает файл.
 - Требует подтверждения владельцем: нет (делегировано).
 
+### D-B-015. Надёжность шлюза (WP5.1–5.6) и переход хода на `teacher_fallback`
+- Класс: B
+- WP / место: WP5.1–5.6, WP6.5; `quack/llm/gateway.py`, `quack/llm/pressure.py`,
+  `quack/session/turns.py`
+- Решения:
+  1. `llm_semaphore_limit` (`С-§1.3`) остаётся в `Settings` и больше не используется (WP5.1):
+     семафор на модель по `llm_concurrency[process_role]`.
+  2. Шлюз получает `redis` в конструкторе (необязательный, по умолчанию `None`): флаг давления
+     и ключ размыкателя без Redis не ставятся, исключений нет. Передачу `resources.redis` в
+     `LLMGateway` при сборке ресурсов делают A/C (`quack/runtime`, `quack/api/resources`).
+  3. Допуск учителя (WP5.3): ход читает оставшийся TTL флага модели учителя; если он не
+     больше `teacher_admission_wait_ms` — ждёт ровно его, иначе сразу `teacher_fallback`
+     (без опроса — нет числа «интервал опроса»). Ожидание слота семафора у ролей горячего
+     пути ограничено тем же `teacher_admission_wait_ms`; не дождался — `LLMRateLimitedError`.
+  4. Размыкатель: 429, 400 и обрыв по лимиту выхода — не сбои; проба, получившая такой
+     ответ, заканчивается без вердикта, следующий вызов пробует снова.
+  5. Ход: `LLMRateLimitedError` или `circuit_open` у учителя → вызов `teacher_fallback`
+     (`prompt_role="teacher"`, ключ `…:teacher:fallback`), `degraded_mode =
+     "teacher_fallback"`; запасной не удался → детерминированная деградация Фазы 2.
+     Уровень рассуждения передаётся в шлюз (`teacher_reasoning_effort`, WP6.5).
+- Правки тестов (§8.9): `test_gateway_semaphore_limits_concurrency` — на семафоры по моделям
+  (п.4); проверка «не ослаблен»: с лимитом 1000 вместо настроенного тест падает.
+  Фикстуры: в общей `settings` (`tests/conftest.py`) `llm_retry_attempts=0` — тесты Фаз 1–2
+  подают один сбой и ждут деградации сразу, повторы WP5.2 проверяют T-L2/T-L3 со своими
+  настройками; `test_gateway_provider_unavailable` — `llm_retry_attempts=0`,
+  `test_gateway_session_budget` — `session_budget_exempt_roles=()` (WP5.6 освобождает
+  `extractor`, а тест проверяет сам бюджет). Утверждения не менялись.
+- Тесты: T-L1–T-L7, T-L11 (часть шлюза), T-L12, T-L13. T-L8, T-L10 — адаптер WP5.7 (ждёт
+  D-B-004). T-H6 (переход хода на `teacher_fallback`) — следующим шагом.
+- Требует подтверждения владельцем: нет (делегировано).
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
