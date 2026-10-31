@@ -5097,6 +5097,49 @@
         ]
       }
     },
+    "/v1/learner/stream": {
+      "get": {
+        "description": "SSE `projection_advanced` (WP7); data are fetched with ordinary GETs.",
+        "operationId": "get_learner_stream_v1_learner_stream_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "description": "named events `event: <name>\\ndata: <json>` (С-§8.5)",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHORIZED: missing, invalid or revoked token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Get Learner Stream",
+        "tags": [
+          "learner"
+        ]
+      }
+    },
     "/v1/sessions": {
       "post": {
         "operationId": "start_session_v1_sessions_post",

@@ -61,7 +61,7 @@
 | WP4 | C | WP4.1: `read_session`, модули C переведены, `T-A9a`/`T-A9b` зелёные; **частично** — модули B в `PENDING_NEO4J_SESSIONS` и `_read` хранилища ждут правки B (D-C-016). WP4.2: шпаргалки чужой темы → 404 (D-C-017), `T-E3` зелёный на стенде | 461 passed |
 | WP5 | B | не начат | — |
 | WP6 | B | не начат | — |
-| WP7 | C | не начат | — |
+| WP7 | C | выполнено: `GET /v1/learner/stream` (Redis, опрос без Redis, keepalive), снимок `openapi.json` обновлён (D-C-021, D-C-022) | `T-H4` + keepalive + 401 зелёные |
 | WP8 | A, C | WP8.7 (C): выполнено — `ops openapi` (функция `write_openapi`), снимок `backend/openapi.json`, `ErrorResponse` и SSE в схеме (D-C-015); остальное — не начато | `T-A7` + 3 теста схемы зелёные; всего 456 passed |
 | WP9 | A | не начат | — |
 | WP10 | C | WP10.1 стенд `system` и WP10.2 `T-E1`…`T-E10` — написаны (красные, ветка `phase-3-c-e2e-red`); WP10.3 — не начат | 6 красных, 4 зелёных на текущем коде |
@@ -1043,6 +1043,37 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/graph/test_evidence_law4.py` — `T-W1`…`T-W6` (27 тестов).
 - Требует подтверждения владельцем: нет
 
+### D-C-021. WP7: где живёт канал и тест `T-H4`
+- Класс: B
+- WP / место: WP7; `quack/api/learner_stream.py`, `tests/test_learner_stream.py`, `tests/support/sse.py`
+- Контекст: канал не относится ни к одному продуктовому пакету; `T-H4` перечислен в §8.5 (файл горячего
+  пути — зона B); `httpx.ASGITransport` буферизует весь ответ, бесконечный SSE так не прочитать.
+- Варианты: (1) роутер в `quack.api` (основание API, зона C), монтируется в `create_app`; тест — отдельный
+  файл C; потоковый транспорт — в `tests/support/` (S9); (2) роутер в `quack/session/` — зона B.
+- Решение: (1). Транспорт повторяет тот, что B написал в `tests/session/test_session_events_stream.py`;
+  B может перейти на общий из `tests/support/sse.py`.
+- Почему: §7.3 (зона C), §4.1 (основание API импортирует только ядро и API).
+- Обратимость: одна строка `include_router`, модуль канала.
+- Тесты: `T-H4` (`test_learner_stream`, `test_learner_stream_polls_without_redis`), keepalive, 401.
+- Требует подтверждения владельцем: нет
+
+### D-C-022. WP7: поведение канала в пограничных случаях и keepalive
+- Класс: B
+- WP / место: WP7, WP6.3; `quack/api/learner_stream.py`, `quack/api/sse.py::KEEPALIVE_COMMENT`, `sse_bytes_response`
+- Контекст: ТЗ не говорит, что делать после обрыва подписки в середине потока и как слать keepalive, пока
+  общий keepalive WP6.3 (поток B) не сделан.
+- Решение: подписка на `projector:applied:{id}` оформляется до первого чтения смещений (событие между
+  ними не теряется); ошибка Redis в середине → подписка закрывается, канал переходит на опрос
+  `ops.projector_offsets` раз в `learner_stream_poll_ms` и шлёт событие только при росте `applied_seq`;
+  каждое сообщение Redis → `projection_advanced {"applied_seq"}`; молчание дольше `sse_keepalive_s` →
+  `: ping`. Соединение с Postgres берётся на один запрос; при отключении клиента подписка закрывается
+  под `asyncio.shield`. Кадр keepalive и ответ из готовых кадров — общие в `quack/api/sse.py`: B может
+  взять их для WP6.3.
+- Почему: §0.4.3 п.1 (событие не теряется), п.4.
+- Обратимость: функция `learner_stream`.
+- Тесты: `tests/test_learner_stream.py`.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -1061,6 +1092,7 @@ _(пусто)_
 | WP4.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifact_isolation.py` | 1 failed: шпаргалка чужой темы → `200 null`, ждали 404. `T-E3` на стенде `phase-3-c-e2e-red`: то же падение |
 | S7 (WP6.1, часть C) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_neo4j_outage.py` | 2 failed: `GET /v1/domains/{id}/graph` при сломанном Neo4j → 500, ждали 503; нет `NEO4J_OUTAGE_ERRORS` |
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
+| WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
 
 ## Правки тестов
 
@@ -1075,6 +1107,7 @@ _(пусто)_
 | `tests/domains/test_curation_keys_and_actor.py::_FakeDriver.session` | принимает `**_config` | WP4.1: сессии открываются через `read_session(driver)` с `default_access_mode`; фикстура, утверждения не менялись |
 | `tests/domains/test_graph_view_fixes.py::test_graph_view_opens_every_neo4j_session_with_read_access` | шпион считает и сессии, открытые через `read_session`, вызванную из `graph_view.py` | WP4.1 перенёс место открытия сессии в `quack/db/neo4j.py`; утверждения (≥ 2 сессии, все READ) те же. Проверка «не ослаблен»: при `read_session` без READ тест падает |
 | `tests/factories.py::EventLog.add` | необязательный параметр `schema_version` (по умолчанию 1) | WP12: события `turn.extracted` v2 в сценариях; фикстура, утверждения не менялись |
+| `tests/test_app_assembly.py::PENDING_ROUTES` | убран `GET /v1/learner/stream` | WP7 смонтирован (`test_pending_routes_are_still_pending` требует удалить запись) |
 
 ## Вопросы к команде
 
