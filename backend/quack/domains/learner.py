@@ -83,7 +83,7 @@ async def delete_learner_account(
         await session.execute(
             text(
                 "UPDATE ops.jobs SET status = 'cancelled', updated_at = :now "
-                "WHERE learner_id = :id AND status = 'queued'"
+                "WHERE learner_id = :id AND status IN ('queued', 'running')"
             ),
             {"id": learner_id, "now": now},
         )

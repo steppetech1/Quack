@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from uuid import UUID, uuid5
 
+import neo4j
 from sqlalchemy import text
 
 from quack.api.app import AppResources
@@ -329,7 +330,7 @@ async def propose_structure(
     events.append(
         NewEvent(
             type="structure.proposed",
-            actor="structurer@1",
+            actor="code" if degraded else "structurer@1",
             domain_id=domain_id,
             idempotency_key=req.idempotency_key,
             payload={
@@ -455,7 +456,7 @@ async def edit_structure(
     )
 
     async def _load_existing_dag() -> tuple[set[UUID], set[tuple[UUID, UUID]]]:
-        async with resources.neo4j.session() as n_session:
+        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as n_session:
             t_res = await n_session.run(
                 "MATCH (t:Topic {learnerId: $l, domainId: $d}) RETURN t.id AS id",
                 {"l": str(learner_id), "d": str(domain_id)},

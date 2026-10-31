@@ -21,9 +21,13 @@ from quack.graph.ids import CURRENT_RULES_VERSION
 from quack.graph.neo4j_store import find_learners_with_rules
 from quack.graph.rebuild import rebuild_learner
 from quack.graph.worker import ProjectorWorker
+from quack.jobs.kinds import session_sweep_inactive
+from quack.jobs.queue import enqueue_job
 from quack.jobs.runner import JobRunner
 from quack.logging import configure_logging, get_logger
 from quack.ops.commands import migrate, purge_deleted, replay_dlq
+from quack.session import lifecycle as _session_lifecycle  # noqa: F401  (registers session.sweep_inactive)
+from quack.session import workers as _session_workers  # noqa: F401  (registers turn.extract, session.checkpoint)
 
 log = get_logger(__name__)
 
@@ -76,6 +80,19 @@ async def _with_resources[T](
         await engine.dispose()
 
 
+async def _schedule_sweep(settings: Settings, session_factory, stop: asyncio.Event) -> None:
+    """Periodically enqueue the coalesced session.sweep_inactive job (spec §7)."""
+    interval = max(60.0, settings.session_inactivity_timeout_min * 60 / 6)
+    while not stop.is_set():
+        try:
+            async with session_factory() as session, session.begin():
+                await enqueue_job(session, session_sweep_inactive())
+        except Exception as exc:
+            log.warning("sweep_schedule_failed", error=repr(exc))
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+
+
 async def _worker(settings: Settings) -> int:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -92,7 +109,11 @@ async def _worker(settings: Settings) -> int:
         projector = ProjectorWorker(settings, engine, session_factory, driver, redis)
         runner = JobRunner(settings, session_factory, worker_id)
         log.info("worker_started", worker_id=worker_id)
-        await asyncio.gather(projector.run_forever(stop), runner.run_forever(stop))
+        await asyncio.gather(
+            projector.run_forever(stop),
+            runner.run_forever(stop),
+            _schedule_sweep(settings, session_factory, stop),
+        )
         return 0
 
     return await _with_resources(settings, run)
