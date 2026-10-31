@@ -20,7 +20,7 @@ from quack.db.redis import PROJECTOR_WAKEUP_CHANNEL
 from quack.domains.curation import curate_domain_graph
 from quack.domains.schemas import CuratorMerge, CuratorOutput
 from quack.jobs.queue import ClaimedJob
-from quack.jobs.runner import JobContext
+from tests.support.resources import build_job_context
 
 
 class _Result:
@@ -132,7 +132,7 @@ async def test_curator_key_actor_and_wakeup(
         skill_merges=[CuratorMerge(source_id=left, target_id=active, reason="same")]
     )
     llm = _SpyLLM(output)
-    ctx = JobContext(settings=settings, session_factory=db)
+    ctx = build_job_context(settings, db, None, None)
     job = _job(learner_id, domain_id)
 
     pubsub = redis.pubsub()

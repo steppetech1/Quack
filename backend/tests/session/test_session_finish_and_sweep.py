@@ -17,10 +17,11 @@ from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.jobs import kinds
 from quack.jobs.queue import ClaimedJob, enqueue_job
-from quack.jobs.runner import JOB_HANDLERS, JobContext, JobRunner
+from quack.jobs.runner import JOB_HANDLERS, JobRunner
 from quack.session import lifecycle
 from tests.session.fixtures import SeededDomain
 from tests.session.helpers import make_token
+from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -426,6 +427,7 @@ async def test_sweep_inactive_abandons_only_expired_active_sessions_and_is_idemp
         settings,
         db,
         "sweep-worker",
+        build_job_context(settings, db, None, None),
         handlers={"session.sweep_inactive": lifecycle.sweep_inactive_sessions},
     )
     assert await runner.run_one() is True
@@ -474,11 +476,13 @@ async def test_sweep_inactive_abandons_only_expired_active_sessions_and_is_idemp
         attempt=0,
         max_attempts=5,
     )
-    await lifecycle.sweep_inactive_sessions(dummy_job, JobContext(settings, db))
+    await lifecycle.sweep_inactive_sessions(dummy_job, build_job_context(settings, db, None, None))
     assert (await _session_row(db, fresh_id))["status"] == "active"
 
     short_timeout = settings.model_copy(update={"session_inactivity_timeout_min": 5})
-    await lifecycle.sweep_inactive_sessions(dummy_job, JobContext(short_timeout, db))
+    await lifecycle.sweep_inactive_sessions(
+        dummy_job, build_job_context(short_timeout, db, None, None)
+    )
 
     fresh_after = await _session_row(db, fresh_id)
     assert fresh_after["status"] == "abandoned"

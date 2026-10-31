@@ -67,7 +67,9 @@ async def test_handlers_share_driver_redis_and_gateway(
     assert seen[-1] == ("checkpoint", None, ctx.redis)
 
     with pytest.raises(RuntimeError):
-        await workers.handle_turn_extract(extract_job, JobContext(settings, db))
+        await workers.handle_turn_extract(
+            extract_job, build_job_context(settings, db, None, object())
+        )
     assert len(seen) == 3
 
     # §4.2: `redis = None` is work without Redis, the handler runs and passes it on.

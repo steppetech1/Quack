@@ -104,8 +104,6 @@ async def _worker(settings: Settings) -> int:
     context = await create_job_context(settings)
     try:
         engine, driver = context.engine, context.neo4j
-        if engine is None or driver is None:
-            raise RuntimeError("job context has no engine or neo4j driver")
         missing = await verify_schema(driver)
         if missing:
             log.error("neo4j_schema_missing", missing=missing)

@@ -15,9 +15,9 @@ from quack.db.redis import presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.jobs.queue import ClaimedJob
-from quack.jobs.runner import JobContext
 from quack.session import lifecycle
 from tests.session.fixtures import SeededDomain
+from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -206,7 +206,9 @@ async def test_sweep_keeps_presence_of_another_session(
     await redis.set(presence_key(seed.learner_id), str(other))
     await _make_stale(db, session_id)
 
-    await lifecycle.sweep_inactive_sessions(_sweep_job(), JobContext(settings, db))
+    await lifecycle.sweep_inactive_sessions(
+        _sweep_job(), build_job_context(settings, db, None, None)
+    )
 
     async with db() as session:
         status = (
@@ -232,6 +234,8 @@ async def test_sweep_deletes_presence_of_swept_session(
     assert await redis.get(presence_key(seed.learner_id)) == str(session_id)
     await _make_stale(db, session_id)
 
-    await lifecycle.sweep_inactive_sessions(_sweep_job(), JobContext(settings, db))
+    await lifecycle.sweep_inactive_sessions(
+        _sweep_job(), build_job_context(settings, db, None, None)
+    )
 
     assert await redis.get(presence_key(seed.learner_id)) is None

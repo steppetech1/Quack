@@ -39,7 +39,7 @@ def build_app_resources(
     factory = session_factory or create_session_factory(engine)
     return AppResources(
         settings=settings,
-        engine=engine,
+        engine=cast(AsyncEngine, engine),
         session_factory=factory,
         neo4j=cast(AsyncDriver, neo4j),
         redis=cast(Redis | None, redis),
@@ -65,7 +65,7 @@ def build_job_context(
     return JobContext(
         settings=settings,
         session_factory=session_factory,
-        engine=engine,
+        engine=cast(AsyncEngine, engine),
         neo4j=cast(AsyncDriver, neo4j),
         redis=cast(Redis | None, redis),
         llm=llm or LLMGateway(session_factory, provider or UnavailableLLMProvider(), settings),

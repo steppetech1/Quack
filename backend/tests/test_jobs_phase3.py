@@ -67,7 +67,8 @@ async def _claim(db: SessionFactory, worker: str = "w1") -> ClaimedJob | None:
 
 
 def _runner(settings: Settings, db: SessionFactory, handlers: dict[str, JobHandler]) -> JobRunner:
-    return JobRunner(settings, db, "w-test", handlers=handlers)
+    context = build_job_context(settings, db, None, None)
+    return JobRunner(settings, db, "w-test", context, handlers=handlers)
 
 
 # --- T-Q1, T-Q2: readiness of the projection --------------------------------------------
