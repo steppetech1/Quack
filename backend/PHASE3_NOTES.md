@@ -287,6 +287,23 @@ C и WP11.4, плюс Q-A1) лежат в `tests/test_jobs_phase3_pending.py` н
 Значения `None` у полей `JobContext` остаются до перевода `session/workers.py` потоком B
 (`phase-3-b-workers-jobcontext`); снимаются отдельным PR A.
 
+### D-A-008. WP3.3: планировщик, `account.purge_deleted`, проверка полноты обработчиков
+
+Класс B. `quack/jobs/periodic.py`: `PeriodicScheduler(settings, session_factory, clock=…)` со
+`tick()` и `run_forever(stop)` ставит `session.sweep_inactive` и `account.purge_deleted` с
+`run_after` = начало следующей корзины `(floor(now / interval) + 1) * interval`; корзина — по
+UTC-времени эпохи. Склейка по `coalesce_key` держит одну ждущую задачу. Старый
+`cli._schedule_sweep` (интервал `max(60, timeout / 6)`) удалён, интервалы теперь
+`session_sweep_interval_s` и `purge_deleted_interval_s`.
+`handle_purge_deleted` лежит в `quack/ops/purge_job.py` (слой сборки: `jobs` не импортирует `ops`, `T-A6`), вызывает `ops.commands.purge_deleted` через `ctx.engine`, `ctx.neo4j`,
+`ctx.redis` и дополнительно удаляет `presence:learner:{id}` и `ratelimit:*:{id}`.
+В `PURGE_TABLES` добавлены `ops.dispatcher_offsets` и `ops.turn_manifests`: таблицы миграции
+`0002` с `learner_id`, без них удаление ученика оставляло бы строки (Т-§16.3, `T-Q11`).
+`cli worker` сверяет `register_all_handlers()` с `JOB_KINDS` до создания ресурсов и при
+расхождении пишет `job_handlers_mismatch` (списки `missing`, `extra`) и выходит с кодом 1
+(`T-Q7`, закрывает D-A-005). `T-Q7` и проверка кода выхода перенесены из pending в
+`tests/test_jobs_phase3.py`.
+
 #### Этап I и красные тесты потока A к G0
 
 Сигнатуры: `JobSpec.required_seq`, `JobDeferred`, `JobFailedPermanently`, `JOB_KINDS`,
@@ -1344,6 +1361,33 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
 - Требует подтверждения владельцем: нет
 
+### D-C-025. `structure/propose`: ключ события выводится из клиентского ключа и хэша ввода (Q9, T-E2)
+- Класс: C
+- WP / место: WP10.2 (`T-E2`); `quack/domains/structure.py::proposal_key`, `_check_proposal_key`
+- Контекст: `T-E2` требует 409 на тот же ключ с другим телом для **всех** эндпоинтов с ключом.
+  По `Т-§2.1` конфликт — по хэшу нагрузки события. Нагрузка `structure.proposed` — ответ
+  структуратора, который шлюз отдаёт из `core.llm_outbox` по тому же ключу, поэтому другое тело
+  давало ту же нагрузку и 200. У остальных эндпоинтов тело запроса входит в нагрузку.
+- Варианты (с уровнями §0.4.1): (а) поля запроса в нагрузке `structure.proposed` — смена схемы
+  события, класс D (§0.4.4 п.2); (б) сверять `request_hash` outbox в шлюзе — зона B, хэш включает
+  отрендеренный промпт с контекстом, повтор хода учителя получил бы 409 вместо ответа из кэша;
+  (в) исключить `propose` из `T-E2` — ослабление теста, класс D (§0.4.4 п.4); (г) записывать
+  `structure.interview_completed` на каждый `propose` — проекция переводит домен в `structuring`;
+  (д) ключ события от кода выводится из источника (`Т-§2.3`): `{клиентский ключ}:{sha256 ввода}`,
+  ввод — `domain_id`, `goals`, `background`, `focus_areas`; до вызова модели код ищет
+  `structure.proposed` ученика с тем же клиентским ключом и другим хэшем → `IdempotencyConflictError`.
+- Решение: (д). Тот же ключ вызова структуратора, поэтому повтор с тем же телом берёт ответ из
+  outbox и возвращает уже записанное событие; другое тело — 409 без вызова модели и без новых
+  событий. `domain_id` во вводе: тот же ключ для другого домена — тоже 409, а не чужое событие.
+  Схема события не меняется. Гонка двух одновременных запросов с разными телами и одним ключом
+  может записать два предложения — оставлено (повтор с другим телом одновременно не бывает у
+  клиента, который создаёт ключ на действие).
+- Почему: `T-E2` (уровень 2 §0.4.1), `Т-§2.1`, `Т-§2.3` (уровень 4); остальные варианты — класс D
+  или вред горячему пути.
+- Обратимость: функция ключа в `structure.py`; данных учеников нет.
+- Тесты: `tests/domains/test_propose_idempotency.py`, `T-E2`.
+- Требует подтверждения владельцем: да (класс C), Q9 закрыт этим решением
+
 ## Заблокировано
 
 _(пусто)_
@@ -1372,6 +1416,7 @@ _(пусто)_
 | WP6.3 (статус хода) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase3_hot_path.py tests/session/test_turn_evaluation.py tests/session/test_turns_and_sse.py tests/session/test_turn_retry.py tests/llm/test_labels.py` (коммит `0d60978`) | 6 failed, 62 passed: `T-H10` ×2 (нет `status`), 4 теста точного порядка кадров ждут `status` |
 | WP5.7 (адаптер) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py` (коммит `3d76160`) | 10 failed, 23 passed: `T-L8` ×9 и `T-L10` — `NotImplementedError` в `ResponsesClient`; `T-L9` (экземпляр, `jsonschema`) зелёный |
 | WP12 (обработчик B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_turn_extract_worker.py tests/session/test_extract_quote_grounding.py tests/session/test_worker_pool_and_slice.py` (коммит `539f863`) | 3 failed, 1 passed: обработчик пишет `turn.extracted` v1 через `extractor@1` |
+| WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
 | WP10.2 (стенд на `phase-3` после WP1, WP2, WP3.1–3.4, WP4, WP6.2) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed. Падают: `T-E1`, `T-E5` — `turn.extract` идёт мимо `ScriptedLLMProvider`: `quack/session/workers.py` строит свой шлюз (`_worker_resources`), а не берёт `JobContext.llm` (WP2.1, A/B); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200 (Q9); `T-E10` — нет обработчика `account.purge_deleted` и планировщика (A, WP3.3). Стенд: обработчики — `quack.runtime.register_all_handlers`, один `JobContext` над ресурсами стенда, `create_app(resources=)`. Побочно: кэш `_worker_resources` по `id(settings)` переносит открытый размыкатель из e2e в `tests/session/test_session_checkpoint_worker.py` при полном прогоне (уйдёт с WP2.1) |
 | WP10.2 (стенд + `phase-3-b-workers-jobcontext`, WP2.1 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q` (ветка `phase-3-c-e2e-red`) | 3 failed, 598 passed. `T-E5` зелёный; размыкатель между тестами не переносится. Падают: `T-E1` — `turn.extract` без `required_seq`, задачи ставит не диспетчер (A, WP11); `T-E2` — Q9; `T-E10` — WP3.3 (A) |
 | WP10.2 (стенд на `phase-3` 6cefd3e, после #38/#40 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed → после правки стенда 3 failed, 7 passed. `T-E5` упал: обработчик зовёт модель со схемой `ExtractorOutputV2` (D-B-022), стенд сбивал `ExtractorOutput`; стенд переведён на `ExtractorOutputV2`. Красные: `T-E1` (WP11, A), `T-E2` (#37), `T-E10` (#34, A) |

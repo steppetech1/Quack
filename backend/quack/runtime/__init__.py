@@ -23,6 +23,7 @@ HANDLER_MODULES: tuple[str, ...] = (
     "quack.session.lifecycle",
     "quack.session.workers",
     "quack.artifacts.cheatsheets",
+    "quack.ops.purge_job",
 )
 
 
