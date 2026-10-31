@@ -10,15 +10,30 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
+from neo4j import AsyncDriver
+from redis.asyncio import Redis
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from quack.api.app import create_app
+from quack.api.auth import issue_access_token
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
+from quack.events import append_events
+from quack.events.models import NewEvent, StoredEvent
+from quack.graph.neo4j_store import Neo4jGraphStore
+from quack.graph.worker import ProjectorWorker
 from quack.jobs import kinds
 from quack.jobs.kinds import JobDeferred
+from quack.jobs.periodic import PeriodicScheduler, handle_purge_deleted
 from quack.jobs.queue import ClaimedJob, JobSpec, claim_next_job, enqueue_job
 from quack.jobs.runner import JobContext, JobHandler, JobRunner
 from quack.llm.errors import LLMBudgetExceededError
+from quack.ops.commands import PURGE_TABLES
+from tests.scenario import build_scenario
+from tests.support.auth import ensure_user
+from tests.support.resources import build_app_resources, build_job_context
 
 QUACK_ROOT = Path(__file__).resolve().parents[1] / "quack"
 
@@ -146,3 +161,121 @@ async def test_budget_errors_route_to_defer_or_dlq(db: SessionFactory, settings:
     (s,) = await _q(db, "SELECT status, attempt FROM ops.jobs WHERE id = :i", i=session_scope)
     assert s["status"] == "failed" and s["attempt"] == 1
     assert await _q(db, "SELECT 1 FROM ops.dlq WHERE job_id = :i", i=session_scope)
+
+
+# --- T-Q5: periodic jobs, once per bucket ----------------------------------------------
+
+
+async def test_periodic_scheduler_runs_once_per_bucket(
+    db: SessionFactory, settings: Settings
+) -> None:
+    now = [datetime(2030, 1, 1, 0, 0, 30, tzinfo=UTC)]
+    schedulers = [PeriodicScheduler(settings, db, clock=lambda: now[0]) for _ in range(2)]
+    for _ in range(5):
+        for scheduler in schedulers:
+            await scheduler.tick()
+
+    async def queued() -> dict[str, datetime]:
+        rows = await _q(
+            db,
+            "SELECT kind, run_after FROM ops.jobs WHERE status = 'queued' "
+            "AND kind IN ('session.sweep_inactive', 'account.purge_deleted')",
+        )
+        assert len(rows) == 2, rows
+        return {r["kind"]: r["run_after"] for r in rows}
+
+    first = await queued()
+    assert first["session.sweep_inactive"] == datetime(2030, 1, 1, 0, 1, 0, tzinfo=UTC)
+    assert first["account.purge_deleted"] == datetime(2030, 1, 1, 0, 10, 0, tzinfo=UTC)
+
+    await _exec(db, "UPDATE ops.jobs SET status = 'done' WHERE status = 'queued'")
+    now[0] = datetime(2030, 1, 1, 0, 1, 5, tzinfo=UTC)
+    for scheduler in schedulers:
+        await scheduler.tick()
+    rows = await _q(
+        db, "SELECT kind, run_after FROM ops.jobs WHERE status = 'queued' ORDER BY kind"
+    )
+    by_kind = {r["kind"]: r["run_after"] for r in rows}
+    assert by_kind["session.sweep_inactive"] == datetime(2030, 1, 1, 0, 2, 0, tzinfo=UTC)
+    assert len(rows) == 2
+
+
+# --- T-Q11: purge job removes the learner completely -----------------------------------
+
+
+def _as_new(events: list[StoredEvent]) -> list[NewEvent]:
+    return [
+        NewEvent(
+            type=e.type,
+            payload=e.payload,
+            actor=e.actor,
+            idempotency_key=e.idempotency_key,
+            occurred_at=e.occurred_at,
+            session_id=e.session_id,
+            domain_id=e.domain_id,
+        )
+        for e in events
+    ]
+
+
+async def test_purge_job_removes_learner_completely(
+    settings: Settings,
+    pg_engine: AsyncEngine,
+    db: SessionFactory,
+    neo4j: AsyncDriver,
+    redis: Redis,
+) -> None:
+    log, _ = build_scenario()
+    learner = log.learner_id
+    async with db() as session, session.begin():
+        await append_events(session, learner, _as_new(log.events), False)
+    await ensure_user(db, learner)
+    worker = ProjectorWorker(settings, pg_engine, db, neo4j, redis)
+    for _ in range(50):
+        if await worker.run_once() == 0:
+            break
+    assert (await Neo4jGraphStore(neo4j, str(learner)).dump()).nodes != {}
+    async with db() as session, session.begin():
+        await enqueue_job(session, kinds.turn_extract(learner, uuid4(), {}))
+        await session.execute(
+            text(
+                "INSERT INTO ops.dispatcher_offsets (learner_id, last_dispatched_seq) "
+                "VALUES (:l, 3)"
+            ),
+            {"l": learner},
+        )
+    await redis.set(f"presence:learner:{learner}", "s", ex=300)
+    await redis.set(f"ratelimit:actions:{learner}", "3", ex=60)
+    await redis.set(f"ratelimit:turns:{learner}", "1", ex=60)
+
+    app = create_app(
+        settings,
+        resources=build_app_resources(settings, pg_engine, neo4j, redis, session_factory=db),
+    )
+    token = issue_access_token(learner, settings)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete("/v1/learner", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+    async with db() as session, session.begin():
+        await enqueue_job(session, kinds.account_purge_deleted())
+    runner = JobRunner(
+        settings,
+        db,
+        "purge-worker",
+        handlers={"account.purge_deleted": handle_purge_deleted},
+        context=build_job_context(settings, db, neo4j, redis, engine=pg_engine),
+    )
+    assert await runner.run_one()
+
+    for table in PURGE_TABLES:
+        assert await _q(db, f"SELECT 1 FROM {table} WHERE learner_id = :l", l=learner) == [], table
+    assert "ops.dispatcher_offsets" in PURGE_TABLES and "ops.turn_manifests" in PURGE_TABLES
+    assert await _q(db, "SELECT 1 FROM auth.users WHERE id = :l", l=learner) == []
+    assert (await Neo4jGraphStore(neo4j, str(learner)).dump()).nodes == {}
+    assert [key async for key in redis.scan_iter(match=f"*{learner}*")] == []
+    [tomb] = await _q(
+        db, "SELECT status FROM ops.deletion_tombstones WHERE learner_id = :l", l=learner
+    )
+    assert tomb["status"] == "purged"
