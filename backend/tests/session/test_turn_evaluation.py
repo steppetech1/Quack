@@ -16,7 +16,7 @@ from quack.graph.projector import run_projector_batch
 from quack.practice.evaluation import FEEDBACK_CORRECT
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -67,7 +67,7 @@ async def test_math_task_evaluated_in_turn_via_compute(
         TeacherOutput(
             reply_text="Spot on! 3x^2 is the derivative of x^3.",
             pedagogical_move="give_feedback",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 
@@ -92,7 +92,9 @@ async def test_math_task_evaluated_in_turn_via_compute(
     # 5. Verify teacher prompt received task_evaluation_json
     teacher_calls = fake_llm.calls_for("teacher")
     assert len(teacher_calls) == 1
-    assert str(math_task_id) in teacher_calls[0].prompt
+    # WP14.1: the evaluated task is named by its label, never by its id.
+    assert str(math_task_id) not in teacher_calls[0].prompt
+    assert '"task": "K' in teacher_calls[0].prompt.split("### Automatic check")[1]
     assert '"evaluator": "compute"' in teacher_calls[0].prompt
     assert '"is_correct": true' in teacher_calls[0].prompt
 

@@ -16,7 +16,7 @@ from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.events.append import append_events
 from quack.events.models import NewEvent
-from quack.events.payloads import TaskEvaluated, TaskSubmitted
+from quack.events.payloads import SkillRef, TaskEvaluated, TaskSubmitted
 from quack.graph.ids import QUACK_UUID_NS
 from quack.jobs import kinds
 from quack.jobs.queue import enqueue_job
@@ -36,6 +36,18 @@ from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
 from quack.session.schemas import TeacherOutput, TurnRequest
 from quack.session.tasks import assigned_task_ids_from_overlay, solved_families_from_overlay
+from quack.session.teacher_labels import (
+    TeacherDecision,
+    build_teacher_labels,
+    evaluation_view,
+    misconceptions_view,
+    offered_tasks,
+    resolve_teacher_output,
+    skills_view,
+    tasks_view,
+    topic_line,
+    turns_view,
+)
 from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER, resolve_degraded_mode
 
 _TB_COLUMNS = ", ".join(f"tb.{c.strip()}" for c in TASK_COLUMNS.split(","))
@@ -248,17 +260,6 @@ async def open_turn(
                 session_id=session_id,
             )
 
-        available_tasks_data = [
-            {
-                "task_id": str(t.task_id),
-                "family_id": t.family_id,
-                "kind": t.kind,
-                "difficulty": t.difficulty,
-                "prompt_text": t.prompt_text,
-            }
-            for t in available_tasks
-        ]
-
         # 4. In-turn task evaluation (ТЗ-П2 §2.3.4) through the one cascade of quack.practice
         #    (WP6.2, D-B-006), then the teacher call via LLMGateway.
         turn_id = uuid5(QUACK_UUID_NS, f"turn:{learner_id}:{session_id}:{body.idempotency_key}")
@@ -288,36 +289,41 @@ async def open_turn(
                     compute=compute,
                     settings=settings,
                 )
-                task_evaluation_json = json.dumps(
-                    {
-                        "task_id": str(submitted_task.task_id),
-                        "evaluator": verdict.evaluator,
-                        "is_correct": verdict.is_correct,
-                        "score": verdict.score,
-                        "independence": verdict.independence,
-                        "feedback": verdict.feedback,
-                        "skill_scores": verdict.skill_scores,
-                    },
-                    ensure_ascii=False,
-                )
+
+        # WP14.1 (Т-§4.5): the teacher sees labels, never ids.
+        labels = build_teacher_labels(
+            settings,
+            topic_id=topic_id,
+            skills_slice=context.skills_slice,
+            misconceptions=context.misconceptions,
+            available_tasks=available_tasks,
+            submitted_task=submitted_task,
+        )
+        offered = offered_tasks(labels, available_tasks)
+        if submitted_task is not None and verdict is not None:
+            task_evaluation_json = evaluation_view(labels, submitted_task, verdict)
 
         variables = {
             "mode": context.mode,
-            "topic_name": context.topic_name,
+            "topic_name": topic_line(labels, topic_id, context.topic_name),
             "rolling_summary": context.rolling_summary,
-            "recent_turns_json": json.dumps(context.recent_turns, ensure_ascii=False),
+            "recent_turns_json": json.dumps(
+                turns_view(labels, context.recent_turns), ensure_ascii=False
+            ),
             # WP6.1 (Т-§20.7): the memory slot is marked while Neo4j is unreachable.
             "skills_slice_json": (
                 MEMORY_UNAVAILABLE_MARKER
                 if context.memory_unavailable
-                else json.dumps(context.skills_slice, ensure_ascii=False)
+                else json.dumps(skills_view(labels, context.skills_slice), ensure_ascii=False)
             ),
             "misconceptions_json": (
                 MEMORY_UNAVAILABLE_MARKER
                 if context.memory_unavailable
-                else json.dumps(context.misconceptions, ensure_ascii=False)
+                else json.dumps(
+                    misconceptions_view(labels, context.misconceptions), ensure_ascii=False
+                )
             ),
-            "available_tasks_json": json.dumps(available_tasks_data, ensure_ascii=False),
+            "available_tasks_json": json.dumps(tasks_view(labels, offered), ensure_ascii=False),
             "task_evaluation_json": task_evaluation_json,
             "student_text": body.text,
         }
@@ -337,6 +343,7 @@ async def open_turn(
                 idempotency_key=f"turn:{session_id}:{body.idempotency_key}:teacher",
             )
             teacher_output = teacher_result.value
+            decision = resolve_teacher_output(teacher_output, labels)
         except (LLMBudgetExceededError, LLMUnavailableError, LLMSchemaError) as exc:
             llm_degraded_mode = (
                 "budget_exceeded" if isinstance(exc, LLMBudgetExceededError) else "llm_unavailable"
@@ -355,8 +362,8 @@ async def open_turn(
             teacher_output = TeacherOutput(
                 reply_text=degraded_reply_text(fallback_task),
                 pedagogical_move="assign_task" if fallback_task is not None else "explain",
-                assign_task_id=fallback_task.task_id if fallback_task is not None else None,
             )
+            decision = TeacherDecision(focus_skill_ids=[], assign_task_id=None, concept=None)
 
         # 5. Events to commit
         student_turn_index = prev_turn_index + 1
@@ -427,8 +434,8 @@ async def open_turn(
             )
 
         # Optional concept_explained
-        if teacher_output.concept_explained is not None:
-            ce = teacher_output.concept_explained
+        if decision.concept is not None:
+            ce = decision.concept
             events.append(
                 NewEvent(
                     type="teacher.concept_explained",
@@ -436,7 +443,9 @@ async def open_turn(
                         "session_id": str(session_id),
                         "turn_id": str(turn_id),
                         "topic_id": str(ce.topic_id),
-                        "skills": [s.model_dump(mode="json") for s in ce.skills],
+                        "skills": [
+                            SkillRef(skill_id=s).model_dump(mode="json") for s in ce.skill_ids
+                        ],
                         "depth": float(ce.depth),
                         "summary": ce.summary,
                     },
@@ -453,15 +462,14 @@ async def open_turn(
         if llm_degraded_mode is None and (
             teacher_output.pedagogical_move == "assign_task" or mode == "practice"
         ):
-            avail_ids = {t.task_id for t in available_tasks}
+            offered_ids = {t.task_id for t in offered}
             if (
-                teacher_output.assign_task_id is not None
-                and teacher_output.assign_task_id in avail_ids
-                and teacher_output.assign_task_id not in assigned_task_ids
+                decision.assign_task_id is not None
+                and decision.assign_task_id in offered_ids
+                and decision.assign_task_id not in assigned_task_ids
             ):
                 assigned_task = next(
-                    (t for t in available_tasks if t.task_id == teacher_output.assign_task_id),
-                    None,
+                    (t for t in offered if t.task_id == decision.assign_task_id), None
                 )
             if assigned_task is None and topic_id is not None:
                 async with resources.session_factory() as session:
@@ -511,7 +519,7 @@ async def open_turn(
                     "turn_index": teacher_turn_index,
                     "text": teacher_output.reply_text,
                     "pedagogical_move": teacher_output.pedagogical_move,
-                    "focus_skill_ids": [str(s) for s in teacher_output.focus_skill_ids],
+                    "focus_skill_ids": [str(s) for s in decision.focus_skill_ids],
                     "degraded_mode": degraded_mode,
                 },
                 actor=teacher_actor,

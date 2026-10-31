@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from quack.events.payloads import (
     ExtractedMisconception,
     ExtractedObservation,
-    SkillRef,
     Unit,
 )
 
@@ -108,20 +107,25 @@ class FinishResponse(StrictModel):
 
 
 class ConceptExplainedDraft(StrictModel):
-    topic_id: UUID
-    skills: list[SkillRef]
+    """Labels of the call (WP14.1): `topic_label` `T…`, `explained_skill_labels` `S…`."""
+
+    topic_label: str
+    explained_skill_labels: list[str]
     depth: Unit
     summary: str
 
 
 class TeacherOutput(StrictModel):
+    """teacher@1. The model sees and writes labels, never ids (WP14.1, Т-§4.5); code
+    resolves them (`quack.session.teacher_labels`)."""
+
     reply_text: str
     pedagogical_move: Literal[
         "explain", "socratic_question", "assign_task", "give_feedback", "summarize"
     ]
-    focus_skill_ids: list[UUID] = []
+    focus_skill_labels: list[str] = []
     concept_explained: ConceptExplainedDraft | None = None
-    assign_task_id: UUID | None = None
+    assign_task_label: str | None = None
     evaluated_is_correct: bool | None = None
     evaluated_score: float | None = Field(default=None, ge=0.0, le=1.0)
     evaluated_feedback: str | None = None

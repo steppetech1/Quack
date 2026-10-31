@@ -18,7 +18,7 @@ from quack.practice.evaluation import independence_from_hints
 from quack.session.schemas import TeacherOutput
 from tests.factories import new_event
 from tests.session.fixtures import FakeComputeClient, FakeLLMProvider, SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -79,7 +79,7 @@ async def test_turn_math_submission_writes_response_time_sec_and_independence(
         TeacherOutput(
             reply_text="Correct derivative!",
             pedagogical_move="give_feedback",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 
@@ -176,7 +176,7 @@ async def test_turn_math_submission_combines_overlay_hint_penalties_and_hints_us
         TeacherOutput(
             reply_text="Good job working through the hints!",
             pedagogical_move="give_feedback",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 
@@ -276,14 +276,14 @@ async def test_turns_pass_session_id_to_get_available_tasks_and_pick_task(
         )
     await _project_all(neo4j, db, seeded_domain.learner_id)
 
-    # 1. Normal turn with pedagogical_move="assign_task" and assign_task_id=None:
+    # 1. Normal turn with pedagogical_move="assign_task" and assign_task_label=None:
     # get_available_tasks must exclude math1 from teacher prompt, and pick_task must pick math2.
     fake_llm.push(
         "teacher",
         TeacherOutput(
             reply_text="Here is your next task.",
             pedagogical_move="assign_task",
-            assign_task_id=None,
+            assign_task_label=None,
         ),
     )
 
@@ -296,8 +296,12 @@ async def test_turns_pass_session_id_to_get_available_tasks_and_pick_task(
 
     teacher_calls = fake_llm.calls_for("teacher")
     assert len(teacher_calls) == 1
+    # WP14.1: offered tasks are shown by label and statement, never by id.
+    offered = teacher_calls[0].prompt.split("### Available tasks")[1].split("###")[0]
+    assert "Find d/dx x^3" not in offered  # math1
+    assert "Find d/dx sin(2x)" in offered  # math2
     assert str(math1) not in teacher_calls[0].prompt
-    assert str(math2) in teacher_calls[0].prompt
+    assert str(math2) not in teacher_calls[0].prompt
 
     sse1 = dict(parse_sse(turn1_resp.text))
     assert UUID(sse1["task_assigned"]["task_id"]) == math2

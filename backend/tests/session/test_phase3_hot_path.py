@@ -24,7 +24,7 @@ from quack.session.schemas import TeacherOutput
 from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER, resolve_degraded_mode
 from tests.factories import new_event
 from tests.session.fixtures import FakeComputeClient, FakeLLMProvider, SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, task_label
 from tests.support.broken import BrokenNeo4jDriver
 
 pytest_plugins = ["tests.session.fixtures"]
@@ -81,10 +81,11 @@ async def test_turn_survives_neo4j_outage(
     session_id = UUID(start.json()["session_id"])
     await _project_all(neo4j, db, learner)
 
+    label_x = await task_label(db, learner, seeded_domain.topic_id, session_id, task_x)
     fake_llm.push(
         "teacher",
         TeacherOutput(
-            reply_text="Try this task.", pedagogical_move="assign_task", assign_task_id=task_x
+            reply_text="Try this task.", pedagogical_move="assign_task", assign_task_label=label_x
         ),
     )
     await _turn(client, auth_headers, session_id, "outage-turn-1", "Give me a task.")
@@ -93,11 +94,11 @@ async def test_turn_survives_neo4j_outage(
     resources: AppResources = session_app.state.resources
     session_app.state.resources = replace(resources, neo4j=BrokenNeo4jDriver())  # type: ignore[arg-type]  # stand-in driver
 
-    # The teacher asks for X again: the overlay must keep it out (session invariant).
+    # The teacher repeats the label of turn 1: X is not offered again (session invariant).
     fake_llm.push(
         "teacher",
         TeacherOutput(
-            reply_text="One more task.", pedagogical_move="assign_task", assign_task_id=task_x
+            reply_text="One more task.", pedagogical_move="assign_task", assign_task_label=label_x
         ),
     )
     response = await client.post(
@@ -266,10 +267,11 @@ async def test_turn_and_submit_evaluation_parity(
 
     # Both tasks are assigned by the teacher, one per turn.
     for i, task_id in enumerate((by_turn, by_submit)):
+        label = await task_label(db, learner, seeded_domain.topic_id, session_id, task_id)
         fake_llm.push(
             "teacher",
             TeacherOutput(
-                reply_text="Try this task.", pedagogical_move="assign_task", assign_task_id=task_id
+                reply_text="Try this task.", pedagogical_move="assign_task", assign_task_label=label
             ),
         )
         await _turn(client, auth_headers, session_id, f"parity-assign-{kind}-{i}", "Next one?")

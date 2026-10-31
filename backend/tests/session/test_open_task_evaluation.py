@@ -19,7 +19,7 @@ from quack.graph.projector import run_projector_batch
 from quack.practice.schemas import EvaluatorOutput, RubricItemCheck
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain, _task_generated
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -101,7 +101,7 @@ async def test_open_task_evaluated_via_llm_teacher_fields(
         TeacherOutput(
             reply_text="Great explanation!",
             pedagogical_move="give_feedback",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 
