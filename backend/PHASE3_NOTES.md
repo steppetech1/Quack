@@ -287,6 +287,17 @@ formatted, `pyright` — 0 errors. `pytest` в этом прогоне не за
 таблица `ops.turn_manifests` — поля по §6.1 и WP14.2, D-B-003) — владелец `quack/db`,
 `migrations/` не назван в §7.3, см. сигнал; заполнение `ScriptedLLMProvider` по S12 — C (S9).
 
+#### Красные прогоны потока B
+
+| WP | Команда | Итог |
+| :-- | :-- | :-- |
+| WP5.7 (препроцессор), WP14.1, §4.4 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_llm_runtime.py tests/llm/test_labels.py tests/session/test_phase3_hot_path.py` (ветка `phase-3-b-first-red`) | 46 failed, 0 passed: `T-L9` (11), `T-M1` (3), `T-H3` (32) — все `NotImplementedError` |
+
+`T-L9` здесь — только структура схемы. Часть «минимальный экземпляр проходит `jsonschema` и
+`model_validate_json`» ждёт генератора `meta-mock` (WP10.3, C) и D-B-004. `T-H2` (WP6.2)
+пишется в начале WP6.2: ему нужно одно приложение, где ход и `submit` идут через подменённые
+шлюз и compute.
+
 ### D-B-004. SDK OpenAI и `jsonschema` не входят в зависимости
 - Класс: D
 - WP / место: WP5.7 (адаптер `ResponsesClient` поверх `AsyncOpenAI`, `Т-§11.5`), `T-L8`,
