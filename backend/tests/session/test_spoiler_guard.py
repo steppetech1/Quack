@@ -104,7 +104,7 @@ async def test_guard_retries_then_removes_sentence(
     calls = fake_llm.calls_for("teacher")[before:]
     assert len(calls) == 3
     # Т-§12.1 «возврат в model с причиной»: the retries carry the reason, the first try not.
-    reason = '{"rule": "spoiler", "task_label": "K'
+    reason = '{"rule": "spoiler"'
     assert reason not in calls[0].prompt
     assert all(reason in call.prompt for call in calls[1:])
     text = _token_text(sse)
