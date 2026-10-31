@@ -752,6 +752,23 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Требует подтверждения владельцем: п.1 — нет, **2026-11-01 решено исполнителем по поручению
   владельца**: признак `ТЗ-П2` «подсказка высшей ступени», события `solution.requested`
   (`Т-§2.2`) в коде нет. П.4 — блок `{{ guard_reason }}` в `teacher@1` пишет владелец (промпты).
+### D-B-020. WP14.2: значения полей манифеста хода
+- Класс: C
+- WP / место: WP14.2; `quack/session/manifest.py`, `quack/session/turns.py`
+- Решение: строка пишется в транзакции `append_events` хода, после события. Типы
+  `TurnManifest` приведены к колонкам миграции `0002_phase3` (версии — числа `N` из
+  `name@N`). `prompt_version` — `TEACHER_PROMPT_VERSION` (1); `renderer_version` — номер
+  `RENDERER_VERSION` (`renderer@1`, D-B-002): другой версии отрисовки контекста учителя в
+  Фазе 3 нет. `role` — `teacher_fallback`, если ответ дал запасной, иначе `teacher` (и при
+  детерминированной деградации); `model` — модель этой роли; `reasoning_effort` — уровень этой
+  роли (WP6.5); `projected_seq` — `applied_seq` среза; `overlay_seqs` — `seq` событий
+  наложения; `label_table` — `LabelMap.table()`; `degraded_mode` — итог хода.
+- В красном коммите `T-M4` ждал `degraded_mode = None`; в фикстуре проектор не применил
+  `session.started`, ход честно идёт в `projector_lag`. Ожидание исправлено до зелёного
+  коммита: манифест равен `turn_completed.degraded_mode` (проверка не слабее — точное
+  совпадение с итогом хода).
+- Тесты: `T-M4` (`tests/llm/test_labels.py`).
+- Требует подтверждения владельцем: нет
 
 ### Поток C
 
@@ -1113,6 +1130,7 @@ _(пусто)_
 | WP12 (часть 1) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/graph` (коммит `d9951df`) | 26 failed, 1 passed: `NotImplementedError` в `assign_tier`/`evidence_weight`/`to_extracted_element`; проектор падает на v2 (`TurnExtractedV2` без `observations`) |
 | WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
 | WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
+| WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
 
 ## Правки тестов
 

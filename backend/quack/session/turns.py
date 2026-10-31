@@ -40,8 +40,10 @@ from quack.practice.evaluation import (
     task_from_row,
 )
 from quack.practice.selection import pick_task
+from quack.session.checkpoint_render import RENDERER_VERSION
 from quack.session.context import build_turn_context
 from quack.session.locks import acquire_turn_lock
+from quack.session.manifest import TurnManifest, write_turn_manifest
 from quack.session.schemas import TeacherOutput, TurnRequest
 from quack.session.spoiler_guard import find_spoiler, guarded_tasks, remove_spoiler_sentences
 from quack.session.tasks import assigned_task_ids_from_overlay, solved_families_from_overlay
@@ -79,6 +81,10 @@ def degraded_reply_text(task: TaskToCheck | None) -> str:
         "The tutor is temporarily limited right now, so let's practise with a ready task:\n\n"
         f"{task.prompt_text}"
     )
+
+
+# `teacher@N` of the turn (Т-§11.6); also written to the turn manifest (WP14.2).
+TEACHER_PROMPT_VERSION = 1
 
 
 async def get_available_tasks(
@@ -457,7 +463,7 @@ async def open_turn(
             key = teacher_key if role == "teacher" else f"{teacher_key}:fallback"
             result = await gateway.generate_structured(
                 role=role,
-                prompt_version=1,
+                prompt_version=TEACHER_PROMPT_VERSION,
                 response_model=TeacherOutput,
                 # WP15: a retry carries the reason of the guard as data.
                 variables={
@@ -692,6 +698,31 @@ async def open_turn(
             )
             student_stored = next(e for e in stored_events if e.type == "turn.student_replied")
             teacher_stored = next(e for e in stored_events if e.type == "turn.teacher_replied")
+            # WP14.2 (Т-§3.2): the manifest goes in the same transaction as the reply.
+            manifest_role: Literal["teacher", "teacher_fallback"] = (
+                "teacher_fallback" if used_fallback else "teacher"
+            )
+            await write_turn_manifest(
+                session,
+                TurnManifest(
+                    turn_id=turn_id,
+                    learner_id=learner_id,
+                    session_id=session_id,
+                    prompt_version=TEACHER_PROMPT_VERSION,
+                    renderer_version=int(RENDERER_VERSION.rsplit("@", 1)[1]),
+                    role=manifest_role,
+                    model=settings.model_for_role(manifest_role),
+                    reasoning_effort=teacher_reasoning_effort(
+                        role=manifest_role,
+                        is_first_turn=prev_turn_index < 0,
+                        session_evaluations=evaluations,
+                    ),
+                    projected_seq=context.applied_seq,
+                    overlay_seqs=[event.seq for event in context.overlay.events],
+                    label_table=labels.table(),
+                    degraded_mode=degraded_mode,
+                ),
+            )
 
             await enqueue_job(
                 session,
