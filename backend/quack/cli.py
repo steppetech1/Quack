@@ -22,12 +22,17 @@ from quack.graph.ids import CURRENT_RULES_VERSION
 from quack.graph.neo4j_store import find_learners_with_rules
 from quack.graph.rebuild import rebuild_learner
 from quack.graph.worker import ProjectorWorker
-from quack.jobs.kinds import session_sweep_inactive
-from quack.jobs.queue import enqueue_job
+from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.runner import JobRunner
 from quack.logging import configure_logging, get_logger
 from quack.ops.commands import migrate, purge_deleted, replay_dlq
-from quack.runtime import close_job_context, create_job_context, register_all_handlers
+from quack.runtime import (
+    JobHandlersMismatchError,
+    check_handlers_complete,
+    close_job_context,
+    create_job_context,
+    register_all_handlers,
+)
 
 log = get_logger(__name__)
 
@@ -82,25 +87,19 @@ async def _with_resources[T](
         await engine.dispose()
 
 
-async def _schedule_sweep(settings: Settings, session_factory, stop: asyncio.Event) -> None:
-    """Periodically enqueue the coalesced session.sweep_inactive job (spec §7)."""
-    interval = max(60.0, settings.session_inactivity_timeout_min * 60 / 6)
-    while not stop.is_set():
-        try:
-            async with session_factory() as session, session.begin():
-                await enqueue_job(session, session_sweep_inactive())
-        except Exception as exc:
-            log.warning("sweep_schedule_failed", error=repr(exc))
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=interval)
-
-
 async def _worker(settings: Settings) -> int:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, stop.set)
+
+    handlers = register_all_handlers()
+    try:
+        check_handlers_complete(handlers)
+    except JobHandlersMismatchError as exc:
+        log.error("job_handlers_mismatch", missing=exc.missing, extra=exc.extra)
+        return 1
 
     context = await create_job_context(settings)
     try:
@@ -119,14 +118,14 @@ async def _worker(settings: Settings) -> int:
             settings,
             context.session_factory,
             worker_id,
-            handlers=register_all_handlers(),
+            handlers=handlers,
             context=context,
         )
         log.info("worker_started", worker_id=worker_id)
         await asyncio.gather(
             projector.run_forever(stop),
             runner.run_forever(stop),
-            _schedule_sweep(settings, context.session_factory, stop),
+            PeriodicScheduler(settings, context.session_factory).run_forever(stop),
         )
         return 0
     finally:
