@@ -1299,6 +1299,24 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
 - Требует подтверждения владельцем: нет
 
+### D-C-024. §2.3 п.8, R4: ID моделей и имена `META_API_*` в `Settings`
+- Класс: B
+- WP / место: §2.3 п.8, R4, §6.2; `quack/config.py`, `quack/api/resources.py`, `quack/artifacts/deps.py`, `quack/domains/curation.py`
+- Контекст: в `Settings` были два набора полей: `llm_api_key`/`llm_api_base_url` (env `LLM_API_*`) и
+  `meta_api_key`/`meta_api_base_url` (блок B, env `META_API_*` с запасными `LLM_API_*`). Код A
+  (`quack/runtime`) и B (`session/workers.py`) читает старые поля: при одном `META_API_KEY` в env они
+  получали бы пустой ключ. Модели по умолчанию — условные `muse-wonder`/`muse-spark`.
+- Варианты: (1) старые поля удалить, оставить их имена свойствами над `meta_api_*`, читателей C
+  перевести на новые имена; (2) править файлы A и B (нет среди исключений §7.3).
+- Решение: (1). `llm_default_model = muse-spark-1.3`, `llm_role_models` = `teacher: muse-wonder-1.0`,
+  `teacher_fallback: muse-spark-1.3` (распределение ролей то же). Прод требует `META_API_KEY`;
+  маскируется `meta_api_key`. A и B переходят на `meta_api_*` в своих файлах, после чего свойства
+  удаляются. `.env.example` (только новые имена, WP5.7) — у B.
+- Почему: §2.3 п.8, R4, §0.4.3 п.2.
+- Обратимость: два свойства и значения по умолчанию в `config.py`.
+- Тесты: `tests/test_settings_meta_api.py` (4).
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
