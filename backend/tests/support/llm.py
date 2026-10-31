@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,7 +16,7 @@ from typing import Any
 import orjson
 from pydantic import BaseModel
 
-from quack.llm.errors import ProviderUnavailableError
+from quack.llm.errors import ProviderRateLimitedError, ProviderUnavailableError
 from quack.llm.provider import ProviderRequest, ProviderResponse
 
 type QueuedLLMItem = dict[str, Any] | BaseModel | str | Exception
@@ -89,28 +90,166 @@ class ScriptedFailure:
     remaining_share: float | None = None
 
 
+# Failure kinds the Phase 2 provider interface can express; the rest arrive with the
+# Responses API provider interface (WP5.7, seam S12, stream B).
+SUPPORTED_FAILURES = frozenset({"unavailable", "rate_limited", "invalid_json"})
+
+
+def _default_responses() -> dict[str, QueuedLLMItem]:
+    """Valid, data-agnostic answers for the nine output schemas of Phase 2 (§8.1)."""
+    return {
+        "StructurerOutput": {
+            "topics": [
+                {"slug": "basics", "name": "Basics", "description": "Starting point"},
+                {"slug": "next", "name": "Next steps", "description": "Builds on basics"},
+            ],
+            "skills": [
+                {"slug": "basics-1", "topic_slug": "basics", "name": "Core idea"},
+                {"slug": "next-1", "topic_slug": "next", "name": "Applying the idea"},
+            ],
+            "prereqs": [{"from_topic_slug": "basics", "to_topic_slug": "next"}],
+            "skill_deps": [],
+            "misconceptions": [],
+        },
+        "DiagnosticOutput": {
+            "prompt_text": "Which option is right?",
+            "options": ["A", "B", "C"],
+            "correct_answer": "A",
+            "is_correct": True,
+            "score": 1.0,
+            "tested_depth": 0.5,
+        },
+        "CuratorOutput": {
+            "promotions": [],
+            "skill_merges": [],
+            "topic_merges": [],
+            "misconception_merges": [],
+        },
+        "TeacherOutput": {
+            "reply_text": "Let us practise this step by step.",
+            "pedagogical_move": "assign_task",
+        },
+        "ExtractorOutput": {"observations": [], "misconceptions": []},
+        "CheckpointerOutput": {
+            "rolling_summary": "The learner practised the topic.",
+            "open_threads": [],
+            "key_observations": [],
+        },
+        "TaskGenOutput": {
+            "family_id": "scripted-family",
+            "difficulty": 0.5,
+            "prompt_text": "Pick the right option.",
+            "reference_solution": {"option": "A", "answer": "A", "options": ["A", "B"]},
+        },
+        "EvaluatorOutput": {
+            "is_correct": True,
+            "score": 1.0,
+            "feedback": "Correct.",
+            "skill_scores": [],
+        },
+        "ArtifactGenOutput": {"title": "Notes", "text": "# Notes\n\nScripted text."},
+    }
+
+
+def _content(item: QueuedLLMItem) -> str:
+    if isinstance(item, Exception):
+        raise item
+    if isinstance(item, BaseModel):
+        return item.model_dump_json()
+    if isinstance(item, dict):
+        return orjson.dumps(item).decode()
+    return item
+
+
+@dataclass
+class Hold:
+    arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+
 @dataclass
 class ScriptedLLMProvider:
     """`LLMProvider` answering by `request.schema_name` with default responders for all
-    output schemas, a call journal and failure injection by model or schema (§8.1)."""
+    output schemas, a call journal and failure injection by model or schema (§8.1).
+
+    Background jobs in e2e tests run concurrently, so the answer never depends on the call
+    order. A schema without a responder fails the test loudly."""
 
     responders: dict[str, Responder] = field(default_factory=dict)
     failures: list[ScriptedFailure] = field(default_factory=list)
     calls: list[ProviderRequest] = field(default_factory=list)
+    gates: dict[str, Hold] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for schema_name, item in _default_responses().items():
+            self.responders.setdefault(schema_name, lambda _request, item=item: item)
 
     def respond(self, schema_name: str, responder: Responder) -> None:
         """Override the default responder of one schema."""
-        raise NotImplementedError
+        self.responders[schema_name] = responder
+
+    def hold(self, schema_name: str) -> Hold:
+        """Calls of `schema_name` wait until `release` is set; `arrived` is set when the first
+        held call reaches the gate (race tests)."""
+        gate = self.gates[schema_name] = Hold()
+        return gate
 
     def fail(self, failure: ScriptedFailure) -> None:
         """Inject a failure for matching calls."""
-        raise NotImplementedError
+        if failure.kind not in SUPPORTED_FAILURES:
+            raise NotImplementedError(
+                f"failure kind {failure.kind!r} needs the provider interface of WP5.7 (S12)"
+            )
+        self.failures.append(failure)
 
     def calls_for(
         self, *, model: str | None = None, schema_name: str | None = None
     ) -> list[ProviderRequest]:
         """Journal of calls filtered by model and/or schema."""
-        raise NotImplementedError
+        return [
+            c
+            for c in self.calls
+            if (model is None or c.model == model)
+            and (schema_name is None or c.schema_name == schema_name)
+        ]
+
+    def _take_failure(self, request: ProviderRequest) -> ScriptedFailure | None:
+        for failure in self.failures:
+            if failure.times <= 0:
+                continue
+            if failure.model not in (None, request.model):
+                continue
+            if failure.schema_name not in (None, request.schema_name):
+                continue
+            failure.times -= 1
+            return failure
+        return None
 
     async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
-        raise NotImplementedError
+        self.calls.append(request)
+        gate = self.gates.get(request.schema_name)
+        if gate is not None:
+            gate.arrived.set()
+            await gate.release.wait()
+        failure = self._take_failure(request)
+        if failure is not None:
+            if failure.kind == "unavailable":
+                raise ProviderUnavailableError("scripted: unavailable")
+            if failure.kind == "rate_limited":
+                retry = float(failure.retry_after) if failure.retry_after else None
+                raise ProviderRateLimitedError(retry)
+            content = "{not json"
+        else:
+            responder = self.responders.get(request.schema_name)
+            if responder is None:
+                raise AssertionError(
+                    f"ScriptedLLMProvider: no responder for {request.schema_name!r}"
+                )
+            content = _content(responder(request))
+        return ProviderResponse(
+            content=content,
+            input_tokens=100,
+            output_tokens=40,
+            cached_tokens=0,
+            model=request.model,
+        )
