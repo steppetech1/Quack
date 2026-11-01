@@ -1811,6 +1811,24 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/domains/test_propose_idempotency.py`, `T-E2`.
 - Требует подтверждения владельцем: да (класс C) → **подтверждено 2026-11-01** исполнителем по поручению владельца: `Т-§2.3` «ключи событий от кода и агентов выводятся из источника», `Т-§2.1` — конфликт по хэшу нагрузки; схема `structure.proposed` не меняется (§0.4.4 п.2). Q9 закрыт
 
+### D-C-026. Стенд e2e: время планировщика и очереди двигается вместе (T-E10)
+- Класс: C
+- WP / место: WP10.2 (`T-E10`); `tests/e2e/system.py::System.advance_time`, запуск `PeriodicScheduler`
+- Контекст: `PeriodicScheduler` (WP3.3, A) берёт время из подменяемых часов и ставит `run_after`
+  на начало следующего интервала, а `JobRunner` берёт задачи по `now()` базы. Сдвиг одних часов
+  стенда не делает задачу `account.purge_deleted` готовой: она ждёт реального времени.
+- Варианты (с уровнями §0.4.1): (а) уменьшить `purge_deleted_interval_s` на стенде до секунды —
+  очистка идёт во всех тестах стенда, `settle` ловит задачи, которые появляются каждую секунду;
+  (б) ставить задачу очистки в тесте руками — `T-E10` перестаёт проверять планировщик;
+  (в) часы для `JobRunner` — правка зоны A; (г) `System.advance_time(s)`: сдвигает часы
+  планировщика и `run_after` ждущих задач на `s`.
+- Решение: (г). Стенд запускает `PeriodicScheduler` с `clock=System.clock` вместе с проектором
+  и `JobRunner`; `T-E10` зовёт `await system.advance_time(purge_deleted_interval_s)`.
+- Почему: `T-E10` проверяет путь «удаление → планировщик → обработчик → purged» без правки
+  кода A и без лишних задач в остальных тестах.
+- Обратимость: только стенд `tests/e2e`.
+- Тесты: `T-E10`.
+- Требует подтверждения владельцем: нет (стенд тестов)
 ### D-C-027. Повтор запроса с занятым ключом: ключ сверяется раньше проверки запроса (T-E2)
 - Класс: C
 - WP / место: WP10.2 (`T-E2`); `quack/domains/structure.py` (`confirm_structure`, `edit_structure`),
@@ -1841,6 +1859,24 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `tests/artifacts/test_practice_engine.py` (`tasks/next`, `hint`, `submit`),
   `tests/artifacts/test_artifacts_search_export.py::test_notes_crud`, `T-E2`.
 - Требует подтверждения владельцем: нет (поведение задано `T-E2`; выбор только в способе)
+### D-C-028. Стенд e2e: обход T-E2 — с поднятым `learner_actions_per_min` и `settle()` после каждого шага
+- Класс: C
+- WP / место: WP10.2 (`T-E2`); `tests/e2e/conftest.py::system_for_walk`,
+  `tests/e2e/test_isolation_and_idempotency.py::_advance`
+- Контекст: обход шлёт каждый изменяющий запрос три раза от одного ученика — больше 60 в минуту,
+  и `sessions/{id}/finish` получал 429. После шагов `turns` и `sessions/{id}/finish` фоновые задачи
+  дописывали события между замерами «до» и «после повтора» (падение примерно раз на 4 прогона).
+- Варианты (с уровнями §0.4.1): (а) поднять лимит для всего стенда — остальные тесты теряют
+  боевой лимит; (б) несколько учеников в обходе — шаги зависят от id предыдущих; (в) фикстура
+  `system_for_walk` с `learner_actions_per_min = 1000` только для `T-E2` и `settle()` после первого
+  запроса каждого шага, до замера «до».
+- Решение: (в).
+- Почему: `T-E2` проверяет идемпотентность, а не лимит (лимит — `T-A4`/`T-A5`); утверждения теста
+  не меняются.
+- Обратимость: только стенд `tests/e2e`.
+- Тесты: `T-E2`.
+- Требует подтверждения владельцем: нет (стенд тестов)
+
 ### D-C-029. T-O5: `CheckpointerOutput` заменён на `ExtractorOutputV2`
 - Класс: C
 - WP / место: WP10.3 (`T-O5`); `tests/test_meta_mock.py::OUTPUT_MODELS`,
@@ -1939,6 +1975,7 @@ _(пусто)_
 | WP6.4 (C: `diagnostic`, `finish_artifacts`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py tests/artifacts/test_artifacts_search_export.py` (коммит `edd0bf9`) | 2 failed: ответ `diagnostic@1` с верным вариантом вне вариантов записан в банк (`actor = diagnostic@1`); обработчик `session.finish_artifacts` берёт `session_id` из lock key (`badly formed hexadecimal UUID string`) |
 | WP14.1 (`T-M2`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py -k unknown_label_returns` (коммит `7359037`) | 2 failed: один вызов учителя вместо двух — повтора с ошибкой метки нет |
 | WP5.7 (`meta_smoke.py`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_meta_smoke.py` (коммит `6fe79a3`) | 2 failed: в скрипте нет `smoke_calls` / `run_smoke` |
+| WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
 | WP10.2 (`confirm`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `1b209a3`) | 1 failed: тот же ключ с другой `structure_version` → 422 `VALIDATION_ERROR` (проверка версии раньше ключа), ждали 409 |
 | WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
 | WP10.2 (`diagnostic/finish`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py -k same_key_other_session` (коммит `619219c`) | 1 failed: тот же ключ с другим `session_id` → 404 `NOT_FOUND` (сессия ищется раньше ключа), ждали 409 |
@@ -1948,6 +1985,15 @@ _(пусто)_
 | WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
 | D-B-028 (порядок блокировок) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_lock_order.py` (коммит `325e6e6`) | 1 failed: `DeadlockDetectedError` — `finish_session` держит строку сессии и ждёт `learner_seq` |
 | WP14.1 (C: дайджест, `T-M3`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k names_not_ids` (коммит `b87d596`) | 1 failed: в запросе `artifacts@1` (mode digest) `covered_skill_ids` и `task_id` — UUID; найдено потоком B на стенде (`T-M3`, ветка `phase-3-b-e2e-llm-seams`) |
+| WP10.2 (стенд на `phase-3` после WP1, WP2, WP3.1–3.4, WP4, WP6.2) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed. Падают: `T-E1`, `T-E5` — `turn.extract` идёт мимо `ScriptedLLMProvider`: `quack/session/workers.py` строит свой шлюз (`_worker_resources`), а не берёт `JobContext.llm` (WP2.1, A/B); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200 (Q9); `T-E10` — нет обработчика `account.purge_deleted` и планировщика (A, WP3.3). Стенд: обработчики — `quack.runtime.register_all_handlers`, один `JobContext` над ресурсами стенда, `create_app(resources=)`. Побочно: кэш `_worker_resources` по `id(settings)` переносит открытый размыкатель из e2e в `tests/session/test_session_checkpoint_worker.py` при полном прогоне (уйдёт с WP2.1) |
+| WP10.2 (стенд + `phase-3-b-workers-jobcontext`, WP2.1 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q` (ветка `phase-3-c-e2e-red`) | 3 failed, 598 passed. `T-E5` зелёный; размыкатель между тестами не переносится. Падают: `T-E1` — `turn.extract` без `required_seq`, задачи ставит не диспетчер (A, WP11); `T-E2` — Q9; `T-E10` — WP3.3 (A) |
+| WP10.2 (стенд на `phase-3` 6cefd3e, после #38/#40 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed → после правки стенда 3 failed, 7 passed. `T-E5` упал: обработчик зовёт модель со схемой `ExtractorOutputV2` (D-B-022), стенд сбивал `ExtractorOutput`; стенд переведён на `ExtractorOutputV2`. Красные: `T-E1` (WP11, A), `T-E2` (#37), `T-E10` (#34, A) |
+| WP10.2 (стенд на `phase-3` 320df09, после #31, #34, #37) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 3 failed, 7 passed → со стендом на `PeriodicScheduler` и `advance_time` (D-C-026) 2 failed, 8 passed. `T-E10` зелёный. Красные: `T-E1` — `turn.extract` без `required_seq` (WP11, A); `T-E2` — `structure/confirm` с тем же ключом и другой `structure_version` → 422 раньше проверки ключа (C, `domains/structure.py`) |
+| WP10.2 (стенд + `phase-3-c-confirm-409`, D-C-027, D-C-028) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | шаги `T-E2` по очереди: `confirm` 422, `PATCH structure` 409 на точный повтор, `diagnostic/finish` 404, `tasks/next`/`hint`/заметки 200 на другое тело, `sessions/{id}/finish` 429 (лимит) — исправлены; `T-E2` зелёный. Красный: `T-E1` — `turn.extract` без `required_seq` (WP11, A) |
+| WP10.2 (стенд на `phase-3` 1d68c57 + #44; локально с #46 A) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | с #46 стенд не стартовал (`JobRunner` got multiple values for `context`: поле `context` встало перед `handlers`) → стенд передаёт `handlers=` по имени; 1 failed, 9 passed. Красный: `T-E1` (WP11, A) |
+| WP14.1 (`T-M3`), WP5.3 (`T-Q10`, сверка вызовов) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e/test_llm_seams_e2e.py` (коммит `464d6da`, ветка `phase-3-b-e2e-llm-seams` поверх стенда `phase-3-c-e2e-red`) | 1 failed, 1 passed: `T-M3` — в запросе `artifacts@1` (сводка сессии, `quack/artifacts/cheatsheets.py`: `covered_skill_ids`, `task_id`) есть UUID (**дефект C**); сверка `KIND_LLM_ROLES` с вызовами обработчиков — зелёная |
+| WP10.2 (стенд + #54 C + `phase-3-b-e2e-llm-seams` B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | `T-M3` зелёный после #54. Плавающее падение (примерно 1 прогон из 2–6) любого теста с `finish_session` на фоне: `DeadlockDetectedError` — `finish_session` (`session/lifecycle.py`) держит `core.sessions FOR UPDATE` и затем берёт `core.learner_seq FOR UPDATE` в `append_events`; фоновая запись берёт `learner_seq`, затем проекция обновляет ту же строку `core.sessions`. Встречный порядок блокировок, зона B. Красный всегда: `T-E1` (WP11, A) |
+| WP10.2 (стенд на `phase-3` ea2a8e0, после #56 B — порядок блокировок `finish_session`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` ×6 (ветка `phase-3-c-e2e-red`) | 6 из 6: 1 failed, 12 passed, дедлоков нет. Красный только `T-E1` (WP11, A) |
 
 ## Правки тестов
 
@@ -1981,6 +2027,7 @@ _(пусто)_
 | Q5 | Склейка `artifact.refresh_cheatsheet` теряет `session_id` | O6 |
 | Q6 | Прод: `JWT_SECRET` не короче 32 байт (dev-секрет 20 байт) | STREAM3_NOTES §2 |
 | Q8 | ~~DoD п.3: `T-E4`, `T-E6`, `T-E7`, `T-E9` зелёные до реализации~~ — закрыто: D-C-012 | D-C-012 |
+| Q9 | `T-E2` ждёт 409 на `structure/propose` с тем же ключом и другим телом. По Т-§ «Идемпотентность» конфликт — по хэшу нагрузки события; нагрузка `structure.proposed` — ответ структуратора, который шлюз берёт из `core.llm_outbox` по тому же ключу, поэтому другое тело даёт ту же нагрузку и 200. Варианты: (а) добавить в нагрузку `structure.proposed` поля запроса (`goals`, `background`, `focus_areas`) — расширение схемы события; (б) хранить хэш входа в outbox и отдавать конфликт из шлюза (зона B); (в) исключить `propose` из проверки 409 в `T-E2` с причиной | T-E2, WP10.2 |
 | Q7 | ~~Подтвердить: токен ученика без строки `auth.users` → 401, тест потока 2 меняется~~ — закрыто 2026-10-31: решение передано исполнителю, принят вариант (1) | D-C-004 |
 | Q10 | ~~Проверенные промпты владельца для `structurer`, `curator`, `artifacts`~~ — закрыто 2026-11-01: в Фазе 3 контракты и правила трёх ролей не меняются; часть 1 пакета описывает входы следующих фаз (материалы, кандидаты из эмбеддингов, карточки) и не переносится — D-B-029 | D-B-029 |
 

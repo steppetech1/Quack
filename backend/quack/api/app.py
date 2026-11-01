@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import structlog
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -131,6 +132,11 @@ def create_app(
     keep ownership of them; `None` builds them in the lifespan and closes them on shutdown."""
     settings = settings or get_settings()
     configure_logging(settings.log_level, settings.secret_values())
+    # Д-§9.1: Uvicorn worker processes (`api_workers > 1`) call this factory themselves and do
+    # not inherit the CLI's contextvars; the role comes from `PROCESS_ROLE` in the environment.
+    structlog.contextvars.bind_contextvars(
+        process=settings.process_role, version=settings.quack_version
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

@@ -540,3 +540,17 @@ def test_turn_stream_documents_status_after_turn_started() -> None:
     assert all(p >= 0 for p in positions), schema["description"]
     assert positions == sorted(positions), schema["description"]
     assert '{"state": "thinking"}' in schema["description"]
+
+
+def test_create_app_binds_process_and_version(settings: Settings) -> None:
+    """WP8.1 (Д-§9.1): Uvicorn worker processes (`api_workers > 1`) build the app themselves and
+    do not inherit the CLI's contextvars; `create_app` binds `process` and `version` itself."""
+    import structlog
+
+    structlog.contextvars.unbind_contextvars("process", "version")
+    try:
+        create_app(settings.model_copy(update={"process_role": "api", "quack_version": "4.5.6"}))
+        bound = structlog.contextvars.get_contextvars()
+        assert (bound.get("process"), bound.get("version")) == ("api", "4.5.6")
+    finally:
+        structlog.contextvars.unbind_contextvars("process", "version")
