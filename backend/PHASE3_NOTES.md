@@ -448,6 +448,44 @@ UTC-времени эпохи. Склейка по `coalesce_key` держит �
   запись `_no_graph_effect` в `graph/phase_a.HANDLERS`. Проверка — `ops.registry.registry_gaps()`:
   новая пара без обработчика проектора или без правила и пометки даёт строку, `T-O6` падает.
 
+### D-A-015. WP9: образы, compose, CI
+
+Класс B, два места класса C (последние пункты).
+
+- `backend/Dockerfile` (`quack-backend`): сборка на `ghcr.io/astral-sh/uv:0.9.5-python3.12-bookworm-slim`,
+  `uv sync --frozen --no-default-groups` (без `dev` и `loadtest`), запуск на
+  `python:3.12-slim-bookworm` под пользователем `quack` (uid 10001), `ENTRYPOINT python -m
+  quack.cli`. При сборке — `ops event-registry --out /app/event_registry.json`. В образ входит
+  `loadtest/` (для `meta-mock`; `locust` не ставится). `compute/Dockerfile` (`quack-compute`) — так
+  же, `uv sync --frozen --no-dev`, Uvicorn на 8001. `.dockerignore` — `.venv`, кэши, `.env*`
+  (кроме `.env.example`), тесты.
+- `compose.yaml` (корень): `postgres`, `neo4j` (`neo4j:${NEO4J_VERSION:-2026.06}-community` — версия
+  тестов), `redis` (без записи на диск), `migrate`, `api`, `projector`, `workers`, `compute`;
+  профиль `loadtest` — `meta-mock` (`uvicorn --factory loadtest.meta_mock:app_from_env`, порт 8080,
+  `depends_on … service_started, required: false`). Сеть `backend` — `internal: true` у всех,
+  `egress` — у `api` и `workers`; портов нет. Явный `environment:` у каждого: у `projector` и
+  `compute` нет `META_API_KEY`, у `compute` нет переменных баз. Лимиты, `memswap_limit = 1,25 ×`,
+  `stop_grace_period` (api 35 с, workers 25 с, projector 15 с, compute 10 с), память Neo4j и
+  Postgres — по Д-§4.1. `compose.override.yaml` публикует базы и API на 127.0.0.1 (через сеть
+  `local`: сервис только во `internal` порт публиковать не может).
+- `.github/workflows/ci.yml`: `pull_request` и `push` в `main`, `permissions: contents: read`,
+  actions по SHA (тег — в комментарии), джобы `backend` (Postgres 16, Neo4j, Redis сервисами,
+  `QUACK_TEST_REQUIRE_INFRA=1`), `compute`, `images` (сборка обоих образов под `linux/amd64` без
+  публикации). Прогон самого CI на GitHub — после слияния (на PR в `phase-3` он тоже запустится).
+- **Проверено живым запуском** (`docker compose -f compose.yaml up --wait`, 2026-11-01): все
+  сервисы здоровы, `migrate` завершился, `ops seed-learners` → токен проходит `/v1/auth/me`,
+  `ops status` — все зависимости `ok`, лаг проектора и диспетчера 0; `meta-mock` отвечает 400 на
+  `temperature`; SIGTERM — `api`, `projector`, `workers` выходят с кодом 0. Образы собирались под
+  arm64 (машина разработчика); `linux/amd64` собирает CI.
+- **Класс C — платформа.** `linux/amd64` задаётся в CI (`platforms:`), а не в `FROM --platform`:
+  иначе локальная сборка на Apple Silicon шла бы через эмуляцию (Д-§5.1 «НА ОБСУЖДЕНИИ: arm64»).
+- **Класс C — память Neo4j.** Значения Д-§4.1 (куча 1,5 ГБ, page cache 1,25 ГБ, лимит 4 ГБ) — по
+  умолчанию; переменные `NEO4J_HEAP`, `NEO4J_PAGECACHE`, `NEO4J_TX_MAX`, `NEO4J_MEM_LIMIT`,
+  `NEO4J_MEMSWAP_LIMIT` позволяют поднять стек на машине с ~4 ГБ у Docker (с прод-значениями
+  Neo4j там падает по OOM — проверено).
+- `ops seed-learners` в compose запускается в `api`: токены подписываются `JWT_SECRET`, а он по
+  Д-§7 есть только у `api`.
+
 ### D-A-012. WP8.6: `ops seed-learners`
 
 Класс B. `quack/ops/seed.py::seed_learners(session_factory, settings, *, count, fixture,

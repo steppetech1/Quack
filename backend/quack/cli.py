@@ -105,8 +105,6 @@ def build_parser() -> argparse.ArgumentParser:
 def _run_api(settings: Settings) -> int:
     import uvicorn
 
-    # Uvicorn worker processes build their own Settings: the role goes through the environment.
-    os.environ["PROCESS_ROLE"] = settings.process_role
     uvicorn.run(
         "quack.api.app:create_app",
         factory=True,
@@ -244,7 +242,11 @@ async def _rebuild(settings: Settings, args: argparse.Namespace) -> int:
 
 
 async def _seed_learners(settings: Settings, args: argparse.Namespace) -> int:
-    """WP8.6 (Д-§11): exit code 2 when refused on prod."""
+    """WP8.6 (Д-§11): exit code 2 when refused on prod or without JWT_SECRET (the `ops` role
+    requires no secrets, Д-§7; tokens signed with an empty key are useless)."""
+    if not settings.jwt_secret.get_secret_value():
+        log.error("seed_learners_refused", reason="JWT_SECRET is not set; run it in `api`")
+        return 2
     engine = create_engine(settings)
     try:
         learners = await seed_learners(
@@ -325,7 +327,10 @@ async def _ops(settings: Settings, args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = process_settings(get_settings(), PROCESS_ROLES[args.command])
+    role = PROCESS_ROLES[args.command]
+    # Settings validates the prod secrets of the role (Д-§7, ТЗ WP9.2): set it before reading.
+    os.environ["PROCESS_ROLE"] = role
+    settings = process_settings(get_settings(), role)
     configure_logging(settings.log_level, settings.secret_values())
     if args.command == "api":
         return _run_api(settings)

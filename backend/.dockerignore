@@ -1,0 +1,15 @@
+# WP9.1: no virtualenvs, caches, secrets or tests in the image.
+.venv
+**/__pycache__
+**/*.pyc
+.ruff_cache
+.pytest_cache
+.mypy_cache
+.env
+.env.*
+!.env.example
+tests
+docs
+*.md
+graphify-out
+loadtest/reports
