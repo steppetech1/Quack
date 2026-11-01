@@ -97,7 +97,7 @@ export function TopicLive({ id }: { id: string }) {
   const refreshCheat = async () => {
     setBusy(true);
     try {
-      await post(`/v1/topics/${id}/cheatsheet/refresh`, { idempotency_key: idem() });
+      await post(`/v1/topics/${id}/cheatsheet/refresh`, { domain_id: topic.domain_id });
       setError(null);
     } catch (e) {
       setError(errorText(e));

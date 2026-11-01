@@ -183,7 +183,7 @@ export function SessionLive({ id }: { id: string }) {
   const finish = async () => {
     setBusy(true);
     try {
-      const res = await post<S["FinishResponse"]>(`/v1/sessions/${id}/finish`, { idempotency_key: idem() });
+      const res = await post(`/v1/sessions/${id}/finish`, { idempotency_key: idem() });
       saveSummary(id, res);
       setActive(null);
       void reload();

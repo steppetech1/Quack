@@ -2,7 +2,7 @@ import { idem, post, type S } from "./client";
 
 /** Starting a session on the backend (it closes the previous active one) */
 export function startSession(body: { domain_id: string; topic_id?: string | null; mode?: "learn" | "practice" | "review"; goal?: string | null }) {
-  return post<S["SessionStarted"]>("/v1/sessions", { ...body, idempotency_key: idem() });
+  return post("/v1/sessions", { ...body, idempotency_key: idem() });
 }
 
 /** Session results for the summary screen: finish returns them once, the summary page reads them here */

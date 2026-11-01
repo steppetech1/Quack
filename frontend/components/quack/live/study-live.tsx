@@ -46,7 +46,7 @@ export function PracticeLive({ topicId }: { topicId: string }) {
   const started = useRef(false);
 
   const nextTask = async (c: { sessionId: string; turnId: string }) => {
-    const r = await post<S["NextTaskResponse"]>(`/v1/sessions/${c.sessionId}/tasks/next`, { topic_id: topicId, turn_id: c.turnId, idempotency_key: idem() });
+    const r = await post(`/v1/sessions/${c.sessionId}/tasks/next`, { topic_id: topicId, turn_id: c.turnId, idempotency_key: idem() });
     setTask({ task_id: r.task_id, prompt_text: r.prompt_text });
   };
 
@@ -83,7 +83,7 @@ export function PracticeLive({ topicId }: { topicId: string }) {
     if (!ctx || !task) return;
     setBusy(true);
     try {
-      const h = await post<S["HintResponse"]>(`/v1/sessions/${ctx.sessionId}/tasks/${task.task_id}/hint`, { turn_id: ctx.turnId, idempotency_key: idem() });
+      const h = await post(`/v1/sessions/${ctx.sessionId}/tasks/${task.task_id}/hint`, { turn_id: ctx.turnId, idempotency_key: idem() });
       setHints((x) => [...x, h]);
       setError(null);
     } catch (e) {
@@ -97,7 +97,7 @@ export function PracticeLive({ topicId }: { topicId: string }) {
     if (!ctx || !task) return;
     setBusy(true);
     try {
-      const r = await post<S["SubmitResponse"]>(`/v1/sessions/${ctx.sessionId}/tasks/${task.task_id}/submit`, {
+      const r = await post(`/v1/sessions/${ctx.sessionId}/tasks/${task.task_id}/submit`, {
         answer,
         turn_id: ctx.turnId,
         idempotency_key: idem(),

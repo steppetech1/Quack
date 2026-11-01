@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { API_MODE, del as apiDelete, idem } from "@/lib/api/client";
+import { API_MODE, del as apiDelete } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
@@ -454,7 +454,7 @@ function AccountTab() {
                     return;
                   }
                   // the backend tombstones the learner and purges the data later; the token stops working
-                  void apiDelete("/v1/learner", { idempotency_key: idem() }).then(logout, () => soon(tx.settings.deleteSoon));
+                  void apiDelete("/v1/learner").then(logout, () => soon(tx.settings.deleteSoon));
                 }}
                 className="h-10 rounded-control border border-st-confused px-4 text-body font-semibold text-st-confused transition-colors hover:bg-cloth-hover"
               >
