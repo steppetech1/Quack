@@ -147,6 +147,20 @@ def _markdown(title: str, sections: list[tuple[str, list[str]]]) -> str:
 # --- session.finish_artifacts ---------------------------------------------------------
 
 
+_SKILL_NAMES: LiteralString = (
+    "MATCH (s:Skill) WHERE s.learnerId = $l AND s.id IN $ids RETURN s.id AS id, s.name AS name"
+)
+
+
+async def _skill_names(deps: WorkerDeps, learner_id: UUID, skill_ids: list[str]) -> dict[str, str]:
+    """Names of the skills in the graph; a skill not projected yet has none."""
+    if not skill_ids:
+        return {}
+    async with read_session(deps.neo4j) as session:
+        result = await session.run(_SKILL_NAMES, {"l": str(learner_id), "ids": skill_ids})
+        return {str(r["id"]): str(r["name"]) async for r in result if r["name"]}
+
+
 async def _digest_event(
     deps: WorkerDeps,
     learner_id: UUID,
@@ -184,9 +198,12 @@ async def _digest_event(
         refs = p["skill_scores"] if r["type"] == "task.evaluated" else p["skills"]
         skill_ids.extend(ref["skill_id"] for ref in refs if ref.get("skill_id"))
     covered = list(dict.fromkeys(skill_ids))
+    # T-M3 (Т-§4.5): the model sees skill names and task numbers, never ids.
+    names = await _skill_names(deps, learner_id, covered)
+    skills = [names.get(sid) or f"Skill {i}" for i, sid in enumerate(covered, start=1)]
     tasks = [
-        {"task_id": p["task_id"], "is_correct": p["is_correct"], "score": p["score"]}
-        for p in evaluated
+        {"task": f"Task {i}", "is_correct": p["is_correct"], "score": p["score"]}
+        for i, p in enumerate(evaluated, start=1)
     ]
 
     output = await _generate(
@@ -197,7 +214,7 @@ async def _digest_event(
         {
             "mode": "digest",
             "title_context": DIGEST_TITLE,
-            "skills_summary_json": {"covered_skill_ids": covered, "evaluated_tasks": tasks},
+            "skills_summary_json": {"covered_skills": skills, "evaluated_tasks": tasks},
             "misconceptions_summary_json": [
                 m for p in evaluated for m in p.get("triggered_misconceptions", [])
             ],
@@ -210,11 +227,11 @@ async def _digest_event(
         text = _markdown(
             title,
             [
-                ("Covered skills", [f"- {s}" for s in covered]),
+                ("Covered skills", [f"- {s}" for s in skills]),
                 (
                     "Solved tasks",
                     [
-                        f"- {t['task_id']}: correct = {t['is_correct']}, score = {t['score']}"
+                        f"- {t['task']}: correct = {t['is_correct']}, score = {t['score']}"
                         for t in tasks
                     ],
                 ),
