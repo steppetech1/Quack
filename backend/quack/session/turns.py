@@ -19,8 +19,6 @@ from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.events.payloads import SkillRef, TaskEvaluated, TaskSubmitted
 from quack.graph.ids import QUACK_UUID_NS
-from quack.jobs import kinds
-from quack.jobs.queue import enqueue_job
 from quack.llm.errors import (
     LLMBudgetExceededError,
     LLMRateLimitedError,
@@ -231,8 +229,7 @@ async def open_turn(
             row = (
                 await session.execute(
                     text(
-                        "SELECT id, domain_id, topic_id, mode, status, "
-                        "last_turn_index, last_checkpoint_turn "
+                        "SELECT id, domain_id, topic_id, mode, status, last_turn_index "
                         "FROM core.sessions WHERE id = :id AND learner_id = :l"
                     ),
                     {"id": session_id, "l": learner_id},
@@ -244,7 +241,6 @@ async def open_turn(
             domain_id: UUID = row.domain_id
             topic_id: UUID | None = row.topic_id
             mode: str = str(row.mode)
-            session_last_checkpoint_turn = int(row.last_checkpoint_turn)
 
             # S-1: Check if this idempotency key was already used
             resumed_reply: tuple[int, int] | None = None
@@ -415,8 +411,6 @@ async def open_turn(
             session_id,
             before_seq=student_seq,
         )
-        last_checkpoint_turn = max(context.last_checkpoint_turn, session_last_checkpoint_turn)
-
         # 3. Available tasks for prompt (using overlay.assigned_task_ids and overlay.graph)
         assigned_task_ids = assigned_task_ids_from_overlay(context.overlay)
         solved_family_ids = solved_families_from_overlay(context.overlay)
@@ -729,7 +723,7 @@ async def open_turn(
             )
         )
 
-        # 6. Single transaction: append events, enqueue turn.extract & session.checkpoint
+        # 6. Single transaction: append events and the turn manifest
         async with resources.session_factory() as session, session.begin():
             stored_events = await append_events(
                 session,
@@ -764,33 +758,8 @@ async def open_turn(
                     degraded_mode=degraded_mode,
                 ),
             )
-
-            await enqueue_job(
-                session,
-                kinds.turn_extract(
-                    learner_id,
-                    session_id,
-                    {
-                        "session_id": str(session_id),
-                        "turn_id": str(turn_id),
-                        "student_seq": student_seq,
-                        "teacher_seq": teacher_stored.seq,
-                    },
-                ),
-            )
-
-            if (teacher_turn_index - last_checkpoint_turn) >= settings.checkpoint_every_turns:
-                await enqueue_job(
-                    session,
-                    kinds.session_checkpoint(
-                        learner_id,
-                        session_id,
-                        {
-                            "session_id": str(session_id),
-                            "up_to_turn_index": teacher_turn_index,
-                        },
-                    ),
-                )
+            # WP11.4: turn.extract and session.checkpoint are enqueued by the log dispatcher
+            # from turn.teacher_replied (quack/jobs/dispatcher_rules.py).
 
         # 7. Prepare SSE event sequence
         sse_events: list[tuple[str, dict[str, Any]]] = [

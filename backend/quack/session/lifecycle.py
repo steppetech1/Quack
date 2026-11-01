@@ -15,13 +15,12 @@ from quack.api.errors import ApiError
 from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.db.neo4j import cypher, read_session
-from quack.db.redis import create_redis, presence_key
+from quack.db.redis import presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
-from quack.jobs import kinds
-from quack.jobs.queue import ClaimedJob, enqueue_job
+from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.session.context import TURN_EVENT_TYPES, last_checkpoint
 from quack.session.schemas import (
@@ -439,7 +438,6 @@ async def finish_session(
             "duration_sec": max(0, round(float(row.duration_sec))),
         }
         domain_id: UUID = row.domain_id
-        topic_id: UUID | None = row.topic_id
         stored = await append_events(
             session,
             learner_id,
@@ -458,27 +456,8 @@ async def finish_session(
             redis=resources.redis,
         )
         end_seq = stored[-1].seq
-        await enqueue_job(
-            session,
-            kinds.session_finish_artifacts(
-                learner_id,
-                session_id,
-                # WP6.4 п.2: the payload of the seam `finish_session` → `session.finish_artifacts`.
-                {
-                    "session_id": str(session_id),
-                    "domain_id": str(domain_id),
-                    "topic_id": str(topic_id) if topic_id else None,
-                },
-            ),
-        )
-        await enqueue_job(
-            session,
-            kinds.graph_curate(
-                learner_id,
-                domain_id,
-                {"domain_id": str(domain_id)},
-            ),
-        )
+        # WP11.4: session.finish_artifacts and graph.curate are enqueued by the log
+        # dispatcher from session.completed (quack/jobs/dispatcher_rules.py).
 
     await _release_presence(resources.redis, learner_id, session_id)
     return FinishResponse(
@@ -526,12 +505,6 @@ async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
                 publish_wakeup=False,
             )
 
-    if not abandoned:
-        return
-    redis = create_redis(ctx.settings)
-    try:
-        for learner_id, session_id in abandoned:
-            await _release_presence(redis, learner_id, session_id)
-    finally:
-        with contextlib.suppress(RedisError, OSError):
-            await redis.aclose()
+    # WP2.1: the process Redis of the context (None = no Redis, §4.2), never a new client.
+    for learner_id, session_id in abandoned:
+        await _release_presence(ctx.redis, learner_id, session_id)

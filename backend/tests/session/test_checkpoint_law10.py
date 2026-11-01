@@ -29,6 +29,7 @@ from quack.session.checkpoint_render import (
 )
 from quack.session.schemas import TeacherOutput
 from quack.session.workers import handle_session_checkpoint
+from tests.support.dispatch import dispatch
 from tests.support.resources import build_job_context
 
 if TYPE_CHECKING:
@@ -237,6 +238,7 @@ async def test_checkpoint_makes_no_llm_call(
     assert kinds.KIND_LLM_ROLES["session.checkpoint"] == ()
     session_id = await _three_turns(client, auth_headers, seeded_domain, fake_llm)
     calls_before = len(fake_llm.calls)
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     async with db() as session, session.begin():
         job = await claim_next_job(session, "law10", ["session.checkpoint"])
     assert job is not None
@@ -276,9 +278,11 @@ async def test_checkpoint_job_has_no_required_seq(
     seeded_domain: SeededDomain,
     db: SessionFactory,
     fake_llm: FakeLLMProvider,
+    settings: Settings,
 ) -> None:
     """T-C5: the enqueued `session.checkpoint` has `required_seq IS NULL`."""
     await _three_turns(client, auth_headers, seeded_domain, fake_llm)
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     async with db() as session:
         rows = (
             await session.execute(

@@ -9,6 +9,7 @@ import httpx
 import pytest
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
@@ -17,6 +18,7 @@ from quack.jobs.runner import JobContext
 from quack.session import workers
 from quack.session.schemas import ExtractorOutputV2, TeacherOutput
 from tests.session.helpers import parse_sse
+from tests.support.dispatch import project_and_dispatch
 from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
@@ -88,6 +90,7 @@ async def test_topic_context_read_uses_teacher_seq_as_min_seq(
     settings: Settings,
     fake_llm: Any,
     monkeypatch: pytest.MonkeyPatch,
+    pg_engine: AsyncEngine,
 ) -> None:
     start_resp = await client.post(
         "/v1/sessions",
@@ -113,6 +116,7 @@ async def test_topic_context_read_uses_teacher_seq_as_min_seq(
     assert turn_resp.status_code == 200, turn_resp.text
     turn_id = UUID(dict(parse_sse(turn_resp.text))["turn_started"]["turn_id"])
 
+    await project_and_dispatch(settings, db, pg_engine, neo4j, seeded_domain.learner_id)  # §8.9 п.7
     # The DB is shared between tests: skip turn.extract jobs left over by other tests.
     while True:
         async with db() as session, session.begin():

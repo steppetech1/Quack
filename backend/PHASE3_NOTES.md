@@ -312,6 +312,73 @@ UTC-времени эпохи. Склейка по `coalesce_key` держит �
 (`T-Q7`, закрывает D-A-005). `T-Q7` и проверка кода выхода перенесены из pending в
 `tests/test_jobs_phase3.py`.
 
+### D-A-009. WP5.3 в раннере: флаг давления до захвата задачи (`T-Q10`)
+
+Класс B. По просьбе B (шов S3). `JobRunner.run_one` на каждой итерации захвата один раз зовёт
+`quack.llm.pressure.pressured_models(ctx.redis)` и не передаёт в `claim_next_job` виды, у которых
+хотя бы одна роль из `KIND_LLM_ROLES[kind]` идёт на модель под флагом
+(`settings.model_for_role(role)`). Виды без ролей (`session.sweep_inactive`,
+`account.purge_deleted`, `session.checkpoint`) не блокируются. Без Redis флагов нет, исключений
+нет. Если все виды под флагом, итерация возвращает «нечего брать», цикл ждёт `consumer_poll_ms`.
+Вторая часть `T-Q10` (сверка `KIND_LLM_ROLES` с ролями, которые обработчики реально вызвали в
+`T-E1`, по журналу `ScriptedLLMProvider`) — в стенде e2e потока C, после зелёного `T-E1`.
+
+### D-A-010. WP11.1–11.3: диспетчер журнала
+
+Класс C (два места, где ТЗ молчит).
+
+- **Код.** `quack/jobs/dispatcher.py`: `Dispatcher(settings, session_factory, redis)` с
+  `run_once()`, `run_forever(stop)`, `lag()`; `supervise(name, task, stop, restart_pause_s)`.
+  Правила — `quack/jobs/dispatcher_rules.py::rules_for(event, facts, *, checkpoint_every_turns)`:
+  чистая функция события и `EventFacts` — реляционных данных, которые диспетчер читает для
+  правила (строка `core.sessions`: `topic_id`, `last_checkpoint_turn`; `seq` реплики ученика
+  того же `turn_id`). Граф не читается, модели не вызываются.
+- **Одна транзакция на пачку ученика:** строка отметки (вставляется, если её нет),
+  `SELECT … FOR UPDATE SKIP LOCKED` (второй диспетчер пропускает ученика), события после
+  отметки (до `dispatcher_batch_size`), правила, `enqueue_job`, новая отметка, фиксация. Ученики —
+  до `dispatcher_concurrency` параллельно; исключение у ученика пишется
+  `dispatcher_learner_failed`, его отметка не двигается, остальные идут дальше. Неизвестный тип
+  или версия схемы — `dispatcher_unknown_event`, событие пропускается, отметка сдвигается.
+- **Ключ дедупликации (спорное место 1).** ТЗ ссылается на ключ дедупликации `С-§7.1`, но в
+  очереди склейка есть только по `coalesce_key` и только среди `queued`; у `turn.extract`
+  `coalesce_key` нет. Выбрано: перед постановкой задачи с `required_seq` диспетчер ищет задачу
+  того же `kind`, `lock_key` и `required_seq` в любом статусе. `required_seq` — `seq`
+  события-триггера, поэтому тройка однозначно называет триггер. Задачу без `required_seq`
+  (`session.checkpoint`) защищают склейка и условие правила: выполненная сводка сдвигает
+  `last_checkpoint_turn`. Индекса под этот поиск нет (миграции — зона C); при росте `ops.jobs`
+  его стоит добавить: `(lock_key, required_seq)`.
+- **Сосуществование схем (спорное место 2).** До WP11.4 старая постановка ставила `turn.extract`
+  с `required_seq = NULL`, и диспетчер поставил бы вторую задачу. Поэтому WP11.1–11.3 и
+  переключение WP11.4 идут одной веткой и сливаются вместе: окна, где работают обе схемы, нет.
+- **Процесс.** `cli worker` (пока он совмещает роли, WP8.1) запускает проектор и диспетчер
+  отдельными задачами под `supervise` с паузой `dispatcher_restart_pause_s`. Диспетчер
+  просыпается раз в `consumer_poll_ms` и по `projector:wakeup`.
+- Тесты `T-D1`–`T-D8` и `test_dispatcher_lag` (WP11.5, для `ops status`) —
+  `tests/test_dispatcher.py`. Проверка на неверной реализации: без поиска по `required_seq`
+  падает `T-D4`.
+
+### D-A-011. WP11.4: переключение; `required_seq` обязателен; `cancel_learner_jobs` (Q-A1)
+
+Класс C, ревью у B и C (пересечение №4 §7.3).
+
+- Удалены вызовы `enqueue_job`: `session/turns.py` (`turn.extract`, `session.checkpoint`),
+  `session/lifecycle.py::finish_session` (`session.finish_artifacts`, `graph.curate`),
+  `artifacts/cheatsheets.py::run_finish_artifacts` (`artifact.refresh_cheatsheet`). Остались
+  планировщик, `ops replay-dlq` и эндпоинт `POST /v1/topics/{id}/cheatsheet/refresh`:
+  `request_cheatsheet_refresh` ставит задачу с `required_seq` = `last_seq` ученика (`T-D8`).
+- `required_seq` в фабриках `turn_extract`, `session_finish_artifacts`,
+  `artifact_refresh_cheatsheet`, `graph_curate` — обязательный именованный аргумент без значения
+  по умолчанию, тип `int | None`. `None` оставлен для тестов очереди, которые проверяют задачи без
+  порога; продуктовый код передаёт `seq`. Закрывает D-A-002.
+- Q-A1: `domains/learner.py` отменяет задачи ученика через `quack.jobs.queue.cancel_learner_jobs`
+  (одна строка в зоне C). `T-Q9` перенесён из `phase-3-a-pending-red` в
+  `tests/test_jobs_phase3.py` и зелёный.
+- `session/lifecycle.py::handle_sweep_inactive` создавал свой клиент Redis (`create_redis`) —
+  долг WP2.1, его нашёл `T-Q9`. Теперь берёт `ctx.redis` (`None` — без Redis).
+- Правки тестов (§8.9 п.7, утверждения не менялись): вызовы четырёх фабрик в тестах получили
+  `required_seq=None` — прежнее значение по умолчанию; тесты, которые ждали задачу сразу после
+  запроса, перед проверкой вызывают `Dispatcher(...).run_once()`.
+
 #### Этап I и красные тесты потока A к G0
 
 Сигнатуры: `JobSpec.required_seq`, `JobDeferred`, `JobFailedPermanently`, `JOB_KINDS`,
@@ -324,7 +391,7 @@ UTC-времени эпохи. Склейка по `coalesce_key` держит �
 
 | # | Вопрос | Кому |
 | :-- | :-- | :-- |
-| Q-A1 | `domains/learner.py:85` отменяет задачи ученика прямым SQL по `ops.jobs`. Для `T-Q9` нужна функция ядра очереди (зона A, например `cancel_learner_jobs`) и вызов её из `domains` — правка зоны C одной строкой в WP11.4 | C |
+| Q-A1 | `domains/learner.py:85` отменяет задачи ученика прямым SQL по `ops.jobs`. Для `T-Q9` нужна функция ядра очереди (зона A, например `cancel_learner_jobs`) и вызов её из `domains` — правка зоны C одной строкой в WP11.4. **Сделано в WP11.4 (D-A-011), ждёт ревью C** | C |
 | Q-A2 | D-A-002 и D-A-003 — подтвердить | владелец |
 
 ### Поток B

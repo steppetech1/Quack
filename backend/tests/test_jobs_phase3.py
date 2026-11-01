@@ -88,7 +88,7 @@ async def test_claim_waits_for_projection(db: SessionFactory) -> None:
     got = await _claim(db)
     assert got is not None and got.id == job_id
     # required_seq IS NULL needs no offsets row.
-    other = await _enqueue(db, kinds.graph_curate(uuid4(), uuid4(), {}))
+    other = await _enqueue(db, kinds.graph_curate(uuid4(), uuid4(), {}, required_seq=None))
     got = await _claim(db, "w2")
     assert got is not None and got.id == other
 
@@ -102,7 +102,7 @@ async def test_coalesce_keeps_max_required_seq(db: SessionFactory) -> None:
     )
     assert rows == [{"status": "queued", "required_seq": 7}]
     learner2, domain2 = uuid4(), uuid4()  # coalesce_key is curate:{domain}, so a new domain
-    await _enqueue(db, kinds.graph_curate(learner2, domain2, {}))
+    await _enqueue(db, kinds.graph_curate(learner2, domain2, {}, required_seq=None))
     await _enqueue(db, kinds.graph_curate(learner2, domain2, {}, required_seq=4))
     rows = await _q(db, "SELECT required_seq FROM ops.jobs WHERE learner_id = :l", l=learner2)
     assert rows == [{"required_seq": 4}]
@@ -133,11 +133,13 @@ async def test_job_deferred_merges_into_queued_duplicate(
     db: SessionFactory, settings: Settings
 ) -> None:
     learner, domain = uuid4(), uuid4()
-    first = await _enqueue(db, kinds.graph_curate(learner, domain, {}))
+    first = await _enqueue(db, kinds.graph_curate(learner, domain, {}, required_seq=None))
     second: list[UUID] = []
 
     async def handler(job: ClaimedJob, ctx: JobContext) -> None:
-        second.append(await _enqueue(db, kinds.graph_curate(learner, domain, {})))
+        second.append(
+            await _enqueue(db, kinds.graph_curate(learner, domain, {}, required_seq=None))
+        )
         raise JobDeferred(600, "learner_present")
 
     assert await _runner(settings, db, {"graph.curate": handler}).run_one()
@@ -151,7 +153,7 @@ async def test_job_deferred_merges_into_queued_duplicate(
 
 
 async def test_budget_errors_route_to_defer_or_dlq(db: SessionFactory, settings: Settings) -> None:
-    daily = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}))
+    daily = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None))
     session_scope = await _enqueue(db, kinds.session_checkpoint(uuid4(), uuid4(), {}))
 
     async def over_daily(job: ClaimedJob, ctx: JobContext) -> None:
@@ -245,7 +247,7 @@ async def test_purge_job_removes_learner_completely(
             break
     assert (await Neo4jGraphStore(neo4j, str(learner)).dump()).nodes != {}
     async with db() as session, session.begin():
-        await enqueue_job(session, kinds.turn_extract(learner, uuid4(), {}))
+        await enqueue_job(session, kinds.turn_extract(learner, uuid4(), {}, required_seq=None))
         await session.execute(
             text(
                 "INSERT INTO ops.dispatcher_offsets (learner_id, last_dispatched_seq) "
@@ -326,7 +328,7 @@ async def test_pressure_flag_blocks_kinds_using_that_model(
     model = settings.model_for_role("extractor")
     assert KIND_LLM_ROLES["turn.extract"] == ("extractor",)
     learner = uuid4()
-    extract = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}))
+    extract = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}, required_seq=None))
     sweep = await _enqueue(db, kinds.session_sweep_inactive())
     await _exec(
         db, "UPDATE ops.jobs SET priority = 0 WHERE id = :id", id=extract
@@ -362,7 +364,7 @@ async def test_pressure_flags_without_redis_block_nothing(
     db: SessionFactory, settings: Settings
 ) -> None:
     """§4.2: a context without Redis claims every kind and raises nothing."""
-    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}))
+    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None))
     seen: list[UUID] = []
 
     async def handler(job: ClaimedJob, ctx: JobContext) -> None:

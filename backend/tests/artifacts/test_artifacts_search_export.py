@@ -24,6 +24,7 @@ from quack.jobs import kinds
 from quack.jobs.queue import ClaimedJob, JobSpec, claim_next_job, complete_job, enqueue_job
 from quack.llm.errors import ProviderUnavailableError
 from tests.factories import new_event
+from tests.support.dispatch import dispatch
 
 if TYPE_CHECKING:
     from tests.artifacts.conftest import AuthHeaders, FakeProvider, Seeder, Structure
@@ -250,7 +251,9 @@ async def test_cheatsheet_refresh_is_versioned_and_notifies(
     await pubsub.subscribe(session_events_channel(sid))
     await pubsub.get_message(timeout=1.0)
     payload = {"domain_id": str(s.domain_id), "session_id": str(sid)}
-    spec = kinds.artifact_refresh_cheatsheet(learner, tid, payload)
+    spec = kinds.artifact_refresh_cheatsheet(learner, tid, payload, required_seq=None)
+    # The endpoint's job waits for the projection of the learner's log (WP11.2, WP3.1).
+    await seed.project(learner)
     for _ in range(3):
         await _run_job(db, worker_deps, spec, run_refresh_cheatsheet)
 
@@ -303,8 +306,9 @@ async def test_finish_artifacts_creates_digest_and_enqueues_cheatsheet(
     fake_provider.respond("ArtifactGenOutput", DIGEST)
 
     payload = {"session_id": str(sid), "domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
-    job = await _claim(db, kinds.session_finish_artifacts(learner, sid, payload))
+    job = await _claim(db, kinds.session_finish_artifacts(learner, sid, payload, required_seq=None))
     await run_finish_artifacts(job, worker_deps)
+    await dispatch(seed.settings, db, learner)  # §8.9 п.7: the cheatsheet job comes from the log
 
     digest_id = uuid5(QUACK_UUID_NS, f"digest:{sid}")
     [digest] = await _events_of(db, learner, "session.digest_created")
@@ -347,8 +351,9 @@ async def test_finish_artifacts_takes_the_payload_of_finish_session(
     fake_provider.respond("ArtifactGenOutput", DIGEST)
 
     payload = {"session_id": str(sid), "domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
-    job = await _claim(db, kinds.session_finish_artifacts(learner, sid, payload))
+    job = await _claim(db, kinds.session_finish_artifacts(learner, sid, payload, required_seq=None))
     await run_finish_artifacts(replace(job, lock_key=f"learner:{learner}:finish"), worker_deps)
+    await dispatch(seed.settings, db, learner)  # §8.9 п.7: the cheatsheet job comes from the log
 
     [digest] = await _events_of(db, learner, "session.digest_created")
     assert digest["payload"]["session_id"] == str(sid)
@@ -362,7 +367,10 @@ async def test_finish_artifacts_takes_the_payload_of_finish_session(
     await pubsub.subscribe(session_events_channel(sid))
     await pubsub.get_message(timeout=1.0)
     fake_provider.respond("ArtifactGenOutput", SHEET)
-    spec = kinds.artifact_refresh_cheatsheet(learner, s.topic_id, refresh["payload"])
+    spec = kinds.artifact_refresh_cheatsheet(
+        learner, s.topic_id, refresh["payload"], required_seq=None
+    )
+    await seed.project(learner)  # the dispatcher's job waits for session.digest_created (WP3.1)
     await _run_job(db, worker_deps, spec, run_refresh_cheatsheet)
 
     [update] = await _events_of(db, learner, "artifact.cheatsheet_updated")
@@ -401,7 +409,7 @@ async def test_search_and_export(
     await seed.reply(learner, sid, 0, "how does the chain rule work", teacher=False)
     fake_provider.respond("ArtifactGenOutput", SHEET)
     sheet_spec = kinds.artifact_refresh_cheatsheet(
-        learner, s.topic_id, {"domain_id": str(s.domain_id)}
+        learner, s.topic_id, {"domain_id": str(s.domain_id)}, required_seq=None
     )
     await _run_job(db, worker_deps, sheet_spec, run_refresh_cheatsheet)
     digest_id = uuid5(QUACK_UUID_NS, f"digest:{sid}")
