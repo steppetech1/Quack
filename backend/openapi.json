@@ -1,6 +1,59 @@
 {
   "components": {
     "schemas": {
+      "ActionFrame": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ActionRecordedFrame"
+          },
+          {
+            "$ref": "#/components/schemas/StatusFrame"
+          },
+          {
+            "$ref": "#/components/schemas/VerdictFrame"
+          },
+          {
+            "$ref": "#/components/schemas/TokenFrame"
+          },
+          {
+            "$ref": "#/components/schemas/ResetFrame"
+          },
+          {
+            "$ref": "#/components/schemas/ElementFrame"
+          },
+          {
+            "$ref": "#/components/schemas/TurnCommittedFrame"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorFrame"
+          }
+        ]
+      },
+      "ActionRecordedFrame": {
+        "additionalProperties": false,
+        "description": "`action_recorded {seq, verdict?}`: right after the action event is committed.",
+        "properties": {
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerdictFrame"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "ActionRecordedFrame",
+        "type": "object"
+      },
       "ActiveSession": {
         "additionalProperties": false,
         "properties": {
@@ -65,6 +118,107 @@
           "last_checkpoint_turn"
         ],
         "title": "ActiveSession",
+        "type": "object"
+      },
+      "AnswerAction": {
+        "additionalProperties": false,
+        "description": "`answer.submitted` (+ instant verdict in the same transaction, Т-§6.1).",
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/LearnerAnswer"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Confidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "answer",
+            "title": "Kind",
+            "type": "string"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part"
+          },
+          "self_assessment": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Self Assessment"
+          },
+          "solve_time_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solve Time Ms"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AnswerSource",
+            "default": "chat"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "task_id",
+          "answer"
+        ],
+        "title": "AnswerAction",
         "type": "object"
       },
       "AnswerDiagnosticRequest": {
@@ -154,6 +308,30 @@
         ],
         "title": "AnswerDiagnosticResponse",
         "type": "object"
+      },
+      "AnswerSource": {
+        "enum": [
+          "chat",
+          "canvas",
+          "photo",
+          "card"
+        ],
+        "type": "string"
+      },
+      "AnswerType": {
+        "enum": [
+          "choice",
+          "number",
+          "expression",
+          "set",
+          "vector",
+          "quantity",
+          "proof",
+          "free_text",
+          "drawing",
+          "short_text"
+        ],
+        "type": "string"
       },
       "ArchiveDomainRequest": {
         "properties": {
@@ -417,6 +595,73 @@
         "title": "AuthResponse",
         "type": "object"
       },
+      "CanvasRef": {
+        "additionalProperties": false,
+        "description": "A canvas line or block picked by the lasso (Т-§15.6).",
+        "properties": {
+          "block_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Id"
+          },
+          "canvas_id": {
+            "format": "uuid",
+            "title": "Canvas Id",
+            "type": "string"
+          },
+          "line_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Id"
+          }
+        },
+        "required": [
+          "canvas_id"
+        ],
+        "title": "CanvasRef",
+        "type": "object"
+      },
+      "CardSeriesElement": {
+        "additionalProperties": false,
+        "description": "Серия карточек: card labels (`C…`, §17).",
+        "properties": {
+          "cards": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "card_series",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "cards"
+        ],
+        "title": "CardSeriesElement",
+        "type": "object"
+      },
       "CheatsheetRefreshRequest": {
         "properties": {
           "domain_id": {
@@ -449,6 +694,33 @@
           "status"
         ],
         "title": "CheatsheetRefreshResponse",
+        "type": "object"
+      },
+      "CheckSkipAction": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "check_skip",
+            "title": "Kind",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "task_id"
+        ],
+        "title": "CheckSkipAction",
         "type": "object"
       },
       "CheckpointView": {
@@ -484,6 +756,73 @@
           "key_observations"
         ],
         "title": "CheckpointView",
+        "type": "object"
+      },
+      "ChoiceElement": {
+        "additionalProperties": false,
+        "description": "Вопрос с выбором: options are in the task spec (`answer.options`).",
+        "properties": {
+          "ask_confidence": {
+            "title": "Ask Confidence",
+            "type": "boolean"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "choice",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "prompt",
+          "ask_confidence"
+        ],
+        "title": "ChoiceElement",
+        "type": "object"
+      },
+      "Confidence": {
+        "maximum": 4.0,
+        "minimum": 1.0,
+        "type": "integer"
+      },
+      "ConfidenceAction": {
+        "additionalProperties": false,
+        "description": "`confidence.reported {target_seq, value}`: no teacher turn (`201`).",
+        "properties": {
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "confidence",
+            "title": "Kind",
+            "type": "string"
+          },
+          "target_seq": {
+            "title": "Target Seq",
+            "type": "integer"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Confidence"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "target_seq",
+          "value"
+        ],
+        "title": "ConfidenceAction",
         "type": "object"
       },
       "ConfirmStructureRequest": {
@@ -904,6 +1243,154 @@
         "title": "EditStructureResponse",
         "type": "object"
       },
+      "Element": {
+        "discriminator": {
+          "mapping": {
+            "card_series": "#/components/schemas/CardSeriesElement",
+            "choice": "#/components/schemas/ChoiceElement",
+            "free_answer": "#/components/schemas/FreeAnswerElement",
+            "material_link": "#/components/schemas/MaterialLinkElement",
+            "pair": "#/components/schemas/PairElement",
+            "prediction": "#/components/schemas/PredictionElement",
+            "reference_card": "#/components/schemas/ReferenceCardElement",
+            "scaffold": "#/components/schemas/ScaffoldElement",
+            "short_answer": "#/components/schemas/ShortAnswerElement",
+            "task": "#/components/schemas/TaskElement",
+            "timed_quiz": "#/components/schemas/TimedQuizElement",
+            "visualization": "#/components/schemas/VisualizationElement",
+            "why_choice": "#/components/schemas/WhyChoiceElement"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ChoiceElement"
+          },
+          {
+            "$ref": "#/components/schemas/WhyChoiceElement"
+          },
+          {
+            "$ref": "#/components/schemas/ShortAnswerElement"
+          },
+          {
+            "$ref": "#/components/schemas/TaskElement"
+          },
+          {
+            "$ref": "#/components/schemas/ScaffoldElement"
+          },
+          {
+            "$ref": "#/components/schemas/PredictionElement"
+          },
+          {
+            "$ref": "#/components/schemas/FreeAnswerElement"
+          },
+          {
+            "$ref": "#/components/schemas/PairElement"
+          },
+          {
+            "$ref": "#/components/schemas/CardSeriesElement"
+          },
+          {
+            "$ref": "#/components/schemas/TimedQuizElement"
+          },
+          {
+            "$ref": "#/components/schemas/VisualizationElement"
+          },
+          {
+            "$ref": "#/components/schemas/MaterialLinkElement"
+          },
+          {
+            "$ref": "#/components/schemas/ReferenceCardElement"
+          }
+        ]
+      },
+      "ElementFrame": {
+        "additionalProperties": false,
+        "description": "`element {block_id, element}`: after its markup passed the code check.",
+        "properties": {
+          "block_id": {
+            "title": "Block Id",
+            "type": "string"
+          },
+          "element": {
+            "$ref": "#/components/schemas/Element"
+          }
+        },
+        "required": [
+          "block_id",
+          "element"
+        ],
+        "title": "ElementFrame",
+        "type": "object"
+      },
+      "ElementResponseAction": {
+        "additionalProperties": false,
+        "description": "`element.responded` (+ `answer.submitted` if the element is a task).",
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LearnerAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Confidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "element_response",
+            "title": "Kind",
+            "type": "string"
+          },
+          "response": {
+            "title": "Response",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "turn_seq": {
+            "title": "Turn Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "turn_seq",
+          "element_id",
+          "response"
+        ],
+        "title": "ElementResponseAction",
+        "type": "object"
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -944,6 +1431,31 @@
           "SERVICE_UNAVAILABLE"
         ],
         "type": "string"
+      },
+      "ErrorFrame": {
+        "additionalProperties": false,
+        "description": "`error {code, message, retryable}`: an error before the write — no turn in the log.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "ErrorFrame",
+        "type": "object"
       },
       "ErrorResponse": {
         "properties": {
@@ -1236,6 +1748,74 @@
         "title": "FinishSessionRequest",
         "type": "object"
       },
+      "FlagUnclearAction": {
+        "additionalProperties": false,
+        "description": "`item.flagged_unclear {turn_seq, block_id, quote}` (Т-§12.3).",
+        "properties": {
+          "block_id": {
+            "title": "Block Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "flag_unclear",
+            "title": "Kind",
+            "type": "string"
+          },
+          "quote": {
+            "title": "Quote",
+            "type": "string"
+          },
+          "turn_seq": {
+            "title": "Turn Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "turn_seq",
+          "block_id",
+          "quote"
+        ],
+        "title": "FlagUnclearAction",
+        "type": "object"
+      },
+      "FreeAnswerElement": {
+        "additionalProperties": false,
+        "description": "Свободный ответ, «объясни своими словами»: the rubric is in the task spec\n(`answer.key_ideas`); the answer is text or voice.",
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "free_answer",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "voice": {
+            "title": "Voice",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "prompt",
+          "voice"
+        ],
+        "title": "FreeAnswerElement",
+        "type": "object"
+      },
       "HealthLive": {
         "properties": {
           "status": {
@@ -1322,6 +1902,33 @@
         "title": "HintRequest",
         "type": "object"
       },
+      "HintRequestAction": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "hint_request",
+            "title": "Kind",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "task_id"
+        ],
+        "title": "HintRequestAction",
+        "type": "object"
+      },
       "HintResponse": {
         "properties": {
           "hint_level": {
@@ -1354,6 +1961,103 @@
           "seq"
         ],
         "title": "HintResponse",
+        "type": "object"
+      },
+      "IntentAction": {
+        "additionalProperties": false,
+        "description": "«Изучать / Практиковать / Повторять» on a topic or a hub (Т-§12.7) →\n`message.sent {intent, topic_id | hub_id}` (ТЗ Ф4 WP13.1).",
+        "properties": {
+          "hub_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hub Id"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "intent": {
+            "enum": [
+              "learn",
+              "practice",
+              "review"
+            ],
+            "title": "Intent",
+            "type": "string"
+          },
+          "kind": {
+            "const": "intent",
+            "title": "Kind",
+            "type": "string"
+          },
+          "topic_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Id"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "intent"
+        ],
+        "title": "IntentAction",
+        "type": "object"
+      },
+      "LearnerAnswer": {
+        "additionalProperties": false,
+        "description": "`answer.submitted.answer` (ТЗ Ф4 §6.3): `{kind, value, latex?, sympy?}`; `value` is the\nraw text (option id for `choice`), `latex` / `sympy` come from the formula editor or the\nrecognizer (Т-§6.5, Т-§22.7).",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/AnswerType"
+          },
+          "latex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latex"
+          },
+          "sympy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sympy"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "LearnerAnswer",
         "type": "object"
       },
       "LearnerMeResponse": {
@@ -1415,6 +2119,119 @@
           "password"
         ],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "MaterialLinkElement": {
+        "additionalProperties": false,
+        "description": "Ссылка на материал: a chunk label (`P…`) and its page or slide.",
+        "properties": {
+          "chunk": {
+            "title": "Chunk",
+            "type": "string"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "material_link",
+            "title": "Kind",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "chunk",
+          "page"
+        ],
+        "title": "MaterialLinkElement",
+        "type": "object"
+      },
+      "MathValue": {
+        "additionalProperties": false,
+        "description": "Т-§22.7: `latex` for display (KaTeX), `sympy` — canonical SymPy string for checking.",
+        "properties": {
+          "latex": {
+            "title": "Latex",
+            "type": "string"
+          },
+          "sympy": {
+            "title": "Sympy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "latex",
+          "sympy"
+        ],
+        "title": "MathValue",
+        "type": "object"
+      },
+      "MessageAction": {
+        "additionalProperties": false,
+        "description": "`message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).",
+        "properties": {
+          "canvas_refs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CanvasRef"
+            },
+            "title": "Canvas Refs",
+            "type": "array"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "message",
+            "title": "Kind",
+            "type": "string"
+          },
+          "material_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Material Ids",
+            "type": "array"
+          },
+          "skill_invocation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Invocation"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "text"
+        ],
+        "title": "MessageAction",
         "type": "object"
       },
       "MisconceptionDraft": {
@@ -1743,6 +2560,97 @@
         "title": "NoteUpdateResponse",
         "type": "object"
       },
+      "PairElement": {
+        "additionalProperties": false,
+        "description": "Пара на различение: two task elements whose markups point at each other\n(`pairTaskId`).",
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "first_element_id": {
+            "title": "First Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "pair",
+            "title": "Kind",
+            "type": "string"
+          },
+          "second_element_id": {
+            "title": "Second Element Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "first_element_id",
+          "second_element_id"
+        ],
+        "title": "PairElement",
+        "type": "object"
+      },
+      "PlotSpec": {
+        "additionalProperties": false,
+        "description": "A simple plot of one function (Т-§12.3 «простой график»).",
+        "properties": {
+          "function": {
+            "$ref": "#/components/schemas/MathValue"
+          },
+          "variable": {
+            "title": "Variable",
+            "type": "string"
+          },
+          "x_max": {
+            "title": "X Max",
+            "type": "number"
+          },
+          "x_min": {
+            "title": "X Min",
+            "type": "number"
+          }
+        },
+        "required": [
+          "function",
+          "variable",
+          "x_min",
+          "x_max"
+        ],
+        "title": "PlotSpec",
+        "type": "object"
+      },
+      "PredictionElement": {
+        "additionalProperties": false,
+        "description": "Предсказание: a question before a step of the explanation.",
+        "properties": {
+          "ask_confidence": {
+            "title": "Ask Confidence",
+            "type": "boolean"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "prediction",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "prompt",
+          "ask_confidence"
+        ],
+        "title": "PredictionElement",
+        "type": "object"
+      },
       "PrereqEdge": {
         "additionalProperties": false,
         "description": "`from_topic_id` is a prerequisite of `to_topic_id`: (from)-[:PREREQ_OF]->(to).",
@@ -1860,6 +2768,65 @@
         "title": "ProposeStructureResponse",
         "type": "object"
       },
+      "ReferenceCardElement": {
+        "additionalProperties": false,
+        "description": "Справочная карточка: formulas and definitions.",
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "const": "reference_card",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "items"
+        ],
+        "title": "ReferenceCardElement",
+        "type": "object"
+      },
+      "ReferenceItem": {
+        "additionalProperties": false,
+        "properties": {
+          "formula": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MathValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "text",
+          "formula"
+        ],
+        "title": "ReferenceItem",
+        "type": "object"
+      },
       "RegisterRequest": {
         "properties": {
           "display_name": {
@@ -1894,6 +2861,87 @@
           "password"
         ],
         "title": "RegisterRequest",
+        "type": "object"
+      },
+      "ResetFrame": {
+        "additionalProperties": false,
+        "description": "`reset {reason}`: the shown part is replaced by «уточняю…» (Т-§12.2 этап 3).",
+        "properties": {
+          "reason": {
+            "enum": [
+              "spoiler",
+              "guard"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ResetFrame",
+        "type": "object"
+      },
+      "ScaffoldElement": {
+        "additionalProperties": false,
+        "description": "Каркас с пропусками: every gap is a part of the task spec (Т-§5.2); `target` —\nchat or a block in the teacher layer of the canvas (Т-§15.1).",
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/ScaffoldGap"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "kind": {
+            "const": "scaffold",
+            "title": "Kind",
+            "type": "string"
+          },
+          "target": {
+            "enum": [
+              "chat",
+              "canvas"
+            ],
+            "title": "Target",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "text",
+          "gaps",
+          "target"
+        ],
+        "title": "ScaffoldElement",
+        "type": "object"
+      },
+      "ScaffoldGap": {
+        "additionalProperties": false,
+        "properties": {
+          "part": {
+            "title": "Part",
+            "type": "string"
+          },
+          "placeholder": {
+            "title": "Placeholder",
+            "type": "string"
+          }
+        },
+        "required": [
+          "part",
+          "placeholder"
+        ],
+        "title": "ScaffoldGap",
         "type": "object"
       },
       "SearchResponse": {
@@ -2176,6 +3224,37 @@
         "title": "SessionStarted",
         "type": "object"
       },
+      "ShortAnswerElement": {
+        "additionalProperties": false,
+        "description": "Короткий ответ: the answer type and spec are in the task.",
+        "properties": {
+          "ask_confidence": {
+            "title": "Ask Confidence",
+            "type": "boolean"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "short_answer",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "prompt",
+          "ask_confidence"
+        ],
+        "title": "ShortAnswerElement",
+        "type": "object"
+      },
       "SkillDepEdge": {
         "additionalProperties": false,
         "description": "`skill_id` depends on `depends_on_skill_id`: (skill)-[:DEPENDS_ON]->(dependency).",
@@ -2395,6 +3474,33 @@
         "title": "SkillPatch",
         "type": "object"
       },
+      "SolutionRequestAction": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "solution_request",
+            "title": "Kind",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind",
+          "task_id"
+        ],
+        "title": "SolutionRequestAction",
+        "type": "object"
+      },
       "StartDiagnosticRequest": {
         "properties": {
           "idempotency_key": {
@@ -2504,6 +3610,36 @@
         "title": "StartSessionRequest",
         "type": "object"
       },
+      "StatusFrame": {
+        "additionalProperties": false,
+        "description": "`status`: `thinking` after admission; `tool` with the tool name on each tool call.",
+        "properties": {
+          "state": {
+            "enum": [
+              "thinking",
+              "tool"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "StatusFrame",
+        "type": "object"
+      },
       "SubmitRequest": {
         "properties": {
           "answer": {
@@ -2593,6 +3729,92 @@
           "seq"
         ],
         "title": "SubmitResponse",
+        "type": "object"
+      },
+      "TaskElement": {
+        "additionalProperties": false,
+        "description": "Задача, with the «solve on the canvas» button.",
+        "properties": {
+          "ask_confidence": {
+            "title": "Ask Confidence",
+            "type": "boolean"
+          },
+          "canvas": {
+            "title": "Canvas",
+            "type": "boolean"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "task",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "prompt",
+          "canvas",
+          "ask_confidence"
+        ],
+        "title": "TaskElement",
+        "type": "object"
+      },
+      "TimedQuizElement": {
+        "additionalProperties": false,
+        "description": "Пробник с таймером: task elements and the time.",
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "timed_quiz",
+            "title": "Kind",
+            "type": "string"
+          },
+          "task_element_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Task Element Ids",
+            "type": "array"
+          },
+          "time_limit_s": {
+            "minimum": 1.0,
+            "title": "Time Limit S",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "task_element_ids",
+          "time_limit_s"
+        ],
+        "title": "TimedQuizElement",
+        "type": "object"
+      },
+      "TokenFrame": {
+        "additionalProperties": false,
+        "description": "`token {text}`: checked body text (Т-§12.2 этап 3).",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TokenFrame",
         "type": "object"
       },
       "TopicDetailResponse": {
@@ -2822,6 +4044,58 @@
         "title": "TopicPriorItem",
         "type": "object"
       },
+      "TurnCommittedFrame": {
+        "additionalProperties": false,
+        "description": "`turn_committed {seq, degraded_mode, effort, role}` after `turn.committed`.",
+        "properties": {
+          "degraded_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "budget_exceeded",
+                  "llm_unavailable",
+                  "memory_unavailable",
+                  "teacher_fallback",
+                  "projector_lag"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degraded Mode"
+          },
+          "effort": {
+            "enum": [
+              "low",
+              "high"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "teacher",
+              "teacher_fallback"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "degraded_mode",
+          "effort",
+          "role"
+        ],
+        "title": "TurnCommittedFrame",
+        "type": "object"
+      },
       "TurnRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3039,6 +4313,143 @@
           "seq"
         ],
         "title": "UpdateTopicStatusResponse",
+        "type": "object"
+      },
+      "VerdictFrame": {
+        "additionalProperties": false,
+        "description": "`verdict`: a fast verdict that came during the turn (Т-§6.1).",
+        "properties": {
+          "answer_seq": {
+            "title": "Answer Seq",
+            "type": "integer"
+          },
+          "method": {
+            "enum": [
+              "exact",
+              "numeric",
+              "symbolic",
+              "units",
+              "model"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "correct",
+              "incorrect",
+              "partial",
+              "unclear"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "part": {
+            "title": "Part",
+            "type": "string"
+          },
+          "verification": {
+            "enum": [
+              "code",
+              "model"
+            ],
+            "title": "Verification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer_seq",
+          "part",
+          "outcome",
+          "method",
+          "verification"
+        ],
+        "title": "VerdictFrame",
+        "type": "object"
+      },
+      "VisualizationElement": {
+        "additionalProperties": false,
+        "description": "Визуализация, демо: a ready artifact (agent request label `R…`, Т-§13.6) or a simple\nplot; exactly one is set.",
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "is_task": {
+            "title": "Is Task",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "visualization",
+            "title": "Kind",
+            "type": "string"
+          },
+          "plot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlotSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "request",
+          "plot",
+          "is_task"
+        ],
+        "title": "VisualizationElement",
+        "type": "object"
+      },
+      "WhyChoiceElement": {
+        "additionalProperties": false,
+        "description": "«Почему» как выбор: 3–4 reasonings and «other» (П-4.5); options in the task spec.",
+        "properties": {
+          "allow_other": {
+            "title": "Allow Other",
+            "type": "boolean"
+          },
+          "ask_confidence": {
+            "title": "Ask Confidence",
+            "type": "boolean"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "why_choice",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "prompt",
+          "allow_other",
+          "ask_confidence"
+        ],
+        "title": "WhyChoiceElement",
         "type": "object"
       }
     }
@@ -5566,6 +6977,193 @@
           }
         },
         "summary": "Get Session"
+      }
+    },
+    "/v1/sessions/{session_id}/actions": {
+      "post": {
+        "description": "ТЗ Ф4 WP13.1 (`Т-§1.4`): one learner action. Stage I of WP13 (§0.3): declared for the\nOpenAPI draft of G1 (seam S11); the body lands with WP13.",
+        "operationId": "post_action_v1_sessions__session_id__actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "answer": "#/components/schemas/AnswerAction",
+                    "check_skip": "#/components/schemas/CheckSkipAction",
+                    "confidence": "#/components/schemas/ConfidenceAction",
+                    "element_response": "#/components/schemas/ElementResponseAction",
+                    "flag_unclear": "#/components/schemas/FlagUnclearAction",
+                    "hint_request": "#/components/schemas/HintRequestAction",
+                    "intent": "#/components/schemas/IntentAction",
+                    "message": "#/components/schemas/MessageAction",
+                    "solution_request": "#/components/schemas/SolutionRequestAction"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MessageAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IntentAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AnswerAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ElementResponseAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HintRequestAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SolutionRequestAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CheckSkipAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/FlagUnclearAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ConfidenceAction"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "itemSchema": {
+                  "properties": {
+                    "data": {
+                      "contentMediaType": "application/json",
+                      "contentSchema": {
+                        "$ref": "#/components/schemas/ActionFrame"
+                      },
+                      "type": "string"
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "retry": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Actions with a teacher turn: SSE frames in the order of ТЗ Ф4 §4.7."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "`201 {seq}` of an action without a teacher turn.",
+                  "properties": {
+                    "seq": {
+                      "title": "Seq",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq"
+                  ],
+                  "title": "ActionAccepted",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Actions without a teacher turn (`confidence`): the action event seq."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHORIZED: missing, invalid or revoked token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Post Action"
       }
     },
     "/v1/sessions/{session_id}/events": {

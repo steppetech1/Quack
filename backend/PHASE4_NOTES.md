@@ -324,6 +324,13 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 ## Правки тестов
 
 - `tests/test_contracts.py` (`T-A6`): в `PRODUCT` добавлен `agents` (ТЗ Ф4 §4.1). Сила проверки не меняется.
+- `tests/test_app_assembly.py` (C, PR #75, §8.15 п.2): `T-A1` — в набор маршрутов добавлен
+  `POST /v1/sessions/{session_id}/actions` (§6.4). `test_openapi_documents_every_response` — у
+  `/actions` ровно два ответа 2xx, `200` (SSE) и `201` (`{seq}`) по §4.7, у остальных — по-прежнему
+  ровно один; модель SSE-ответа принимается из `itemSchema` (так FastAPI описывает одно событие в
+  OpenAPI 3.2), модель обязательна, как раньше. `test_sse_endpoints_document_event_stream` расширен
+  на `/actions`. Тест падает на маршруте с одним 2xx или без модели события (§8.15 п.4).
+  `backend/openapi.json` пересобран `ops openapi`.
 
 ## Вопросы к команде
 
