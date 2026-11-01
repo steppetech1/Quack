@@ -396,3 +396,17 @@ async def test_meta_mock_incomplete_is_cut() -> None:
             await adapter.complete_structured(_request(TeacherOutput))
     finally:
         await adapter.aclose()
+
+
+async def test_task_gen_answer_is_a_valid_choice_task() -> None:
+    """DoD п.7: the load scenario asks for `choice` tasks; the mock's `task_gen` answer builds a
+    bank task (one correct option, its label is the answer) instead of a generation error."""
+    from uuid import uuid4
+
+    from quack.practice.generation import build_generated_task
+
+    async with _client() as client:
+        response = await client.post("/responses", json=_body(TaskGenOutput))
+    output = TaskGenOutput.model_validate_json(_answer_text(response.json()))
+    task = build_generated_task(output, "choice", uuid4(), [])
+    assert task.reference_solution["option"] == output.answer.value
