@@ -33,6 +33,7 @@ from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
 from quack.graph.topic_display import INACTIVE_SKILL_STATUSES
+from quack.llm.errors import LLMSchemaError
 from quack.llm.gateway import LLMGateway
 from quack.practice import selection
 from quack.practice.evaluation import (
@@ -336,12 +337,15 @@ async def next_task(
             idempotency_key=_task_gen_key(session_id, body.idempotency_key),
         )
         task = build_generated_task(result.value, body.kind, task_id, [])
-    except (*LLM_ERRORS, GeneratedTaskError):
+    except (*LLM_ERRORS, GeneratedTaskError) as exc:
         async with resources.session_factory() as session:
             fallback = await selection.fallback_bank_task(
                 session, learner_id, session_id, body.topic_id, skill_id, body.kind, excluded
             )
         if fallback is None:
+            if isinstance(exc, GeneratedTaskError):
+                # An unusable model answer is `LLM_DEGRADED` like a schema error, not a 500.
+                raise LLMSchemaError(str(exc)) from exc
             raise
         await _append(
             resources,

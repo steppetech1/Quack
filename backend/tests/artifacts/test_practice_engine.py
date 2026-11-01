@@ -317,6 +317,46 @@ async def test_next_task_falls_back_to_bank_when_llm_down(
     assert new[0]["session_id"] == sid
 
 
+async def test_next_task_bad_generation_without_bank_is_llm_degraded(
+    client: httpx.AsyncClient,
+    auth: AuthHeaders,
+    seed: Seeder,
+    db: SessionFactory,
+    fake_provider: FakeProvider,
+) -> None:
+    """A `task_gen` answer the code cannot build a task from (a choice task without a correct
+    option) and no bank task to fall back to: `LLM_DEGRADED` 503 like any unusable model
+    answer, not a 500 (DoD п.7); nothing is written."""
+    learner, s, sid = await _practice_history(seed)
+    fake_provider.respond(
+        "TaskGenOutput",
+        TaskGenOutput(
+            statement="Pick the derivative of $x^2$.",
+            options=[],
+            answer=TaskAnswer(type="choice", value="A", units=None),
+            solution="2x.",
+            hints=HINTS,
+            tests=[TaskLevel(skill="S1", level=3)],
+            method_named=False,
+            variant_of=None,
+            form=None,
+            pair_task=None,
+        ),
+    )
+    before = await _last_seq(db, learner)
+    body = {
+        "topic_id": str(s.topic_id),
+        "turn_id": str(uuid4()),
+        "kind": "choice",
+        "idempotency_key": "next-1",
+    }
+
+    r = await client.post(f"/v1/sessions/{sid}/tasks/next", json=body, headers=auth(learner))
+    assert r.status_code == 503, r.text
+    assert r.json()["error"]["code"] == "LLM_DEGRADED"
+    assert await _last_seq(db, learner) == before
+
+
 async def test_hints_progress_and_reduce_independence(
     client: httpx.AsyncClient,
     auth: AuthHeaders,

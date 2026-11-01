@@ -95,6 +95,15 @@ class DiagnosticParams(BaseModel):
     default_tested_depth: float = 0.5
 
 
+# Д-§7: the secrets each process role needs in prod (compose passes only these, ТЗ WP9.2).
+_PROD_SECRETS_BY_ROLE: dict[str, tuple[str, ...]] = {
+    "api": ("JWT_SECRET", "META_API_KEY", "NEO4J_PASSWORD"),
+    "workers": ("META_API_KEY", "NEO4J_PASSWORD"),
+    "projector": ("NEO4J_PASSWORD",),
+    "ops": (),
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
@@ -316,15 +325,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_secrets_in_prod(self) -> Settings:
+        """Д-§7, ТЗ WP9.2: each process gets only its own secrets, prod requires exactly those of
+        the role (`projector` has no META_API_KEY, `migrate` and other `ops` commands none)."""
         if self.env == "prod":
+            secrets = {
+                "JWT_SECRET": self.jwt_secret,
+                "META_API_KEY": self.meta_api_key,
+                "NEO4J_PASSWORD": self.neo4j_password,
+            }
             missing = [
                 name
-                for name, value in (
-                    ("JWT_SECRET", self.jwt_secret),
-                    ("META_API_KEY", self.meta_api_key),
-                    ("NEO4J_PASSWORD", self.neo4j_password),
-                )
-                if not value.get_secret_value()
+                for name in _PROD_SECRETS_BY_ROLE[self.process_role]
+                if not secrets[name].get_secret_value()
             ]
             if missing:
                 raise ValueError(f"missing required secrets for ENV=prod: {', '.join(missing)}")
