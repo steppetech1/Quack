@@ -58,6 +58,7 @@ FIXED_UUID = "00000000-0000-4000-8000-000000000000"
 FIXED_DATETIME = "2026-01-01T00:00:00Z"
 FIXED_DATE = "2026-01-01"
 TEACHER_SCHEMA = "TeacherOutput"
+TASK_GEN_SCHEMA = "TaskGenOutput"
 
 
 @dataclass(frozen=True)
@@ -175,6 +176,17 @@ def _string(schema: dict[str, Any], text_chars: int | None) -> str:
 
 
 # --- latency and limits ---------------------------------------------------------------------
+
+
+def _choice_task(instance: dict[str, Any]) -> dict[str, Any]:
+    """`task_gen` answer the code can build a task from (DoD п.7, the load scenario asks for
+    `choice`): one correct option, its label is the answer (`quack.practice.generation`)."""
+    options = [
+        {"catches": None, "correct": True, "label": "A", "text": "text"},
+        {"catches": "slip", "correct": False, "label": "B", "text": "text"},
+    ]
+    answer = {**instance["answer"], "type": "choice", "value": "A"}
+    return {**instance, "answer": answer, "options": options}
 
 
 def latency_s(model: str, effort: str, latency: Latency) -> float:
@@ -377,9 +389,10 @@ async def _responses(request: Request) -> Response:
         return _error(429, "rate_limit_exceeded", "scripted 429 share", headers)
 
     text_chars = config.teacher_chars if fmt.get("name") == TEACHER_SCHEMA else None
-    answer = orjson.dumps(
-        minimal_instance(fmt["schema"], text_chars=text_chars), option=orjson.OPT_SORT_KEYS
-    ).decode()
+    instance = minimal_instance(fmt["schema"], text_chars=text_chars)
+    if fmt.get("name") == TASK_GEN_SCHEMA:
+        instance = _choice_task(instance)
+    answer = orjson.dumps(instance, option=orjson.OPT_SORT_KEYS).decode()
     input_tokens = _tokens(orjson.dumps(body.get("input", "")).decode())
     reasoning_tokens = REASONING_TOKENS["high" if effort == "high" else "low"]
     output_tokens = _tokens(answer) + reasoning_tokens
