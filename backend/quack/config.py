@@ -516,6 +516,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["https://app.qvack.online", "https://preview.qvack.online"]
     )
+    # WP24: hard timeout of a compute PDF, image or render job — Phase 4 decision D-C-107.
+    compute_task_timeout_s: float = 60.0
 
     fold: FoldParams = Field(default_factory=FoldParams)
 

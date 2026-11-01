@@ -309,6 +309,7 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 | Пакет | Состояние | Тесты |
 | :-- | :-- | :-- |
 | S1 (зона C), этап I | интерфейсы `ObjectStore`, `EmbeddingClient`, `EmailSender`, `DeletionJournal`; поля `AppResources`; подмены; имена параметров §6.7 потока C. Продовые клиенты — `NotImplementedError` (WP18–WP20, WP25) | `tests/storage/test_s1_resources.py` — 8 passed |
+| S10, этап I + пул | `compute`: пул `pebble` (`quack_compute/pool.py`) с жёстким таймаутом — реализован; настройки, схемы и маршруты WP24 — тела `NotImplementedError`; `Renderer` (Chromium) — этап I. `backend`: `ComputeClient` — методы всех эндпоинтов WP24, `create_compute_client`; заглушка — очереди по эндпоинтам | `compute/tests/test_pool_and_contract.py` — 4 passed (`T-CM1` зелёный; в Linux, весь `compute` — 9 passed); `tests/storage/test_compute_client_s10.py` — 4 passed |
 
 ### D-C-102. Где живут `EmailSender` и `DeletionJournal`
 - Класс: B
@@ -380,6 +381,27 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 - Тесты: `T-OPS6` (WP9).
 - Требует подтверждения владельцем: да — **подтверждено** 2026-11-02, вариант (1): по поручению владельца
   решать по ТЗ и техдоку («у нас пока никаких данных учеников нет. остальные решения если за мной какие есть - сверься с тз и тз доком, дай решение»), решение передал B.
+
+### D-C-107. Контракт эндпоинтов compute WP24 и таймаут задания
+- Класс: B
+- WP / место: WP24, шов S10; `compute/quack_compute/contracts.py`, `backend/quack/compute_client/contracts.py`, `Settings.compute_task_timeout_s`
+- Контекст: WP24 называет эндпоинты и что они делают, но не схемы и не таймаут задания;
+  `Д-§3.2`: compute без сети, файл — в теле запроса, результат — в ответе.
+- Варианты: (1) JSON с base64 для двоичных данных, одна схема на эндпоинт; (2) сырой двоичный
+  запрос и `multipart`-ответ.
+- Решение: (1). Схемы — минимальные поля из WP20.2, WP21.3, WP22.3, `Т-§13.6`, `Т-§17.6`:
+  `pdf/pages` → страницы (номер, текст, WebP); `image/align` → `aligned` и WebP; `image/clean-drawing`
+  (изображение и маска `segmenter`) → WebP; `image/render-strokes` (штрихи в координатах доски,
+  размер) → WebP; `render/snapshots` (HTML, наборы параметров) → снимок, ошибки консоли, `blank`;
+  `render/pdf` (HTML) → PDF и `page_count`. Таймаут задания — `compute_task_timeout_s` = 60 с в
+  compute и backend (документы не называют; консервативно — дольше), задание сверх него убивается,
+  ответ 504 → `ComputeJobTimeout`; клиент ждёт `compute_task_timeout_s + compute_timeout_sec`.
+  Рендер — в процессе сервиса (`Renderer`, один Chromium с закрытием по простою), не в пуле.
+- Почему: §0.4.3 п.5 (одна форма для всех эндпоинтов, без новых зависимостей), п.4.
+- Обратимость: схема одного эндпоинта, один параметр.
+- Тесты: `T-CM1`, `test_wp24_endpoints_are_declared`, `tests/storage/test_compute_client_s10.py`;
+  `T-CM2`, `T-CM3` — с реализацией WP24.
+- Требует подтверждения владельцем: нет
 
 #### Ответ A: таблицы C в базовой миграции и D-A-103 (2026-11-02)
 
