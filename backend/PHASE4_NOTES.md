@@ -381,6 +381,21 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 - Тесты: `T-OPS6` (WP9).
 - Требует подтверждения владельцем: да
 
+#### Ответ A: таблицы C в базовой миграции и D-A-103 (2026-11-02)
+
+Таблицы C в `backend/db/migrations/20261102000001_baseline.sql` (`phase-4-a-wp1`, `4a75a2c`) сверены
+с §6.1 по колонкам: `core.auth_sessions`, `core.auth_links`, `content.canvas_boards`,
+`content.materials`, `content.material_pages`, `content.artifacts`, `content.artifact_versions`,
+`content.learner_skills`, `content.exports`; плюс колонки C в `core.learners` (`email`, `settings`).
+Все колонки §6.1 есть, лишних нет, `learner_id` в каждой таблице; `NULL`/`NOT NULL` по D-A-104
+C подходят (`material_pages.text NOT NULL` — для страницы без текста пишется пустая строка).
+Правок не нужно.
+
+D-A-103 (две схемы до WP1.3): **C согласен** с вариантом (3). В WP9 при переходе (WP1.3) C
+переключает `ops migrate`, образ (`dbmate` в `quack-backend`) и сервис `migrate` в compose на
+dbmate. Сейчас нужно только одно: dbmate в CI, иначе `T-DB1`/`T-DB5` падают в job `backend` —
+PR #77 (dbmate v2.36.0, sha256).
+
 ## Заблокировано
 
 ## Красные прогоны
