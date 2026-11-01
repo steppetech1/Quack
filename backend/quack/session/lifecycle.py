@@ -388,6 +388,13 @@ async def finish_session(
     resources: AppResources, learner_id: UUID, session_id: UUID, body: FinishSessionRequest
 ) -> FinishResponse:
     async with resources.session_factory() as session, session.begin():
+        # D-B-028: `core.learner_seq` first, then the session row — the order of
+        # `append_events` and its relational projection; the other order deadlocks with a
+        # background write of the same learner.
+        await session.execute(
+            text("SELECT 1 FROM core.learner_seq WHERE learner_id = :l FOR UPDATE"),
+            {"l": learner_id},
+        )
         row = (
             await session.execute(
                 text(

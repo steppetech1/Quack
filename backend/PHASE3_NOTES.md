@@ -1100,6 +1100,22 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   через шлюз на `ScriptedLLMProvider` даёт полный отчёт и код выхода.
 - Требует подтверждения владельцем: нет
 
+### D-B-028. Порядок блокировок `finish_session`: `core.learner_seq`, затем строка сессии
+- Класс: B (дефект, найден потоком C на стенде e2e 2026-11-01)
+- WP / место: `quack/session/lifecycle.py::finish_session`
+- Контекст: `finish_session` брал `core.sessions … FOR UPDATE`, затем `append_events` брал
+  `core.learner_seq FOR UPDATE`. Фоновая запись того же ученика идёт в обратном порядке:
+  `append_events` (`learner_seq`) → реляционная проекция `UPDATE core.sessions`
+  (`quack/events/projections.py`). Встречный порядок давал `DeadlockDetectedError`, тесты
+  стенда с `finish_session` на фоне плавали (`T-Q10`, `T-E10`).
+- Решение: `finish_session` первым берёт `core.learner_seq FOR UPDATE` (как `start_session`),
+  затем строку сессии. Другие места зоны B: `start_session` — уже в этом порядке; `heartbeat` и
+  учёт токенов в шлюзе держат одну строку сессии без `learner_seq` — цикла нет.
+- Тесты: `tests/session/test_session_lock_order.py` — фоновая транзакция держит `learner_seq`
+  и обновляет строку сессии, пока ждёт `finish_session`; на старом коде — `DeadlockDetectedError`
+  (коммит red), после правки — проходит.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1703,6 +1719,7 @@ _(пусто)_
 | WP10.2 (`hint`, `submit`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py` (коммит `ea60717`) | 2 failed, 3 passed: тот же ключ с другим `turn_id` (`hint`) и другим ответом (`submit`) → 200 с записанным ответом, ждали 409 |
 | WP10.2 (заметки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k notes_crud` (коммит `d0480a5`) | 1 failed: тот же ключ с другим `title` → 201 с записанной заметкой, ждали 409 |
 | WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
+| D-B-028 (порядок блокировок) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_lock_order.py` (коммит `325e6e6`) | 1 failed: `DeadlockDetectedError` — `finish_session` держит строку сессии и ждёт `learner_seq` |
 | WP14.1 (C: дайджест, `T-M3`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k names_not_ids` (коммит `b87d596`) | 1 failed: в запросе `artifacts@1` (mode digest) `covered_skill_ids` и `task_id` — UUID; найдено потоком B на стенде (`T-M3`, ветка `phase-3-b-e2e-llm-seams`) |
 
 ## Правки тестов
