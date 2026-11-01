@@ -26,6 +26,7 @@ from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.runner import JobRunner
 from quack.logging import configure_logging, get_logger
 from quack.ops.commands import migrate, purge_deleted, replay_dlq
+from quack.ops.seed import SeedRefusedError, seed_learners, write_learners
 from quack.runtime import (
     JobHandlersMismatchError,
     check_handlers_complete,
@@ -54,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
     replay = ops_sub.add_parser("replay-dlq", help="replay DLQ entries")
     replay.add_argument("--id", action="append", dest="ids", help="DLQ entry id (repeatable)")
     ops_sub.add_parser("purge-deleted", help="physically delete learners with tombstones")
+    seed = ops_sub.add_parser("seed-learners", help="create test learners for the load stand")
+    seed.add_argument("--count", type=int, required=True, help="number of learners")
+    seed.add_argument("--out", required=True, help="path of the learners JSON to write")
+    seed.add_argument("--fixture", default="default", help="structure fixture name")
+    seed.add_argument("--confirm", action="store_true", help="required when env=prod")
     openapi = ops_sub.add_parser("openapi", help="write the OpenAPI snapshot of the API")
     openapi.add_argument("--out", required=True, help="path of the openapi.json to write")
     return parser
@@ -160,6 +166,27 @@ async def _rebuild(settings: Settings, args: argparse.Namespace) -> int:
     return await _with_resources(settings, run)
 
 
+async def _seed_learners(settings: Settings, args: argparse.Namespace) -> int:
+    """WP8.6 (Д-§11): exit code 2 when refused on prod."""
+    engine = create_engine(settings)
+    try:
+        learners = await seed_learners(
+            create_session_factory(engine),
+            settings,
+            count=args.count,
+            fixture=args.fixture,
+            confirm=args.confirm,
+        )
+    except SeedRefusedError as exc:
+        log.error("seed_learners_refused", reason=str(exc))
+        return 2
+    finally:
+        await engine.dispose()
+    write_learners(Path(args.out), learners)
+    log.info("seed_learners_done", count=len(learners), out=args.out)
+    return 0
+
+
 async def _ops(settings: Settings, args: argparse.Namespace) -> int:
     if args.op == "verify-schema":
         driver = create_driver(settings)
@@ -180,6 +207,8 @@ async def _ops(settings: Settings, args: argparse.Namespace) -> int:
         return 0
     if args.op == "rebuild":
         return await _rebuild(settings, args)
+    if args.op == "seed-learners":
+        return await _seed_learners(settings, args)
     if args.op == "replay-dlq":
         ids = [UUID(x) for x in args.ids] if args.ids else None
 
