@@ -1630,6 +1630,25 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   `::test_diagnostic_question_without_a_valid_reference_is_not_banked`.
 - Требует подтверждения владельцем: да (класс C, вместо валидатора в `events` из предложения B)
 
+### D-C-031. WP10.3: сценарий Locust — значения, которых нет в документах
+- Класс: B
+- WP / место: WP10.3; `loadtest/scenario.py`, `loadtest/locustfile.py`, группа `loadtest` в
+  `pyproject.toml`
+- Контекст: `Д-§11` и WP10.3 задают ход и heartbeat раз в 30 с, «иногда» задачу и завершение
+  «после K ходов», файл учеников `ops seed-learners` (WP8.6). Не заданы K, доля ходов с задачей,
+  вид задачи, ответ и текст хода.
+- Решение: `TURNS_PER_SESSION = 10`, `TASK_SHARE = 0.2`, задача `choice` с ответом `A` (её проверяет
+  код, без `compute` и модели), текст хода — один вопрос. Логика — в `loadtest/scenario.py` без
+  импорта Locust (Locust при импорте патчит стандартную библиотеку через gevent и ломает asyncio
+  в pytest); `locustfile.py` только связывает её с `HttpUser`. В отчёте Locust — строки SSE
+  `turn: status` (`teacher_status_p95_ms`), `turn: first token`, `turn: complete` (сбой — оборванный
+  поток, критерий smoke). `[tool.uv] default-groups = ["dev", "loadtest"]`: pyright проверяет
+  `loadtest/`; образ ставится без групп (WP9, A).
+- Почему: §0.4.3 — проще и проверяемо тестом без стенда; значения меняются в одном месте.
+- Обратимость: константы сценария.
+- Тесты: `tests/test_loadtest_scenario.py`; на стенде e2e — `tests/e2e/test_loadtest_stream.py`.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -1675,6 +1694,7 @@ _(пусто)_
 | WP10.2 (`tasks/next`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py -k targets_new_family` (коммит `49a03fb`) | 1 failed: тот же ключ с другим `kind` → 200 с записанной задачей, ждали 409 |
 | WP10.2 (`hint`, `submit`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py` (коммит `ea60717`) | 2 failed, 3 passed: тот же ключ с другим `turn_id` (`hint`) и другим ответом (`submit`) → 200 с записанным ответом, ждали 409 |
 | WP10.2 (заметки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k notes_crud` (коммит `d0480a5`) | 1 failed: тот же ключ с другим `title` → 201 с записанной заметкой, ждали 409 |
+| WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
 
 ## Правки тестов
 
