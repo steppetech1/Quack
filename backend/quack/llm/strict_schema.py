@@ -5,6 +5,10 @@ optional field becomes a type with `null` instead of `anyOf`; `$defs` / `$ref` a
 A model the strict mode cannot express (free dict, untyped field) is an error naming the
 field: such fields are turned into lists of objects before gate G1 (§7.2).
 
+A discriminated union (`oneOf` + `discriminator`, e.g. `Element`) becomes `anyOf` of its
+objects without `discriminator`: the strict mode accepts `anyOf`, and each object already
+pins its `kind` with `const` (Phase 4 decision D-B-111).
+
 `title` and `default` are dropped (D-B-005): in the strict mode every property is
 required, so a default is never applied by the model; validation keywords (`enum`,
 `format`, `minimum`, `maxLength`, …) and `description` are kept.
@@ -17,7 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-_DROPPED_KEYS = frozenset({"title", "default"})
+_DROPPED_KEYS = frozenset({"title", "default", "discriminator"})
 _REF_PREFIX = "#/$defs/"
 
 
@@ -48,6 +52,8 @@ class _Converter:
 
     def node(self, schema: dict[str, Any], path: str) -> dict[str, Any]:
         schema = self._inline_ref(schema, path)
+        if "oneOf" in schema:
+            schema = {k: v for k, v in schema.items() if k != "oneOf"} | {"anyOf": schema["oneOf"]}
         if "anyOf" in schema:
             return self._any_of(schema, path)
         result = {k: v for k, v in schema.items() if k not in _DROPPED_KEYS}
