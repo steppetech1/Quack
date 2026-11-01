@@ -1,0 +1,8 @@
+{
+  "domain": "Calculus I (load test)",
+  "topics": [
+    {"name": "Limits", "skills": ["Limit laws", "One-sided limits"]},
+    {"name": "Derivatives", "skills": ["Chain rule", "Product rule"]},
+    {"name": "Integrals", "skills": ["Antiderivatives", "Substitution"]}
+  ]
+}

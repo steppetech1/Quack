@@ -400,6 +400,22 @@ UTC-времени эпохи. Склейка по `coalesce_key` держит �
 | Q-A1 | `domains/learner.py:85` отменяет задачи ученика прямым SQL по `ops.jobs`. Для `T-Q9` нужна функция ядра очереди (зона A, например `cancel_learner_jobs`) и вызов её из `domains` — правка зоны C одной строкой в WP11.4. **Сделано в WP11.4 (D-A-011), ждёт ревью C** | C |
 | Q-A2 | D-A-002 и D-A-003 — подтвердить | владелец |
 
+### D-A-012. WP8.6: `ops seed-learners`
+
+Класс B. `quack/ops/seed.py::seed_learners(session_factory, settings, *, count, fixture,
+confirm)` и подкоманда `ops seed-learners --count N --out PATH [--fixture NAME] [--confirm]`.
+Ученик `i`: строка `auth.users` (email `loadtest+{i}@quack.invalid`, `preferences =
+{"seeded": true}`, вместо хэша пароля `!seeded` — вход только по выданному токену),
+`learner.registered`, `domain.created`, `structure.proposed`, `structure.confirmed` — все через
+`append_events` с `actor = "system"`, без модели. ID — `uuid5(QUACK_UUID_NS, "seed:{i}:…")`, ключи
+событий — `seed:{i}:…`, поэтому повторный запуск ничего не дублирует (строка пользователя —
+`ON CONFLICT (id) DO NOTHING`), токены выпускаются заново. Файл PATH — JSON-список
+`{learner_id, token, domain_id, topic_ids}` (контракт `loadtest/scenario.py::load_learners`).
+Фикстура по умолчанию — `backend/loadtest/fixtures/default.json` (3 темы, 6 навыков; каталог
+зоны C, файл добавлен потоком A по ТЗ WP8.6). При `env = prod` нужен `--confirm`, и команда
+отказывает, если есть пользователь без `preferences.seeded = true`; отказ — код 2, ничего не
+создаётся. Тест `T-O3` — `tests/test_ops_phase3.py`.
+
 ### Поток B
 
 #### Аудит WP0, зона B (2026-10-31, `phase-3` `fca744f`)
