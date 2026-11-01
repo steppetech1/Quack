@@ -311,6 +311,7 @@ export const en = {
       account: "Data and account",
     },
     saved: "Saved",
+    saveFailed: "Couldn't save. Check the connection and try again",
     soonTag: "soon",
     defaultName: "Anya",
     defaultCourse: "Year 2, Applied Math",

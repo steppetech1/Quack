@@ -312,6 +312,7 @@ export const ru: Dict = {
       account: "Данные и аккаунт",
     },
     saved: "Сохранено",
+    saveFailed: "Не сохранилось. Проверь связь и попробуй ещё раз",
     soonTag: "скоро",
     defaultName: "Аня",
     defaultCourse: "2 курс, ПМИ",

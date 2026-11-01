@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useMocks, useT } from "@/lib/i18n/provider";
 import type { Domain } from "@/lib/mock/types";
 import { domainFromApi } from "./adapters";
-import { API_MODE, ApiError, get, getToken, setToken, type S } from "./client";
+import { API_MODE, ApiError, get, getToken, idem, patch, setToken, type S } from "./client";
 
 type Data = {
   /** false until the first load (API mode only) */
@@ -19,6 +19,8 @@ type Data = {
   /** Load (or re-load) the topic graph of a subject */
   loadGraph: (domainId: string) => Promise<void>;
   setActive: (s: S["ActiveSession"] | null) => void;
+  /** Merge keys into the learner's preferences on the backend (no-op on mocks) */
+  savePreferences: (prefs: Record<string, unknown>) => Promise<void>;
   logout: () => void;
 };
 
@@ -43,6 +45,7 @@ function MockData({ children }: { children: React.ReactNode }) {
       reload: async () => {},
       loadGraph: async () => {},
       setActive: () => {},
+      savePreferences: async () => {},
       logout: () => {},
     }),
     [domains],
@@ -108,14 +111,20 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const labels = useMemo(() => ({ hub: t.live.allTopics, activeSession: t.live.activeSession }), [t]);
   const domains = useMemo(() => summaries.map((s) => domainFromApi(s, graphs[s.domain_id], labels, active)), [summaries, graphs, labels, active]);
 
+  const savePreferences = useCallback(async (prefs: Record<string, unknown>) => {
+    // the backend merges the keys and returns the whole object
+    const r = await patch("/v1/learner/preferences", { preferences: prefs, idempotency_key: idem() });
+    setMe((m) => (m ? { ...m, preferences: r.preferences } : m));
+  }, []);
+
   const logout = useCallback(() => {
     setToken(null);
     router.replace("/login");
   }, [router]);
 
   const value = useMemo<Data>(
-    () => ({ ready, error, domains, me, active, reload, loadGraph, setActive, logout }),
-    [ready, error, domains, me, active, reload, loadGraph, logout],
+    () => ({ ready, error, domains, me, active, reload, loadGraph, setActive, savePreferences, logout }),
+    [ready, error, domains, me, active, reload, loadGraph, savePreferences, logout],
   );
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
