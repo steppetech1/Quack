@@ -107,3 +107,30 @@ def test_tool_definitions() -> None:
         definition = tool_definition(tool)
         assert definition["type"] == "function" and definition["strict"] is True
         assert definition["parameters"]["additionalProperties"] is False
+
+
+def test_actions_route_in_openapi() -> None:
+    """S11, S14 (ТЗ Ф4 §4.7, §6.4): `POST /v1/sessions/{id}/actions` declares its SSE frames
+    under `text/event-stream` and `201 {seq}`; the frames and `Element` are components."""
+    from quack.api.app import create_app
+
+    schema = create_app().openapi()
+    responses = schema["paths"]["/v1/sessions/{session_id}/actions"]["post"]["responses"]
+    item = responses["200"]["content"]["text/event-stream"]["itemSchema"]
+    assert item["properties"]["data"]["contentSchema"] == {
+        "$ref": "#/components/schemas/ActionFrame"
+    }
+    assert responses["201"]["content"]["application/json"]["schema"]["title"] == "ActionAccepted"
+    components = schema["components"]["schemas"]
+    frames = {r["$ref"].rsplit("/", 1)[1] for r in components["ActionFrame"]["anyOf"]}
+    assert frames == {
+        "ActionRecordedFrame",
+        "StatusFrame",
+        "VerdictFrame",
+        "TokenFrame",
+        "ResetFrame",
+        "ElementFrame",
+        "TurnCommittedFrame",
+        "ErrorFrame",
+    }
+    assert "Element" in components

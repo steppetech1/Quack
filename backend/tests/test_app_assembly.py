@@ -180,6 +180,8 @@ EXPECTED_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/v1/sessions/{session_id}/heartbeat"),
         ("POST", "/v1/sessions/{session_id}/finish"),
         ("POST", "/v1/sessions/{session_id}/turns"),
+        # ТЗ Ф4 §4.7, §6.4: the student action (WP13.1, stream B).
+        ("POST", "/v1/sessions/{session_id}/actions"),
         ("GET", "/v1/sessions/{session_id}/events"),
         # stream 3
         ("POST", "/v1/sessions/{session_id}/tasks/next"),
@@ -443,6 +445,8 @@ DEAD_POSTGRES_DSN = "postgresql://quack:quack@127.0.0.1:1/quack_test"
 OPENAPI_SNAPSHOT = Path(__file__).resolve().parent.parent / "openapi.json"
 ERROR_REF = "#/components/schemas/ErrorResponse"
 MUTATING = {"post", "patch", "delete"}
+# ТЗ Ф4 §4.7: an action answers SSE (200) or plain JSON `201 {seq}`; every other route has one 2xx.
+SUCCESS_CODES = {("POST", "/v1/sessions/{session_id}/actions"): {"200", "201"}}
 
 
 def _snapshot_app() -> FastAPI:
@@ -490,12 +494,19 @@ def test_openapi_documents_every_response() -> None:
     for path, operations in schema["paths"].items():
         for method, operation in operations.items():
             what = f"{method.upper()} {path}"
-            ok = [r for s, r in operation["responses"].items() if s.startswith("2")]
-            assert len(ok) == 1, what
-            content = ok[0].get("content", {})
-            assert content, f"{what}: no response body"
-            for media in content.values():
-                assert media.get("schema"), f"{what}: response without a model"
+            ok = {s: r for s, r in operation["responses"].items() if s.startswith("2")}
+            assert len(ok) == len(SUCCESS_CODES.get((method.upper(), path), {"2xx"})), what
+            if (method.upper(), path) in SUCCESS_CODES:
+                assert set(ok) == SUCCESS_CODES[(method.upper(), path)], what
+            for response in ok.values():
+                content = response.get("content", {})
+                assert content, f"{what}: no response body"
+                for media_type, media in content.items():
+                    # FastAPI SSE (OpenAPI 3.2) documents the model of one event as `itemSchema`.
+                    model = media.get("schema") or (
+                        media.get("itemSchema") if media_type == "text/event-stream" else None
+                    )
+                    assert model, f"{what}: response without a model"
             if not path.startswith("/v1/"):
                 continue  # `/health/*` keep their own bodies (WP8.3)
             errors = _error_codes(operation)
@@ -517,7 +528,11 @@ def test_openapi_documents_every_response() -> None:
 def test_sse_endpoints_document_event_stream() -> None:
     """WP8.7: SSE endpoints (`С-§8.5`) describe a `text/event-stream` body."""
     paths = _snapshot_app().openapi()["paths"]
-    for path in ("/v1/sessions/{session_id}/turns", "/v1/sessions/{session_id}/events"):
+    for path in (
+        "/v1/sessions/{session_id}/turns",
+        "/v1/sessions/{session_id}/events",
+        "/v1/sessions/{session_id}/actions",
+    ):
         (operation,) = paths[path].values()
         assert list(operation["responses"]["200"]["content"]) == ["text/event-stream"], path
 
