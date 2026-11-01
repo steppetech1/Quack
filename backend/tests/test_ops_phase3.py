@@ -126,3 +126,51 @@ async def test_seed_learners_refuses_on_prod(
         )
         assert await cli._ops(prod, args) == 2
     assert not out.exists()
+
+
+# --- T-O4: CLI of Phase 3 --------------------------------------------------------------
+
+
+def test_cli_parser_phase3(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    """§6.7, WP8.1: process roles and the ops commands with their arguments; `worker` (both
+    roles in one process, development only) refuses to start on prod with exit code 2."""
+    parser = cli.build_parser()
+    for argv in (["api"], ["projector"], ["workers"], ["worker"]):
+        assert parser.parse_args(argv).command == argv[0]
+    seed = parser.parse_args(
+        ["ops", "seed-learners", "--count", "3", "--out", "l.json", "--fixture", "x", "--confirm"]
+    )
+    assert (seed.op, seed.count, seed.out, seed.fixture, seed.confirm) == (
+        "seed-learners",
+        3,
+        "l.json",
+        "x",
+        True,
+    )
+    assert parser.parse_args(["ops", "openapi", "--out", "o.json"]).out == "o.json"
+    assert cli.PROCESS_ROLES == {
+        "api": "api",
+        "projector": "projector",
+        "workers": "workers",
+        "worker": "workers",
+        "ops": "ops",
+    }
+
+    monkeypatch.setattr(cli, "get_settings", lambda: settings.model_copy(update={"env": "prod"}))
+    assert cli.main(["worker"]) == 2
+
+
+def test_cli_binds_process_role_and_version(settings: Settings) -> None:
+    """WP8.1 (Д-§9.1): the role goes into Settings before resources, every log line carries
+    `process` and `version`."""
+    import structlog
+
+    configured = cli.process_settings(
+        settings.model_copy(update={"quack_version": "1.2.3"}), "workers"
+    )
+    assert configured.process_role == "workers"
+    try:
+        bound = structlog.contextvars.get_contextvars()
+        assert (bound["process"], bound["version"]) == ("workers", "1.2.3")
+    finally:
+        structlog.contextvars.unbind_contextvars("process", "version")
