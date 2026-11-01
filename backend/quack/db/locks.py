@@ -9,16 +9,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from enum import IntEnum
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from quack.db.db import LockKeyspace
 
-class LockKeyspace(IntEnum):
-    LEARNER_PROJECTION = 1  # projector, rebuild, purge-deleted
-    SESSION_TURN = 2  # turn lock fallback when Redis is down (Т-§5.1, Т-§17.3)
+__all__ = ["LockKeyspace", "advisory_lock"]
 
 
 @asynccontextmanager

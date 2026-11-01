@@ -46,8 +46,8 @@
 | Пункт | Поток | Скрипт | Итог |
 | :-- | :-: | :-- | :-- |
 | а) `SEARCH … VECTOR INDEX … WHERE learnerId = $id AND searchable = true` (`Т-§3.4.6`, `Т-§1.10`) | C | `scripts/checks/vector_search_filter.py` | **Работает** на `neo4j:2026.10-community` (агент `Neo4j/2026.10.1`, community): индекс с `WITH [c.learnerId, c.searchable]`, запрос `CYPHER 25 MATCH … SEARCH c IN (VECTOR INDEX … FOR $q WHERE … LIMIT 30) SCORE AS score` вернул ровно узлы ученика с `searchable = true`. Запасной путь WP20.4 не нужен |
-| б) составной range-индекс `(learnerId, retDueAtMs)` на `Skill` (`Т-§3.4.8`) | A | — | ждёт поток A |
-| в) параметры `py-fsrs` (`Т-§8.3`) | A | — | ждёт поток A |
+| б) составной range-индекс `(learnerId, retDueAtMs)` на `Skill` (`Т-§3.4.8`) | A | `scripts/checks/skill_due_index.py` | **Работает** на `neo4j:2026.10-community` (2026.10.1): `CREATE RANGE INDEX … FOR (s:Skill) ON (s.learnerId, s.retDueAtMs)` → `ONLINE`; запрос WP17.1 (`learnerId = $id AND retDueAtMs > 0 AND retDueAtMs <= $now`) идёт через `NodeIndexSeek` по составному индексу. Запасной путь (одиночные индексы) не нужен |
+| в) параметры `py-fsrs` (`Т-§8.3`) | A | `scripts/checks/fsrs_params.py` | `py-fsrs` **6.3.2** (закрепляется в WP4): `Scheduler(parameters, desired_retention, learning_steps, relearning_steps, maximum_interval, enable_fuzzing)` — все четыре имени `Т-§8.3` совпадают; по умолчанию 21 вес (FSRS-6); при `enable_fuzzing=False`, пустых шагах и явном UTC-времени два прогона дают одинаковые сроки; первый `Good` сразу даёт `Review`. `uv run --with fsrs==6.3.2 python scripts/checks/fsrs_params.py` → код 0 |
 | г) `antlr4-python3-runtime` для SymPy, `parse_latex(…, strict=True)` (`Т-§6.5`) | B | `scripts/checks/wp0_3g_antlr.py` | SymPy 1.14.0 требует **4.11.x**; `strict` есть; с 4.11.1 строгий разбор работает. В `compute` рантайма пока нет — закрепляется в WP11.5. Подробно — ниже, «Поток B: подробности п.3г, п.3д» |
 | д) Meta Model API: `sam-3.1`, `muse-voice-transcribe-1.0` (`Т-§1.3`) | B | — (только документация: вызов запрещён п.3д, скрипту нечего проверять) | `sam-3.1` — `POST /v1/responses`, ответ спецтокенами; голос — `POST /v1/asr/transcribe`, `multipart/form-data`, WAV. Подробно — ниже, «Поток B: подробности п.3г, п.3д» |
 | е) `READ`-сессия Neo4j отклоняет запись (`Д-§14.2`, `T-A9b`) | C (перенос) | `tests/test_neo4j_read_session.py` | **Подтверждено**: 3 passed на Neo4j 2026.06.0 (полный прогон) и на 2026.10.1 (`QUACK_TEST_NEO4J_URI=bolt://127.0.0.1:57688`) |
@@ -97,6 +97,9 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 | Пакет | Поток | Состояние | Тесты |
 | :-- | :-: | :-- | :-- |
 | WP0 (зона C) | C | частично: ждёт п.2 (владелец) | — (скрипт п.3а) |
+| WP0 (зона A) | A | выполнен: аудит B1–B7, B21; п.3б, п.3в | — (скрипты п.3б, п.3в) |
+| WP2 (A) | A | черновик каталога S3 (G0) в `phase-4-a-wp2`: 65 типов §6.3, общие модели B в ядре (Q-A-1 (а)), ключи, пометки обработчиков и правил; заморозка — G1 после Q-A-2, Q-A-3 | `tests/events`: 73 passed |
+| WP1.1–1.2 (A) | A | выполнен в `phase-4-a-wp1` (шов S2): базовая миграция dbmate, `Db`, `append_events`, параметры §6.7 потока A. WP1.4 (`.squawk.toml`, S16) — к G2; WP1.3 — к G3/G4 | `tests/db`: 19 passed |
 | WP0 (зона B) | B | выполнен: аудит, п.3г, п.3д, п.5 | — (скрипт п.3г) |
 | Этап I G1 (B: S7, S8, S11, S13) | B | контракты в `phase-4-b`, тесты контрактов зелёные | см. «Красные прогоны» |
 | WP10.2–10.3 (B) | B | частично: разбор потока хода и вход шага цикла с инструментами — зелёные (`T-AI2`–`T-AI4`); адаптер `ResponsesClient.stream_structured` и цикл `run_tool_loop` (параллельные инструменты с таймаутом, повтор оборванного с удвоенным лимитом) — зелёные (`T-AI5`, `T-AI6` без строки `ops.llm_usage` — она в WP10.4); встраивание в шлюз (допуск, семафоры, учёт) — с WP13 | 19 passed |
@@ -120,6 +123,18 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 | B24 | Подтверждено: `AppResources` — `settings`, `engine`, `session_factory`, `neo4j`, `redis`, `llm`, `compute`; новых ресурсов и CORS-списка нет |
 | B27 | Подтверждено: `loadtest/meta_mock.py` строит ответ по схеме (`minimal_instance`), без стриминга и инструментов. Часть WP26.2 — C, `meta_smoke.py` — B |
 
+Пункты §3, которые подтверждает поток A (`phase-4` `a087529`, 2026-11-02).
+
+| # | Итог |
+| :-- | :-- |
+| B1 | Подтверждено: Alembic `migrations/versions/0001_initial_schema.py`, `0002_phase3.py`; таблицы `auth.users`, `core.learner_seq`, `core.events`, `core.sessions`, `core.artifacts`, `core.domains`, `core.task_bank`, `core.llm_outbox`, `ops.jobs`, `ops.dlq`, `ops.llm_ledger`, `ops.deletion_tombstones`, `ops.projector_offsets`, `ops.event_types_seen`, `ops.dispatcher_offsets`, `ops.turn_manifests` |
+| B2 | Подтверждено, пересчёт: `sqlalchemy`/`asyncpg` импортируют **41** модуль `quack/` и **61** файл `tests/`; `loadtest/` — 0 |
+| B3 | Подтверждено: `quack/events/catalog.py` — 36 типов |
+| B4 | Подтверждено: `quack/graph/` — `phase_a.py`, `folds.py`, `topic_display.py`; в коде `p_mastery`, `PART_OF`, `PREREQ_OF`, `DEPENDS_ON`, `appliedSeq`, `rules@2` |
+| B5 | Подтверждено: `quack/graph/evidence_weights.py`, `evidence_validation.py` есть |
+| B6 | Подтверждено: `quack/jobs/dispatcher.py`, `dispatcher_rules.py` есть |
+| B7 | Подтверждено: `quack/jobs/queue.py` — числовой `priority`, `attempt`/`max_attempts`, `run_after`, статусы `queued`/`running`/`done`/`failed`/`cancelled`, `ops.dlq`; нет `visible`, `cancel_requested`, `skipped_budget`, `max_jobs_per_learner` |
+| B21 | Подтверждено: `quack/domains/learner.py` пишет `ops.deletion_tombstones` (`pending_purge`); зачистка — `quack/ops/purge_job.py` |
 
 Пункты §3, которые подтверждает поток B (`main` `9ef6e3e`, 2026-11-02).
 
@@ -173,6 +188,49 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 ## Журнал решений
 
 ### Поток A
+
+### D-A-101. Размер пула `Db`
+- Класс: B. WP1.2, `quack/config.py`: `pg_pool_min_size` 1, `pg_pool_max_size` 10 на процесс. Размеров нет ни в `Т-§`, ни в `Д-§`; числа в коде запрещены (§0.3). Варианты: (а) 1/10; (б) как в Фазе 3 (10 + 5 сверх). Решение (а) — консервативно (§0.4.3, последний абзац). Обратимость: значения параметров. Тесты: `T-DB5` (работает на пуле). Подтверждение: нет.
+
+### D-A-102. `projector_batch_size` и `rebuild_max_tx_ops` 200 000 — вместе с WP3
+- Класс: B. §6.7 требует переименовать `projector_batch_max_events` → `projector_batch_size` и поднять `rebuild_max_tx_ops` до 200 000. Оба читают проектор и пересборка Фазы 3, `quack/cli.py` (C) и тесты Фазы 3 (`test_worker_and_ops.py`, `test_infra.py` проверяет 5000). Варианты: (а) сейчас — правка файлов C и утверждения чужого теста; (б) в WP3, когда старый проектор заменяется и его потребители уходят. Решение (б). Почему: §0.4.3 п.3, п.5; §0.4.4 п.14. Обратимость: имя и значение параметра. Подтверждение: нет.
+
+### D-A-103. Переходный период: две схемы Postgres до WP1.3
+- Класс: C
+- WP / место: WP1.1–1.3; `backend/db/migrations/`, `quack/db/db.py`, `quack/events/log.py`, `quack/events/registry.py`, `tests/db/fixtures.py`
+- Контекст: WP1.1 (чистый старт) создаёт таблицы с теми же именами, что у Фаз 1–3, но с другими колонками (`core.events`, `ops.jobs`, `ops.event_types_seen`, `ops.projector_offsets`, `ops.dispatcher_offsets`, `ops.turn_manifests`), а каталог WP2 убирает 36 типов `С-§5`. WP1.3 при этом оставляет старые модули B и C на SQLAlchemy до G3, и им нужны старые таблицы и старый каталог; `phase-4` должна быть всегда зелёной (§7.4). ТЗ не говорит, как обе схемы живут одновременно.
+- Варианты: (1) заменить схему сразу — старый код и ~770 тестов B и C падают, чинить пришлось бы в чужих зонах (§0.4.4 п.14); (2) новые таблицы под временными именами — нарушает контракт §6.1; (3) две схемы до WP1.3: новая — dbmate из `backend/db/migrations/` в отдельной базе (в тестах — `<test db>_p4`, фикстуры `p4_db`, `pg_db`, `create_learner` в `tests/db/fixtures.py`), новый код (`quack.db.Db`, `quack.events.log.append_events`, `quack.events.registry`) — рядом со старым (`quack.db.postgres`, `quack.events.append`, `quack.events.catalog`). Alembic, старый каталог и старые модули удаляются в WP1.3 вместе с последним потребителем; переключение `ops migrate`, compose и CI на dbmate — WP9 (C) в момент перехода.
+- Решение: (3).
+- Почему: ТЗ само предполагает, что старый код на SQLAlchemy работает до WP1.3: поля `engine` и `session_factory` уходят «вместе с SQLAlchemy (WP1.3)» (§4.2), зависимость `alembic` удаляется в WP1.3, а не в WP1.1, старые модули переносит владелец «когда переписывает» (WP1.3, риск R-W §9), остаток можно урезать с возвратом R2 в реестр (§7.5 п.6), `phase-4` всегда зелёная (§7.4). Со всем этим расходится одна фраза WP1.1 «Alembic-ревизии 0001, 0002 удаляются»: без старой схемы старые модули и их тесты падают в чужих зонах (§0.4.4 п.14). Первоисточники (`Т-§1.2`, `Т-§3.1`) переход не описывают; итог фазы одинаков в обоих вариантах. Критерии §0.4.3: п.1 — ничего не теряется и не ломается; п.3 — интерфейсы швов S2/S3 те же; п.4 — снимается удалением старых модулей и Alembic в WP1.3. Сдвигается только момент удаления ревизий Alembic: из WP1.1 в WP1.3 (вместе с зависимостью `alembic`).
+- Обратимость: удалить отдельную базу и фикстуры; схема и код Фазы 4 от этого не меняются.
+- Тесты: `T-DB1`, `T-DB5`, `tests/db/fixtures.py`.
+- Согласовано: B — да (2026-11-02: новый код B сразу на `Db` и `append_events`, старые модули B переводит и удаляет при переписывании в WP11–WP15, остаток к G3 — A по §7.3 п.1); C — да (2026-11-02, ответ в PR #74, раздел C; dbmate в CI — PR #77).
+- Требует подтверждения владельцем: да — **подтверждено** владельцем 2026-11-02 (передано через B, согласие B — PR #76). Решение принято исполнителем A по поручению разработчика потока A после сверки с ТЗ.
+
+### D-A-104. Колонки базовой миграции, которых §6.1 не уточняет
+- Класс: B. WP1.1, `backend/db/migrations/20261102000001_baseline.sql`. После G0 добавить `NOT NULL` нельзя (только расширяющие миграции), поэтому `NOT NULL` — у ключей, `learner_id`, времени и статусов, а ссылки, без которых строка осмысленна (`domain_id`, `topic_id`, `hub_id`, `session_id`), — `NULL`. Исключение по сверке B: `content.sessions.domain_id NOT NULL` (`Т-§22.9`: «Сессий без домена нет»). Целые — `BIGINT` (правило squawk `prefer-bigint-over-int`, `Д-§5.2` п.2; тип после G0 не меняется). `core.learners.email` — `NOT NULL`, уникальный, `CHECK` на нижний регистр. `ops.jobs.job_key` — первичный ключ; `ops.jobs.learner_id` — `NULL` только у периодических задач WP7.5. `ops.turn_manifests` — ключ `manifest_id` (ссылка `turn.committed.manifest_id`; `turn_id` в Фазе 4 нет), `reasoning_effort` Фазы 3 → `effort`; `prompt_version` и `renderer_version` — `TEXT` вида `teacher@2`, `renderer@1` (по сверке B: `Т-§11.6` «версия роль@N записывается в манифест», `Т-§10.6`). `ops.llm_usage` — токены `input`, `cached_input`, `output`, `reasoning` (виды таблицы цен §1.3 плюс рассуждение), `cost_usd numeric(12,6)`. `ops.event_types_seen.first_seen_at` и `updated_at` у отметок — как в Фазе 3. Внешних ключей нет (как в Фазе 3; удаление WP25 идёт по `learner_id`). Схема `langgraph` не создаётся (`Т-§22.3`, §2.2). Почему: §0.4.3, «частые случаи», строка 1; п.4. Обратимость: до G0 — правка baseline, после — расширяющая миграция. Тесты: `T-DB1`. Владельцам таблиц B и C — проверить свои до G0. Подтверждение: нет.
+
+### D-A-105. `append_events` не заводит строку ученика
+- Класс: B. WP1.2, `quack/events/log.py`. `Т-§2.3`: «блокирует строку ученика (SELECT … FOR UPDATE)»; Фаза 3 заводила `core.learner_seq` лениво. Решение: нет строки `core.learners` → `LearnerNotFoundError`; строку заводит вход (WP18, C), в тестах — `tests.db.fixtures.create_learner`. Почему: §0.4.3 п.2 (буква `Т-§2.3`), `email NOT NULL` (D-A-104). Обратимость: одна ветка функции. Тесты: `test_learner_row_is_required`. Подтверждение: нет.
+
+### D-A-106. Формат `agent:<kind>` в `actor`
+- Класс: B. WP2.1, `quack/events/actor.py`: `agent:` и имя в `snake_case` (`^agent:[a-z][a-z0-9_]*$`), как имена ролей; формы `kind` документ не задаёт. Обратимость: одно регулярное выражение. Тесты: `test_actor_versions_and_agents`. Подтверждение: нет.
+
+### D-A-107. Текст `item.flagged_unclear` — в поле `text`
+- Класс: B. WP2.1, WP2.3, `quack/events/event_types.py`. §6.3 называет поле `quote`, а WP2.3 включает тип в полнотекстовый поиск, и `Т-§3.1` требует: «все типы событий с текстом для поиска хранят его в поле text». Решение: цитируемый фрагмент — поле `text` (уровень 2 §0.4.1 выше ТЗ). Обратимость: имя поля до G1. Тесты: `test_text_types_have_text_and_match_index`. Подтверждение: нет (B пишет этот тип — сообщено).
+
+### D-A-108. Ключ `check.failed`
+- Класс: B. WP2.1, `quack/events/keys.py`: `check_failed:{answer_seq}:{part}` — по образцу `verdict:{answer_seq}:{part}` (одна запись на часть, `Т-§6.1`). Тесты: `test_derived_keys_deterministic`. Подтверждение: нет.
+
+### D-A-109. Черновик каталога S3 (G0) — поля сверх §6.3
+- Класс: B
+- WP / место: WP2.1, `quack/events/values.py`, `quack/events/records.py`, `quack/events/event_types.py`
+- Контекст: §6.3 даёт ключевые поля, остальное — «минимально нужное для правила» (§0.4.3, «частые случаи», строка 1). Q-A-1 (а): модели B одной формы — в ядре, формы с метками — их id-версии в ядре, имена даёт A.
+- Решение: `values.py` — `LearnerAnswer`, `AnswerSpec` и части, `Verdict`, `CheckFailed` (теперь модель Pydantic, а не dataclass), `NewSkill`, перечни; `Verdict` и `CheckFailed` — сами нагрузки `verdict.recorded`, `check.failed`. `records.py` — id-формы: поле-метка `x` → `x_id`, `R…` → `request_id`, `C…` → `card_ids`, `P…` → `chunk_id`; `TurnTaskRecord` несёт `task_id` задачи, созданной ходом (WP2.2); `DeadlineRecord.deadline_at_ms` (как в `hub.deadline_set`); `ExtractedElementRecord.at_ms` — время действия, копирует код (`Т-§2.1`); `RootCauseRecord.confidence` — категория модели, число даёт код при проекции (закон 4). Перечни из `Т-§3.4.2`: `origin` темы и навыка (`session`, `material`, `learner`), задача — `source` (`seminar`, `generated`, `material`, `teacher`), `verification` (`unchecked`, `checked`, `disputed`); `edge.added.origin` — `material`, `model`, `learner` (`Т-§4.6`); `hub.created.kind` — WP6.3; `hub.deadline_set.source` — `turn`, `observation`, `syllabus`, `learner` (WP6.3); `deadline_at_ms = null` снимает дедлайн. `from`/`into` → `from_id`/`into_id`. Пометки «обработчик / правило» — по столбцам §6.3 (`SPECS`, T-EV5).
+- Почему: §0.4.3, «частые случаи», строка 1; `Т-§0.4` (snake_case в нагрузке).
+- Обратимость: до G1 — правка моделей; после — только новой версией схемы (§0.4.4 п.2).
+- Тесты: `T-EV1`, `T-EV2`, `T-EV5`, `test_shared_models_are_the_payloads`, `tests/events/samples.py`.
+- Требует подтверждения владельцем: нет. Поля типов B и C — подтвердить владельцам типов до G1 (вопросы Q-A-2, Q-A-3).
 
 ### Поток B
 
@@ -306,6 +364,8 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 
 ## Красные прогоны
 
+- WP2 (A), Этап I–II: схемы нагрузок (Этап I), шаблоны ключей — `NotImplementedError`: `pytest -q tests/events` — 2 failed (`T-EV3`), 71 passed (`T-EV1`, `T-EV2`, `T-EV5` на схемах Этапа I). Зелёный: 73 passed.
+- WP1 (A), коммит `8c9fe33` (Этап I–II): `QUACK_TEST_REQUIRE_INFRA=1 python -m pytest -q tests/db` — 13 errors (`NotImplementedError` в `open_db`: все `T-DB5`), 6 passed (`T-DB1` — миграция есть с Этапа I; `T-DB2`, `T-DB4` и их самопроверки; формат `actor`). Зелёный (`phase-4-a-wp1`): 19 passed.
 - Этап I G1 (B): `uv run pytest tests/session/test_phase4_contracts.py tests/llm/test_phase4_ai_layer.py tests/practice/test_tasks_markup.py tests/practice/test_check_instant.py tests/test_contracts.py` — 33 красных (`NotImplementedError`: `TurnStreamParser`, `next_step_input`, `validate_markup`, `check`), 26 зелёных (контракты, `T-AI1`, `T-A6`).
 - WP10.2–10.3 (адаптер и цикл): `tests/llm/test_phase4_stream_adapter.py` написан до реализации, но красный прогон не снят отдельно (до реализации тесты падали бы на импорте `quack.llm.tool_loop`). Зелёный: 9 passed; с затронутыми старыми (`tests/llm`, `test_llm_runtime.py`, `test_meta_mock.py`, `test_thresholds_in_settings.py`, `test_contracts.py`) — 127 passed.
 - Зелёный прогон (B, `phase-4-b`): те же файлы — 59 passed. Полный прогон набора на итоговом SHA (§0.4.7) — job `backend` CI (`QUACK_TEST_REQUIRE_INFRA=1`); SHA и итог — в описании PR #72.
@@ -315,6 +375,10 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 - `tests/test_contracts.py` (`T-A6`): в `PRODUCT` добавлен `agents` (ТЗ Ф4 §4.1). Сила проверки не меняется.
 
 ## Вопросы к команде
+
+- **Q-A-2 (A → B, к заморозке S3 на G1).** (1) `Verdict.misconception` в событии — id заблуждения или гипотеза словами, метка недопустима (`Т-§4.5`); оставить одно поле `str` или разделить на `misconception_id` и `misconception_hypothesis`? (2) `element.responded` по §6.3 — без `answer`; ответ на элемент-задачу пишется как `answer.submitted` с `element_id` — так? (3) `observation.extracted.rejected` — форма `{reason, quote}` достаточна? (4) `RootCauseRecord.confidence` — категория в событии, число по `root_cause_confidence_map` считает проектор (A) — согласен? (5) `item.flagged_unclear.text` вместо `quote` (D-A-107). (6) `CheckFailed` стал моделью Pydantic — позиционный конструктор dataclass больше не работает.
+- **Q-A-3 (A → C, к заморозке S3 на G1).** (1) `observation.diagnosed`: `diagnosis.kind` (`error`, `question`) и `method` (`model`, `symbolic`) — по WP5.1, WP21.4 так? (2) `canvas.line_committed.kind` — пока `str`: дай закрытый перечень видов строки (`Т-§15.3`). (3) `material.parsed` — `{material_id, pages_count}` достаточно? (4) `artifact.updated.kind` — пока `str`: назови значения видов WP23.1. (5) `DeletionRecord.target_id` — UUID, как `ops.deletion_log.target_id` (ревью #74).
+- **Q-A-1 (A → B, класс C, шов S3).** Каталог событий живёт в ядре (`quack.events`, §4.1), и импортировать модели B из `quack.practice`, `quack.agents`, `quack.session` он не может (слои §4.1, `T-A6`). Кроме того, разметка `turn.committed` хранит id, а `TurnMarkup` модели — метки. Предложение A: модели нагрузки — в каталоге (`quack.events.registry`, S3), поля — по моделям B (`Verdict`, `CheckFailed`, `ExtractedElement`, `TurnMarkup` с id, `LearnerAnswer`); B импортирует их из ядра вместо своих копий или держит свои модели, а тест-контракт сверяет поля. Нужен выбор B до G1.
 
 - **Q-C-1 (C → владелец, к сведению B).** `compute/` на `main`: в первом прогоне в контейнере,
   запущенном одновременно с полным `pytest` backend, упали 2 теста из 5
