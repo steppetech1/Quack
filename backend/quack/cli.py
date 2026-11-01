@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import os
 import signal
 import socket
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
+import structlog
 from sqlalchemy import text
 
 from quack.config import Settings, get_settings
@@ -32,18 +35,41 @@ from quack.runtime import (
     JobHandlersMismatchError,
     check_handlers_complete,
     close_job_context,
+    close_projector_context,
     create_job_context,
+    create_projector_context,
     register_all_handlers,
 )
 
 log = get_logger(__name__)
+
+type ProcessRole = Literal["api", "workers", "projector", "ops"]
+
+# WP8.1, §4.3: the `process_role` each command runs with; `worker` is projector + workers.
+PROCESS_ROLES: dict[str, ProcessRole] = {
+    "api": "api",
+    "projector": "projector",
+    "workers": "workers",
+    "worker": "workers",
+    "ops": "ops",
+}
+
+
+def process_settings(settings: Settings, role: ProcessRole) -> Settings:
+    """Set the role before any resource is created (§4.3) and bind `process` and `version` to
+    every log line of this process (Д-§9.1)."""
+    configured = settings.model_copy(update={"process_role": role})
+    structlog.contextvars.bind_contextvars(process=role, version=configured.quack_version)
+    return configured
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m quack.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("api", help="run the HTTP API (uvicorn)")
-    sub.add_parser("worker", help="run the projector, the dispatcher and the job executors")
+    sub.add_parser("projector", help="run the projector and the log dispatcher")
+    sub.add_parser("workers", help="run the job executors and the periodic scheduler")
+    sub.add_parser("worker", help="projector + workers in one process (development only)")
     ops = sub.add_parser("ops", help="operational commands")
     ops_sub = ops.add_subparsers(dest="op", required=True)
     ops_sub.add_parser("migrate", help="alembic upgrade head")
@@ -69,11 +95,15 @@ def build_parser() -> argparse.ArgumentParser:
 def _run_api(settings: Settings) -> int:
     import uvicorn
 
+    # Uvicorn worker processes build their own Settings: the role goes through the environment.
+    os.environ["PROCESS_ROLE"] = settings.process_role
     uvicorn.run(
         "quack.api.app:create_app",
         factory=True,
         host=settings.api_host,
         port=settings.api_port,
+        workers=settings.api_workers,
+        timeout_graceful_shutdown=settings.api_graceful_shutdown_s,
         log_config=None,
     )
     return 0
@@ -94,52 +124,83 @@ async def _with_resources[T](
         await engine.dispose()
 
 
-async def _worker(settings: Settings) -> int:
+def _stop_event() -> asyncio.Event:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, stop.set)
+    return stop
 
+
+async def _projector_tasks(settings: Settings, stop: asyncio.Event) -> int:
+    """WP8.1: Neo4j schema check, then projector and dispatcher as two supervised tasks
+    (WP11.1). On stop each finishes its current batch and starts no new one (Д-§6.1)."""
+    context = create_projector_context(settings)
+    try:
+        missing = await verify_schema(context.neo4j)
+        if missing:
+            log.error("neo4j_schema_missing", missing=missing)
+            return 1
+        projector = ProjectorWorker(
+            settings, context.engine, context.session_factory, context.neo4j, context.redis
+        )
+        dispatcher = Dispatcher(settings, context.session_factory, context.redis)
+        pause = settings.dispatcher_restart_pause_s
+        log.info("projector_started")
+        await asyncio.gather(
+            supervise("projector", projector.run_forever, stop, restart_pause_s=pause),
+            supervise("dispatcher", dispatcher.run_forever, stop, restart_pause_s=pause),
+        )
+        return 0
+    finally:
+        await close_projector_context(context)
+
+
+async def _workers_tasks(settings: Settings, stop: asyncio.Event) -> int:
+    """WP8.1: handler registration and completeness check (WP2.2), executors with the reaper
+    (graceful shutdown WP3.5) and the periodic scheduler (WP3.3)."""
     handlers = register_all_handlers()
     try:
         check_handlers_complete(handlers)
     except JobHandlersMismatchError as exc:
         log.error("job_handlers_mismatch", missing=exc.missing, extra=exc.extra)
         return 1
-
     context = await create_job_context(settings)
     try:
-        engine, driver = context.engine, context.neo4j
-        missing = await verify_schema(driver)
-        if missing:
-            log.error("neo4j_schema_missing", missing=missing)
-            return 1
-        worker_id = f"{socket.gethostname()}:{id(stop)}"
-        projector = ProjectorWorker(
-            settings, engine, context.session_factory, driver, context.redis
-        )
+        worker_id = f"{socket.gethostname()}:{os.getpid()}:{id(stop)}"
         runner = JobRunner(
-            settings,
-            context.session_factory,
-            worker_id,
-            handlers=handlers,
-            context=context,
+            settings, context.session_factory, worker_id, handlers=handlers, context=context
         )
-        dispatcher = Dispatcher(settings, context.session_factory, context.redis)
-        pause = settings.dispatcher_restart_pause_s
-        log.info("worker_started", worker_id=worker_id)
-        # WP11.1 (Т-§22.4): projector and dispatcher are separate supervised tasks; a crash of
-        # one is logged and restarted after the pause and does not stop the other.
+        log.info("workers_started", worker_id=worker_id)
         await asyncio.gather(
-            supervise("projector", projector.run_forever, stop, restart_pause_s=pause),
-            supervise("dispatcher", dispatcher.run_forever, stop, restart_pause_s=pause),
             runner.run_forever(stop),
             PeriodicScheduler(settings, context.session_factory).run_forever(stop),
         )
         return 0
     finally:
         await close_job_context(context)
+
+
+async def _projector(settings: Settings) -> int:
+    return await _projector_tasks(settings, _stop_event())
+
+
+async def _workers(settings: Settings) -> int:
+    return await _workers_tasks(settings, _stop_event())
+
+
+async def _worker(settings: Settings) -> int:
+    """Development only: projector and workers in one process (WP8.1)."""
+    stop = _stop_event()
+    handlers = register_all_handlers()
+    try:
+        check_handlers_complete(handlers)
+    except JobHandlersMismatchError as exc:
+        log.error("job_handlers_mismatch", missing=exc.missing, extra=exc.extra)
+        return 1
+    codes = await asyncio.gather(_projector_tasks(settings, stop), _workers_tasks(settings, stop))
+    return max(codes)
 
 
 async def _rebuild(settings: Settings, args: argparse.Namespace) -> int:
@@ -237,12 +298,19 @@ async def _ops(settings: Settings, args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = get_settings()
+    settings = process_settings(get_settings(), PROCESS_ROLES[args.command])
     configure_logging(settings.log_level, settings.secret_values())
     if args.command == "api":
         return _run_api(settings)
     if args.command == "worker":
+        if settings.env == "prod":
+            log.error("worker_command_is_for_development", hint="run projector and workers")
+            return 2
         return asyncio.run(_worker(settings))
+    if args.command == "projector":
+        return asyncio.run(_projector(settings))
+    if args.command == "workers":
+        return asyncio.run(_workers(settings))
     if args.op == "migrate":
         migrate(settings)
         return 0

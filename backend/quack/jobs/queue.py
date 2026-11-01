@@ -194,6 +194,20 @@ async def complete_job(session: AsyncSession, job_id: UUID, worker_id: str) -> b
     return result.first() is not None
 
 
+async def release_job(session: AsyncSession, job_id: UUID, worker_id: str) -> bool:
+    """WP3.5: put an unfinished job back to `queued` on shutdown — `attempt` unchanged, lock
+    cleared — only while `worker_id` still owns it."""
+    result = await session.execute(
+        text(
+            "UPDATE ops.jobs SET status = 'queued', locked_by = NULL, heartbeat_at = NULL, "
+            "updated_at = now() WHERE id = :id AND status = 'running' AND locked_by = :worker "
+            "RETURNING id"
+        ),
+        {"id": job_id, "worker": worker_id},
+    )
+    return result.first() is not None
+
+
 def _error_parts(error: BaseException | str) -> tuple[str, str]:
     if isinstance(error, BaseException):
         return type(error).__name__, str(error)
