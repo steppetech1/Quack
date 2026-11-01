@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, Field, SecretStr, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -106,6 +106,88 @@ _PROD_SECRETS_BY_ROLE: dict[str, tuple[str, ...]] = {
     "projector": ("NEO4J_PASSWORD",),
     "ops": (),
 }
+
+
+# --- stream B ---
+type PriorityClass = Literal["P0", "P1", "P2", "P3"]
+
+WONDER = "muse-wonder-1.0"
+SPARK = "muse-spark-1.3"
+
+
+class RoleConfig(BaseModel):
+    """One row of the role table Т-§11.1 (ТЗ Ф4 WP10.1). `effort`, `max_output_tokens` and
+    `prompt` are null for the roles that are not text calls (`segmenter`, `voice`,
+    `illustrator`): Т-§11.1 gives them no effort row (D-B-101)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    model: str
+    effort: Literal["low", "high"] | None
+    max_output_tokens: int | None
+    priority_class: PriorityClass
+    timeout_s: float
+    prompt: str | None
+
+
+def _role(
+    model: str,
+    effort: Literal["low", "high"] | None,
+    max_output_tokens: int | None,
+    priority_class: PriorityClass,
+    prompt: str | None,
+    timeout_s: float = 60.0,
+) -> RoleConfig:
+    return RoleConfig(
+        model=model,
+        effort=effort,
+        max_output_tokens=max_output_tokens,
+        priority_class=priority_class,
+        timeout_s=timeout_s,
+        prompt=prompt,
+    )
+
+
+def default_llm_roles() -> dict[str, RoleConfig]:
+    """Т-§11.1 (models, effort, output limits), Т-§11.3 (priority classes), Т-§1.3 (model ids).
+    Timeouts: teacher 45 s and teacher_fallback 30 s as in Phase 3, others `llm_timeout_sec`
+    (60 s). Classes of roles with two uses (`recognizer`, `builder`) and of `voice` — D-B-101."""
+    return {
+        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@2", 45.0),
+        "teacher_fallback": _role(SPARK, "low", 4096, "P0", "teacher@2", 30.0),
+        "extractor": _role(SPARK, "high", 4096, "P2", "extractor@3"),
+        "verdict_free": _role(SPARK, "high", 4096, "P1", "verdict_free@1"),
+        "verdict_proof": _role(WONDER, "high", 8192, "P1", "verdict_proof@1"),
+        "second_opinion": _role(WONDER, "high", 8192, "P1", "second_opinion@1"),
+        "canvas_diagnoser": _role(SPARK, "low", 4096, "P0", "canvas_diagnoser@1"),
+        "recognizer": _role(SPARK, "low", 4096, "P0", "recognizer@1"),
+        "segmenter": _role("sam-3.1", None, None, "P1", None),
+        "voice": _role("muse-voice-transcribe-1.0", None, None, "P1", None),
+        "analyst": _role(SPARK, "high", 4096, "P2", "analyst@1"),
+        "analyst_deep": _role(WONDER, "high", 8192, "P2", "analyst@1"),
+        "builder": _role(SPARK, "high", 4096, "P2", "builder@1"),
+        "material_parser": _role(SPARK, "high", 4096, "P2", "material_parser@1"),
+        "task_generator": _role(SPARK, "high", 4096, "P2", "task_generator@1"),
+        "task_checker": _role(SPARK, "high", 4096, "P1", "task_checker@1"),
+        "task_arbiter": _role(WONDER, "high", 8192, "P2", "task_arbiter@1"),
+        "solution_space": _role(SPARK, "high", 4096, "P2", "solution_space@1"),
+        "viz_builder": _role(WONDER, "high", 16384, "P2", "viz_builder@1"),
+        "viz_checker": _role(SPARK, "low", 4096, "P2", "viz_checker@1"),
+        "misconception_describer": _role(SPARK, "high", 4096, "P3", "misconception_describer@1"),
+        "artifact_writer": _role(SPARK, "high", 4096, "P2", "artifact_writer@1"),
+        "today_planner": _role(SPARK, "high", 4096, "P2", "today_planner@1"),
+        "domain_classifier": _role(SPARK, "low", 4096, "P1", "domain_classifier@1"),
+        "release_judge": _role(WONDER, "high", 8192, "P3", "release_judge@1"),
+        "illustrator": _role("muse-image-1.0", None, None, "P2", None),
+    }
+
+
+class ModelPrice(BaseModel):
+    """Т-§11.4: dollars per 1M tokens of one model (ТЗ Ф4 WP10.4)."""
+
+    input: float
+    cached_input: float
+    output: float
 
 
 class Settings(BaseSettings):
@@ -359,6 +441,65 @@ class Settings(BaseSettings):
     # WP15 (Т-§12.1, Т-§12.4): spoiler guard retries; numbers with |x| below this are not checked.
     guard_max_retries: int = 2
     spoiler_ignore_abs_below: int = 10
+    # --- Phase 4, stream B (ТЗ Ф4 §6.7; starting values Т-§21.3, Т-§22.11) ---
+    # WP10.1: the role table Т-§11.1, one row per role.
+    llm_roles: dict[str, RoleConfig] = Field(default_factory=default_llm_roles)
+    # WP10.4 (Т-§11.4, ТЗ Ф4 §2.3 строка 9): prices come from the owner; empty until then.
+    llm_prices: dict[str, ModelPrice] = Field(default_factory=dict)
+    # WP10.3 (Т-§11.5).
+    tool_timeout_ms: int = 2000
+    # WP10.3: model steps of one tool loop before it is cut. Phase 4 decision D-B-117.
+    tool_loop_max_steps: int = 4
+    # WP10.4 (Т-§11.4).
+    session_agent_budget_usd: float = 0.5
+    learner_daily_budget_usd: float = 3.0
+    # WP13.4 (Т-§12.2).
+    spoiler_holdback_chars: int = 120
+    # WP14.5 (Т-§10.1).
+    teacher_context_target_tokens: int = 30000
+    teacher_context_max_tokens: int = 60000
+    # WP14.2 (Т-§10.2).
+    memory_skills_max: int = 12
+    # Phase 4 decision D-B-102: threshold of "confident enough" gap type (Т-§10.2).
+    gap_type_min_confidence: float = 0.6
+    # WP14.4 (Т-§10.4): result limits of the memory tools. Phase 4 decision D-B-103.
+    memory_tool_limits: dict[str, int] = Field(
+        default_factory=lambda: {
+            "skill_history": 10,
+            "similar_mistakes": 5,
+            "past_solution": 2,
+            "voice_at_line": 1,
+            "search_materials": 5,
+            "prerequisites": 10,
+        }
+    )
+    # WP16.3 (Т-§4.3).
+    candidate_k: int = 15
+    # WP16.4 (Т-§4.9).
+    domain_autolink_confidence: float = 0.8
+    # WP11.2–11.3 (Т-§6.1, Т-§6.4, Т-§6.6).
+    symbolic_inline_timeout_ms: int = 1500
+    symbolic_background_timeout_ms: int = 10000
+    symbolic_check_delay_ms: int = 3000
+    min_sig_digits: int = 3
+    numeric_points: int = 20
+    # WP11.6 (Т-§7.7).
+    verdict_min_confidence: float = 0.7
+    second_opinion_model: str = WONDER
+    # WP13.9 (Т-§3.2).
+    turn_context_sample_rate: float = 0.02
+    # WP16.5 (Т-§22.10: one fix round; target value Т-§21.3 is 3).
+    viz_max_fix_rounds: int = 1
+    viz_static_base_url: str = ""
+    # WP10.6 (ТЗ Ф4 §2.3 строка 20): UUIDv5 namespace of the learner pseudonym in traces.
+    # Phase 4 decision D-B-105: a fixed namespace, never changed after the first trace.
+    langsmith_pseudonym_ns: str = "6f1c2a9e-4b7d-5e3a-9c21-0d8e7f6a5b43"
+    # WP15 (Т-§9.4): root-cause confidence category of extractor@3 → number. D-B-106.
+    root_cause_confidence_map: dict[Literal["low", "medium", "high"], float] = Field(
+        default_factory=lambda: {"low": 0.3, "medium": 0.6, "high": 0.9}
+    )
+    # WP10.3 (Т-§11.8 п.1): fallback two-step teacher turn, off until the live run says so.
+    teacher_two_step: bool = False
 
     # --- stream C ---
     # WP8.3: probe timeout of /health/ready and /healthz (was HEALTH_CHECK_TIMEOUT_SEC).
