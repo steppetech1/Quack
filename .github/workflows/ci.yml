@@ -57,6 +57,16 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           working-directory: backend
+      # ТЗ Ф4 §4.6, D-A-103: dbmate binary for the Phase 4 baseline (tests/db), pinned by checksum.
+      - name: Install dbmate
+        env:
+          DBMATE_VERSION: v2.36.0
+          DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/dbmate"             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/dbmate" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/dbmate" /usr/local/bin/dbmate
+          dbmate --version
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
