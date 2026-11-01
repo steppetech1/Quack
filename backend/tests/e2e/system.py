@@ -38,6 +38,7 @@ from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.graph.worker import ProjectorWorker
+from quack.jobs.dispatcher import Dispatcher
 from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, JobHandler, JobRunner
@@ -56,6 +57,9 @@ _BUSY_SQL = text(
       (SELECT count(*) FROM core.learner_seq s
          LEFT JOIN ops.projector_offsets p ON p.learner_id = s.learner_id
         WHERE s.last_seq > coalesce(p.applied_seq, 0)) AS projector_lagging,
+      (SELECT count(*) FROM core.learner_seq s
+         LEFT JOIN ops.dispatcher_offsets d ON d.learner_id = s.learner_id
+        WHERE s.last_seq > coalesce(d.last_dispatched_seq, 0)) AS dispatcher_lagging,
       (SELECT count(*) FROM ops.jobs
         WHERE status = 'running' OR (status = 'queued' AND run_after <= now())) AS jobs_ready
     """
@@ -150,7 +154,9 @@ class System:
             self.settings, self.engine, self.session_factory, self.neo4j, self.redis
         )
         self._spawn(projector.run_forever)
-        # S-A: dispatcher task in the projector process (WP11.1) starts here.
+        # Dispatcher of the log (WP11.1), as `quack.cli worker` runs it.
+        dispatcher = Dispatcher(self.settings, self.session_factory, self.redis)
+        self._spawn(dispatcher.run_forever)
         handlers = {k: _logged(h, self.job_starts) for k, h in job_handlers().items()}
         runner = JobRunner(
             self.settings,
@@ -194,22 +200,25 @@ class System:
         """Wait until the log is projected (and dispatched) and no claimable job is left."""
         deadline = time.monotonic() + timeout_s
         stable = 0
-        last: tuple[int, int] = (-1, -1)
+        last: tuple[int, int, int] = (-1, -1, -1)
         while True:
             for task in self._tasks:
                 if task.done() and task.exception() is not None:
                     raise AssertionError(f"background task failed: {task.exception()!r}")
             async with self.session_factory() as session:
                 row = (await session.execute(_BUSY_SQL)).one()
-            last = (int(row.projector_lagging), int(row.jobs_ready))
-            # S-A: dispatcher lag (`ops.dispatcher_offsets` vs `core.learner_seq`) joins here.
-            stable = stable + 1 if last == (0, 0) else 0
+            last = (
+                int(row.projector_lagging),
+                int(row.dispatcher_lagging),
+                int(row.jobs_ready),
+            )
+            stable = stable + 1 if last == (0, 0, 0) else 0
             if stable >= SETTLE_STABLE_ROUNDS:
                 return
             if time.monotonic() > deadline:
                 raise AssertionError(
                     f"system did not settle in {timeout_s} s: projector lagging learners "
-                    f"{last[0]}, claimable jobs {last[1]}"
+                    f"{last[0]}, dispatcher lagging learners {last[1]}, claimable jobs {last[2]}"
                 )
             await asyncio.sleep(SETTLE_POLL_SEC)
 
