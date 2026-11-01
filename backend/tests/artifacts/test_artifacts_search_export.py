@@ -444,6 +444,41 @@ async def test_digest_request_has_names_not_ids(
     assert s.skill_a_name in template[0]["payload"]["text"]
 
 
+async def test_search_skips_deleted_notes_and_old_versions(
+    client: httpx.AsyncClient, auth: AuthHeaders, seed: Seeder
+) -> None:
+    """Q4 (PHASE3_NOTES): the event search shows an artifact event only while it holds the
+    artifact's current content — a deleted note and an edited-away text are not found; the
+    current text is found in both lists."""
+    learner = await seed.learner()
+    s = await seed.seed_structure(learner)
+    headers = auth(learner)
+    r = await _create_note(client, headers, s, "Gone", "zygote membrane draft", "n-gone")
+    assert r.status_code == 201, r.text
+    r = await _delete_note(client, headers, r.json()["artifact_id"], "d-gone")
+    assert r.status_code == 200, r.text
+    r = await _create_note(client, headers, s, "Integrals", "trapezoid estimate", "n-kept")
+    assert r.status_code == 201, r.text
+    kept_id = r.json()["artifact_id"]
+    edit = {"title": "Integrals", "text": "simpson estimate", "idempotency_key": "e-kept"}
+    r = await client.patch(f"/v1/artifacts/notes/{kept_id}", json=edit, headers=headers)
+    assert r.status_code == 200, r.text
+    await seed.project(learner)
+
+    async def found(q: str) -> tuple[list[str], set[tuple[str, str]]]:
+        r = await client.get("/v1/artifacts/search", params={"q": q}, headers=headers)
+        assert r.status_code == 200, r.text
+        hits = r.json()
+        artifacts = [a["artifact_id"] for a in hits["artifact_hits"]]
+        return artifacts, {(e["type"], e["text"]) for e in hits["event_hits"]}
+
+    assert await found("zygote membrane") == ([], set())
+    assert await found("trapezoid") == ([], set())
+    artifacts, events = await found("simpson")
+    assert artifacts == [kept_id]
+    assert events == {("artifact.note_updated", "simpson estimate")}
+
+
 async def test_search_and_export(
     client: httpx.AsyncClient,
     auth: AuthHeaders,

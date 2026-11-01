@@ -95,6 +95,10 @@ class DiagnosticParams(BaseModel):
     default_tested_depth: float = 0.5
 
 
+# Q6 (PHASE3_NOTES): tokens are HS256; RFC 7518 §3.2 requires a key at least as long as the
+# hash output (256 bits). A property of the algorithm, not a tunable threshold.
+HS256_MIN_SECRET_BYTES = 32
+
 # Д-§7: the secrets each process role needs in prod (compose passes only these, ТЗ WP9.2).
 _PROD_SECRETS_BY_ROLE: dict[str, tuple[str, ...]] = {
     "api": ("JWT_SECRET", "META_API_KEY", "NEO4J_PASSWORD"),
@@ -340,6 +344,13 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise ValueError(f"missing required secrets for ENV=prod: {', '.join(missing)}")
+            jwt_bytes = len(self.jwt_secret.get_secret_value().encode())
+            if "JWT_SECRET" in _PROD_SECRETS_BY_ROLE[self.process_role] and (
+                jwt_bytes < HS256_MIN_SECRET_BYTES
+            ):
+                raise ValueError(
+                    f"JWT_SECRET for ENV=prod must be at least {HS256_MIN_SECRET_BYTES} bytes"
+                )
         return self
 
     @property

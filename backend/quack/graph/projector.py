@@ -283,6 +283,11 @@ async def project_events(
         topic = prop_str(props, "topicId")
         if topic:
             dirty_topics.add(topic)
+        # After `skill.merged` the target is also PART_OF the topic of the merged skill: every
+        # topic of the skill is refreshed, or batching would differ from a rebuild (Т-§2.5).
+        dirty_topics.update(
+            key[4] for key in graph.out_rels("Skill", skill_id, "PART_OF") if key[3] == "Topic"
+        )
     for misc_id in miscs:
         props = graph.get("Misconception", misc_id) or {}
         manifestations = [

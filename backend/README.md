@@ -19,7 +19,8 @@ QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q
 One image (`quack-backend`), one command per process (ТЗ Фазы 3 WP8.1). The CLI sets the
 process role before reading `Settings`: in `ENV=prod` each role needs only its own secrets
 (`api` — `JWT_SECRET`, `META_API_KEY`, `NEO4J_PASSWORD`; `workers` — `META_API_KEY`,
-`NEO4J_PASSWORD`; `projector` — `NEO4J_PASSWORD`; `ops` — none). Every log line carries
+`NEO4J_PASSWORD`; `projector` — `NEO4J_PASSWORD`; `ops` — none); `JWT_SECRET` is at least 32
+bytes (HS256). Every log line carries
 `process` and `version` (`QUACK_VERSION`).
 
 ```bash
@@ -85,7 +86,7 @@ skipped (set `QUACK_TEST_REQUIRE_INFRA=1` to make them fail instead).
 docker run -d --name quack-test-pg -e POSTGRES_USER=quack -e POSTGRES_PASSWORD=quack \
   -e POSTGRES_DB=quack_test -p 55432:5432 postgres:16
 docker run -d --name quack-test-neo4j -e NEO4J_AUTH=neo4j/quacktest123 -p 57687:7687 \
-  neo4j:2026.06-community
+  neo4j:2026.10-community
 docker run -d --name quack-test-redis -p 56379:6379 redis:7
 ```
 

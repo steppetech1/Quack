@@ -78,7 +78,7 @@ services:
 
   neo4j:
     # The Community version the test suite runs on (backend/README.md); never `latest`.
-    image: neo4j:${NEO4J_VERSION:-2026.06}-community
+    image: neo4j:${NEO4J_VERSION:-2026.10}-community
     restart: unless-stopped
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
