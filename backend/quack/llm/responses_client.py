@@ -17,11 +17,12 @@ last `message` without that phase. The order of JSON keys is never relied on.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 import httpx2
 import openai
+import orjson
 from openai import AsyncOpenAI
 
 from quack.llm.errors import (
@@ -31,6 +32,14 @@ from quack.llm.errors import (
     ProviderUnavailableError,
 )
 from quack.llm.provider import RATE_LIMIT_HEADERS, ProviderRequest, ProviderResponse
+from quack.llm.streaming import (
+    OutputItemDone,
+    StreamCompleted,
+    StreamEvent,
+    StreamRequest,
+    StreamUsage,
+    TextDelta,
+)
 from quack.logging import get_logger
 
 log = get_logger(__name__)
@@ -157,6 +166,88 @@ class ResponsesClient:
             headers=headers,
         )
 
+    async def stream_structured(self, request: StreamRequest) -> AsyncIterator[StreamEvent]:
+        """WP10.2 (Т-§11.1, Т-§11.5): `/responses` with `stream: true`. Text deltas only of
+        the answer message (not `phase: commentary`); every finished output item raw; last —
+        `StreamCompleted` with usage and the rate-limit headers. An error event of the
+        stream is `ProviderUnavailableError`; `incomplete` is reported, never parsed."""
+        body = self._body(request.base)
+        body["stream"] = True
+        body["input"] = [*body["input"], *(dict(item) for item in request.input_items)]
+        if request.tools:
+            body["tools"] = [dict(tool) for tool in request.tools]
+            body["tool_choice"] = "auto"  # the only choice Meta accepts (Т-§1.3)
+        try:
+            async with self.sdk.responses.with_streaming_response.create(
+                **body, timeout=request.base.timeout_sec
+            ) as raw:
+                headers = _rate_limit_headers(raw.headers)
+                commentary: set[str] = set()
+                async for line in raw.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    event = orjson.loads(line.removeprefix("data:").strip())
+                    for out in _stream_event(event, commentary, headers, request.base.model):
+                        yield out
+        except openai.RateLimitError as exc:
+            headers = _rate_limit_headers(exc.response.headers)
+            raise ProviderRateLimitedError(
+                _seconds(headers.get("retry-after")), headers=headers, body=exc.response.text
+            ) from exc
+        except openai.BadRequestError as exc:
+            raise ProviderBadRequestError(exc.response.text) from exc
+        except openai.APIStatusError as exc:
+            raise ProviderUnavailableError(f"provider returned HTTP {exc.status_code}") from exc
+        except (openai.APIConnectionError, openai.APITimeoutError, httpx2.HTTPError) as exc:
+            raise ProviderUnavailableError(str(exc)) from exc
+
     async def aclose(self) -> None:
         """Close the HTTP client (called by `LLMGateway.aclose`, §4.2)."""
         await self.sdk.close()
+
+
+def _stream_event(
+    event: Mapping[str, Any], commentary: set[str], headers: Mapping[str, str], model: str
+) -> list[StreamEvent]:
+    """One server-sent event of `/responses` → stream events of the gateway (WP10.2)."""
+    kind = event.get("type")
+    if kind == "response.output_item.added":
+        item = event.get("item") or {}
+        if item.get("type") == "message" and item.get("phase") == "commentary":
+            commentary.add(str(item.get("id")))
+        return []
+    if kind == "response.output_text.delta":
+        if str(event.get("item_id")) in commentary:
+            return []
+        return [TextDelta(str(event.get("delta", "")))]
+    if kind == "response.output_item.done":
+        item = dict(event.get("item") or {})
+        if item.get("type") == "message" and item.get("phase") == "commentary":
+            log.info("llm_commentary", model=model, text=_message_text(item))
+        return [OutputItemDone(item)]
+    if kind in ("response.completed", "response.incomplete"):
+        response = event.get("response") or {}
+        usage = response.get("usage") or {}
+        status = "incomplete" if kind == "response.incomplete" else "completed"
+        if response.get("status") == "incomplete":
+            status = "incomplete"
+        return [
+            StreamCompleted(
+                status=status,
+                usage=StreamUsage(
+                    input_tokens=int(usage.get("input_tokens", 0)),
+                    cached_tokens=int(
+                        (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
+                    ),
+                    output_tokens=int(usage.get("output_tokens", 0)),
+                    reasoning_tokens=int(
+                        (usage.get("output_tokens_details") or {}).get("reasoning_tokens", 0)
+                    ),
+                ),
+                model=str(response.get("model", model)),
+                headers=dict(headers),
+            )
+        ]
+    if kind in ("response.failed", "error"):
+        raise ProviderUnavailableError(f"stream error event {kind}: {orjson.dumps(event).decode()}")
+    return []
