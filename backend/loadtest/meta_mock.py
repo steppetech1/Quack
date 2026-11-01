@@ -59,6 +59,7 @@ FIXED_DATETIME = "2026-01-01T00:00:00Z"
 FIXED_DATE = "2026-01-01"
 TEACHER_SCHEMA = "TeacherOutput"
 TASK_GEN_SCHEMA = "TaskGenOutput"
+STRUCTURER_SCHEMA = "StructurerOutput"
 
 
 @dataclass(frozen=True)
@@ -187,6 +188,56 @@ def _choice_task(instance: dict[str, Any]) -> dict[str, Any]:
     ]
     answer = {**instance["answer"], "type": "choice", "value": "A"}
     return {**instance, "answer": answer, "options": options}
+
+
+def _structure() -> dict[str, Any]:
+    """`structurer` answer with a usable domain: the minimal instance has no topics, so the
+    stand had no skills to practise ("topic has no skills"). Three topics in a prerequisite
+    chain, two skills each, one skill dependency and one misconception."""
+    plan = {
+        "limits": (
+            "Limits",
+            ("epsilon-delta", "Epsilon-delta definition"),
+            ("limit-laws", "Limit laws"),
+        ),
+        "derivatives": (
+            "Derivatives",
+            ("derivative-definition", "Derivative as a limit"),
+            ("chain-rule", "Chain rule"),
+        ),
+        "integrals": (
+            "Integrals",
+            ("riemann-sums", "Riemann sums"),
+            ("substitution", "Substitution"),
+        ),
+    }
+    topics = [
+        {"description": f"{name}: the core ideas.", "name": name, "slug": slug}
+        for slug, (name, *_) in plan.items()
+    ]
+    skills = [
+        {"description": "", "name": skill_name, "slug": skill_slug, "topic_slug": slug}
+        for slug, (_, *pairs) in plan.items()
+        for skill_slug, skill_name in pairs
+    ]
+    return {
+        "misconceptions": [
+            {
+                "description": "Differentiates the outer function and forgets the inner one.",
+                "name": "Drops the inner derivative",
+                "skill_slug": "chain-rule",
+            }
+        ],
+        "prereqs": [
+            {"from_topic_slug": "limits", "to_topic_slug": "derivatives"},
+            {"from_topic_slug": "derivatives", "to_topic_slug": "integrals"},
+        ],
+        "skill_deps": [
+            {"depends_on_skill_slug": "derivative-definition", "skill_slug": "chain-rule"}
+        ],
+        "skills": skills,
+        "topics": topics,
+    }
 
 
 def latency_s(model: str, effort: str, latency: Latency) -> float:
@@ -392,6 +443,8 @@ async def _responses(request: Request) -> Response:
     instance = minimal_instance(fmt["schema"], text_chars=text_chars)
     if fmt.get("name") == TASK_GEN_SCHEMA:
         instance = _choice_task(instance)
+    elif fmt.get("name") == STRUCTURER_SCHEMA:
+        instance = _structure()
     answer = orjson.dumps(instance, option=orjson.OPT_SORT_KEYS).decode()
     input_tokens = _tokens(orjson.dumps(body.get("input", "")).decode())
     reasoning_tokens = REASONING_TOKENS["high" if effort == "high" else "low"]

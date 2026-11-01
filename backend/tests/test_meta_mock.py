@@ -410,3 +410,24 @@ async def test_task_gen_answer_is_a_valid_choice_task() -> None:
     output = TaskGenOutput.model_validate_json(_answer_text(response.json()))
     task = build_generated_task(output, "choice", uuid4(), [])
     assert task.reference_solution["option"] == output.answer.value
+
+
+async def test_structurer_answer_gives_topics_with_skills() -> None:
+    """The stand needs a usable domain: the mock's `structurer` answer has topics, each with
+    skills, and every reference survives `sanitize_structurer_output` (no dangling slugs)."""
+    from uuid import uuid4
+
+    from quack.domains.structure import sanitize_structurer_output
+
+    async with _client() as client:
+        response = await client.post("/responses", json=_body(StructurerOutput))
+    output = StructurerOutput.model_validate_json(_answer_text(response.json()))
+    topics, skills, prereqs, skill_deps, misconceptions = sanitize_structurer_output(
+        uuid4(), 1, output
+    )
+    assert len(topics) == len(output.topics) >= 2
+    assert {s.topic_id for s in skills} == {t.topic_id for t in topics}
+    assert len(skills) == len(output.skills)
+    assert len(prereqs) == len(output.prereqs) >= 1
+    assert len(skill_deps) == len(output.skill_deps)
+    assert len(misconceptions) == len(output.misconceptions)
