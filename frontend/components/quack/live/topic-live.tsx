@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { topicState } from "@/lib/api/adapters";
-import { ApiError, get, idem, post, qs, type S } from "@/lib/api/client";
+import { ApiError, get, post, qs, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
 import { useFmt, useT } from "@/lib/i18n/provider";
@@ -32,9 +32,11 @@ export function TopicLive({ id }: { id: string }) {
   const router = useRouter();
   const { dayLabel } = useFmt();
   const errorText = useErrorText();
-  const { domains } = useData();
+  const { domains, appliedSeq } = useData();
   const { focusDomain } = useShell();
   const [data, setData] = useState<Loaded | null>(null);
+  /** The page for this topic is on screen: a failed live re-fetch keeps it instead of showing an error */
+  const shown = useRef<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,10 +51,11 @@ export function TopicLive({ id }: { id: string }) {
           get<S["ArtifactView"] | null>(`/v1/topics/${id}/cheatsheet`).catch(() => null),
         ]);
         if (off) return;
-        focusDomain(detail.topic.domain_id);
+        if (shown.current !== id) focusDomain(detail.topic.domain_id);
+        shown.current = id;
         setData({ detail, artifacts: list.artifacts.filter((a) => a.kind !== "cheatsheet"), cheat });
       } catch (e) {
-        if (off) return;
+        if (off || shown.current === id) return;
         if (e instanceof ApiError && (e.status === 404 || e.status === 422)) setMissing(true);
         else setError(errorText(e));
       }
@@ -60,9 +63,9 @@ export function TopicLive({ id }: { id: string }) {
     return () => {
       off = true;
     };
-    // load once per topic
+    // once per topic, and again when the backend projection moves (states, skills, a new cheat sheet)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, appliedSeq]);
 
   const domain = domains.find((d) => d.id === data?.detail.topic.domain_id);
   const domainTitle = domain?.title ?? "";
@@ -97,7 +100,7 @@ export function TopicLive({ id }: { id: string }) {
   const refreshCheat = async () => {
     setBusy(true);
     try {
-      await post(`/v1/topics/${id}/cheatsheet/refresh`, { idempotency_key: idem() });
+      await post(`/v1/topics/${id}/cheatsheet/refresh`, { domain_id: topic.domain_id });
       setError(null);
     } catch (e) {
       setError(errorText(e));

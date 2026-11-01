@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { API_MODE, del as apiDelete, idem } from "@/lib/api/client";
+import { API_MODE, del as apiDelete } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
@@ -19,30 +19,52 @@ type TabId = (typeof TAB_IDS)[number];
 
 const KEY = "quack.settings";
 type Prefs = { name: string; address: "ty" | "vy"; course: string; replyLang: "ui" | "materials" };
-/** Settings: locale defaults, with whatever is saved in localStorage on top (read in an effect) */
+
+/** Only the keys this page owns, and only with values it understands: the backend object is free-form */
+function pickPrefs(raw: unknown): Partial<Prefs> {
+  if (!raw || typeof raw !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  const out: Partial<Prefs> = {};
+  if (typeof r.name === "string") out.name = r.name;
+  if (r.address === "ty" || r.address === "vy") out.address = r.address;
+  if (typeof r.course === "string") out.course = r.course;
+  if (r.replyLang === "ui" || r.replyLang === "materials") out.replyLang = r.replyLang;
+  return out;
+}
+
+/**
+ * Settings: locale defaults with the saved values on top. With the backend they live in the learner's
+ * preferences (`PATCH /v1/learner/preferences`), so they follow the account; on mocks — in localStorage.
+ */
 function usePrefs() {
   const t = useT();
+  const { me, savePreferences } = useData();
   const defaults = useMemo<Prefs>(
-    () => ({ name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
-    [t],
+    () => ({ name: me?.display_name || t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
+    [t, me?.display_name],
   );
   const [stored, setStored] = useState<Partial<Prefs> | null>(null);
   useEffect(() => {
-    const read = () => {
-      try {
-        const raw = localStorage.getItem(KEY);
-        if (raw) setStored(JSON.parse(raw) as Partial<Prefs>);
-      } catch {}
-    };
-    read();
-  }, []);
-  const saved = useMemo(() => ({ ...defaults, ...stored }), [defaults, stored]);
-  const save = useCallback((next: Prefs) => {
-    setStored(next);
+    if (API_MODE) return;
     try {
-      localStorage.setItem(KEY, JSON.stringify(next));
+      const raw = localStorage.getItem(KEY);
+      // localStorage is only readable after mount
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (raw) setStored(pickPrefs(JSON.parse(raw)));
     } catch {}
   }, []);
+  const remote = useMemo(() => pickPrefs(me?.preferences), [me?.preferences]);
+  const saved = useMemo(() => ({ ...defaults, ...(API_MODE ? remote : stored) }), [defaults, remote, stored]);
+  const save = useCallback(
+    async (next: Prefs) => {
+      if (API_MODE) return savePreferences(next);
+      setStored(next);
+      try {
+        localStorage.setItem(KEY, JSON.stringify(next));
+      } catch {}
+    },
+    [savePreferences],
+  );
   return [saved, save] as const;
 }
 
@@ -59,15 +81,20 @@ export function SettingsPage() {
   const tab: TabId = TABS.some((t) => t.id === param) ? (param as TabId) : "general";
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [prefs, savePrefs] = usePrefs();
-  const [toast, setToast] = useState<{ n: number } | null>(null);
+  const [toast, setToast] = useState<{ n: number; failed: boolean } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const saved = useCallback(
     (next: Prefs) => {
-      savePrefs(next);
-      clearTimeout(timer.current);
-      setToast((t) => ({ n: (t?.n ?? 0) + 1 }));
-      timer.current = setTimeout(() => setToast(null), 2200);
+      const show = (failed: boolean) => {
+        clearTimeout(timer.current);
+        setToast((t) => ({ n: (t?.n ?? 0) + 1, failed }));
+        timer.current = setTimeout(() => setToast(null), failed ? 4000 : 2200);
+      };
+      savePrefs(next).then(
+        () => show(false),
+        () => show(true),
+      );
     },
     [savePrefs],
   );
@@ -137,7 +164,7 @@ export function SettingsPage() {
             key={toast.n}
             className="animate-toast rounded-xl border border-seam bg-cloth-raised px-4 py-2.5 text-small text-paper shadow-[0_8px_24px_-8px_rgb(0_0_0/0.6)]"
           >
-            {tx.settings.saved}
+            {toast.failed ? tx.settings.saveFailed : tx.settings.saved}
           </p>
         )}
       </div>
@@ -204,6 +231,7 @@ function Radio<T extends string>({
 function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => void }) {
   const tx = useT();
   const soon = useSoon();
+  const { me } = useData();
   const [draft, setDraft] = useState(prefs);
   const [synced, setSynced] = useState(prefs);
   // Сохранённое подгрузилось из localStorage: обновляем черновик, пока он не тронут
@@ -227,11 +255,11 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
           aria-hidden
           className="flex size-14 shrink-0 items-center justify-center rounded-full border border-seam bg-cloth-raised font-heading text-[1.5rem] text-paper"
         >
-          {tx.profile.initial}
+          {me ? prefs.name.trim().charAt(0).toUpperCase() || tx.profile.initial : tx.profile.initial}
         </div>
         <div className="min-w-0">
-          <p className="text-body font-medium text-paper">{tx.profile.name}</p>
-          <p className="truncate text-small text-paper-dim">{tx.profile.email}</p>
+          <p className="text-body font-medium text-paper">{me ? prefs.name : tx.profile.name}</p>
+          <p className="truncate text-small text-paper-dim">{me?.email ?? tx.profile.email}</p>
         </div>
       </div>
 
@@ -454,7 +482,7 @@ function AccountTab() {
                     return;
                   }
                   // the backend tombstones the learner and purges the data later; the token stops working
-                  void apiDelete("/v1/learner", { idempotency_key: idem() }).then(logout, () => soon(tx.settings.deleteSoon));
+                  void apiDelete("/v1/learner").then(logout, () => soon(tx.settings.deleteSoon));
                 }}
                 className="h-10 rounded-control border border-st-confused px-4 text-body font-semibold text-st-confused transition-colors hover:bg-cloth-hover"
               >

@@ -1,4 +1,4 @@
-import type { components } from "./schema";
+import type { components, paths } from "./schema";
 
 /** Backend models, generated from `lib/api/openapi.json` (`npm run api:types`) */
 export type S = components["schemas"];
@@ -84,10 +84,39 @@ export async function api<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: 
   return (text ? JSON.parse(text) : null) as T;
 }
 
+/*
+ * Write calls are typed by the OpenAPI contract: the call's path (`/v1/topics/${id}/…`) is matched
+ * against the schema's path templates (`/v1/topics/{topic_id}/…`), and the body and the response
+ * come from that operation. A body that doesn't fit the backend is a compile error, not a 422.
+ */
+type WriteMethod = "post" | "patch" | "delete";
+/** `/v1/topics/{topic_id}/x` → `/v1/topics/${string}/x` */
+type Template<P extends string> = P extends `${infer A}{${string}}${infer B}` ? `${A}${string}${Template<B>}` : P;
+type Op<P extends string, M extends WriteMethod> = {
+  // `${string}` also matches "/", so a shorter template can match too: it only counts if it has this method
+  [K in keyof paths]: P extends Template<K> ? Exclude<paths[K][M], undefined> : never;
+}[keyof paths];
+/** Paths that have this method on the backend */
+export type WritePath<M extends WriteMethod> = {
+  [K in keyof paths]: paths[K][M] extends undefined | never ? never : Template<K>;
+}[keyof paths];
+type Json<C> = C extends { content: { "application/json": infer B } } ? B : undefined;
+export type BodyOf<P extends string, M extends WriteMethod> =
+  Op<P, M> extends { requestBody: infer R } ? Json<R> : Op<P, M> extends { requestBody?: infer R } ? Json<R> | undefined : undefined;
+export type ResponseOf<P extends string, M extends WriteMethod> =
+  Op<P, M> extends { responses: infer R }
+    ? R extends { 200: infer C } ? Json<C> : R extends { 201: infer C } ? Json<C> : R extends { 202: infer C } ? Json<C> : undefined
+    : never;
+/** The body argument is optional only where the endpoint takes none */
+type BodyArg<P extends string, M extends WriteMethod> = undefined extends BodyOf<P, M> ? [body?: BodyOf<P, M>] : [body: BodyOf<P, M>];
+
 export const get = <T>(path: string) => api<T>("GET", path);
-export const post = <T>(path: string, body: unknown = {}) => api<T>("POST", path, body);
-export const patch = <T>(path: string, body: unknown) => api<T>("PATCH", path, body);
-export const del = <T>(path: string, body?: unknown) => api<T>("DELETE", path, body);
+export const post = <P extends WritePath<"post">>(path: P, ...[body]: BodyArg<P, "post">) =>
+  api<ResponseOf<P, "post">>("POST", path, body ?? {});
+export const patch = <P extends WritePath<"patch">>(path: P, ...[body]: BodyArg<P, "patch">) =>
+  api<ResponseOf<P, "patch">>("PATCH", path, body);
+export const del = <P extends WritePath<"delete">>(path: P, ...[body]: BodyArg<P, "delete">) =>
+  api<ResponseOf<P, "delete">>("DELETE", path, body);
 
 export const qs = (params: Record<string, string | number | undefined | null>) => {
   const p = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "");
@@ -97,6 +126,14 @@ export const qs = (params: Record<string, string | number | undefined | null>) =
 export type SseEvent = { event: string; data: Record<string, unknown> };
 
 /** SSE over fetch: the backend needs the Authorization header, which EventSource can't send */
+export function sse<P extends WritePath<"post">>(
+  method: "POST",
+  path: P,
+  body: BodyOf<P, "post">,
+  onEvent: (e: SseEvent) => void,
+  signal?: AbortSignal,
+): Promise<void>;
+export function sse(method: "GET", path: string, body: undefined, onEvent: (e: SseEvent) => void, signal?: AbortSignal): Promise<void>;
 export async function sse(
   method: "GET" | "POST",
   path: string,

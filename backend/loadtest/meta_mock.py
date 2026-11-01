@@ -25,6 +25,7 @@ import base64
 import hashlib
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -59,6 +60,7 @@ FIXED_DATETIME = "2026-01-01T00:00:00Z"
 FIXED_DATE = "2026-01-01"
 TEACHER_SCHEMA = "TeacherOutput"
 TASK_GEN_SCHEMA = "TaskGenOutput"
+STRUCTURER_SCHEMA = "StructurerOutput"
 
 
 @dataclass(frozen=True)
@@ -178,6 +180,35 @@ def _string(schema: dict[str, Any], text_chars: int | None) -> str:
 # --- latency and limits ---------------------------------------------------------------------
 
 
+_KIND_HEADER = re.compile(r"### Kind of problem\s+(\w+)")
+
+
+def _texts(node: Any) -> list[str]:
+    """All strings of the request `input` (a string or a list of messages and parts)."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, list):
+        return [text for item in cast(list[Any], node) for text in _texts(item)]
+    if isinstance(node, dict):
+        return [text for value in cast(dict[str, Any], node).values() for text in _texts(value)]
+    return []
+
+
+def _requested_kind(body: dict[str, Any]) -> str | None:
+    """The kind of problem `task_gen@1` asks for, from its `### Kind of problem` block."""
+    for text in _texts(body.get("input")):
+        match = _KIND_HEADER.search(text)
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+def _math_task(instance: dict[str, Any]) -> dict[str, Any]:
+    """`task_gen` answer for a `math` task (the default kind of `tasks/next`): a number."""
+    answer = {**instance["answer"], "type": "number", "value": "2"}
+    return {**instance, "answer": answer, "options": []}
+
+
 def _choice_task(instance: dict[str, Any]) -> dict[str, Any]:
     """`task_gen` answer the code can build a task from (DoD п.7, the load scenario asks for
     `choice`): one correct option, its label is the answer (`quack.practice.generation`)."""
@@ -187,6 +218,56 @@ def _choice_task(instance: dict[str, Any]) -> dict[str, Any]:
     ]
     answer = {**instance["answer"], "type": "choice", "value": "A"}
     return {**instance, "answer": answer, "options": options}
+
+
+def _structure() -> dict[str, Any]:
+    """`structurer` answer with a usable domain: the minimal instance has no topics, so the
+    stand had no skills to practise ("topic has no skills"). Three topics in a prerequisite
+    chain, two skills each, one skill dependency and one misconception."""
+    plan = {
+        "limits": (
+            "Limits",
+            ("epsilon-delta", "Epsilon-delta definition"),
+            ("limit-laws", "Limit laws"),
+        ),
+        "derivatives": (
+            "Derivatives",
+            ("derivative-definition", "Derivative as a limit"),
+            ("chain-rule", "Chain rule"),
+        ),
+        "integrals": (
+            "Integrals",
+            ("riemann-sums", "Riemann sums"),
+            ("substitution", "Substitution"),
+        ),
+    }
+    topics = [
+        {"description": f"{name}: the core ideas.", "name": name, "slug": slug}
+        for slug, (name, *_) in plan.items()
+    ]
+    skills = [
+        {"description": "", "name": skill_name, "slug": skill_slug, "topic_slug": slug}
+        for slug, (_, *pairs) in plan.items()
+        for skill_slug, skill_name in pairs
+    ]
+    return {
+        "misconceptions": [
+            {
+                "description": "Differentiates the outer function and forgets the inner one.",
+                "name": "Drops the inner derivative",
+                "skill_slug": "chain-rule",
+            }
+        ],
+        "prereqs": [
+            {"from_topic_slug": "limits", "to_topic_slug": "derivatives"},
+            {"from_topic_slug": "derivatives", "to_topic_slug": "integrals"},
+        ],
+        "skill_deps": [
+            {"depends_on_skill_slug": "derivative-definition", "skill_slug": "chain-rule"}
+        ],
+        "skills": skills,
+        "topics": topics,
+    }
 
 
 def latency_s(model: str, effort: str, latency: Latency) -> float:
@@ -391,7 +472,11 @@ async def _responses(request: Request) -> Response:
     text_chars = config.teacher_chars if fmt.get("name") == TEACHER_SCHEMA else None
     instance = minimal_instance(fmt["schema"], text_chars=text_chars)
     if fmt.get("name") == TASK_GEN_SCHEMA:
-        instance = _choice_task(instance)
+        instance = (
+            _math_task(instance) if _requested_kind(body) == "math" else _choice_task(instance)
+        )
+    elif fmt.get("name") == STRUCTURER_SCHEMA:
+        instance = _structure()
     answer = orjson.dumps(instance, option=orjson.OPT_SORT_KEYS).decode()
     input_tokens = _tokens(orjson.dumps(body.get("input", "")).decode())
     reasoning_tokens = REASONING_TOKENS["high" if effort == "high" else "low"]

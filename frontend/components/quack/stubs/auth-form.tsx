@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
-import { API_MODE, ApiError, post, setToken, type S } from "@/lib/api/client";
+import { API_MODE, ApiError, post, setToken } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
 import { Duck } from "../duck";
 import { FIELD, Field, PRIMARY_BTN, StubNote } from "./stub-parts";
@@ -29,10 +29,9 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     const password = String(form.get("password") ?? "");
     const name = String(form.get("name") ?? "").trim();
     try {
-      const res = await post<S["AuthResponse"]>(
-        signup ? "/v1/auth/register" : "/v1/auth/login",
-        signup ? { email, password, display_name: name || null } : { email, password },
-      );
+      const res = signup
+        ? await post("/v1/auth/register", { email, password, display_name: name || null })
+        : await post("/v1/auth/login", { email, password });
       setToken(res.token);
       // the app layout mounts fresh and loads data with the new token
       router.replace("/");
