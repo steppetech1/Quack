@@ -27,7 +27,7 @@
   `quack-test-neo4j` (:57687, **Neo4j 2026.06.0** — README и compose называют 2026.10,
   `D-A-017`; локальный контейнер старше, на итог прогона не влияет), `quack-test-redis`
   (Redis 7, :56379; compose — 8.2). Docker 29.8.1, uv 0.12.23.
-- **Чистый старт (WP0 п.2): ждёт письменного подтверждения владельца.**
+- **Чистый старт (WP0 п.2): подтверждён владельцем в чате 2026-11-02** — событий настоящих учеников нет ни в одном окружении; локальные стенды `quack-*` и `quack-test-*` тестовые.
 
 Прогон на `main` `9ef6e3e`:
 
@@ -155,7 +155,7 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 
 Решение владельца (2 нояб.): промпты поток B не пишет; владелец передаёт заготовки, B их только
 дорабатывает под схемы (слой 2). Схемы выходов ролей (код, шов S8) B пишет сам. Требования к
-промптам — `documentation/SYSTEM_PROMPTS_PHASE4_REGISTRY.md` (документ владельца). Его открытые
+промптам — реестр промптов Фазы 4 владельца (в репозитории его нет: `documentation/**` правит только владелец, §2.1). Его открытые
 вопросы, которые закрывает B: п.4 (раскладка полей `extractor@3`, `Element`, `planUpdate`, дедлайн,
 `params`) — закрыты кодом (D-B-107…D-B-110, имя `new_misconception` взято из реестра); п.6 (выходы
 `task_checker`, `task_arbiter`, `today_planner`, `viz_builder`, `release_judge`) — D-B-113; п.3
@@ -308,7 +308,7 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 
 - Этап I G1 (B): `uv run pytest tests/session/test_phase4_contracts.py tests/llm/test_phase4_ai_layer.py tests/practice/test_tasks_markup.py tests/practice/test_check_instant.py tests/test_contracts.py` — 33 красных (`NotImplementedError`: `TurnStreamParser`, `next_step_input`, `validate_markup`, `check`), 26 зелёных (контракты, `T-AI1`, `T-A6`).
 - WP10.2–10.3 (адаптер и цикл): `tests/llm/test_phase4_stream_adapter.py` написан до реализации, но красный прогон не снят отдельно (до реализации тесты падали бы на импорте `quack.llm.tool_loop`). Зелёный: 9 passed; с затронутыми старыми (`tests/llm`, `test_llm_runtime.py`, `test_meta_mock.py`, `test_thresholds_in_settings.py`, `test_contracts.py`) — 127 passed.
-- Зелёный прогон (B, `phase-4-b`): те же файлы — 59 passed. Полный набор не прогонялся (правило сессии: только затронутые тесты, полный прогон — в `phase-4`).
+- Зелёный прогон (B, `phase-4-b`): те же файлы — 59 passed. Полный прогон набора на итоговом SHA (§0.4.7) — job `backend` CI (`QUACK_TEST_REQUIRE_INFRA=1`); SHA и итог — в описании PR #72.
 
 ## Правки тестов
 
