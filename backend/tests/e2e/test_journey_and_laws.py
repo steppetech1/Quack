@@ -73,10 +73,10 @@ async def test_full_learner_journey(system: System) -> None:
         assert dispatched == last_seq
 
         target_skills = await session.scalar(
-            text("SELECT target_skills FROM core.task_bank WHERE task_id = :t"),
-            {"t": j.practice_task_id},
+            text("SELECT target_skills FROM core.task_bank WHERE id = :t AND learner_id = :l"),
+            {"t": j.practice_task_id, "l": learner_id},
         )
-    solved_skills = {str(s["skill_id"]) for s in target_skills or []}
+    solved_skills = {str(s["skill"]["skill_id"]) for s in target_skills or []}
     assert solved_skills, "practice task has no target skills"
 
     api, h = system.client, j.learner.headers
