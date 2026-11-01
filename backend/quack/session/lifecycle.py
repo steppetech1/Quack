@@ -30,6 +30,8 @@ from quack.session.schemas import (
     FinishSessionRequest,
     HeartbeatResponse,
     SessionDetail,
+    SessionListItem,
+    SessionListResponse,
     SessionStarted,
     StartSessionRequest,
     TurnView,
@@ -310,6 +312,31 @@ async def get_active_session(resources: AppResources, learner_id: UUID) -> Activ
             )
         ).one_or_none()
     return _active_from_row(row) if row is not None else None
+
+
+async def list_sessions(
+    resources: AppResources, learner_id: UUID, domain_id: UUID | None, limit: int
+) -> SessionListResponse:
+    """Session history, newest first; read-only over `core.sessions`."""
+    async with resources.session_factory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    f"SELECT {_SESSION_COLUMNS}, goal, ended_at FROM core.sessions "
+                    "WHERE learner_id = :l AND (CAST(:d AS uuid) IS NULL OR domain_id = :d) "
+                    "ORDER BY started_at DESC, id LIMIT :n"
+                ),
+                {"l": learner_id, "d": domain_id, "n": limit},
+            )
+        ).all()
+    return SessionListResponse(
+        sessions=[
+            SessionListItem(
+                **_active_from_row(row).model_dump(), goal=row.goal, ended_at=row.ended_at
+            )
+            for row in rows
+        ]
+    )
 
 
 async def get_session(resources: AppResources, learner_id: UUID, session_id: UUID) -> SessionDetail:

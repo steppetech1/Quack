@@ -174,6 +174,7 @@ EXPECTED_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("PATCH", "/v1/topics/{topic_id}/status"),
         # stream 2
         ("POST", "/v1/sessions"),
+        ("GET", "/v1/sessions"),
         ("GET", "/v1/sessions/active"),
         ("GET", "/v1/sessions/{session_id}"),
         ("POST", "/v1/sessions/{session_id}/heartbeat"),

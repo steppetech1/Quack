@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
+from quack.api.errors import ApiError
 from quack.api.resources import AppResources, get_resources
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
@@ -27,6 +28,7 @@ from quack.session.schemas import (
     FinishSessionRequest,
     HeartbeatResponse,
     SessionDetail,
+    SessionListResponse,
     SessionStarted,
     StartSessionRequest,
     TurnRequest,
@@ -44,6 +46,24 @@ async def start_session(
     body: StartSessionRequest, learner_id: LearnerId, resources: Resources, settings: SettingsDep
 ) -> SessionStarted:
     return await lifecycle.start_session(resources, settings, learner_id, body)
+
+
+@router.get("/sessions")
+async def list_sessions(
+    learner_id: LearnerId,
+    resources: Resources,
+    settings: SettingsDep,
+    domain_id: UUID | None = None,
+    limit: int | None = Query(None),
+) -> SessionListResponse:
+    effective_limit = settings.session_list_default_limit if limit is None else limit
+    if effective_limit < 1 or effective_limit > settings.session_list_max_limit:
+        raise ApiError(
+            "VALIDATION_ERROR",
+            f"limit must be between 1 and {settings.session_list_max_limit}",
+            status_code=422,
+        )
+    return await lifecycle.list_sessions(resources, learner_id, domain_id, effective_limit)
 
 
 @router.get("/sessions/active")

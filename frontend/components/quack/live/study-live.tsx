@@ -13,7 +13,7 @@ import { BackLink, PageShell, PageSection, PILL } from "../page-parts";
 import { Inline, RichText } from "../rich-text";
 import { AREA, DANGER_BTN, FIELD, Field, PRIMARY_BTN, SECONDARY_BTN, StubHeader } from "../stubs/stub-parts";
 import { useErrorText } from "./domain-setup-live";
-import { Markdown } from "./markdown";
+import { Markdown, plainText } from "./markdown";
 
 function ErrorLine({ text }: { text: string | null }) {
   if (!text) return null;
@@ -351,7 +351,7 @@ export function LibraryLive() {
                 <span className="min-w-0 flex-1 truncate text-body text-paper">{a.title}</span>
                 <span className={PILL}>{kind(a.kind)}</span>
               </div>
-              <p className="mt-1 line-clamp-2 text-small text-paper-dim">{a.content_md.slice(0, 200)}</p>
+              <p className="mt-1 line-clamp-2 text-small text-paper-dim">{plainText(a.content_md, 200)}</p>
               <p className="num mt-1 text-small text-paper-dim">{dayLabel(a.updated_at.slice(0, 10))}</p>
             </Link>
           </li>

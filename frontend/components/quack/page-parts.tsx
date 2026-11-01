@@ -158,11 +158,16 @@ export function ActionButton({
   primary,
   href,
   soonText,
+  onClick,
+  disabled,
 }: {
   label: string;
   primary?: boolean;
   href?: string;
   soonText: string;
+  /** Настоящее действие вместо «скоро» */
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   const soon = useSoon();
   const cls = cn(
@@ -174,7 +179,7 @@ export function ActionButton({
       {label}
     </Link>
   ) : (
-    <button type="button" onClick={() => soon(soonText)} className={cls}>
+    <button type="button" disabled={disabled} onClick={onClick ?? (() => soon(soonText))} className={cn(cls, "disabled:opacity-50")}>
       {label}
     </button>
   );
@@ -296,7 +301,7 @@ export function MomentsList({ items, showTopic }: { items: (Moment & { href?: st
 }
 
 /** Каркас страницы: прокручиваемая колонка + поле ввода с меткой фокуса */
-export function PageFrame({ chipLabel, children }: { chipLabel: string; children: React.ReactNode }) {
+export function PageFrame({ chipLabel, topicId, children }: { chipLabel: string; topicId?: string; children: React.ReactNode }) {
   const t = useT();
   const { startSession } = useShell();
   const [chip, setChip] = useState(true);
@@ -307,7 +312,7 @@ export function PageFrame({ chipLabel, children }: { chipLabel: string; children
         <div className="mx-auto w-full max-w-[720px]">
           <Composer
             label={t.page.composerLabel(chipLabel)}
-            onSend={startSession}
+            onSend={(text) => startSession(text, chip ? topicId : null)}
             primary={false}
             chip={chip ? { label: chipLabel, onRemove: () => setChip(false) } : undefined}
           />

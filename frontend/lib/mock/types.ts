@@ -57,7 +57,10 @@ export type TodayItem = {
   href?: string;
   title: string;
   reason: string;
-  minutes: number;
+  /** Оценка времени; у бэкенда её нет */
+  minutes?: number;
+  /** Тема, по которой пункт открывает сессию повторения (бэкенд) */
+  topicId?: string;
 };
 
 export type Domain = {
@@ -74,6 +77,8 @@ export type Domain = {
   readiness?: number;
   /** Статус на бэкенде: onboarding (темы ещё не подтверждены), active, archived. У моков не задан */
   status?: string;
+  /** Бэкенд ещё не применил свежие события к графу (`lag_degraded`) */
+  lagging?: boolean;
 };
 
 export type NoteKind = "def" | "thm" | "text";

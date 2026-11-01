@@ -275,3 +275,51 @@ async def test_foreign_or_unknown_session_is_not_found(
     stranger_active = await client.get("/v1/sessions/active", headers=stranger_headers)
     assert stranger_active.status_code == 200, stranger_active.text
     assert stranger_active.json() is None
+
+
+async def test_session_list_is_newest_first_per_learner_and_domain(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+    seeded_domain: SeededDomain,
+    settings: Settings,
+) -> None:
+    seed = seeded_domain
+    empty = await client.get("/v1/sessions", headers=auth_headers)
+    assert empty.status_code == 200, empty.text
+    assert empty.json() == {"sessions": []}
+
+    first = await _start(client, auth_headers, seed, "list-a", goal="what is a series")
+    assert first.status_code == 201, first.text
+    second = await _start(client, auth_headers, seed, "list-b", mode="practice")
+    assert second.status_code == 201, second.text
+    first_id, second_id = first.json()["session_id"], second.json()["session_id"]
+
+    listed = await client.get("/v1/sessions", headers=auth_headers)
+    assert listed.status_code == 200, listed.text
+    rows = listed.json()["sessions"]
+    assert [r["session_id"] for r in rows] == [second_id, first_id]
+    assert rows[0]["status"] == "active"
+    assert rows[0]["ended_at"] is None
+    assert rows[1]["status"] == "abandoned"
+    assert rows[1]["goal"] == "what is a series"
+    assert rows[1]["ended_at"] is not None
+
+    one = await client.get("/v1/sessions", params={"limit": 1}, headers=auth_headers)
+    assert [r["session_id"] for r in one.json()["sessions"]] == [second_id]
+
+    by_domain = await client.get(
+        "/v1/sessions", params={"domain_id": str(seed.domain_id)}, headers=auth_headers
+    )
+    assert len(by_domain.json()["sessions"]) == 2
+    other = await client.get(
+        "/v1/sessions", params={"domain_id": str(uuid4())}, headers=auth_headers
+    )
+    assert other.json() == {"sessions": []}
+
+    stranger = {"Authorization": f"Bearer {make_token(settings, uuid4())}"}
+    assert (await client.get("/v1/sessions", headers=stranger)).json() == {"sessions": []}
+
+    for bad in (0, settings.session_list_max_limit + 1):
+        resp = await client.get("/v1/sessions", params={"limit": bad}, headers=auth_headers)
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["code"] == "VALIDATION_ERROR"

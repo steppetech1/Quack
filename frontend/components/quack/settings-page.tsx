@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { API_MODE, del as apiDelete, idem } from "@/lib/api/client";
+import { API_MODE, del as apiDelete, idem, patch } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
@@ -19,30 +19,44 @@ type TabId = (typeof TAB_IDS)[number];
 
 const KEY = "quack.settings";
 type Prefs = { name: string; address: "ty" | "vy"; course: string; replyLang: "ui" | "materials" };
-/** Settings: locale defaults, with whatever is saved in localStorage on top (read in an effect) */
+/** Settings: locale defaults, with whatever is saved on top: the backend profile, or localStorage on mocks */
 function usePrefs() {
   const t = useT();
+  const { me, reload } = useData();
+  // On the backend the name comes from the profile; the mock name and course are for mocks only
   const defaults = useMemo<Prefs>(
-    () => ({ name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
-    [t],
+    () =>
+      API_MODE
+        ? { name: me?.display_name ?? "", address: "ty", course: "", replyLang: "ui" }
+        : { name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" },
+    [t, me],
   );
   const [stored, setStored] = useState<Partial<Prefs> | null>(null);
   useEffect(() => {
     const read = () => {
+      if (API_MODE) {
+        if (me) setStored(me.preferences as Partial<Prefs>);
+        return;
+      }
       try {
         const raw = localStorage.getItem(KEY);
         if (raw) setStored(JSON.parse(raw) as Partial<Prefs>);
       } catch {}
     };
     read();
-  }, []);
+  }, [me]);
   const saved = useMemo(() => ({ ...defaults, ...stored }), [defaults, stored]);
   const save = useCallback((next: Prefs) => {
     setStored(next);
+    if (API_MODE) {
+      // the backend merges keys into the stored preferences; the profile is re-read so other pages see them
+      void patch("/v1/learner/preferences", { preferences: next, idempotency_key: idem() }).then(reload, () => {});
+      return;
+    }
     try {
       localStorage.setItem(KEY, JSON.stringify(next));
     } catch {}
-  }, []);
+  }, [reload]);
   return [saved, save] as const;
 }
 
@@ -204,6 +218,9 @@ function Radio<T extends string>({
 function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => void }) {
   const tx = useT();
   const soon = useSoon();
+  const { me } = useData();
+  const profileName = API_MODE ? (me?.display_name ?? me?.email.split("@")[0] ?? "") : tx.profile.name;
+  const profileEmail = API_MODE ? (me?.email ?? "") : tx.profile.email;
   const [draft, setDraft] = useState(prefs);
   const [synced, setSynced] = useState(prefs);
   // Сохранённое подгрузилось из localStorage: обновляем черновик, пока он не тронут
@@ -227,11 +244,11 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
           aria-hidden
           className="flex size-14 shrink-0 items-center justify-center rounded-full border border-seam bg-cloth-raised font-heading text-[1.5rem] text-paper"
         >
-          {tx.profile.initial}
+          {API_MODE ? profileName.charAt(0).toUpperCase() : tx.profile.initial}
         </div>
         <div className="min-w-0">
-          <p className="text-body font-medium text-paper">{tx.profile.name}</p>
-          <p className="truncate text-small text-paper-dim">{tx.profile.email}</p>
+          <p className="text-body font-medium text-paper">{profileName}</p>
+          <p className="truncate text-small text-paper-dim">{profileEmail}</p>
         </div>
       </div>
 

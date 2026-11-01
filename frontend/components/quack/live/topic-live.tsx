@@ -13,7 +13,7 @@ import { useShell } from "../app-shell";
 import { ArtifactHost, ExpandableCard, type WindowSpec } from "../artifact-window";
 import { Crumbs, MemoryRing, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
 import { useErrorText } from "./domain-setup-live";
-import { Markdown } from "./markdown";
+import { Markdown, plainText } from "./markdown";
 
 type Loaded = {
   detail: S["TopicDetailResponse"];
@@ -32,7 +32,7 @@ export function TopicLive({ id }: { id: string }) {
   const router = useRouter();
   const { dayLabel } = useFmt();
   const errorText = useErrorText();
-  const { domains } = useData();
+  const { domains, revision } = useData();
   const { focusDomain } = useShell();
   const [data, setData] = useState<Loaded | null>(null);
   const [missing, setMissing] = useState(false);
@@ -60,9 +60,9 @@ export function TopicLive({ id }: { id: string }) {
     return () => {
       off = true;
     };
-    // load once per topic
+    // load per topic, and again when the backend applied new events (cheat sheet, mastery)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, revision]);
 
   const domain = domains.find((d) => d.id === data?.detail.topic.domain_id);
   const domainTitle = domain?.title ?? "";
@@ -124,7 +124,7 @@ export function TopicLive({ id }: { id: string }) {
 
   return (
     <ArtifactHost windows={windows}>
-      <PageFrame chipLabel={tx.page.chipTopic(topic.name)}>
+      <PageFrame chipLabel={tx.page.chipTopic(topic.name)} topicId={topic.topic_id}>
         <Crumbs domainTitle={domainTitle} />
 
         <header className="mt-2">
@@ -216,7 +216,7 @@ export function TopicLive({ id }: { id: string }) {
                 <ExpandableCard key={a.artifact_id} artifact={`a-${a.artifact_id}`}>
                   <span className="block px-4 pt-3 font-semibold text-paper">{a.title}</span>
                   <span aria-hidden className="mt-1 block h-[72px] overflow-hidden px-4 text-small leading-relaxed text-paper-dim [mask-image:linear-gradient(to_bottom,#000_55%,transparent)]">
-                    {a.content_md.slice(0, 280)}
+                    {plainText(a.content_md)}
                   </span>
                   <span className="num block px-4 pb-3 text-small text-paper-dim">
                     {a.kind === "cheatsheet" ? tx.stubs.library.kinds.cheatsheet : tx.stubs.library.kinds.note} · {dayLabel(a.updated_at.slice(0, 10))}
