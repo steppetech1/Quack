@@ -6,14 +6,16 @@ LLM degradation fallback, confirmation, and manual structure editing
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from typing import Any
 from uuid import UUID, uuid5
 
-import neo4j
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
+from quack.db.neo4j import read_session
 from quack.domains.schemas import (
     ConfirmStructureRequest,
     ConfirmStructureResponse,
@@ -32,6 +34,9 @@ from quack.domains.schemas import (
 )
 from quack.domains.service import slugify_domain_name
 from quack.events.append import append_events
+from quack.events.catalog import validate_payload
+from quack.events.errors import IdempotencyConflictError
+from quack.events.hashing import payload_hash
 from quack.events.models import NewEvent
 from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.neo4j_store import read_applied_seq
@@ -243,6 +248,41 @@ def build_degraded_structure(
     return topics, skills, prereqs, [], []
 
 
+def proposal_key(domain_id: UUID, req: ProposeStructureRequest) -> str:
+    """Key of `structure.proposed` and of its structurer call, derived from the source (Т-§2.3):
+    the client key and the hash of the request input. The payload of the event is the model's
+    answer, so its hash alone cannot tell another request from a repeat (Т-§2.1, D-C-025)."""
+    digest = payload_hash(
+        {
+            "domain_id": str(domain_id),
+            "goals": req.goals,
+            "background": req.background,
+            "focus_areas": req.focus_areas,
+        }
+    )
+    return f"{req.idempotency_key}:{digest}"
+
+
+async def _check_proposal_key(
+    session: AsyncSession, learner_id: UUID, req: ProposeStructureRequest, key: str
+) -> None:
+    """`IdempotencyConflictError` (409) if the client key was used for another request."""
+    prefix = f"{req.idempotency_key}:"
+    rows = await session.execute(
+        text(
+            "SELECT idempotency_key FROM core.events WHERE learner_id = :l "
+            "AND type = 'structure.proposed' AND left(idempotency_key, :n) = :p "
+            "AND length(idempotency_key) = :m"
+        ),
+        {"l": learner_id, "n": len(prefix), "p": prefix, "m": len(key)},
+    )
+    for (existing,) in rows:
+        if existing != key:
+            raise IdempotencyConflictError(
+                req.idempotency_key, existing.rsplit(":", 1)[1], key.rsplit(":", 1)[1]
+            )
+
+
 async def propose_structure(
     resources: AppResources,
     settings: Settings,
@@ -273,6 +313,8 @@ async def propose_structure(
             raise ApiError("NOT_FOUND", f"Domain {domain_id} not found", status_code=404)
         domain_name = dom["name"]
         domain_status = dom["status"]
+        key = proposal_key(domain_id, req)
+        await _check_proposal_key(session, learner_id, req, key)
 
     structure_version = 1
 
@@ -293,7 +335,7 @@ async def propose_structure(
             learner_id=learner_id,
             session_id=None,
             turn_id=None,
-            idempotency_key=req.idempotency_key,
+            idempotency_key=key,
         )
         topics, skills, prereqs, skill_deps, misconceptions = sanitize_structurer_output(
             domain_id, structure_version, res.value
@@ -332,7 +374,7 @@ async def propose_structure(
             type="structure.proposed",
             actor="code" if degraded else "structurer@1",
             domain_id=domain_id,
-            idempotency_key=req.idempotency_key,
+            idempotency_key=key,
             payload={
                 "domain_id": str(domain_id),
                 "structure_version": structure_version,
@@ -360,6 +402,35 @@ async def propose_structure(
     )
 
 
+async def _recorded_event(session: AsyncSession, learner_id: UUID, key: str) -> Any | None:
+    """The learner's event under `key` (`payload_hash`, `payload`, `seq`), or `None`."""
+    return (
+        await session.execute(
+            text(
+                "SELECT payload_hash, payload, seq FROM core.events "
+                "WHERE learner_id = :l AND idempotency_key = :k"
+            ),
+            {"l": learner_id, "k": key},
+        )
+    ).first()
+
+
+def _check_same_payload(event: NewEvent, existing_hash: str) -> None:
+    """`IdempotencyConflictError` (409) if `event` hashes otherwise than the recorded one."""
+    model = validate_payload(event.type, event.payload, event.schema_version)
+    digest = payload_hash(model.model_dump(mode="json"))
+    if existing_hash != digest:
+        raise IdempotencyConflictError(event.idempotency_key, existing_hash, digest)
+
+
+async def _check_event_key(session: AsyncSession, learner_id: UUID, event: NewEvent) -> None:
+    """`IdempotencyConflictError` (409) if the learner's event under this key has another
+    payload hash; the same hash is left to `append_events`, which returns the stored event."""
+    recorded = await _recorded_event(session, learner_id, event.idempotency_key)
+    if recorded is not None:
+        _check_same_payload(event, recorded.payload_hash)
+
+
 async def confirm_structure(
     resources: AppResources,
     learner_id: UUID,
@@ -381,6 +452,20 @@ async def confirm_structure(
         if not dom:
             raise ApiError("NOT_FOUND", f"Domain {domain_id} not found", status_code=404)
 
+        event = NewEvent(
+            type="structure.confirmed",
+            actor="learner",
+            domain_id=domain_id,
+            idempotency_key=req.idempotency_key,
+            payload={
+                "domain_id": str(domain_id),
+                "structure_version": req.structure_version,
+            },
+        )
+        # The key is checked before the request (T-E2): another body under a used key is 409,
+        # also when that body would fail validation.
+        await _check_event_key(session, learner_id, event)
+
         proposed = (
             await session.execute(
                 text(
@@ -398,16 +483,6 @@ async def confirm_structure(
                 status_code=422,
             )
 
-        event = NewEvent(
-            type="structure.confirmed",
-            actor="learner",
-            domain_id=domain_id,
-            idempotency_key=req.idempotency_key,
-            payload={
-                "domain_id": str(domain_id),
-                "structure_version": req.structure_version,
-            },
-        )
         stored = await append_events(
             session, learner_id, [event], publish_wakeup=True, redis=resources.redis
         )
@@ -418,6 +493,28 @@ async def confirm_structure(
             active_structure_version=req.structure_version,
             seq=stored[0].seq,
         )
+
+
+def _edit_event(domain_id: UUID, req: EditStructureRequest, version: int) -> NewEvent:
+    """`structure.edited` of the request at `version`."""
+    return NewEvent(
+        type="structure.edited",
+        actor="learner",
+        domain_id=domain_id,
+        idempotency_key=req.idempotency_key,
+        payload={
+            "domain_id": str(domain_id),
+            "structure_version": version,
+            "added_topics": [t.model_dump(mode="json") for t in req.added_topics],
+            "updated_topics": [t.model_dump(mode="json") for t in req.updated_topics],
+            "archived_topic_ids": [str(x) for x in req.archived_topic_ids],
+            "added_prereqs": [p.model_dump(mode="json") for p in req.added_prereqs],
+            "removed_prereqs": [p.model_dump(mode="json") for p in req.removed_prereqs],
+            "added_skills": [s.model_dump(mode="json") for s in req.added_skills],
+            "updated_skills": [s.model_dump(mode="json") for s in req.updated_skills],
+            "archived_skill_ids": [str(x) for x in req.archived_skill_ids],
+        },
+    )
 
 
 async def edit_structure(
@@ -448,6 +545,19 @@ async def edit_structure(
             raise ApiError("NOT_FOUND", f"Domain {domain_id} not found", status_code=404)
         active_version = int(dom["active_structure_version"])
         new_version = active_version + 1
+        # A repeat after the edit was applied: the version has moved on, so the request is
+        # compared under the recorded version and the recorded result is returned (T-E2).
+        recorded = await _recorded_event(session, learner_id, req.idempotency_key)
+        if recorded is not None:
+            recorded_version = int(recorded.payload["structure_version"])
+            _check_same_payload(
+                _edit_event(domain_id, req, recorded_version), recorded.payload_hash
+            )
+            return EditStructureResponse(
+                domain_id=domain_id,
+                active_structure_version=recorded_version,
+                seq=int(recorded.seq),
+            )
 
     deps = SliceDeps(
         session_factory=resources.session_factory,
@@ -456,7 +566,7 @@ async def edit_structure(
     )
 
     async def _load_existing_dag() -> tuple[set[UUID], set[tuple[UUID, UUID]]]:
-        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as n_session:
+        async with read_session(resources.neo4j) as n_session:
             t_res = await n_session.run(
                 "MATCH (t:Topic {learnerId: $l, domainId: $d}) RETURN t.id AS id",
                 {"l": str(learner_id), "d": str(domain_id)},
@@ -506,25 +616,7 @@ async def edit_structure(
             status_code=422,
         )
 
-    payload = {
-        "domain_id": str(domain_id),
-        "structure_version": new_version,
-        "added_topics": [t.model_dump(mode="json") for t in req.added_topics],
-        "updated_topics": [t.model_dump(mode="json") for t in req.updated_topics],
-        "archived_topic_ids": [str(x) for x in req.archived_topic_ids],
-        "added_prereqs": [p.model_dump(mode="json") for p in req.added_prereqs],
-        "removed_prereqs": [p.model_dump(mode="json") for p in req.removed_prereqs],
-        "added_skills": [s.model_dump(mode="json") for s in req.added_skills],
-        "updated_skills": [s.model_dump(mode="json") for s in req.updated_skills],
-        "archived_skill_ids": [str(x) for x in req.archived_skill_ids],
-    }
-    event = NewEvent(
-        type="structure.edited",
-        actor="learner",
-        domain_id=domain_id,
-        idempotency_key=req.idempotency_key,
-        payload=payload,
-    )
+    event = _edit_event(domain_id, req, new_version)
     async with resources.session_factory() as session, session.begin():
         stored = await append_events(
             session, learner_id, [event], publish_wakeup=True, redis=resources.redis

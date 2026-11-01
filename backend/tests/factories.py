@@ -39,8 +39,9 @@ class EventLog:
         domain_id: UUID | None = None,
         at: datetime | None = None,
         step_sec: float = 1.0,
+        schema_version: int = 1,
     ) -> StoredEvent:
-        model = validate_payload(type_, payload)
+        model = validate_payload(type_, payload, schema_version)
         data = model.model_dump(mode="json")
         if at is not None:
             self.now = at
@@ -56,7 +57,7 @@ class EventLog:
             seq=seq,
             event_id=uuid4(),
             type=type_,
-            schema_version=1,
+            schema_version=schema_version,
             actor=actor,
             session_id=session_id,
             turn_id=UUID(data["turn_id"]) if isinstance(data.get("turn_id"), str) else None,

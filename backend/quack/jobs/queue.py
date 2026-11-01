@@ -22,8 +22,26 @@ DEFAULT_BACKOFF_BASE_SEC = 5
 DEFAULT_BACKOFF_MAX_SEC = 300
 
 _JOB_COLUMNS = (
-    "id, kind, learner_id, lock_key, coalesce_key, priority, payload, attempt, max_attempts"
+    "id, kind, learner_id, lock_key, coalesce_key, priority, payload, attempt, max_attempts, "
+    "required_seq"
 )
+
+
+class JobDeferred(Exception):
+    """Raised by a handler: run again in `delay_sec`, without spending an attempt (WP3.2)."""
+
+    def __init__(self, delay_sec: float, reason: str) -> None:
+        super().__init__(reason)
+        self.delay_sec = delay_sec
+        self.reason = reason
+
+
+class JobFailedPermanently(Exception):
+    """Raised by a handler or the runner: failed, into ops.dlq, attempts are not spent (WP3.4)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -36,6 +54,8 @@ class JobSpec:
     payload: dict[str, Any] = field(default_factory=dict)
     max_attempts: int = 5
     run_after: datetime | None = None
+    # WP3.1 (Т-§13.1): seq of the trigger event; None = the job does not read the graph.
+    required_seq: int | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +69,7 @@ class ClaimedJob:
     payload: dict[str, Any]
     attempt: int
     max_attempts: int
+    required_seq: int | None = None
 
 
 @dataclass(frozen=True)
@@ -71,12 +92,16 @@ async def enqueue_job(session: AsyncSession, spec: JobSpec) -> UUID:
     result = await session.execute(
         text(
             "INSERT INTO ops.jobs (id, kind, learner_id, lock_key, coalesce_key, priority, status, "
-            "payload, attempt, max_attempts, run_after, created_at, updated_at) VALUES "
-            "(:id, :kind, :learner_id, :lock_key, :coalesce_key, :priority, 'queued', "
+            "payload, attempt, max_attempts, run_after, required_seq, created_at, updated_at) "
+            "VALUES (:id, :kind, :learner_id, :lock_key, :coalesce_key, :priority, 'queued', "
             "CAST(:payload AS JSONB), 0, :max_attempts, "
-            "COALESCE(CAST(:run_after AS TIMESTAMPTZ), now()), clock_timestamp(), now()) "
+            "COALESCE(CAST(:run_after AS TIMESTAMPTZ), now()), :required_seq, "
+            "clock_timestamp(), now()) "
             "ON CONFLICT (coalesce_key) WHERE status = 'queued' "
-            "DO UPDATE SET payload = EXCLUDED.payload, updated_at = now() RETURNING id"
+            "DO UPDATE SET payload = EXCLUDED.payload, updated_at = now(), "
+            # GREATEST ignores NULL: NULL means "no value" (WP3.1, Т-§13.1).
+            "required_seq = GREATEST(ops.jobs.required_seq, EXCLUDED.required_seq) "
+            "RETURNING id"
         ),
         {
             "id": uuid4(),
@@ -88,9 +113,23 @@ async def enqueue_job(session: AsyncSession, spec: JobSpec) -> UUID:
             "payload": orjson.dumps(spec.payload).decode(),
             "max_attempts": spec.max_attempts,
             "run_after": spec.run_after,
+            "required_seq": spec.required_seq,
         },
     )
     return result.scalar_one()
+
+
+async def cancel_learner_jobs(session: AsyncSession, learner_id: UUID) -> int:
+    """Cancel the learner's queued and running jobs (account deletion, Т-§16.3); returns the
+    number of cancelled jobs. `complete_job` of a running one then updates nothing."""
+    result = await session.execute(
+        text(
+            "UPDATE ops.jobs SET status = 'cancelled', updated_at = now() "
+            "WHERE learner_id = :l AND status IN ('queued', 'running') RETURNING id"
+        ),
+        {"l": learner_id},
+    )
+    return len(result.all())
 
 
 async def claim_next_job(
@@ -101,6 +140,9 @@ async def claim_next_job(
         "UPDATE ops.jobs j SET status = 'running', locked_by = :worker, heartbeat_at = now(), "
         "updated_at = now() FROM (SELECT q.id FROM ops.jobs q WHERE q.status = 'queued' "
         "AND q.run_after <= now() "
+        # WP3.1: a job that reads the graph waits until the projector applied its trigger event.
+        "AND (q.required_seq IS NULL OR EXISTS (SELECT 1 FROM ops.projector_offsets o "
+        "WHERE o.learner_id = q.learner_id AND o.applied_seq >= q.required_seq)) "
         "AND (CAST(:kinds AS TEXT[]) IS NULL OR q.kind = ANY(CAST(:kinds AS TEXT[]))) "
         "AND NOT EXISTS (SELECT 1 FROM ops.jobs r WHERE r.lock_key = q.lock_key "
         "AND r.status = 'running') "
@@ -126,6 +168,7 @@ async def claim_next_job(
         payload=dict(m["payload"]),
         attempt=int(m["attempt"]),
         max_attempts=int(m["max_attempts"]),
+        required_seq=None if m["required_seq"] is None else int(m["required_seq"]),
     )
 
 
@@ -151,6 +194,20 @@ async def complete_job(session: AsyncSession, job_id: UUID, worker_id: str) -> b
     return result.first() is not None
 
 
+async def release_job(session: AsyncSession, job_id: UUID, worker_id: str) -> bool:
+    """WP3.5: put an unfinished job back to `queued` on shutdown — `attempt` unchanged, lock
+    cleared — only while `worker_id` still owns it."""
+    result = await session.execute(
+        text(
+            "UPDATE ops.jobs SET status = 'queued', locked_by = NULL, heartbeat_at = NULL, "
+            "updated_at = now() WHERE id = :id AND status = 'running' AND locked_by = :worker "
+            "RETURNING id"
+        ),
+        {"id": job_id, "worker": worker_id},
+    )
+    return result.first() is not None
+
+
 def _error_parts(error: BaseException | str) -> tuple[str, str]:
     if isinstance(error, BaseException):
         return type(error).__name__, str(error)
@@ -164,12 +221,13 @@ async def _retry_or_dlq(
     stacktrace: str | None,
     *,
     backoff: bool,
+    force_dlq: bool = False,
 ) -> RetryDecision:
     m = row._mapping
     attempt = int(m["attempt"]) + 1
     error_type, message = _error_parts(error)
     last_error = f"{error_type}: {message}"
-    if attempt >= int(m["max_attempts"]):
+    if force_dlq or attempt >= int(m["max_attempts"]):
         await session.execute(
             text(
                 "UPDATE ops.jobs SET status = 'failed', attempt = :attempt, last_error = :err, "
@@ -185,6 +243,7 @@ async def _retry_or_dlq(
             "coalesce_key": m["coalesce_key"],
             "priority": int(m["priority"]),
             "max_attempts": int(m["max_attempts"]),
+            "required_seq": m["required_seq"],
             "payload": m["payload"],
         }
         await session.execute(
@@ -253,6 +312,69 @@ async def fail_or_retry_job(
     if m["status"] != "running" or (worker_id is not None and m["locked_by"] != worker_id):
         raise ValueError(f"job {job_id} is not running for worker {worker_id!r}")
     return await _retry_or_dlq(session, row, error, stacktrace, backoff=True)
+
+
+async def fail_job_permanently(
+    session: AsyncSession,
+    job_id: UUID,
+    worker_id: str | None,
+    error: BaseException | str,
+    *,
+    stacktrace: str | None = None,
+) -> RetryDecision:
+    """`failed` and into `ops.dlq` at once; the attempt is counted, the rest are not spent
+    (WP3.4)."""
+    row = (await session.execute(_SELECT_FOR_UPDATE, {"id": job_id})).first()
+    if row is None:
+        raise LookupError(f"job {job_id} not found")
+    m = row._mapping
+    if m["status"] != "running" or (worker_id is not None and m["locked_by"] != worker_id):
+        raise ValueError(f"job {job_id} is not running for worker {worker_id!r}")
+    return await _retry_or_dlq(session, row, error, stacktrace, backoff=False, force_dlq=True)
+
+
+async def defer_job(
+    session: AsyncSession, job_id: UUID, worker_id: str | None, delay_sec: float, reason: str
+) -> JobStatus:
+    """Postpone a running job by `delay_sec` without spending an attempt (WP3.2).
+
+    If another job with the same `coalesce_key` is queued, this one is cancelled and that one
+    is moved to `now() + delay_sec` at the earliest; otherwise this one returns to `queued`.
+    Returns the new status of the deferred job."""
+    row = (await session.execute(_SELECT_FOR_UPDATE, {"id": job_id})).first()
+    if row is None:
+        raise LookupError(f"job {job_id} not found")
+    m = row._mapping
+    if m["status"] != "running" or (worker_id is not None and m["locked_by"] != worker_id):
+        raise ValueError(f"job {job_id} is not running for worker {worker_id!r}")
+    params = {"id": job_id, "delay": delay_sec, "reason": reason}
+    if m["coalesce_key"] is not None:
+        merged = await session.execute(
+            text(
+                "UPDATE ops.jobs SET run_after = GREATEST(run_after, "
+                "now() + make_interval(secs => :delay)), updated_at = now() "
+                "WHERE coalesce_key = :key AND status = 'queued' AND id <> :id RETURNING id"
+            ),
+            {**params, "key": m["coalesce_key"]},
+        )
+        if merged.first() is not None:
+            await session.execute(
+                text(
+                    "UPDATE ops.jobs SET status = 'cancelled', last_error = :reason, "
+                    "locked_by = NULL, heartbeat_at = NULL, updated_at = now() WHERE id = :id"
+                ),
+                params,
+            )
+            return "cancelled"
+    await session.execute(
+        text(
+            "UPDATE ops.jobs SET status = 'queued', last_error = :reason, locked_by = NULL, "
+            "heartbeat_at = NULL, run_after = now() + make_interval(secs => :delay), "
+            "updated_at = now() WHERE id = :id"
+        ),
+        params,
+    )
+    return "queued"
 
 
 async def reap_stale_jobs(session: AsyncSession, stale_after_sec: int = 60) -> int:

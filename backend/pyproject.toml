@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.162.0",
     "httpx>=0.28.1",
     "neo4j>=5.20",
+    "openai>=3.42.0",
     "orjson>=3.13.0",
     "pwdlib[argon2]>=0.3.1",
     "pydantic>=2.7",
@@ -23,14 +24,20 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26.0",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1",
     "ruff>=0.17.3",
 ]
+loadtest = [
+    "locust>=2.47.0",
+]
 
 [tool.uv]
 package = false
+# pyright checks loadtest/ (WP10.3); images install without these groups.
+default-groups = ["dev", "loadtest"]
 
 [tool.ruff]
 line-length = 100
@@ -42,7 +49,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC"]
 ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.pyright]
-include = ["quack", "tests", "migrations"]
+include = ["quack", "tests", "migrations", "loadtest"]
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 venvPath = "."

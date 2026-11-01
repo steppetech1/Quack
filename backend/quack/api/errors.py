@@ -7,11 +7,15 @@ from typing import Any, Literal
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from neo4j.exceptions import ConnectionAcquisitionTimeoutError, ServiceUnavailable, SessionExpired
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from quack.events.errors import IdempotencyConflictError
 from quack.llm.errors import LLMBudgetExceededError, LLMSchemaError, LLMUnavailableError
+from quack.logging import get_logger
+
+log = get_logger(__name__)
 
 type ErrorCode = Literal[
     "IDEMPOTENCY_CONFLICT",
@@ -21,7 +25,17 @@ type ErrorCode = Literal[
     "VALIDATION_ERROR",
     "UNAUTHORIZED",
     "RATE_LIMITED",
+    # Phase 3 §4.5: a dependency needed for the answer (Neo4j, compute without fallback) is down.
+    "SERVICE_UNAVAILABLE",
 ]
+
+# §4.5, WP6.1 (seam S7): driver errors meaning Neo4j is unreachable (server down, expired
+# session, no connection in time). Query errors are bugs and stay 500.
+NEO4J_OUTAGE_ERRORS: tuple[type[Exception], ...] = (
+    ServiceUnavailable,
+    SessionExpired,
+    ConnectionAcquisitionTimeoutError,
+)
 
 _STATUS_CODES: dict[int, ErrorCode] = {
     401: "UNAUTHORIZED",
@@ -31,6 +45,7 @@ _STATUS_CODES: dict[int, ErrorCode] = {
     409: "IDEMPOTENCY_CONFLICT",
     422: "VALIDATION_ERROR",
     429: "RATE_LIMITED",
+    503: "SERVICE_UNAVAILABLE",
 }
 
 
@@ -105,9 +120,17 @@ def install_error_handlers(app: FastAPI) -> None:
     async def llm_degraded(request: Request, exc: Exception) -> JSONResponse:
         return error_response(request, "LLM_DEGRADED", str(exc), 503)
 
+    async def neo4j_unavailable(request: Request, exc: Exception) -> JSONResponse:
+        log.warning("neo4j_unavailable", path=request.url.path, error=repr(exc))
+        return error_response(
+            request, "SERVICE_UNAVAILABLE", "graph store temporarily unavailable", 503
+        )
+
     app.add_exception_handler(ApiError, api_error)
     app.add_exception_handler(RequestValidationError, validation_error)
     app.add_exception_handler(StarletteHTTPException, http_error)
     app.add_exception_handler(IdempotencyConflictError, idempotency_conflict)
+    for neo4j_error in NEO4J_OUTAGE_ERRORS:
+        app.add_exception_handler(neo4j_error, neo4j_unavailable)
     for exc_type in (LLMUnavailableError, LLMBudgetExceededError, LLMSchemaError):
         app.add_exception_handler(exc_type, llm_degraded)

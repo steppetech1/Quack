@@ -5,20 +5,36 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
 import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
+from neo4j import AsyncDriver
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
+from quack.jobs.kinds import KIND_LLM_ROLES
 from quack.jobs.queue import (
     ClaimedJob,
+    JobDeferred,
+    JobFailedPermanently,
     claim_next_job,
     complete_job,
+    defer_job,
+    fail_job_permanently,
     fail_or_retry_job,
     heartbeat_job,
     reap_stale_jobs,
+    release_job,
 )
+from quack.llm.errors import LLMBudgetExceededError
+from quack.llm.gateway import LLMGateway
+from quack.llm.pressure import pressured_models
 from quack.logging import get_logger
 
 log = get_logger(__name__)
@@ -26,8 +42,20 @@ log = get_logger(__name__)
 
 @dataclass(frozen=True)
 class JobContext:
+    """Per-process resources of `workers` (ТЗ Фазы 3 §4.2, seam S1).
+
+    The field set is a contract. Handlers take the heavy objects only from here and never
+    create them. `redis = None` means work without Redis (§4.2). Tests build the context with
+    `tests.support.resources.build_job_context`.
+    """
+
     settings: Settings
     session_factory: SessionFactory
+    engine: AsyncEngine
+    neo4j: AsyncDriver
+    redis: Redis | None
+    llm: LLMGateway
+    compute: ComputeClient
 
 
 type JobHandler = Callable[[ClaimedJob, JobContext], Awaitable[None]]
@@ -54,6 +82,8 @@ class JobRunner:
     settings: Settings
     session_factory: SessionFactory
     worker_id: str
+    # The process-wide resources handed to every handler (WP2.1).
+    context: JobContext
     handlers: dict[str, JobHandler] = field(default_factory=lambda: JOB_HANDLERS)
 
     async def _heartbeat(self, job: ClaimedJob) -> None:
@@ -63,18 +93,67 @@ class JobRunner:
                 if not await heartbeat_job(session, job.id, self.worker_id):
                     return
 
+    def _budget_outcome(self, exc: LLMBudgetExceededError) -> JobDeferred | JobFailedPermanently:
+        """WP3.4: the session budget does not recover, the daily one does at UTC midnight."""
+        if exc.scope == "session":
+            return JobFailedPermanently(str(exc))
+        now = datetime.now(UTC)
+        midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        jitter = random.uniform(0, self.settings.daily_budget_defer_jitter_s)
+        return JobDeferred((midnight - now).total_seconds() + jitter, str(exc))
+
+    async def _claimable_kinds(self) -> list[str]:
+        """WP5.3 (Т-§22.5): registered kinds minus those whose roles run on a pressured model.
+        The flags are read with one Redis call per claim iteration; without Redis — none."""
+        kinds = sorted(self.handlers)
+        pressured = await pressured_models(self.context.redis)
+        if not pressured:
+            return kinds
+        return [
+            kind
+            for kind in kinds
+            if not any(
+                self.settings.model_for_role(role) in pressured
+                for role in KIND_LLM_ROLES.get(kind, ())
+            )
+        ]
+
     async def run_one(self) -> bool:
         """Claim and execute one job; False when nothing was claimable."""
         if not self.handlers:
             return False
+        kinds = await self._claimable_kinds()
+        if not kinds:
+            return False
         async with self.session_factory() as session, session.begin():
-            job = await claim_next_job(session, self.worker_id, sorted(self.handlers))
+            job = await claim_next_job(session, self.worker_id, kinds)
         if job is None:
             return False
-        context = JobContext(self.settings, self.session_factory)
+        context = self.context
         beat = asyncio.create_task(self._heartbeat(job))
         try:
-            await self.handlers[job.kind](job, context)
+            try:
+                await self.handlers[job.kind](job, context)
+            except LLMBudgetExceededError as exc:
+                raise self._budget_outcome(exc) from exc
+        except asyncio.CancelledError:
+            # WP3.5: shutdown after the grace period — back to queued, attempt unchanged.
+            async with self.session_factory() as session, session.begin():
+                released = await release_job(session, job.id, self.worker_id)
+            log.info("job_released_on_shutdown", kind=job.kind, job_id=str(job.id), ok=released)
+            raise
+        except JobDeferred as exc:
+            log.info("job_deferred", kind=job.kind, job_id=str(job.id), reason=exc.reason)
+            async with self.session_factory() as session, session.begin():
+                await defer_job(session, job.id, self.worker_id, exc.delay_sec, exc.reason)
+        except JobFailedPermanently as exc:
+            log.warning(
+                "job_failed_permanently", kind=job.kind, job_id=str(job.id), reason=exc.reason
+            )
+            async with self.session_factory() as session, session.begin():
+                await fail_job_permanently(
+                    session, job.id, self.worker_id, exc.reason, stacktrace=traceback.format_exc()
+                )
         except Exception as exc:
             log.warning("job_failed", kind=job.kind, job_id=str(job.id), error=repr(exc))
             async with self.session_factory() as session, session.begin():
@@ -113,5 +192,19 @@ class JobRunner:
                 await asyncio.wait_for(stop.wait(), timeout=self.settings.job_stale_after_sec / 2)
 
     async def run_forever(self, stop: asyncio.Event) -> None:
-        loops = [self._loop(stop) for _ in range(max(1, self.settings.worker_concurrency))]
-        await asyncio.gather(self._reaper(stop), *loops)
+        """WP3.5 (Д-§6.1): on `stop` no new jobs are taken; running ones get
+        `worker_shutdown_grace_s`, the rest are cancelled and put back to `queued`."""
+        loops = [
+            asyncio.create_task(self._loop(stop))
+            for _ in range(max(1, self.settings.worker_concurrency))
+        ]
+        reaper = asyncio.create_task(self._reaper(stop))
+        try:
+            await stop.wait()
+            _, pending = await asyncio.wait(loops, timeout=self.settings.worker_shutdown_grace_s)
+            if pending:
+                log.info("worker_shutdown_grace_expired", unfinished=len(pending))
+        finally:
+            for task in (*loops, reaper):
+                task.cancel()
+            await asyncio.gather(*loops, reaper, return_exceptions=True)

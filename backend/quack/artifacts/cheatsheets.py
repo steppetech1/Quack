@@ -8,11 +8,10 @@ from typing import Any, LiteralString
 from uuid import UUID, uuid5
 
 import orjson
-from neo4j import READ_ACCESS
 from redis.exceptions import RedisError
 
-from quack.api.app import AppResources
-from quack.artifacts.deps import WorkerDeps, build_worker_deps
+from quack.api.resources import AppResources
+from quack.artifacts.deps import WorkerDeps, worker_deps
 from quack.artifacts.practice import LLM_ERRORS
 from quack.artifacts.schemas import (
     ArtifactGenOutput,
@@ -20,9 +19,16 @@ from quack.artifacts.schemas import (
     CheatsheetRefreshRequest,
     CheatsheetRefreshResponse,
 )
-from quack.artifacts.store import ARTIFACT_VIEW_COLUMNS, fetch_rows, stored_event
+from quack.artifacts.store import (
+    ARTIFACT_VIEW_COLUMNS,
+    fetch_rows,
+    require_topic_of_learner,
+    stored_event,
+)
+from quack.db.neo4j import read_session
 from quack.db.redis import session_events_channel
 from quack.events import NewEvent, append_events
+from quack.events.reader import last_seq
 from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.topic_display import INACTIVE_SKILL_STATUSES
 from quack.jobs import kinds
@@ -72,7 +78,10 @@ async def get_cheatsheet(
         l=learner_id,
         t=topic_id,
     )
-    return ArtifactView.model_validate(rows[0]) if rows else None
+    if rows:
+        return ArtifactView.model_validate(rows[0])
+    await require_topic_of_learner(resources.session_factory, learner_id, topic_id)
+    return None
 
 
 async def request_cheatsheet_refresh(
@@ -81,11 +90,17 @@ async def request_cheatsheet_refresh(
     body: CheatsheetRefreshRequest,
     resources: AppResources,
 ) -> CheatsheetRefreshResponse:
-    """Enqueue `artifact.refresh_cheatsheet` (spec §7.1)."""
-    spec = kinds.artifact_refresh_cheatsheet(
-        learner_id, topic_id, {"domain_id": str(body.domain_id)}
-    )
+    """Enqueue `artifact.refresh_cheatsheet` (spec §7.1). The learner's action has no event of
+    its own, so this is the one direct enqueue left in product code (WP11.2 exception):
+    `required_seq` is the learner's current `last_seq`."""
+    await require_topic_of_learner(resources.session_factory, learner_id, topic_id)
     async with resources.session_factory() as session, session.begin():
+        spec = kinds.artifact_refresh_cheatsheet(
+            learner_id,
+            topic_id,
+            {"domain_id": str(body.domain_id)},
+            required_seq=await last_seq(session, learner_id),
+        )
         job_id = await enqueue_job(session, spec)
     return CheatsheetRefreshResponse(job_id=job_id, status="queued")
 
@@ -138,6 +153,20 @@ def _markdown(title: str, sections: list[tuple[str, list[str]]]) -> str:
 # --- session.finish_artifacts ---------------------------------------------------------
 
 
+_SKILL_NAMES: LiteralString = (
+    "MATCH (s:Skill) WHERE s.learnerId = $l AND s.id IN $ids RETURN s.id AS id, s.name AS name"
+)
+
+
+async def _skill_names(deps: WorkerDeps, learner_id: UUID, skill_ids: list[str]) -> dict[str, str]:
+    """Names of the skills in the graph; a skill not projected yet has none."""
+    if not skill_ids:
+        return {}
+    async with read_session(deps.neo4j) as session:
+        result = await session.run(_SKILL_NAMES, {"l": str(learner_id), "ids": skill_ids})
+        return {str(r["id"]): str(r["name"]) async for r in result if r["name"]}
+
+
 async def _digest_event(
     deps: WorkerDeps,
     learner_id: UUID,
@@ -175,9 +204,12 @@ async def _digest_event(
         refs = p["skill_scores"] if r["type"] == "task.evaluated" else p["skills"]
         skill_ids.extend(ref["skill_id"] for ref in refs if ref.get("skill_id"))
     covered = list(dict.fromkeys(skill_ids))
+    # T-M3 (Т-§4.5): the model sees skill names and task numbers, never ids.
+    names = await _skill_names(deps, learner_id, covered)
+    skills = [names.get(sid) or f"Skill {i}" for i, sid in enumerate(covered, start=1)]
     tasks = [
-        {"task_id": p["task_id"], "is_correct": p["is_correct"], "score": p["score"]}
-        for p in evaluated
+        {"task": f"Task {i}", "is_correct": p["is_correct"], "score": p["score"]}
+        for i, p in enumerate(evaluated, start=1)
     ]
 
     output = await _generate(
@@ -188,7 +220,7 @@ async def _digest_event(
         {
             "mode": "digest",
             "title_context": DIGEST_TITLE,
-            "skills_summary_json": {"covered_skill_ids": covered, "evaluated_tasks": tasks},
+            "skills_summary_json": {"covered_skills": skills, "evaluated_tasks": tasks},
             "misconceptions_summary_json": [
                 m for p in evaluated for m in p.get("triggered_misconceptions", [])
             ],
@@ -201,11 +233,11 @@ async def _digest_event(
         text = _markdown(
             title,
             [
-                ("Covered skills", [f"- {s}" for s in covered]),
+                ("Covered skills", [f"- {s}" for s in skills]),
                 (
                     "Solved tasks",
                     [
-                        f"- {t['task_id']}: correct = {t['is_correct']}, score = {t['score']}"
+                        f"- {t['task']}: correct = {t['is_correct']}, score = {t['score']}"
                         for t in tasks
                     ],
                 ),
@@ -230,26 +262,25 @@ async def _digest_event(
 
 
 async def run_finish_artifacts(job: ClaimedJob, deps: WorkerDeps) -> None:
-    """`session.digest_created` (`artifacts@1`, mode digest, or a template) and, for a session
-    with a topic, `artifact.refresh_cheatsheet` in the same transaction (decision 3, A15)."""
+    """`session.digest_created` (`artifacts@1`, mode digest, or a template). For a session with
+    a topic the dispatcher turns that event into `artifact.refresh_cheatsheet` (decision 3, A15,
+    WP11.2). The payload is the one of `finish_session`: `{"session_id", "domain_id",
+    "topic_id"}` (WP6.4)."""
     learner_id = _learner(job)
-    session_id = _id_from_lock_key(job, "session:", ":finish")
+    session_id = UUID(job.payload["session_id"])
     domain_id = UUID(job.payload["domain_id"])
     topic = job.payload.get("topic_id")
     topic_id = None if topic is None else UUID(topic)
 
-    # A10: a retried job does not write a second digest but still enqueues the cheatsheet.
+    # A10: a retried job does not write a second digest.
     key = f"session.digest_created:{session_id}"
     events: list[NewEvent] = []
     if await stored_event(deps.session_factory, learner_id, key) is None:
         events.append(await _digest_event(deps, learner_id, session_id, domain_id, topic_id, key))
+    # WP11.4: artifact.refresh_cheatsheet is enqueued by the log dispatcher from
+    # session.digest_created (quack/jobs/dispatcher_rules.py).
     async with deps.session_factory() as session, session.begin():
         await append_events(session, learner_id, events, redis=deps.redis)
-        if topic_id is not None:
-            payload = {"domain_id": str(domain_id), "session_id": str(session_id)}
-            await enqueue_job(
-                session, kinds.artifact_refresh_cheatsheet(learner_id, topic_id, payload)
-            )
 
 
 # --- artifact.refresh_cheatsheet ------------------------------------------------------
@@ -259,7 +290,7 @@ async def _topic_sheet(
     deps: WorkerDeps, learner_id: UUID, domain_id: UUID, topic_id: UUID
 ) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
     """Topic name (None if not projected yet), live skills and their misconceptions (A16)."""
-    async with deps.neo4j.session(default_access_mode=READ_ACCESS) as session:
+    async with read_session(deps.neo4j) as session:
         result = await session.run(
             _TOPIC_SHEET,
             {
@@ -362,11 +393,9 @@ async def run_refresh_cheatsheet(job: ClaimedJob, deps: WorkerDeps) -> None:
 
 @register_job_handler("session.finish_artifacts")
 async def _finish_artifacts_handler(job: ClaimedJob, ctx: JobContext) -> None:
-    async with build_worker_deps(ctx) as deps:
-        await run_finish_artifacts(job, deps)
+    await run_finish_artifacts(job, worker_deps(ctx))
 
 
 @register_job_handler("artifact.refresh_cheatsheet")
 async def _refresh_cheatsheet_handler(job: ClaimedJob, ctx: JobContext) -> None:
-    async with build_worker_deps(ctx) as deps:
-        await run_refresh_cheatsheet(job, deps)
+    await run_refresh_cheatsheet(job, worker_deps(ctx))

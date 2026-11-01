@@ -9,15 +9,15 @@ import httpx
 from neo4j import AsyncDriver
 from sqlalchemy import text
 
-from quack.config import FoldParams
+from quack.config import FoldParams, Settings
 from quack.db.postgres import SessionFactory
-from quack.events.payloads import SkillRef
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
 from quack.session.schemas import ConceptExplainedDraft, TeacherOutput
 from tests.session.fixtures import SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label, task_label
+from tests.support.dispatch import dispatch
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -42,6 +42,7 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     db: SessionFactory,
     neo4j: AsyncDriver,
     fake_llm,
+    settings: Settings,
 ) -> None:
     """ТЗ turns test 1: Full turn pipeline: SSE order/format, events, and turn.extract job."""
     # 1. Start an active session
@@ -61,20 +62,29 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     await _project_all(neo4j, db, seeded_domain.learner_id)
 
     # 2. Queue teacher LLM response with concept explained and task assigned
+    # WP14.1: the teacher answers with the labels of its context (topic T1, skills S…, tasks K…).
+    power = skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])
     concept_draft = ConceptExplainedDraft(
-        topic_id=seeded_domain.topic_id,
-        skills=[SkillRef(skill_id=seeded_domain.skill_ids[0])],
+        topic_label="T1",
+        explained_skill_labels=[power],
         depth=0.7,
         summary="Power rule explanation",
+    )
+    first_task = await task_label(
+        db,
+        seeded_domain.learner_id,
+        seeded_domain.topic_id,
+        session_id,
+        seeded_domain.math_task_ids[0],
     )
     fake_llm.push(
         "teacher",
         TeacherOutput(
             reply_text="Let's practice the power rule.",
             pedagogical_move="assign_task",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[power],
             concept_explained=concept_draft,
-            assign_task_id=seeded_domain.math_task_ids[0],
+            assign_task_label=first_task,
         ),
     )
 
@@ -88,32 +98,40 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     assert turn_resp.headers["content-type"].startswith("text/event-stream")
 
     # 4. Check SSE sequence and format
-    # format: turn_started → token → task_assigned → turn_completed → done
+    # format: turn_started → status → token → task_assigned → turn_completed → done
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "task_assigned", "turn_completed", "done"]
+    assert event_names == [
+        "turn_started",
+        "status",
+        "token",
+        "task_assigned",
+        "turn_completed",
+        "done",
+    ]
 
     turn_started = sse_events[0][1]
     turn_id = UUID(turn_started["turn_id"])
+    assert sse_events[1][1] == {"state": "thinking"}
     assert turn_started["turn_index"] == 0
     assert isinstance(turn_started["user_seq"], int)
     user_seq = turn_started["user_seq"]
 
-    token_event = sse_events[1][1]
+    token_event = sse_events[2][1]
     assert token_event["delta"] == "Let's practice the power rule."
 
-    task_assigned = sse_events[2][1]
+    task_assigned = sse_events[3][1]
     assert UUID(task_assigned["task_id"]) == seeded_domain.math_task_ids[0]
     assert task_assigned["kind"] == "math"
     assert task_assigned["prompt_text"] == "Find d/dx x^3"
 
-    turn_completed = sse_events[3][1]
+    turn_completed = sse_events[4][1]
     assert UUID(turn_completed["turn_id"]) == turn_id
     assert isinstance(turn_completed["committed_seq"], int)
     assert turn_completed["committed_seq"] > user_seq
     assert turn_completed["degraded_mode"] is None
 
-    assert sse_events[4][1] == {}
+    assert sse_events[5][1] == {}
 
     # 5. Check events recorded in core.events
     async with db() as session:
@@ -160,6 +178,7 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     assert teacher_event.actor == "teacher@1"
     assert teacher_event.payload["degraded_mode"] is None
 
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     # 6. Check turn.extract job enqueued in ops.jobs
     async with db() as session:
         job = (
@@ -221,7 +240,7 @@ async def test_turn_without_concept_or_task(
 
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "turn_completed", "done"]
+    assert event_names == ["turn_started", "status", "token", "turn_completed", "done"]
 
     async with db() as session:
         rows = (
@@ -280,7 +299,14 @@ async def test_practice_mode_assigns_task_even_if_move_is_not_assign_task(
 
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "task_assigned", "turn_completed", "done"]
+    assert event_names == [
+        "turn_started",
+        "status",
+        "token",
+        "task_assigned",
+        "turn_completed",
+        "done",
+    ]
 
 
 async def test_parallel_turn_on_same_session_gets_409_turn_locked(

@@ -9,8 +9,8 @@ from uuid import UUID
 import orjson
 from sqlalchemy import text
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.domains.schemas import (
     DeleteLearnerResponse,
     UpdatePreferencesRequest,
@@ -18,6 +18,7 @@ from quack.domains.schemas import (
 )
 from quack.events.append import append_events
 from quack.events.models import NewEvent
+from quack.jobs.queue import cancel_learner_jobs
 
 
 async def update_learner_preferences(
@@ -80,13 +81,7 @@ async def delete_learner_account(
             text("UPDATE auth.users SET deleted_at = :now WHERE id = :id AND deleted_at IS NULL"),
             {"id": learner_id, "now": now},
         )
-        await session.execute(
-            text(
-                "UPDATE ops.jobs SET status = 'cancelled', updated_at = :now "
-                "WHERE learner_id = :id AND status IN ('queued', 'running')"
-            ),
-            {"id": learner_id, "now": now},
-        )
+        await cancel_learner_jobs(session, learner_id)
         await session.execute(
             text(
                 "INSERT INTO ops.deletion_tombstones (learner_id, requested_at, status) "

@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from neo4j import AsyncDriver
 from pydantic import BaseModel, ValidationError
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -29,6 +30,7 @@ from quack.db.locks import LockKeyspace, advisory_lock
 from quack.db.neo4j import INDEXES, UNIQUE_ID_LABELS, verify_schema
 from quack.db.postgres import SessionFactory
 from quack.logging import configure_logging, get_logger, log_context
+from tests.support.resources import build_app_resources
 
 
 async def test_migration_creates_contract_indexes(
@@ -186,8 +188,15 @@ def _app_with_test_routes(app: FastAPI) -> FastAPI:
     return app
 
 
-def test_api_error_format_and_request_id(settings: Settings) -> None:
-    app = _app_with_test_routes(create_app(settings, connect=False))
+def test_api_error_format_and_request_id(
+    settings: Settings,
+    pg_engine: AsyncEngine,
+    db: SessionFactory,
+    neo4j: AsyncDriver,
+    redis: Redis,
+) -> None:
+    res = build_app_resources(settings, pg_engine, neo4j, redis, session_factory=db)
+    app = _app_with_test_routes(create_app(settings, resources=res))
     with TestClient(app) as client:
         response = client.get("/test/boom", headers={"X-Request-ID": "req-123"})
         assert response.status_code == 409
@@ -262,6 +271,9 @@ def test_cli_parser() -> None:
     assert args.learner == learner and not args.stale_rules
     assert parser.parse_args(["ops", "rebuild", "--stale-rules"]).stale_rules
     assert parser.parse_args(["ops", "rebuild", "--all"]).all
+    assert parser.parse_args(["ops", "openapi", "--out", "o.json"]).out == "o.json"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["ops", "openapi"])
     with pytest.raises(SystemExit):
         parser.parse_args(["ops", "rebuild", "--all", "--stale-rules"])
     with pytest.raises(SystemExit):

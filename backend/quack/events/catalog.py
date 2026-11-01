@@ -80,14 +80,22 @@ OVERLAY_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
+# Newer schema versions of existing types (ТЗ Фазы 3 §6.8); older versions stay readable.
+EVENT_TYPE_VERSIONS: dict[tuple[str, int], type[p.Payload]] = {
+    **{(event_type, SCHEMA_VERSION): model for event_type, model in EVENT_TYPES.items()},
+    ("turn.extracted", 2): p.TurnExtractedV2,
+}
+
+
 class UnknownEventTypeError(ValueError):
     """Unknown type or newer schema_version than this code knows (Т-§2.4)."""
 
 
 def payload_model(event_type: str, schema_version: int = SCHEMA_VERSION) -> type[p.Payload]:
-    if schema_version != SCHEMA_VERSION or event_type not in EVENT_TYPES:
+    model = EVENT_TYPE_VERSIONS.get((event_type, schema_version))
+    if model is None:
         raise UnknownEventTypeError(f"unknown event type {event_type!r} v{schema_version}")
-    return EVENT_TYPES[event_type]
+    return model
 
 
 def validate_payload(

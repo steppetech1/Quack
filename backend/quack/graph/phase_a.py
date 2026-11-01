@@ -302,6 +302,8 @@ def _evidence(
     direction: str = "positive",
     family_id: str = "unknown",
     task_id: str = "",
+    at_ms: int | None = None,
+    extra: Props | None = None,
 ) -> str:
     evidence_id = ctx.item_id(item_index)
     ctx.set(
@@ -315,7 +317,7 @@ def _evidence(
             "sourceType": source_type,
             "sourceSeq": ctx.seq,
             "eventType": ctx.event.type,
-            "at": ctx.at,
+            "at": ctx.at if at_ms is None else at_ms,
             "score": score,
             "independence": independence,
             "testedDepth": tested_depth,
@@ -328,6 +330,7 @@ def _evidence(
             "turnId": str(ctx.event.turn_id) if ctx.event.turn_id else "",
             "superseded": False,
             "supersededBySeq": 0,
+            **(extra or {}),
         },
     )
     ctx.rel("Evidence", evidence_id, rel_type, target_label, target_id)
@@ -727,7 +730,15 @@ def _concept_explained(ctx: _Ctx, e: p.TeacherConceptExplained) -> None:
         ctx.dirty_skill(skill_id)
 
 
-def _turn_extracted(ctx: _Ctx, e: p.TurnExtracted) -> None:
+# `turn.extracted` v2 (WP12): the outcome of an element → score and direction of the trace.
+OUTCOME_SCORE = {"correct": 1.0, "incorrect": 0.0, "partial": 0.5}
+OUTCOME_DIRECTION = {"correct": "positive", "incorrect": "negative", "partial": "neutral"}
+
+
+def _turn_extracted(ctx: _Ctx, e: p.TurnExtracted | p.TurnExtractedV2) -> None:
+    if isinstance(e, p.TurnExtractedV2):
+        _turn_extracted_v2(ctx, e)
+        return
     for i, obs in enumerate(e.observations):
         skill_id = _resolve_skill_ref(ctx, obs.skill)
         if skill_id is None:
@@ -772,6 +783,69 @@ def _turn_extracted(ctx: _Ctx, e: p.TurnExtracted) -> None:
         ctx.result.dirty_misconception_ids.add(misc_id)
 
 
+def _turn_extracted_v2(ctx: _Ctx, e: p.TurnExtractedV2) -> None:
+    """Elements of `extractor@2` (WP12.2, law 4): the tier is T3 by source (`Т-§7.8` п.4), the
+    time comes from the source events, and no number of the model reaches the trace. An element
+    rejected by code validation stays in the event and is not applied."""
+    for i, el in enumerate(e.elements):
+        if el.rejected_reason is not None or el.skill is None:
+            continue
+        skill_id = _resolve_skill_ref(ctx, el.skill)
+        if skill_id is None:
+            continue
+        at_ms = to_ms(el.occurred_at) if el.occurred_at is not None else None
+        if el.kind == "misconception_hypothesis":
+            name = el.misconception_label or ""
+            misc_id = _misconception_for(
+                ctx, name, skill_id, el.misconception_id, f"misc:{i}", "extracted"
+            )
+            _evidence(
+                ctx,
+                f"manifest:{i}",
+                kind="manifestation",
+                target_label="Misconception",
+                target_id=misc_id,
+                rel_type="OBSERVED_MISCONCEPTION",
+                domain_id=_skill_domain(ctx, skill_id),
+                tier=EXTRACTOR_TIER,
+                source_type="extractor",
+                score=0.0,
+                direction="negative",
+                at_ms=at_ms,
+            )
+            ctx.result.dirty_misconception_ids.add(misc_id)
+            continue
+        if el.outcome is None or el.level is None or el.assistance is None:
+            continue  # incomplete: code validation marks it, the projector never stops on it
+        _evidence(
+            ctx,
+            i,
+            kind="skill",
+            target_label="Skill",
+            target_id=skill_id,
+            rel_type="EVIDENCE_FOR",
+            domain_id=_skill_domain(ctx, skill_id),
+            tier=EXTRACTOR_TIER,
+            source_type="extractor",
+            score=OUTCOME_SCORE[el.outcome],
+            direction=OUTCOME_DIRECTION[el.outcome],
+            at_ms=at_ms,
+            extra={
+                "level": el.level,
+                "assistance": el.assistance,
+                "hintStep": el.hint_step or 0,
+                "gapType": el.gap_type or "unknown",
+            },
+        )
+        ctx.dirty_skill(skill_id)
+
+
+def _options_count(e: p.TaskGenerated) -> int:
+    """k of a choice task (Т-§7.4 guessing `1 − 1/k`); 0 when the task is not a choice."""
+    options = e.reference_solution.get("options") if e.kind == "choice" else None
+    return len(options) if isinstance(options, list) else 0
+
+
 def _task_generated(ctx: _Ctx, e: p.TaskGenerated) -> None:
     task_id = str(e.task_id)
     topic = ctx.node("Topic", e.topic_id)
@@ -786,6 +860,7 @@ def _task_generated(ctx: _Ctx, e: p.TaskGenerated) -> None:
             "familyId": e.family_id,
             "difficulty": e.difficulty,
             "kind": e.kind,
+            "optionsCount": _options_count(e),
             "status": "generated",
             "assignedSessionId": "",
             "assignedTurnId": "",
@@ -848,6 +923,7 @@ def _task_evaluated(ctx: _Ctx, e: p.TaskEvaluated) -> None:
     task_id, family = (
         (task[0], prop_str(task[1], "familyId", "unknown")) if task else ("", "unknown")
     )
+    options_count = prop_int(task[1], "optionsCount") if task else 0
     if task is not None:
         ctx.set(
             "Task",
@@ -880,6 +956,7 @@ def _task_evaluated(ctx: _Ctx, e: p.TaskEvaluated) -> None:
             tested_depth=item.tested_depth,
             family_id=family,
             task_id=task_id,
+            extra={"optionsCount": options_count},
         )
         ctx.dirty_skill(skill[0])
     for j, hit in enumerate(e.triggered_misconceptions):

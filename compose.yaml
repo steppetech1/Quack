@@ -1,0 +1,251 @@
+# Quack stack (ТЗ Фазы 3 WP9.2, Д-§3, Д-§4.1, Д-§6.1, Д-§7). Values are starting points.
+#
+# Secrets and per-host values come from `.env` next to this file (names: backend/.env.example
+# plus POSTGRES_PASSWORD). No service publishes a port here; `compose.override.yaml` publishes
+# the databases and the API on 127.0.0.1 for local work. Caddy, backup and alerts belong to the
+# DevOps track and are added on top of this file.
+#
+# Small machine (Docker with ~4 GB): NEO4J_HEAP=512m NEO4J_PAGECACHE=256m NEO4J_TX_MAX=256m
+# NEO4J_MEM_LIMIT=1536m NEO4J_MEMSWAP_LIMIT=1920m.
+#
+# Test learners: `docker compose exec api python -m quack.cli ops seed-learners --count N --out
+# /tmp/learners.json` — in `api`, the only service with JWT_SECRET (tokens are signed with it).
+#
+# Load stand: `docker compose --profile loadtest up` adds `meta-mock`; point api and workers to it
+# with META_API_BASE_URL=http://meta-mock:8080 (no /v1 suffix).
+
+name: quack
+
+x-backend-image: &backend-image
+  image: ${QUACK_BACKEND_IMAGE:-quack-backend:local}
+  build:
+    context: ./backend
+  restart: unless-stopped
+
+x-db-env: &db-env
+  ENV: ${ENV:-prod}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  QUACK_VERSION: ${QUACK_VERSION:-dev}
+  POSTGRES_DSN: postgresql://quack:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/quack
+  NEO4J_URI: bolt://neo4j:7687
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+  REDIS_URL: redis://redis:6379/0
+
+x-after-migrate: &after-migrate
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+    neo4j:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-16.10}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: quack
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: quack
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_connections=100
+    shm_size: 256mb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quack -d quack"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 1792m
+    memswap_limit: 2240m
+    cpus: 2.0
+
+  neo4j:
+    # The Community version the test suite runs on (backend/README.md); never `latest`.
+    image: neo4j:${NEO4J_VERSION:-2026.06}-community
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+      # Д-§4.1 values; a small local machine lowers them through the variables.
+      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP:-1536m}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1536m}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-1280m}
+      NEO4J_dbms_memory_transaction_total_max: ${NEO4J_TX_MAX:-512m}
+    volumes:
+      - neo4j-data:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p '${NEO4J_PASSWORD}' 'RETURN 1' >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    mem_limit: ${NEO4J_MEM_LIMIT:-4g}
+    memswap_limit: ${NEO4J_MEMSWAP_LIMIT:-5g}
+    cpus: 2.0
+
+  redis:
+    # No persistence (Т-§1.2): signals, limits and locks only.
+    image: redis:${REDIS_VERSION:-8.2}
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb"]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 192m
+    memswap_limit: 240m
+    cpus: 0.25
+
+  migrate:
+    <<: *backend-image
+    restart: "no"
+    command: ["ops", "migrate"]
+    environment:
+      ENV: ${ENV:-prod}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      QUACK_VERSION: ${QUACK_VERSION:-dev}
+      POSTGRES_DSN: postgresql://quack:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/quack
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    mem_limit: 256m
+    memswap_limit: 320m
+    cpus: 0.5
+
+  api:
+    <<: *backend-image
+    command: ["api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Profile `loadtest` only; the mock has no health endpoint.
+      meta-mock:
+        condition: service_started
+        required: false
+    environment:
+      <<: *db-env
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      API_WORKERS: "2"
+      API_GRACEFUL_SHUTDOWN_S: "30"
+      COMPUTE_URL: http://compute:8001
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      META_API_KEY: ${META_API_KEY:-}
+      META_API_BASE_URL: ${META_API_BASE_URL:-}
+    networks: [backend, egress]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    stop_grace_period: 35s
+    mem_limit: 1g
+    memswap_limit: 1280m
+    cpus: 1.5
+
+  projector:
+    <<: [*backend-image, *after-migrate]
+    command: ["projector"]
+    # No META_API_KEY and no compute: the projector reads the log and writes the graph only.
+    environment:
+      <<: *db-env
+    networks: [backend]
+    stop_grace_period: 15s
+    mem_limit: 512m
+    memswap_limit: 640m
+    cpus: 1.0
+
+  workers:
+    <<: *backend-image
+    command: ["workers"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Profile `loadtest` only; the mock has no health endpoint.
+      meta-mock:
+        condition: service_started
+        required: false
+    environment:
+      <<: *db-env
+      COMPUTE_URL: http://compute:8001
+      WORKER_SHUTDOWN_GRACE_S: "20"
+      META_API_KEY: ${META_API_KEY:-}
+      META_API_BASE_URL: ${META_API_BASE_URL:-}
+    networks: [backend, egress]
+    stop_grace_period: 25s
+    mem_limit: 1g
+    memswap_limit: 1280m
+    cpus: 1.0
+
+  compute:
+    image: ${QUACK_COMPUTE_IMAGE:-quack-compute:local}
+    build:
+      context: ./compute
+    restart: unless-stopped
+    # No database variables, no secrets, no internet (Т-§6.5).
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    networks: [backend]
+    shm_size: 256mb
+    stop_grace_period: 10s
+    mem_limit: 2g
+    memswap_limit: 2560m
+    cpus: 3.0
+
+  meta-mock:
+    <<: *backend-image
+    profiles: [loadtest]
+    entrypoint: ["uvicorn", "--factory", "loadtest.meta_mock:app_from_env"]
+    command: ["--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      META_MOCK_LATENCY: ${META_MOCK_LATENCY:-measured}
+    networks: [backend]
+    mem_limit: 256m
+    memswap_limit: 320m
+    cpus: 0.5
+
+networks:
+  backend:
+    internal: true
+  egress: {}
+
+volumes:
+  postgres-data: {}
+  neo4j-data: {}

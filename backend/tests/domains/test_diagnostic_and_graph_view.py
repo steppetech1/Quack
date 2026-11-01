@@ -37,8 +37,9 @@ from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.worker import ProjectorWorker
 from quack.jobs import kinds
 from quack.jobs.queue import claim_next_job, complete_job, enqueue_job
-from quack.jobs.runner import JobContext
+from quack.jobs.runner import JobRunner
 from tests.domains.conftest import FakeLLMProvider
+from tests.support.resources import build_job_context
 
 
 def _auth_headers(token: str) -> dict[str, str]:
@@ -630,18 +631,20 @@ async def test_graph_curate_defers_when_learner_presence_active(
         events_before = await read_learner_events(session, learner_id)
         job_id = await enqueue_job(
             session,
-            kinds.graph_curate(learner_id, domain_id, {"domain_id": str(domain_id)}),
+            kinds.graph_curate(
+                learner_id, domain_id, {"domain_id": str(domain_id)}, required_seq=None
+            ),
         )
 
     before_run = datetime.now(UTC)
-    async with db() as session, session.begin():
-        claimed = await claim_next_job(session, "test-worker", ["graph.curate"])
-    assert claimed is not None
-    assert claimed.id == job_id
-
-    await handle_graph_curate(claimed, JobContext(settings=settings, session_factory=db))
-    async with db() as session, session.begin():
-        await complete_job(session, claimed.id, "test-worker")
+    runner = JobRunner(
+        settings,
+        db,
+        "test-worker",
+        handlers={"graph.curate": handle_graph_curate},
+        context=build_job_context(settings, db, neo4j, redis, provider=fake_llm_provider),
+    )
+    assert await runner.run_one()
 
     # Verify LLM was not called and no curation events were emitted.
     assert fake_llm_provider.calls == []
@@ -649,17 +652,13 @@ async def test_graph_curate_defers_when_learner_presence_active(
         events_after = await read_learner_events(session, learner_id)
         row = (
             await session.execute(
-                text(
-                    "SELECT status, run_after FROM ops.jobs "
-                    "WHERE kind = 'graph.curate' AND learner_id = :l "
-                    "ORDER BY updated_at DESC LIMIT 1"
-                ),
-                {"l": learner_id},
+                text("SELECT status, run_after, attempt FROM ops.jobs WHERE id = :id"),
+                {"id": job_id},
             )
         ).one()
 
     assert len(events_after) == len(events_before)
-    assert row[0] == "queued"
+    assert row[0] == "queued" and row[2] == 0
     assert row[1] >= before_run + timedelta(minutes=9, seconds=30)
 
 
@@ -820,13 +819,16 @@ async def test_graph_curate_deterministic_promotion_dedup_and_curator_model_pass
     async with db() as session, session.begin():
         await enqueue_job(
             session,
-            kinds.graph_curate(learner_id, domain_id, {"domain_id": str(domain_id)}),
+            kinds.graph_curate(
+                learner_id, domain_id, {"domain_id": str(domain_id)}, required_seq=None
+            ),
         )
     async with db() as session, session.begin():
         claimed = await claim_next_job(session, "test-worker", ["graph.curate"])
     assert claimed is not None
 
-    await handle_graph_curate(claimed, JobContext(settings=settings, session_factory=db))
+    ctx = build_job_context(settings, db, neo4j, redis, provider=fake_llm_provider)
+    await handle_graph_curate(claimed, ctx)
     async with db() as session, session.begin():
         await complete_job(session, claimed.id, "test-worker")
 

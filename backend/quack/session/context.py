@@ -6,20 +6,34 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
+from neo4j.exceptions import ConnectionAcquisitionTimeoutError, ServiceUnavailable, SessionExpired
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.events.models import StoredEvent
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.memory import InMemoryGraph, prop_str
 from quack.graph.neo4j_store import Neo4jGraphStore, read_applied_seq
 from quack.graph.overlay import SessionOverlay, build_session_overlay
-from quack.graph.slice import SliceDeps, read_consistent_slice
+from quack.graph.slice import ConsistentSlice, SliceDeps, read_consistent_slice
+from quack.logging import get_logger
+from quack.session.checkpoint_render import visible_replies
 
 TURN_EVENT_TYPES = ("turn.student_replied", "turn.teacher_replied")
+
+# Connection failures of the Neo4j driver (WP6.1, Т-§20.7): server down, session expired,
+# timeout. The turn then goes on an empty base slice plus the session overlay.
+NEO4J_CONNECTION_ERRORS: tuple[type[BaseException], ...] = (
+    ServiceUnavailable,
+    SessionExpired,
+    ConnectionAcquisitionTimeoutError,
+    TimeoutError,
+)
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,6 +53,7 @@ class TurnContext:
     last_checkpoint_turn: int = -1
     key_observations: list[str] = field(default_factory=list)
     checkpoint: StoredEvent | None = None
+    memory_unavailable: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,21 +96,30 @@ async def last_checkpoint(
 
 
 async def read_active_window(
-    session: AsyncSession, learner_id: UUID, session_id: UUID, after_turn: int, limit: int
+    session: AsyncSession,
+    learner_id: UUID,
+    session_id: UUID,
+    after_turn: int,
+    limit: int | None,
+    *,
+    before_seq: int | None = None,
 ) -> list[StoredEvent]:
-    """The last `limit` replies of the session with `turn_index > after_turn`, oldest first."""
+    """The last `limit` replies (all with `None`) of the session with `turn_index > after_turn`
+    (and `seq` below `before_seq` when given), oldest first."""
     result = await session.execute(
         text(
             f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l "
             "AND session_id = :s AND type = ANY(:types) "
-            "AND (payload->>'turn_index')::int > :after ORDER BY seq DESC LIMIT :limit"
+            "AND (payload->>'turn_index')::int > :after AND seq < :before "
+            "ORDER BY seq DESC LIMIT :limit"
         ),
         {
             "l": learner_id,
             "s": session_id,
             "types": list(TURN_EVENT_TYPES),
             "after": after_turn,
-            "limit": max(0, limit),
+            "before": before_seq if before_seq is not None else 2**62,
+            "limit": None if limit is None else max(0, limit),
         },
     )
     return [row_to_event(row) for row in reversed(result.all())]
@@ -144,9 +168,19 @@ def _topic_slice(
 
 
 async def build_turn_context(
-    resources: AppResources, settings: Settings, learner_id: UUID, session_id: UUID
+    resources: AppResources,
+    settings: Settings,
+    learner_id: UUID,
+    session_id: UUID,
+    *,
+    before_seq: int | None = None,
 ) -> TurnContext:
-    """Consistent slice (<= projector_lag_timeout_ms) + overlay + last checkpoint + <= 12 turns."""
+    """Consistent slice (<= projector_lag_timeout_ms) + overlay + last checkpoint + the turns
+    it did not fold (Т-§10.3).
+
+    `before_seq` — `seq` of the learner's reply of this turn (D-B-018): the slice waits for the
+    projector only up to the event before it (the reply itself is overlaid, law 9), and the
+    window of turns ends before it (the reply is a variable of its own)."""
     async with resources.session_factory() as session:
         row = await _load_session_row(session, learner_id, session_id)
 
@@ -161,9 +195,21 @@ async def build_turn_context(
         applied_seq_reader=applied_seq_reader,
         snapshot_read_retries=settings.snapshot_read_retries,
     )
-    graph_slice = await read_consistent_slice(
-        learner_id, None, store.dump, settings.projector_lag_timeout_ms, deps=deps
-    )
+    memory_unavailable = False
+    try:
+        graph_slice = await read_consistent_slice(
+            learner_id,
+            None if before_seq is None else before_seq - 1,
+            store.dump,
+            settings.projector_lag_timeout_ms,
+            deps=deps,
+        )
+    except NEO4J_CONNECTION_ERRORS as exc:
+        # WP6.1: the student model is unreachable; every session event is overlaid on an
+        # empty slice (applied_seq 0), so the overlay invariants still hold.
+        log.warning("turn_memory_unavailable", learner_id=str(learner_id), error=type(exc).__name__)
+        memory_unavailable = True
+        graph_slice = ConsistentSlice(InMemoryGraph(), 0, 0, False, True)
 
     async with resources.session_factory() as session:
         overlay = await build_session_overlay(
@@ -177,9 +223,12 @@ async def build_turn_context(
         checkpoint = await last_checkpoint(session, learner_id, session_id)
         cp = checkpoint.payload if checkpoint is not None else {}
         last_cp_turn = int(cp.get("up_to_turn_index", -1))
-        window = await read_active_window(
-            session, learner_id, session_id, last_cp_turn, settings.active_window_turns
+        # WP13 (Т-§10.3): the turns the checkpoint folded into episode lines are its
+        # `rolling_summary`; every later turn is shown in full (D-B-023).
+        replies = await read_active_window(
+            session, learner_id, session_id, -1, None, before_seq=before_seq
         )
+        window = visible_replies(replies, last_cp_turn, settings)
 
     topic_name, skills, misconceptions = _topic_slice(overlay.graph, row.topic_id)
     return TurnContext(
@@ -198,4 +247,5 @@ async def build_turn_context(
         last_checkpoint_turn=last_cp_turn,
         key_observations=[str(o) for o in cp.get("key_observations", [])],
         checkpoint=checkpoint,
+        memory_unavailable=memory_unavailable,
     )

@@ -13,9 +13,10 @@ from quack.db.postgres import SessionFactory
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.projector import run_projector_batch
+from quack.practice.evaluation import FEEDBACK_CORRECT
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain
-from tests.session.helpers import parse_sse
+from tests.session.helpers import parse_sse, skill_label
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -66,7 +67,7 @@ async def test_math_task_evaluated_in_turn_via_compute(
         TeacherOutput(
             reply_text="Spot on! 3x^2 is the derivative of x^3.",
             pedagogical_move="give_feedback",
-            focus_skill_ids=[seeded_domain.skill_ids[0]],
+            focus_skill_labels=[skill_label(seeded_domain.skill_ids, seeded_domain.skill_ids[0])],
         ),
     )
 
@@ -91,24 +92,34 @@ async def test_math_task_evaluated_in_turn_via_compute(
     # 5. Verify teacher prompt received task_evaluation_json
     teacher_calls = fake_llm.calls_for("teacher")
     assert len(teacher_calls) == 1
-    assert str(math_task_id) in teacher_calls[0].prompt
+    # WP14.1: the evaluated task is named by its label, never by its id.
+    assert str(math_task_id) not in teacher_calls[0].prompt
+    assert '"task": "K' in teacher_calls[0].prompt.split("### Automatic check")[1]
     assert '"evaluator": "compute"' in teacher_calls[0].prompt
     assert '"is_correct": true' in teacher_calls[0].prompt
 
     # 6. Check SSE sequence and task_evaluated payload
     sse_events = parse_sse(turn_resp.text)
     event_names = [name for name, _ in sse_events]
-    assert event_names == ["turn_started", "token", "task_evaluated", "turn_completed", "done"]
+    assert event_names == [
+        "turn_started",
+        "status",
+        "token",
+        "task_evaluated",
+        "turn_completed",
+        "done",
+    ]
 
     turn_started = sse_events[0][1]
     turn_id = UUID(turn_started["turn_id"])
 
-    task_eval_sse = sse_events[2][1]
+    task_eval_sse = sse_events[3][1]
+    # D-B-006: feedback of a code verdict comes from the one cascade of quack.practice.
     assert task_eval_sse == {
         "task_id": str(math_task_id),
         "is_correct": True,
         "score": 1.0,
-        "feedback": "correct",
+        "feedback": FEEDBACK_CORRECT,
     }
 
     # 7. Check core.events has task.submitted and task.evaluated with evaluator="compute"
@@ -143,8 +154,9 @@ async def test_math_task_evaluated_in_turn_via_compute(
     assert evaluated_row.payload["evaluator"] == "compute"
     assert evaluated_row.payload["is_correct"] is True
     assert evaluated_row.payload["score"] == 1.0
-    assert evaluated_row.payload["independence"] == 0.75
-    assert evaluated_row.payload["feedback"] == "correct"
+    # D-B-006: `hints_used` from the client without a `task.hint_given` costs nothing.
+    assert evaluated_row.payload["independence"] == 1.0
+    assert evaluated_row.payload["feedback"] == FEEDBACK_CORRECT
     assert len(evaluated_row.payload["skill_scores"]) == 1
     assert UUID(evaluated_row.payload["skill_scores"][0]["skill_id"]) == seeded_domain.skill_ids[0]
     assert evaluated_row.payload["skill_scores"][0]["score"] == 1.0

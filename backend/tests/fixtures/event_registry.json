@@ -1,0 +1,153 @@
+{
+  "rules_version": "rules@2",
+  "events": [
+    {
+      "type": "artifact.cheatsheet_updated",
+      "schema_version": 1
+    },
+    {
+      "type": "artifact.note_created",
+      "schema_version": 1
+    },
+    {
+      "type": "artifact.note_deleted",
+      "schema_version": 1
+    },
+    {
+      "type": "artifact.note_updated",
+      "schema_version": 1
+    },
+    {
+      "type": "diagnostic.completed",
+      "schema_version": 1
+    },
+    {
+      "type": "diagnostic.question_answered",
+      "schema_version": 1
+    },
+    {
+      "type": "diagnostic.started",
+      "schema_version": 1
+    },
+    {
+      "type": "domain.archived",
+      "schema_version": 1
+    },
+    {
+      "type": "domain.created",
+      "schema_version": 1
+    },
+    {
+      "type": "evidence.superseded",
+      "schema_version": 1
+    },
+    {
+      "type": "learner.preferences_updated",
+      "schema_version": 1
+    },
+    {
+      "type": "learner.registered",
+      "schema_version": 1
+    },
+    {
+      "type": "misconception.merged",
+      "schema_version": 1
+    },
+    {
+      "type": "misconception.resolved",
+      "schema_version": 1
+    },
+    {
+      "type": "session.abandoned",
+      "schema_version": 1
+    },
+    {
+      "type": "session.checkpointed",
+      "schema_version": 1
+    },
+    {
+      "type": "session.completed",
+      "schema_version": 1
+    },
+    {
+      "type": "session.digest_created",
+      "schema_version": 1
+    },
+    {
+      "type": "session.started",
+      "schema_version": 1
+    },
+    {
+      "type": "skill.merged",
+      "schema_version": 1
+    },
+    {
+      "type": "skill.promoted",
+      "schema_version": 1
+    },
+    {
+      "type": "structure.confirmed",
+      "schema_version": 1
+    },
+    {
+      "type": "structure.edited",
+      "schema_version": 1
+    },
+    {
+      "type": "structure.interview_completed",
+      "schema_version": 1
+    },
+    {
+      "type": "structure.proposed",
+      "schema_version": 1
+    },
+    {
+      "type": "task.assigned",
+      "schema_version": 1
+    },
+    {
+      "type": "task.evaluated",
+      "schema_version": 1
+    },
+    {
+      "type": "task.generated",
+      "schema_version": 1
+    },
+    {
+      "type": "task.hint_given",
+      "schema_version": 1
+    },
+    {
+      "type": "task.submitted",
+      "schema_version": 1
+    },
+    {
+      "type": "teacher.concept_explained",
+      "schema_version": 1
+    },
+    {
+      "type": "topic.merged",
+      "schema_version": 1
+    },
+    {
+      "type": "topic.status_changed",
+      "schema_version": 1
+    },
+    {
+      "type": "turn.extracted",
+      "schema_version": 1
+    },
+    {
+      "type": "turn.extracted",
+      "schema_version": 2
+    },
+    {
+      "type": "turn.student_replied",
+      "schema_version": 1
+    },
+    {
+      "type": "turn.teacher_replied",
+      "schema_version": 1
+    }
+  ]
+}

@@ -300,7 +300,7 @@ async def test_two_phase_account_deletion(
     async with db() as session, session.begin():
         job_id = await enqueue_job(
             session,
-            kinds.graph_curate(learner_id, uuid4(), {"domain_id": str(uuid4())}),
+            kinds.graph_curate(learner_id, uuid4(), {"domain_id": str(uuid4())}, required_seq=None),
         )
 
     del_resp = await api_client.delete(

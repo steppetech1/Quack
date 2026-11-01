@@ -8,7 +8,7 @@ from typing import Any
 
 from neo4j import AsyncDriver, AsyncManagedTransaction
 
-from quack.db.neo4j import cypher, literal
+from quack.db.neo4j import cypher, literal, read_session
 from quack.graph.cypher import compile_mutations
 from quack.graph.memory import InMemoryGraph, validate_props
 from quack.graph.mutations import Mutation, UpsertNode, UpsertRel
@@ -56,7 +56,7 @@ class Neo4jGraphStore:
         self.learner_id = learner_id
 
     async def _read(self, query: str, **params: Any) -> list[dict[str, Any]]:
-        async with self.driver.session() as session:
+        async with read_session(self.driver) as session:
             result = await session.run(cypher(query), params)
             return [record.data() async for record in result]
 
@@ -313,7 +313,7 @@ async def read_applied_seq(driver: AsyncDriver, learner_id: str) -> int:
 
 async def find_learners_with_rules(driver: AsyncDriver, *, current: str) -> list[str]:
     """Learner ids whose projectorVersion differs from `current`."""
-    async with driver.session() as session:
+    async with read_session(driver) as session:
         result = await session.run(
             "MATCH (l:Learner) WHERE l.projectorVersion IS NOT NULL "
             "AND l.projectorVersion <> $v RETURN l.id AS id ORDER BY id",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -10,7 +11,7 @@ from fastapi import FastAPI
 from redis.exceptions import RedisError
 from sqlalchemy import text
 
-from quack.api.app import AppResources
+from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.session import stream
@@ -40,12 +41,17 @@ async def test_deleted_auth_user_gets_401_without_tombstone(
     assert resp.json()["error"]["code"] == "UNAUTHORIZED"
 
 
-async def test_learner_without_auth_user_row_stays_valid(
-    client: httpx.AsyncClient, settings: Settings
+async def test_learner_without_auth_user_row_is_rejected(
+    session_app: FastAPI, settings: Settings
 ) -> None:
+    """ТЗ Фазы 3 WP1.2, D-C-004: a valid token of a learner without an `auth.users` row is
+    401. A plain client is used: the `client` fixture creates user rows for its tokens."""
     headers = {"Authorization": f"Bearer {make_token(settings, uuid4())}"}
-    resp = await client.get("/v1/sessions/active", headers=headers)
-    assert resp.status_code in (200, 404), resp.text
+    transport = httpx.ASGITransport(app=session_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as plain:
+        resp = await plain.get("/v1/sessions/active", headers=headers)
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["error"]["code"] == "UNAUTHORIZED"
 
 
 async def _start_session(
@@ -72,12 +78,7 @@ async def test_events_stream_without_redis_is_empty_sse(
 ) -> None:
     session_id = await _start_session(client, auth_headers, seeded_domain, "resil-no-redis")
     res: AppResources = session_app.state.resources
-    session_app.state.resources = AppResources(
-        engine=res.engine,
-        session_factory=res.session_factory,
-        neo4j=res.neo4j,
-        redis=None,  # type: ignore[arg-type]
-    )
+    session_app.state.resources = replace(res, redis=None)
     resp = await client.get(f"/v1/sessions/{session_id}/events", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"].startswith("text/event-stream")
@@ -117,12 +118,7 @@ async def test_relay_ends_cleanly_on_redis_error(
 ) -> None:
     res: AppResources = session_app.state.resources
     broken = _BrokenRedis()
-    resources = AppResources(
-        engine=res.engine,
-        session_factory=res.session_factory,
-        neo4j=res.neo4j,
-        redis=broken,  # type: ignore[arg-type]
-    )
+    resources = replace(res, redis=broken)  # type: ignore[arg-type]
     items = [item async for item in stream._relay(resources, uuid4())]
     assert items == []
     assert broken.pubsub_obj.closed

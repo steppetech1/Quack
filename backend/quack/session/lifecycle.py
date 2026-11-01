@@ -6,23 +6,21 @@ import contextlib
 from typing import Any
 from uuid import UUID, uuid4
 
-import neo4j
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from quack.api.app import AppResources
 from quack.api.errors import ApiError
+from quack.api.resources import AppResources
 from quack.config import Settings
-from quack.db.neo4j import cypher
-from quack.db.redis import create_redis, presence_key
+from quack.db.neo4j import cypher, read_session
+from quack.db.redis import presence_key
 from quack.events.append import append_events
 from quack.events.models import NewEvent
 from quack.graph.neo4j_store import read_applied_seq
 from quack.graph.slice import SliceDeps, read_consistent_slice
-from quack.jobs import kinds
-from quack.jobs.queue import ClaimedJob, enqueue_job
+from quack.jobs.queue import ClaimedJob
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.session.context import TURN_EVENT_TYPES, last_checkpoint
 from quack.session.schemas import (
@@ -94,7 +92,7 @@ async def _resolve_topic_and_plan(
     """
 
     async def load_topic() -> Any:
-        async with resources.neo4j.session(default_access_mode=neo4j.READ_ACCESS) as session:
+        async with read_session(resources.neo4j) as session:
             result = await session.run(
                 cypher(_TOPIC_QUERY),
                 {
@@ -183,7 +181,10 @@ async def _started_by_key(
 async def _set_presence(
     resources: AppResources, settings: Settings, learner_id: UUID, session_id: UUID
 ) -> None:
-    # Presence is advisory; the session itself lives in Postgres.
+    # Presence is advisory; the session itself lives in Postgres. No Redis → no presence
+    # (§4.2, D-C-005).
+    if resources.redis is None:
+        return
     with contextlib.suppress(RedisError, OSError):
         await resources.redis.set(
             presence_key(learner_id), str(session_id), ex=settings.heartbeat_ttl_sec
@@ -386,6 +387,13 @@ async def finish_session(
     resources: AppResources, learner_id: UUID, session_id: UUID, body: FinishSessionRequest
 ) -> FinishResponse:
     async with resources.session_factory() as session, session.begin():
+        # D-B-028: `core.learner_seq` first, then the session row — the order of
+        # `append_events` and its relational projection; the other order deadlocks with a
+        # background write of the same learner.
+        await session.execute(
+            text("SELECT 1 FROM core.learner_seq WHERE learner_id = :l FOR UPDATE"),
+            {"l": learner_id},
+        )
         row = (
             await session.execute(
                 text(
@@ -437,7 +445,6 @@ async def finish_session(
             "duration_sec": max(0, round(float(row.duration_sec))),
         }
         domain_id: UUID = row.domain_id
-        topic_id: UUID | None = row.topic_id
         stored = await append_events(
             session,
             learner_id,
@@ -456,25 +463,8 @@ async def finish_session(
             redis=resources.redis,
         )
         end_seq = stored[-1].seq
-        await enqueue_job(
-            session,
-            kinds.session_finish_artifacts(
-                learner_id,
-                session_id,
-                {
-                    "domain_id": str(domain_id),
-                    "topic_id": str(topic_id) if topic_id else None,
-                },
-            ),
-        )
-        await enqueue_job(
-            session,
-            kinds.graph_curate(
-                learner_id,
-                domain_id,
-                {"domain_id": str(domain_id)},
-            ),
-        )
+        # WP11.4: session.finish_artifacts and graph.curate are enqueued by the log
+        # dispatcher from session.completed (quack/jobs/dispatcher_rules.py).
 
     await _release_presence(resources.redis, learner_id, session_id)
     return FinishResponse(
@@ -522,12 +512,6 @@ async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
                 publish_wakeup=False,
             )
 
-    if not abandoned:
-        return
-    redis = create_redis(ctx.settings)
-    try:
-        for learner_id, session_id in abandoned:
-            await _release_presence(redis, learner_id, session_id)
-    finally:
-        with contextlib.suppress(RedisError, OSError):
-            await redis.aclose()
+    # WP2.1: the process Redis of the context (None = no Redis, §4.2), never a new client.
+    for learner_id, session_id in abandoned:
+        await _release_presence(ctx.redis, learner_id, session_id)
