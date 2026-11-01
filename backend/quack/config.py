@@ -375,6 +375,8 @@ class Settings(BaseSettings):
     llm_prices: dict[str, ModelPrice] = Field(default_factory=dict)
     # WP10.3 (Т-§11.5).
     tool_timeout_ms: int = 2000
+    # WP10.3: model steps of one tool loop before it is cut. Phase 4 decision D-B-117.
+    tool_loop_max_steps: int = 4
     # WP10.4 (Т-§11.4).
     session_agent_budget_usd: float = 0.5
     learner_daily_budget_usd: float = 3.0
