@@ -58,3 +58,30 @@ def test_prod_requires_meta_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("META_API_KEY", "meta-key-1")
     s = _settings(env="prod", jwt_secret="j" * 32, neo4j_password="pw")
     assert "meta-key-1" in s.secret_values()
+
+
+@pytest.mark.parametrize(
+    ("role", "required"),
+    [
+        ("api", {"JWT_SECRET", "META_API_KEY", "NEO4J_PASSWORD"}),
+        ("workers", {"META_API_KEY", "NEO4J_PASSWORD"}),
+        ("projector", {"NEO4J_PASSWORD"}),
+        ("ops", set()),
+    ],
+)
+def test_prod_secrets_follow_the_process_role(
+    monkeypatch: pytest.MonkeyPatch, role: str, required: set[str]
+) -> None:
+    """ТЗ WP9.2, Д-§7: each compose service gets only its own secrets (`projector` and
+    `migrate` have no `META_API_KEY` or `JWT_SECRET`); prod requires exactly those of the role."""
+    for missing in ("JWT_SECRET", "META_API_KEY", "NEO4J_PASSWORD"):
+        monkeypatch.setenv("META_API_KEY", "" if missing == "META_API_KEY" else "meta-key-1")
+        values = {
+            "jwt_secret": "" if missing == "JWT_SECRET" else "j" * 32,
+            "neo4j_password": "" if missing == "NEO4J_PASSWORD" else "pw",
+        }
+        if missing in required:
+            with pytest.raises(ValidationError, match=missing):
+                _settings(env="prod", process_role=role, **values)
+        else:
+            assert _settings(env="prod", process_role=role, **values).process_role == role
