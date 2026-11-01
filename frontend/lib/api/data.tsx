@@ -1,11 +1,16 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMocks, useT } from "@/lib/i18n/provider";
 import type { Domain } from "@/lib/mock/types";
 import { domainFromApi } from "./adapters";
-import { API_MODE, ApiError, get, getToken, idem, patch, setToken, type S } from "./client";
+import { API_MODE, ApiError, get, getToken, idem, patch, setToken, sse, type S } from "./client";
+
+/** Projection updates come in bursts (one turn → several events): re-read once they settle */
+const LIVE_SETTLE_MS = 600;
+/** Reconnect delays after the stream drops, the last one repeats */
+const LIVE_RETRY_MS = [1_000, 3_000, 10_000, 30_000];
 
 type Data = {
   /** false until the first load (API mode only) */
@@ -14,6 +19,11 @@ type Data = {
   domains: Domain[];
   me: S["LearnerMeResponse"] | null;
   active: S["ActiveSession"] | null;
+  /**
+   * How far the backend projection (graph, topic states) has caught up, from `/v1/learner/stream`.
+   * Pages that show projected data re-fetch when it grows; 0 on mocks and before the stream connects.
+   */
+  appliedSeq: number;
   /** Re-read the subject list and the active session */
   reload: () => Promise<void>;
   /** Load (or re-load) the topic graph of a subject */
@@ -42,6 +52,7 @@ function MockData({ children }: { children: React.ReactNode }) {
       domains,
       me: null,
       active: null,
+      appliedSeq: 0,
       reload: async () => {},
       loadGraph: async () => {},
       setActive: () => {},
@@ -64,10 +75,14 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const [graphs, setGraphs] = useState<Record<string, S["DomainGraphResponse"]>>({});
   const [me, setMe] = useState<S["LearnerMeResponse"] | null>(null);
   const [active, setActive] = useState<S["ActiveSession"] | null>(null);
+  const [appliedSeq, setAppliedSeq] = useState(0);
+  /** Graphs already on screen: the live stream refreshes these */
+  const loaded = useRef(new Set<string>());
 
   const loadGraph = useCallback(async (domainId: string) => {
     try {
       const g = await get<S["DomainGraphResponse"]>(`/v1/domains/${domainId}/graph`);
+      loaded.current.add(domainId);
       setGraphs((m) => ({ ...m, [domainId]: g }));
     } catch (e) {
       // a subject still in onboarding has no graph yet
@@ -103,6 +118,56 @@ function ApiData({ children }: { children: React.ReactNode }) {
     void reload();
   }, [reload, router]);
 
+  // Live updates: the stream says only "the projection moved", the data comes with ordinary GETs
+  useEffect(() => {
+    if (!ready || !getToken()) return;
+    const stop = new AbortController();
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    let seen = -1;
+    const refresh = () => {
+      void get<S["DomainListResponse"]>("/v1/domains")
+        .then((list) => setSummaries(list.domains.filter((d) => d.status !== "archived")))
+        .catch(() => {});
+      for (const id of loaded.current) void loadGraph(id).catch(() => {});
+    };
+    const run = async () => {
+      for (let attempt = 0; !stop.signal.aborted; attempt++) {
+        try {
+          await sse(
+            "GET",
+            "/v1/learner/stream",
+            undefined,
+            ({ event, data }) => {
+              if (event !== "projection_advanced" || typeof data.applied_seq !== "number") return;
+              attempt = 0;
+              const seq = data.applied_seq;
+              // the first event is the current position: nothing to re-read yet
+              if (seen >= 0 && seq > seen) {
+                clearTimeout(settle);
+                settle = setTimeout(() => {
+                  setAppliedSeq(seq);
+                  refresh();
+                }, LIVE_SETTLE_MS);
+              } else if (seen < 0) setAppliedSeq(seq);
+              seen = Math.max(seen, seq);
+            },
+            stop.signal,
+          );
+        } catch (e) {
+          // 401 already sent the user to the login screen
+          if (stop.signal.aborted || (e instanceof ApiError && e.status === 401)) return;
+        }
+        const wait = LIVE_RETRY_MS[Math.min(attempt, LIVE_RETRY_MS.length - 1)];
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    };
+    void run();
+    return () => {
+      stop.abort();
+      clearTimeout(settle);
+    };
+  }, [ready, loadGraph]);
+
   // No subjects yet: the first screen is creating one
   useEffect(() => {
     if (ready && !error && summaries.length === 0 && pathname === "/") router.replace("/domains/new");
@@ -123,8 +188,8 @@ function ApiData({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const value = useMemo<Data>(
-    () => ({ ready, error, domains, me, active, reload, loadGraph, setActive, savePreferences, logout }),
-    [ready, error, domains, me, active, reload, loadGraph, savePreferences, logout],
+    () => ({ ready, error, domains, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
+    [ready, error, domains, me, active, appliedSeq, reload, loadGraph, savePreferences, logout],
   );
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
