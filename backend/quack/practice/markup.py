@@ -8,13 +8,14 @@ part of the model output contract. Decisions on the shape — D-B-107.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from quack.practice.answer_spec import AnswerSpec
+from quack.practice.grammar import grammar_ok
 
 type TaskForm = Literal["multistep", "explain_why", "what_breaks"]
 
@@ -112,4 +113,77 @@ def validate_markup(
     Т-§6.5, a quantity has a unit) and that labels exist (Т-§12.4 «короткие метки
     существуют»). Code checks form, not truth (Т-§5.3).
     """
-    raise NotImplementedError
+    found: list[MarkupViolation] = []
+
+    def add(rule: MarkupRule, detail: str) -> None:
+        found.append(MarkupViolation(rule, detail))
+
+    if not markup.tests:
+        add("no_tests", "tests")
+    answers = [("answer", markup.answer)] + [
+        (f"parts[{i}].answer", part.answer) for i, part in enumerate(markup.parts or [])
+    ]
+    tests = [("tests", t) for t in markup.tests] + [
+        (f"parts[{i}].tests", t)
+        for i, part in enumerate(markup.parts or [])
+        for t in part.tests or []
+    ]
+    for where, tested in tests:
+        if tested.skill is not None and tested.new_skill is not None:
+            add("skill_label_and_new", where)
+        elif tested.skill is not None and tested.skill not in skill_labels:
+            add("unknown_label", f"{where}: {tested.skill}")
+    for where, spec in answers:
+        _check_answer(spec, where, add)
+
+    levels = {t.level for _, t in tests}
+    is_choice = markup.answer.type == "choice"
+    neighbor = any(o.neighbor_idea for o in markup.options or [])
+    if 1 in levels and not is_choice:
+        add("level_1_needs_options", "answer.type")
+    if 2 in levels and is_choice:
+        add("level_2_not_choice", "answer.type")
+    if 4 in levels and markup.method_named:
+        add("level_4_method_named", "methodNamed")
+    if 5 in levels and markup.pair_task_id is None and not (is_choice and neighbor):
+        add("level_5_needs_pair_or_neighbor", "pairTaskId / options")
+    if 6 in levels and markup.form is None:
+        add("level_6_needs_form", "form")
+
+    if markup.variant_of is not None and markup.variant_of not in task_labels:
+        add("unknown_label", f"variantOf: {markup.variant_of}")
+    if markup.pair_task_id is not None and markup.pair_task_id not in task_labels:
+        add("unknown_label", f"pairTaskId: {markup.pair_task_id}")
+    option_ids = {o.option_id for o in markup.answer.options or []}
+    for i, trap in enumerate(markup.options or []):
+        if trap.option_id not in option_ids:
+            add("unknown_label", f"options[{i}].option_id: {trap.option_id}")
+        if trap.misconception is not None and trap.misconception not in misconception_labels:
+            add("unknown_label", f"options[{i}].misconception: {trap.misconception}")
+    return found
+
+
+_TYPES_WITH_VALUE = frozenset({"number", "expression", "quantity"})
+
+
+def _check_answer(spec: AnswerSpec, where: str, add: Callable[[MarkupRule, str], None]) -> None:
+    """Common rules of Т-§5.3 for one answer spec: exactly one correct option, the spec
+    parses (a value where the type needs one, expressions pass the grammar of Т-§6.5, a
+    quantity has a unit)."""
+    if spec.type == "choice":
+        correct = sum(o.correct for o in spec.options or [])
+        if correct != 1:
+            add("choice_one_correct", f"{where}.options")
+        return
+    if spec.type in _TYPES_WITH_VALUE and spec.value is None:
+        add("unknown_answer_type", f"{where}.value")
+    if spec.type in ("set", "vector") and not spec.items:
+        add("unknown_answer_type", f"{where}.items")
+    if spec.type == "short_text" and not spec.accepted:
+        add("unknown_answer_type", f"{where}.accepted")
+    values = [spec.value] if spec.value is not None else []
+    for value in [*values, *(spec.items or [])]:
+        if not grammar_ok(value.sympy):
+            add("expression_unparsed", f"{where}.value")
+    if spec.type == "quantity" and not spec.unit:
+        add("quantity_without_unit", f"{where}.unit")
