@@ -285,6 +285,17 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 - Тесты: `test_tool_loop_step_limit`.
 - Требует подтверждения владельцем: нет
 
+### D-B-118. Объявление `POST /v1/sessions/{id}/actions` родным SSE FastAPI
+- Класс: B
+- WP / место: WP13.1 (Этап I, к G1 по запросу C), `quack/session/router.py`, `quack/session/actions.py`
+- Контекст: шов S11 требует кадры §4.7 и `Element` в OpenAPI к G1; FastAPI сам не выводит схему тела SSE.
+- Варианты: (а) `EventSourceResponse` FastAPI 0.162 и генератор с типом `AsyncIterator[ActionFrame]` — схема кадров в `itemSchema` под `text/event-stream`; (б) свой класс ответа и `responses` — FastAPI добавляет рядом с `$ref` `type: string`.
+- Решение: (а); `201 {seq}` — `ActionAccepted` под `application/json`. Тело — `NotImplementedError` до WP13.
+- Почему: §0.4.3 п.6–7 (проверяемо, средствами уже используемой библиотеки).
+- Обратимость: один маршрут.
+- Тесты: `test_actions_route_in_openapi`.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-101. Имена рабочих веток

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
+from fastapi.sse import EventSourceResponse
 
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources, get_resources
@@ -14,6 +16,7 @@ from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.llm.gateway import LLMGateway
 from quack.session import lifecycle, stream, turns
+from quack.session.actions import Action, ActionAccepted, ActionFrame
 from quack.session.deps import (
     current_learner_id,
     enforce_turn_rate_limit,
@@ -115,6 +118,26 @@ async def post_turn(
         str(getattr(request.state, "request_id", "")),
     )
     return sse_keepalive_response(events, settings.sse_keepalive_s)
+
+
+@router.post(
+    "/sessions/{session_id}/actions",
+    response_class=EventSourceResponse,
+    response_description="Actions with a teacher turn: SSE frames in the order of ТЗ Ф4 §4.7.",
+    responses={
+        201: {
+            "description": "Actions without a teacher turn (`confidence`): the action event seq.",
+            "content": {"application/json": {"schema": ActionAccepted.model_json_schema()}},
+        },
+    },
+)
+async def post_action(
+    session_id: UUID, body: Action, learner_id: LearnerId, resources: Resources
+) -> AsyncIterator[ActionFrame]:
+    """ТЗ Ф4 WP13.1 (`Т-§1.4`): one learner action. Stage I of WP13 (§0.3): declared for the
+    OpenAPI draft of G1 (seam S11); the body lands with WP13."""
+    raise NotImplementedError
+    yield  # a generator: FastAPI streams its frames as SSE
 
 
 @router.get("/sessions/{session_id}/events")

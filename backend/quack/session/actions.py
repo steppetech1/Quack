@@ -251,3 +251,17 @@ class ActionAccepted(BaseModel):
     """`201 {seq}` of an action without a teacher turn."""
 
     seq: int
+
+
+# One SSE frame of `POST /v1/sessions/{id}/actions` (ТЗ Ф4 §4.7); the SSE event name is
+# `FRAME_EVENTS[type(frame)]`. The `: keepalive` comment is not a frame.
+type ActionFrame = (
+    ActionRecordedFrame
+    | StatusFrame
+    | VerdictFrame
+    | TokenFrame
+    | ResetFrame
+    | ElementFrame
+    | TurnCommittedFrame
+    | ErrorFrame
+)
