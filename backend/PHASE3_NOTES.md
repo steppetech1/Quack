@@ -1695,6 +1695,7 @@ _(пусто)_
 | WP10.2 (`hint`, `submit`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py` (коммит `ea60717`) | 2 failed, 3 passed: тот же ключ с другим `turn_id` (`hint`) и другим ответом (`submit`) → 200 с записанным ответом, ждали 409 |
 | WP10.2 (заметки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k notes_crud` (коммит `d0480a5`) | 1 failed: тот же ключ с другим `title` → 201 с записанной заметкой, ждали 409 |
 | WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
+| WP14.1 (C: дайджест, `T-M3`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k names_not_ids` (коммит `b87d596`) | 1 failed: в запросе `artifacts@1` (mode digest) `covered_skill_ids` и `task_id` — UUID; найдено потоком B на стенде (`T-M3`, ветка `phase-3-b-e2e-llm-seams`) |
 
 ## Правки тестов
 
