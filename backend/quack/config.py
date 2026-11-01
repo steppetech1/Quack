@@ -496,10 +496,10 @@ class Settings(BaseSettings):
     stuck_idle_s: int = 60
     max_unprompted_marks_per_task: int = 2
     min_intervention_gap_s: int = 45
-    # Client parameters served in GET /v1/me (ТЗ §6.7); values — D-C-105.
-    stroke_batch_ms: int | None = None
-    line_pause_ms: int | None = None
-    capture_still_ms: int | None = None
+    # Client parameters served in GET /v1/me (ТЗ §6.7); Т-§21.3 (§15.2, §15.3, §16.2).
+    stroke_batch_ms: int = 300
+    line_pause_ms: int = 1200
+    capture_still_ms: int = 700
     # WP22 (Т-§16, Т-§22.6)
     pairing_ttl_s: int = 120
     sheet_line_match_threshold: float = 0.2
