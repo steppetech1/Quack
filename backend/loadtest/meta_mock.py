@@ -25,6 +25,7 @@ import base64
 import hashlib
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -177,6 +178,35 @@ def _string(schema: dict[str, Any], text_chars: int | None) -> str:
 
 
 # --- latency and limits ---------------------------------------------------------------------
+
+
+_KIND_HEADER = re.compile(r"### Kind of problem\s+(\w+)")
+
+
+def _texts(node: Any) -> list[str]:
+    """All strings of the request `input` (a string or a list of messages and parts)."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, list):
+        return [text for item in cast(list[Any], node) for text in _texts(item)]
+    if isinstance(node, dict):
+        return [text for value in cast(dict[str, Any], node).values() for text in _texts(value)]
+    return []
+
+
+def _requested_kind(body: dict[str, Any]) -> str | None:
+    """The kind of problem `task_gen@1` asks for, from its `### Kind of problem` block."""
+    for text in _texts(body.get("input")):
+        match = _KIND_HEADER.search(text)
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+def _math_task(instance: dict[str, Any]) -> dict[str, Any]:
+    """`task_gen` answer for a `math` task (the default kind of `tasks/next`): a number."""
+    answer = {**instance["answer"], "type": "number", "value": "2"}
+    return {**instance, "answer": answer, "options": []}
 
 
 def _choice_task(instance: dict[str, Any]) -> dict[str, Any]:
@@ -442,7 +472,9 @@ async def _responses(request: Request) -> Response:
     text_chars = config.teacher_chars if fmt.get("name") == TEACHER_SCHEMA else None
     instance = minimal_instance(fmt["schema"], text_chars=text_chars)
     if fmt.get("name") == TASK_GEN_SCHEMA:
-        instance = _choice_task(instance)
+        instance = (
+            _math_task(instance) if _requested_kind(body) == "math" else _choice_task(instance)
+        )
     elif fmt.get("name") == STRUCTURER_SCHEMA:
         instance = _structure()
     answer = orjson.dumps(instance, option=orjson.OPT_SORT_KEYS).decode()

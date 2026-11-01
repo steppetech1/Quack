@@ -431,3 +431,20 @@ async def test_structurer_answer_gives_topics_with_skills() -> None:
     assert len(prereqs) == len(output.prereqs) >= 1
     assert len(skill_deps) == len(output.skill_deps)
     assert len(misconceptions) == len(output.misconceptions)
+
+
+async def test_task_gen_answer_fits_math_kind() -> None:
+    """`tasks/next` asks for `math` by default: when the prompt's `### Kind of problem` block
+    says `math`, the mock answers with a number, so the bank row builds (no LLM_DEGRADED)."""
+    from uuid import uuid4
+
+    from quack.practice.generation import build_generated_task
+
+    prompt = "### Topic\n\nLimits\n\n### Kind of problem\n\nmath\n\n### Known misconceptions"
+    body = _body(TaskGenOutput, input=[{"role": "user", "content": prompt}])
+    async with _client() as client:
+        response = await client.post("/responses", json=body)
+    output = TaskGenOutput.model_validate_json(_answer_text(response.json()))
+    task = build_generated_task(output, "math", uuid4(), [])
+    assert output.answer.type == "number"
+    assert task.prompt_text
