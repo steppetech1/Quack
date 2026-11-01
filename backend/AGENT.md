@@ -1,11 +1,13 @@
 # AGENT.md - backend/
 
 Правила для ИИ-агентов внутри `backend/`. Читать вместе с корневым `AGENT.md` и `backend/CLAUDE.md`
-(он действует целиком, кроме исключений ТЗ Ф3 §0.2 п.6: протокол решений §0.4, коммиты в `phase-3/*`, файлы §2.1).
+(он действует целиком, кроме исключений ТЗ Ф4 §0.2 п.7: файлы вне `backend/` из §2.1, протокол решений §0.4,
+коммиты и push в ветки `phase-4*` по §7.4).
 
 ## Что здесь
-Бэкенд Quack: `quack/` (код), `tests/`, `migrations/` (Alembic — источник истины по схеме), `PHASE*_NOTES.md`.
-Зона ТЗ Ф3 — `documentation/ТЗ Фаза 3 (единое).md`. Python 3.14, менеджер `uv`, pytest, ruff, pyright.
+Бэкенд Quack: `quack/` (код), `tests/`, `db/migrations/` (dbmate, ТЗ Ф4 WP1.1), `PHASE*_NOTES.md`.
+Зона — ТЗ Ф4, `documentation/ТЗ Фаза 4 (единое).md`; журнал решений — `PHASE4_NOTES.md` (ТЗ Ф4 §0.4.5).
+Python 3.14, менеджер `uv`, pytest, ruff, pyright.
 
 ## Команды (в `backend/`)
 - `uv sync`
@@ -26,18 +28,18 @@
 9. Горячий путь не ждёт фоновых процессов.
 10. **Нет накопления выводов**: сводка сессии строится кодом, модель не опирается на свои прошлые ответы.
 
-## Архитектура Фазы 3 (контракты ТЗ Ф3 §4)
-- **Слои импортов** (проверяет тест `T-A6` по AST):
-  ядро (`config`, `logging`, `db`, `events`, `graph`, `jobs`, `llm`, `prompts`, `compute_client`) → только ядро;
-  основание API (`quack.api`, кроме `api.app`) → ядро; продукт (`domains`, `session`, `artifacts`, `practice`) →
-  ядро + API + `practice`, **импорт между `domains`/`session`/`artifacts` запрещён**; сборка (`api.app`, `runtime`,
-  `cli`, `ops`) → всё. Общий код продукта — только в `quack.practice`.
-- **Ресурсы процесса** создаются один раз в `quack.runtime`: `settings`, `engine`, `session_factory`, `neo4j`, `redis`,
-  `llm`, `compute`. Это поля `AppResources` (`quack/api/resources.py`) и `JobContext`. Создавать драйвер, Redis или
-  `LLMGateway` внутри обработчика запроса или задачи запрещено. Модульные override'ы в тестах не используем —
-  тесты собирают ресурсы сборщиком из `tests/support/`.
-- **Диспетчер** (WP11) — второй потребитель журнала в процессе проектора; ставит задачи по правилам
-  «событие → задача» с `required_seq` = номер события-триггера. Прямые `enqueue_job` в продуктовом коде убираются.
+## Архитектура (контракты ТЗ Ф4 §4)
+- **Слои импортов** (ТЗ Ф4 §4.1, проверяет тест `T-A6` по AST):
+  ядро (`config`, `logging`, `db`, `events`, `graph`, включая `graph.read`, `jobs`, `llm`, `prompts`,
+  `compute_client`, `storage`, `embeddings`) → только ядро; основание API (`quack.api`, кроме `api.app`) → ядро и
+  основание API; общий продукт (`practice`) → ядро и основание API; продукт (`domains`, `session`, `agents`,
+  `review`, `auth`, `materials`, `canvas`, `artifacts`, `deletion`) → ядро, основание API, `practice`, **импорт
+  между продуктовыми пакетами запрещён**; сборка (`api.app`, `runtime`, `cli`, `ops`) → всё. Память продуктовые
+  пакеты читают только через `quack.graph.read`; циклические импорты запрещены.
+- **Ресурсы процесса** (ТЗ Ф4 §4.2) создаются один раз на процесс в `quack.runtime` и передаются явно; набор полей:
+  `settings`, `db`, `neo4j`, `redis`, `llm`, `compute`, `storage`, `embeddings`, `email`, `deletions` (`engine` и
+  `session_factory` уходят с SQLAlchemy, WP1.3). Каждый внешний клиент имеет подмену в `tests/support/`; модульные
+  переопределения запрещены. `projector` не получает ключей моделей, хранилищ и почты.
 - **LLM**: Responses API со строгой JSON Schema (`to_strict_json_schema`: без свободных словарей), один шлюз на процесс,
   семафоры по моделям, повторы, размыкатель, флаг давления по 429, роль `teacher_fallback`. Имена моделей — `Т-§1.3`
   (`muse-wonder-1.0`, `muse-spark-1.3`).
@@ -47,35 +49,43 @@
   > `teacher_fallback` > `projector_lag` > `null`. Выбор — функция `resolve_degraded_mode` в `quack/session/`.
 - **Защита от спойлера** (WP15): проверка полного `reply_text` до первого SSE-токена; повтор до `guard_max_retries`,
   затем код удаляет предложение с ответом.
-- **Ошибки API**: к `ErrorCode` добавлен `SERVICE_UNAVAILABLE` (503); старые коды не меняются.
+- **Ошибки API** (ТЗ Ф4 §4.5): к `ErrorCode` добавляются только `UNAUTHENTICATED`, `CONSENT_REQUIRED`,
+  `UPLOAD_REJECTED`, `MARKUP_INVALID`; остальные коды Фазы 3 не меняются.
 
 ## Соглашения кода
 - Идентификаторы по-английски: `snake_case` в Python/Postgres, `camelCase` свойства Neo4j, `PascalCase` метки.
 - События `entity.action` в прошедшем времени; роли моделей — существительные; версии `name@N`.
-- Пороги и числа — только в `Settings` под именем (комментарий `# Phase 3 decision D-NNN` у решений вне документов);
+- Пороги и числа — только в `Settings` под именем (комментарий `# Phase 4 decision D-<поток>-NNN` у решений вне
+  документов, ТЗ Ф4 §0.4.3);
   числа в коде модулей запрещены. Блок своего потока в `config.py` — под комментарием `# --- stream X ---`.
-- Миграции только расширяющие; единственная новая — `0002_phase3` (`ops.jobs.required_seq BIGINT NULL`,
-  `ops.dispatcher_offsets`, `ops.turn_manifests`).
+- Миграции — dbmate в `backend/db/migrations/`: базовая миграция WP1.1, после G0 — только расширяющие
+  (ТЗ Ф4 WP1.1, §0.4.4 п.4).
 - `# type: ignore` / `# noqa` — только с комментарием-причиной и только для ограничений библиотек.
 - Промпты — `quack/prompts/<роль>/v<N>.md`, на английском; `manifest.json` пересобирает скрипт, руками не править;
   `backend/openapi.json` — только командой `ops openapi` (поток C на гейтах).
 
-## Владение файлами
-Поток A: `jobs`, `runtime`, `cli`, `ops`, Docker/compose/CI. Поток B: `llm`, `prompts`, `session`, `practice`.
-Поток C: `api`, `domains`, `artifacts`, `graph`, `events`, `db`, `config.py`, `tests/e2e`, `tests/support`.
-Чужое — только по исключениям ТЗ Ф3 §7.3 (один PR с уведомлением владельца). Общие файлы (`config.py`,
-`db/redis.py`, `jobs/kinds.py`, `api/errors.py`) правит владелец; остальные — свой блок.
+## Владение файлами (ТЗ Ф4 §7.3)
+Поток A: `quack/db`, `db/migrations`, `.squawk.toml`, `quack/events`, `quack/graph` (кроме
+`graph/read/materials.py`), `quack/jobs`, `quack/runtime`, `quack/domains`, `quack/review`, `quack/deletion`.
+Поток B: `quack/llm`, `quack/prompts`, `quack/session`, `quack/practice`, `quack/agents`, `PROMPT_CONTRACTS.md`,
+`scripts/meta_smoke.py`. Поток C: `quack/api`, `quack/auth`, `quack/storage`, `quack/embeddings`,
+`quack/materials`, `quack/canvas`, `quack/artifacts`, `quack/compute_client`, `graph/read/materials.py`,
+`config.py` (общий каркас), `cli.py`, `quack/ops`, `Dockerfile`, `tests/e2e`, `tests/support` (каркас),
+`loadtest`, `openapi.json`, `README.md`, общие разделы `PHASE4_NOTES.md`.
+Тесты: A — `tests/db`, `tests/events`, `tests/graph`, `tests/jobs`, `tests/domains`, `tests/review`,
+`tests/deletion`; B — `tests/llm`, `tests/session`, `tests/practice`, `tests/agents`; C — `tests/auth`,
+`tests/storage`, `tests/materials`, `tests/canvas`, `tests/artifacts`, `tests/ops`, `tests/e2e`; общие тесты в
+корне `tests/` — владелец пакета, который они проверяют. `config.py` правят все — каждый в блоке своего потока.
+Чужое — только по исключениям ТЗ Ф4 §7.3 (один PR с уведомлением владельца).
 
 ## Тесты
-- TDD по §8 ТЗ Ф3; тест чинят реализацией. Менять существующий тест можно только по §8.9.
+- TDD по §8 ТЗ Ф4; тест чинят реализацией. Менять существующий тест можно только по ТЗ Ф4 §8.15.
 - Не `sleep` и не повторы для нестабильных тестов — искать гонку, ждать условие с таймаутом.
-- Внешние сервисы только подменами: `FakeLLMProvider`, `ScriptedLLMProvider` (ответ по `schema_name`),
-  `httpx.MockTransport` для compute, «сломанные» Redis и Neo4j из `tests/support/`.
+- Внешние сервисы только подменами из `tests/support/` (ТЗ Ф4 §8.1).
 
 ## Do / Don't
 - Не придумывай: ответ ищи по порядку источников §0.4.1; не нашёл — решение класса B/C с записью в журнал.
-- Не делай «заодно» и не реализуй §2.2 (вход по почте/OIDC, стриминг токенов провайдера, разметка заданий, канвас, голос).
-- Не трогай ядро Фазы 1 (формулы проектора, `rules@1`, схемы событий) вне WP12.
+- Не делай «заодно» и не реализуй ТЗ Ф4 §2.2 и помеченное в первоисточнике ПОЗЖЕ (§0.4.4 п.6).
 - Не пиши в Neo4j вне проектора; не читай граф до применения события (`required_seq`).
 - Не коммить `.env`, ключи, кэши, отчёты нагрузки.
 - Перед работой назови разделы документов, на которые опираешься; ссылки — `§2.3` (техдок), `Д-§8.1`, `С-§8.5`.
