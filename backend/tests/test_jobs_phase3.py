@@ -5,6 +5,7 @@ T-Q7 and T-Q9 are in `test_jobs_phase3_pending.py` until WP3.3 and WP11.4.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,12 +23,13 @@ from quack.api.app import create_app
 from quack.api.auth import issue_access_token
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
+from quack.db.redis import llm_pressure_key
 from quack.events import append_events
 from quack.events.models import NewEvent, StoredEvent
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.worker import ProjectorWorker
 from quack.jobs import kinds
-from quack.jobs.kinds import JOB_KINDS, JobDeferred
+from quack.jobs.kinds import JOB_KINDS, KIND_LLM_ROLES, JobDeferred
 from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.queue import ClaimedJob, JobSpec, claim_next_job, enqueue_job
 from quack.jobs.runner import JobContext, JobHandler, JobRunner
@@ -313,3 +315,60 @@ async def test_worker_exits_with_code_1_on_handler_mismatch(
     registry.pop("graph.curate")
     monkeypatch.setattr(cli, "register_all_handlers", lambda: registry)
     assert await cli._worker(settings) == 1
+
+
+# --- T-Q10: pressure flag of a model ---------------------------------------------------
+
+
+async def test_pressure_flag_blocks_kinds_using_that_model(
+    db: SessionFactory, settings: Settings, redis: Redis
+) -> None:
+    """WP5.3: while `llm:pressure:{model}` is set, kinds whose roles run on the model wait;
+    kinds without a model (P1 maintenance) are still claimed. The flag expires → claimed."""
+    model = settings.model_for_role("extractor")
+    assert KIND_LLM_ROLES["turn.extract"] == ("extractor",)
+    learner = uuid4()
+    extract = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}))
+    sweep = await _enqueue(db, kinds.session_sweep_inactive())
+    await _exec(
+        db, "UPDATE ops.jobs SET priority = 0 WHERE id = :id", id=extract
+    )  # first in line without the flag
+    await redis.set(llm_pressure_key(model), "x", px=1000)
+
+    claimed: list[UUID] = []
+
+    async def handler(job: ClaimedJob, ctx: JobContext) -> None:
+        claimed.append(job.id)
+
+    context = build_job_context(settings, db, None, redis)
+    runner = JobRunner(
+        settings,
+        db,
+        "w-pressure",
+        context,
+        handlers={"turn.extract": handler, "session.sweep_inactive": handler},
+    )
+    assert await runner.run_one()
+    assert claimed == [sweep]
+    assert await runner.run_one() is False
+    [row] = await _q(db, "SELECT status FROM ops.jobs WHERE id = :id", id=extract)
+    assert row["status"] == "queued"
+
+    await asyncio.sleep(1.1)  # the flag expires by its TTL
+    assert await redis.exists(llm_pressure_key(model)) == 0
+    assert await runner.run_one()
+    assert claimed == [sweep, extract]
+
+
+async def test_pressure_flags_without_redis_block_nothing(
+    db: SessionFactory, settings: Settings
+) -> None:
+    """§4.2: a context without Redis claims every kind and raises nothing."""
+    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}))
+    seen: list[UUID] = []
+
+    async def handler(job: ClaimedJob, ctx: JobContext) -> None:
+        seen.append(job.id)
+
+    assert await _runner(settings, db, {"turn.extract": handler}).run_one()
+    assert seen == [job_id]
