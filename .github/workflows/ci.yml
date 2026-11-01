@@ -33,7 +33,7 @@ jobs:
           --health-cmd "pg_isready -U quack -d quack_test"
           --health-interval 5s --health-timeout 3s --health-retries 20
       neo4j:
-        image: neo4j:2026.06-community
+        image: neo4j:2026.10-community
         env:
           NEO4J_AUTH: neo4j/quacktest123
         ports: ["57687:7687"]
