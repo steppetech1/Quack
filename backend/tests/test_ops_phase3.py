@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from neo4j import AsyncDriver
+from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -189,6 +190,48 @@ def test_cli_binds_process_role_and_version(settings: Settings) -> None:
         assert (bound["process"], bound["version"]) == ("workers", "1.2.3")
     finally:
         structlog.contextvars.unbind_contextvars("process", "version")
+
+
+def test_cli_sets_process_role_before_settings(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """WP8.1, WP9.2: `Settings` is validated with the role of the command — prod secrets are
+    those of the role (Д-§7), so `migrate` and `projector` start without JWT/Meta secrets."""
+    import structlog
+
+    monkeypatch.setenv("PROCESS_ROLE", "api")
+    seen: list[str] = []
+
+    def fake_settings() -> Settings:
+        import os
+
+        seen.append(os.environ["PROCESS_ROLE"])
+        return settings
+
+    monkeypatch.setattr(cli, "get_settings", fake_settings)
+    try:
+        assert cli.main(["ops", "event-registry", "--out", str(tmp_path / "r.json")]) == 0
+    finally:
+        structlog.contextvars.unbind_contextvars("process", "version")
+    assert seen == ["ops"]
+
+
+def test_seed_learners_refuses_without_jwt_secret(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`ops` requires no secrets (Д-§7), so seeding checks JWT_SECRET itself: tokens signed
+    with an empty key are refused (exit 2, nothing written)."""
+    import structlog
+
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: settings.model_copy(update={"jwt_secret": SecretStr("")})
+    )
+    out = tmp_path / "learners.json"
+    try:
+        assert cli.main(["ops", "seed-learners", "--count", "1", "--out", str(out)]) == 2
+    finally:
+        structlog.contextvars.unbind_contextvars("process", "version")
+    assert not out.exists()
 
 
 # --- T-O1: ops status ------------------------------------------------------------------

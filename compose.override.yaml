@@ -1,0 +1,18 @@
+# Local development only (Д-§2.1, Д-§3.2): databases and the API on 127.0.0.1. A service only on
+# the `internal` network cannot publish a port, so the published ones also join `local`.
+
+services:
+  postgres:
+    networks: [backend, local]
+    ports: ["127.0.0.1:5432:5432"]
+  neo4j:
+    networks: [backend, local]
+    ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
+  redis:
+    networks: [backend, local]
+    ports: ["127.0.0.1:6379:6379"]
+  api:
+    ports: ["127.0.0.1:8000:8000"]
+
+networks:
+  local: {}

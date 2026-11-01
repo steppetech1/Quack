@@ -1,0 +1,105 @@
+# CI (ТЗ Фазы 3 WP9.3, Д-§5.2, Д-§5.3). No pull_request_target, no workflow_run; read-only
+# token; third-party actions pinned by commit SHA (release tag in the comment).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: quack
+          POSTGRES_PASSWORD: quack
+          POSTGRES_DB: quack_test
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U quack -d quack_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      neo4j:
+        image: neo4j:2026.06-community
+        env:
+          NEO4J_AUTH: neo4j/quacktest123
+        ports: ["57687:7687"]
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p quacktest123 'RETURN 1'"
+          --health-interval 10s --health-timeout 10s --health-retries 30
+          --health-start-period 30s
+      redis:
+        image: redis:8.2
+        ports: ["56379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # Integration tests must not be skipped silently.
+      QUACK_TEST_REQUIRE_INFRA: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          working-directory: backend
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - run: uv run pytest -q
+
+  compute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: compute
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          working-directory: compute
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - run: uv run pytest -q
+
+  images:
+    # Build both images for linux/amd64 without publishing (publishing is the DevOps track).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: false
+          tags: quack-backend:ci
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: compute
+          platforms: linux/amd64
+          push: false
+          tags: quack-compute:ci
