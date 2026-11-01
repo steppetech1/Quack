@@ -1,11 +1,13 @@
-"""Operations (ТЗ Фазы 3 §8.6): T-O3 (`ops seed-learners`)."""
+"""Operations (ТЗ Фазы 3 §8.6): T-O1…T-O4, T-O6."""
 
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
-from uuid import UUID
+from typing import Any, cast
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -18,8 +20,17 @@ from quack import cli
 from quack.api.app import create_app
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
+from quack.db.redis import llm_circuit_key, llm_pressure_key
+from quack.events import append_events
+from quack.events.catalog import EVENT_TYPE_VERSIONS
+from quack.events.models import NewEvent
 from quack.graph.worker import ProjectorWorker
+from quack.jobs import kinds
+from quack.jobs.queue import enqueue_job
+from quack.ops.registry import can_rollback, event_registry, registry_gaps
 from quack.ops.seed import SeedRefusedError, seed_learners, write_learners
+from quack.ops.status import collect_status
+from tests.support.broken import BrokenRedis
 from tests.support.resources import build_app_resources
 
 
@@ -148,6 +159,10 @@ def test_cli_parser_phase3(settings: Settings, monkeypatch: pytest.MonkeyPatch) 
         True,
     )
     assert parser.parse_args(["ops", "openapi", "--out", "o.json"]).out == "o.json"
+    assert parser.parse_args(["ops", "status"]).op == "status"
+    assert parser.parse_args(["ops", "event-registry", "--out", "r.json"]).out == "r.json"
+    rollback = parser.parse_args(["ops", "can-rollback", "--to-registry", "prev.json"])
+    assert rollback.to_registry == "prev.json"
     assert cli.PROCESS_ROLES == {
         "api": "api",
         "projector": "projector",
@@ -174,3 +189,184 @@ def test_cli_binds_process_role_and_version(settings: Settings) -> None:
         assert (bound["process"], bound["version"]) == ("workers", "1.2.3")
     finally:
         structlog.contextvars.unbind_contextvars("process", "version")
+
+
+# --- T-O1: ops status ------------------------------------------------------------------
+
+
+async def _append_n(db: SessionFactory, learner: UUID, n: int) -> int:
+    async with db() as session, session.begin():
+        stored = await append_events(
+            session,
+            learner,
+            [
+                NewEvent(
+                    type="learner.preferences_updated",
+                    payload={"preferences": {"n": i}},
+                    actor="learner",
+                    idempotency_key=f"prefs:{learner}:{i}",
+                )
+                for i in range(n)
+            ],
+            publish_wakeup=False,
+        )
+    return stored[-1].seq
+
+
+async def _exec(db: SessionFactory, sql: str, **params: Any) -> None:
+    async with db() as session, session.begin():
+        await session.execute(text(sql), params)
+
+
+async def _offsets(db: SessionFactory, learner: UUID, seq: int) -> None:
+    await _exec(
+        db,
+        "INSERT INTO ops.projector_offsets (learner_id, applied_seq) VALUES (:l, :s)",
+        l=learner,
+        s=seq,
+    )
+    await _exec(
+        db,
+        "INSERT INTO ops.dispatcher_offsets (learner_id, last_dispatched_seq) VALUES (:l, :s)",
+        l=learner,
+        s=seq,
+    )
+
+
+async def test_ops_status_report(
+    db: SessionFactory, settings: Settings, neo4j: AsyncDriver, redis: Redis
+) -> None:
+    lagging, fine = uuid4(), uuid4()
+    last = await _append_n(db, lagging, 5)
+    await _offsets(db, lagging, last - 3)
+    await _offsets(db, fine, await _append_n(db, fine, 2))
+    async with db() as session, session.begin():
+        old = await enqueue_job(
+            session,
+            replace(
+                kinds.session_sweep_inactive(), run_after=datetime.now(UTC) - timedelta(seconds=120)
+            ),
+        )
+        await enqueue_job(session, kinds.graph_curate(lagging, uuid4(), {}, required_seq=last))
+    assert old is not None
+    await _exec(
+        db,
+        "INSERT INTO ops.dlq (id, source, kind, learner_id, seq, payload, error_type, "
+        "error_message, created_at) VALUES (:id, 'projector', 'x', :l, 1, '{}', 'E', 'e', now())",
+        id=uuid4(),
+        l=lagging,
+    )
+    for status_, tokens in (("ok", 100), ("error", 10)):
+        await _exec(
+            db,
+            "INSERT INTO ops.llm_ledger (id, role, prompt_version, prompt_hash, model, "
+            "input_tokens, output_tokens, latency_ms, status, created_at) VALUES "
+            "(:id, 'teacher', 1, 'h', 'm', :t, 1, 5, :s, now())",
+            id=uuid4(),
+            t=tokens,
+            s=status_,
+        )
+    await redis.set(llm_pressure_key("muse-spark-1.3"), "x", ex=60)
+    await redis.set(llm_circuit_key("muse-wonder-1.0"), "x", ex=60)
+
+    report, code = await collect_status(settings, db, neo4j, redis)
+    assert code == 0
+    assert report["dependencies"] == {"postgres": "ok", "neo4j": "ok", "redis": "ok"}
+    assert report["version"] == settings.quack_version and report["generated_at"]
+    assert report["projector"] == {
+        "learners_total": 2,
+        "learners_lagging": 1,
+        "max_lag_events": 3,
+        "stopped_streams": 1,
+    }
+    assert report["dispatcher"] == {"learners_lagging": 1, "max_lag_events": 3}
+    jobs = report["jobs"]
+    assert jobs["by_status"] == {"queued": 2}
+    assert jobs["oldest_queued_age_s"] >= 120
+    assert jobs["waiting_for_projection"] == 1
+    assert (jobs["finished_last_hour"], jobs["failed_last_hour"]) == (0, 0)
+    assert jobs["failed_share_last_hour"] is None
+    assert report["dlq"] == {"unreplayed": 1}
+    assert report["llm"] == {
+        "tokens_last_hour": 112,
+        "tokens_last_day": 112,
+        "errors_last_hour": 1,
+        "pressure": ["muse-spark-1.3"],
+        "circuit_open": ["muse-wonder-1.0"],
+    }
+    json.dumps(report)  # one JSON object
+
+    broken, code = await collect_status(settings, db, neo4j, cast(Redis, BrokenRedis()))
+    assert code == 0
+    assert broken["dependencies"]["redis"] == "error"
+    assert broken["llm"]["pressure"] is None and broken["llm"]["circuit_open"] is None
+    assert broken["projector"]["learners_lagging"] == 1
+
+
+async def test_ops_status_without_postgres_exits_2(
+    settings: Settings, neo4j: AsyncDriver, redis: Redis
+) -> None:
+    def no_db() -> Any:
+        raise OSError("postgres is down")
+
+    report, code = await collect_status(settings, cast(Any, no_db), neo4j, redis)
+    assert code == 2
+    assert report["dependencies"]["postgres"] == "error"
+    assert report["projector"]["learners_lagging"] is None
+
+
+# --- T-O2, T-O6: event registry, rollback check -----------------------------------------
+
+REGISTRY_FIXTURE = Path(__file__).parent / "fixtures" / "event_registry.json"
+
+
+async def test_event_registry_and_can_rollback(
+    db: SessionFactory, settings: Settings, tmp_path: Path
+) -> None:
+    out = tmp_path / "registry.json"
+    assert cli.main(["ops", "event-registry", "--out", str(out)]) == 0
+    current = json.loads(out.read_text(encoding="utf-8"))
+    expected = json.loads(REGISTRY_FIXTURE.read_text(encoding="utf-8"))
+    assert current == expected == event_registry()
+    pairs = [(e["type"], e["schema_version"]) for e in current["events"]]
+    assert pairs == sorted(pairs) and len(pairs) == 37
+    assert ("turn.extracted", 2) in pairs and current["rules_version"] == "rules@2"
+
+    assert can_rollback(current, set()) == {
+        "can_rollback": True,
+        "new_pairs": [],
+        "new_pairs_seen": [],
+        "rules_changed": False,
+    }
+    previous = {**current, "events": [e for e in current["events"] if e["schema_version"] == 1]}
+    p = {"type": "turn.extracted", "schema_version": 2}
+    unseen = can_rollback(previous, set())
+    assert unseen["can_rollback"] is True and unseen["new_pairs"] == [p]
+    seen = can_rollback(previous, {("turn.extracted", 2)})
+    assert seen["can_rollback"] is False and seen["new_pairs_seen"] == [p]
+    other_rules = can_rollback({**current, "rules_version": "rules@1"}, set())
+    assert other_rules["rules_changed"] is True and other_rules["can_rollback"] is False
+
+    # Through the CLI with ops.event_types_seen of the database: exit 0 / 1.
+    await _exec(
+        db,
+        "INSERT INTO ops.event_types_seen (type, schema_version) VALUES ('turn.extracted', 2)",
+    )
+    previous_file = tmp_path / "previous.json"
+    previous_file.write_text(json.dumps(previous), encoding="utf-8")
+    parser = cli.build_parser()
+    args = parser.parse_args(["ops", "can-rollback", "--to-registry", str(out)])
+    args.previous = current
+    assert await cli._ops(settings, args) == 0
+    args = parser.parse_args(["ops", "can-rollback", "--to-registry", str(previous_file)])
+    args.previous = previous
+    assert await cli._ops(settings, args) == 1
+
+
+def test_event_registry_has_handlers_and_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert registry_gaps() == []
+    monkeypatch.setitem(EVENT_TYPE_VERSIONS, ("lesson.invented", 1), object())
+    assert registry_gaps() == [
+        "lesson.invented@1: no projector handler",
+        "lesson.invented@1: no dispatcher rule and no 'no rule' mark",
+    ]
