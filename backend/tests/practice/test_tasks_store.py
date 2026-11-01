@@ -9,14 +9,14 @@ import psycopg
 import pytest
 
 from quack.db.db import Db
-from quack.events.records import TaskMarkupRecord, TestedLevelRecord
+from quack.events import records
 from quack.events.values import AnswerSpec, MathValue
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.task_store import create_task, get_task
 from tests.db.fixtures import create_learner
 
-MARKUP = TaskMarkupRecord(
-    tests=[TestedLevelRecord(skill_id=uuid4(), level=3)],
+MARKUP = records.TaskMarkupRecord(
+    tests=[records.TestedLevelRecord(skill_id=uuid4(), level=3)],
     method_named=False,
     answer=AnswerSpec(type="number", value=MathValue(latex="\\frac{1}{3}", sympy="1/3")),
 )

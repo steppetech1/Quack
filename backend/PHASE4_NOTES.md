@@ -103,7 +103,7 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 | Этап I G1 (B: S7, S8, S11, S13) | B | контракты в `phase-4-b`, тесты контрактов зелёные | см. «Красные прогоны» |
 | WP10.2–10.3 (B) | B | частично: разбор потока хода и вход шага цикла с инструментами — зелёные (`T-AI2`–`T-AI4`); адаптер `ResponsesClient.stream_structured` и цикл `run_tool_loop` (параллельные инструменты с таймаутом, повтор оборванного с удвоенным лимитом) — зелёные (`T-AI5`, `T-AI6` без строки `ops.llm_usage` — она в WP10.4); встраивание в шлюз (допуск, семафоры, учёт) — с WP13 | 19 passed |
 | WP11 (B) | B | частично: `check()` мгновенные типы (WP11.2) — зелёный `T-CH1` (чистая часть; «в той же транзакции» — с WP13.1 на `Db`); быстрые и медленные — дальше | 11 passed |
-| WP12.1–12.3 (B) | B | частично: `validate_markup` (WP12.3) — зелёный `T-TK2`; `content.tasks` + `task.created` (WP12.1) ждут `Db` и каталог (S2, S3, A) | 14 passed |
+| WP12.1–12.3 (B) | B | частично: `validate_markup` (WP12.3) — зелёный `T-TK2`; `content.tasks` + `task.created` (WP12.1, `quack/practice/task_store.py`) — зелёный `T-TK1` в ветке `phase-4-b-wp12` поверх S2/S3 A (#78, #80); PR — после их слияния | 14 + 4 passed |
 
 ## Аудит
 
@@ -462,6 +462,7 @@ PR #77 (dbmate v2.36.0, sha256).
 - WP1 (A), коммит `8c9fe33` (Этап I–II): `QUACK_TEST_REQUIRE_INFRA=1 python -m pytest -q tests/db` — 13 errors (`NotImplementedError` в `open_db`: все `T-DB5`), 6 passed (`T-DB1` — миграция есть с Этапа I; `T-DB2`, `T-DB4` и их самопроверки; формат `actor`). Зелёный (`phase-4-a-wp1`): 19 passed.
 - Этап I G1 (B): `uv run pytest tests/session/test_phase4_contracts.py tests/llm/test_phase4_ai_layer.py tests/practice/test_tasks_markup.py tests/practice/test_check_instant.py tests/test_contracts.py` — 33 красных (`NotImplementedError`: `TurnStreamParser`, `next_step_input`, `validate_markup`, `check`), 26 зелёных (контракты, `T-AI1`, `T-A6`).
 - WP10.2–10.3 (адаптер и цикл): `tests/llm/test_phase4_stream_adapter.py` написан до реализации, но красный прогон не снят отдельно (до реализации тесты падали бы на импорте `quack.llm.tool_loop`). Зелёный: 9 passed; с затронутыми старыми (`tests/llm`, `test_llm_runtime.py`, `test_meta_mock.py`, `test_thresholds_in_settings.py`, `test_contracts.py`) — 127 passed.
+- WP12.1 (`T-TK1`, `tests/practice/test_tasks_store.py`): красный прогон отдельно не снят — тесты и код в одной итерации, до установки `dbmate` все 4 пропускались. Зелёный: `QUACK_TEST_REQUIRE_INFRA=1` — 4 passed (dbmate 2.37.0, Postgres 16).
 - Зелёный прогон (B, `phase-4-b`): те же файлы — 59 passed. Полный прогон набора на итоговом SHA (§0.4.7) — job `backend` CI (`QUACK_TEST_REQUIRE_INFRA=1`); SHA и итог — в описании PR #72.
 
 ## Правки тестов
