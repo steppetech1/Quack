@@ -19,6 +19,9 @@ CORE = {
     "config",
     "logging",
     "db",
+    # ТЗ Ф4 §4.1: new core packages of stream C (WP19, WP20).
+    "storage",
+    "embeddings",
     "events",
     "graph",
     "jobs",
