@@ -3,6 +3,7 @@
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
+import { API_MODE } from "@/lib/api/client";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -12,6 +13,7 @@ import { CheatCard, CheatSheetContent } from "./artifact-content";
 import { Duck } from "./duck";
 import { ActionButton, Crumbs, HubRing, MaterialsList, MemoryRing, MomentsList, MoreMenu, PageFrame, PageSection, TEXT_BTN } from "./page-parts";
 import { NumText } from "./num-text";
+import { useStartSession } from "./live/use-start-session";
 import { useSoon } from "./soon";
 
 const clean = (s: string) => s.replace(/­/g, "");
@@ -24,6 +26,7 @@ export function HubPage({ id }: { id: string }) {
   const { getTopicDetails, cheatSheets } = useMocks();
   const { domain } = useShell();
   const soon = useSoon();
+  const { start, busy } = useStartSession();
   const hub = domain.hubs.find((h) => h.id === id);
 
   const data = useMemo(() => {
@@ -172,9 +175,23 @@ export function HubPage({ id }: { id: string }) {
             ["review", tx.hub.review],
             ["mixed", tx.hub.mixed],
           ] as const
-        ).map(([k, a]) => (
-          <ActionButton key={k} label={a} primary={k === primaryAction} soonText={tx.hub.actionSoon(a, title)} />
-        ))}
+        ).map(([k, a]) => {
+          // Бэкенд: «Изучать всё» — с первой неизученной темы, «Повторение» — с темы, которую пора повторить,
+          // «Вперемешку» — сессия по главе, тему выбирает бэкенд, «Практика» — экран задач по первой несданной теме
+          const next = ordered.find((t) => t.state !== "solid") ?? ordered[0];
+          const due = ordered.find((t) => t.state === "review" || t.state === "confused") ?? next;
+          if (!API_MODE || !next) return <ActionButton key={k} label={a} primary={k === primaryAction} soonText={tx.hub.actionSoon(a, title)} />;
+          if (k === "practice") return <ActionButton key={k} label={a} href={`/practice/${next.id}`} soonText="" />;
+          const run = () =>
+            void start(
+              k === "all"
+                ? { domainId: domain.id, topicId: next.id, mode: "learn" }
+                : k === "review"
+                  ? { domainId: domain.id, topicId: due.id, mode: "review" }
+                  : { domainId: domain.id, mode: "learn" },
+            );
+          return <ActionButton key={k} label={a} primary={k === primaryAction} soonText="" onClick={run} disabled={busy} />;
+        })}
       </div>
 
       <PageSection id="hub-topics" title={tx.hub.topics} count={ordered.length}>

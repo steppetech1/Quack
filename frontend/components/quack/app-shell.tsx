@@ -21,7 +21,9 @@ type Shell = {
   selectDomain: (id: string) => void;
   /** Новая сессия из поля ввода: сообщение студента, пока бэкенда нет */
   pending: string | null;
-  startSession: (text: string) => void;
+  /** Тема, к которой привязана новая сессия (поле ввода на странице темы) */
+  pendingTopic: string | null;
+  startSession: (text: string, topicId?: string | null) => void;
   /** Режим графа домена: обзор глав, одна глава или все темы */
   graphMode: GraphMode;
   setGraphMode: (m: GraphMode) => void;
@@ -72,6 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const [domainId, setDomainId] = useState(domains[0].id);
   const [pending, setPending] = useState<string | null>(null);
+  const [pendingTopic, setPendingTopic] = useState<string | null>(null);
   // null — решает ширина экрана: на узком десктопе панель свёрнута
   const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
@@ -137,8 +140,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (pathname !== "/" || window.location.search.includes("view=canvases")) router.push("/");
   };
 
-  const startSession = (text: string) => {
+  const startSession = (text: string, topicId: string | null = null) => {
     setPending(text);
+    setPendingTopic(topicId);
     if (!API_MODE) setDomainId(SESSION_DOMAIN);
     router.push("/session/new");
   };
@@ -168,7 +172,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
         <a
           href="#main"
           onClick={(e) => {

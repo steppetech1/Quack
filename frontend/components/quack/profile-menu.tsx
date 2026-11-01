@@ -3,6 +3,7 @@
 import { ArrowUpRight, Check, ChevronRight, Gauge, LifeBuoy, Languages, LogOut, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
@@ -24,9 +25,10 @@ export function ProfileMenu({ active }: { active: boolean }) {
   const { closeDrawer } = useShell();
   const { me, logout } = useData();
   // С бэкендом — настоящий профиль, на моках — из словаря
-  const name = me ? (me.display_name ?? me.email.split("@")[0]) : t.profile.name;
-  const email = me ? me.email : t.profile.email;
-  const initial = me ? name.charAt(0).toUpperCase() : t.profile.initial;
+  // На бэкенде, пока профиль не загрузился, мок-имя не показываем
+  const name = me ? (me.display_name ?? me.email.split("@")[0]) : API_MODE ? "" : t.profile.name;
+  const email = me ? me.email : API_MODE ? "" : t.profile.email;
+  const initial = me ? name.charAt(0).toUpperCase() : API_MODE ? "" : t.profile.initial;
   const [open, setOpen] = useState(false);
   const [lang, setLang] = useState(false);
   const root = useRef<HTMLDivElement>(null);

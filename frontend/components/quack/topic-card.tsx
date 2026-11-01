@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { API_MODE } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
 import type { Topic } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
+import { useShell } from "./app-shell";
+import { useStartSession } from "./live/use-start-session";
 import { useSoon } from "./soon";
 
 export const STATE_COLOR: Record<Topic["state"], string> = {
@@ -31,7 +34,11 @@ export function StateDot({ state, className }: { state: Topic["state"]; classNam
 export function TopicCardBody({ topic, hubLabel }: { topic: Topic; hubLabel?: string }) {
   const t = useT();
   const soon = useSoon();
+  const { domain } = useShell();
+  const { start, busy } = useStartSession();
   const actions = [t.topicCard.study, t.topicCard.practice, t.topicCard.review, t.topicCard.history];
+  // На бэкенде «Изучать» и «Повторять» открывают сессию по теме; «Историю» пока некуда вести
+  const mode = (a: string) => (!API_MODE ? null : a === t.topicCard.study ? "learn" : a === t.topicCard.review ? "review" : null);
   return (
     <>
       <div className="flex items-baseline justify-between gap-3">
@@ -64,8 +71,13 @@ export function TopicCardBody({ topic, hubLabel }: { topic: Topic; hubLabel?: st
           <button
             key={a}
             type="button"
-            onClick={() => soon(t.soon.topicAction(a, topic.title))}
-            className="h-10 rounded-control border border-seam px-3 text-small text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+            disabled={busy}
+            onClick={() => {
+              const m = mode(a);
+              if (m) void start({ domainId: domain.id, topicId: topic.id, mode: m });
+              else soon(t.soon.topicAction(a, topic.title));
+            }}
+            className="h-10 disabled:opacity-50 rounded-control border border-seam px-3 text-small text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
           >
             {a}
           </button>

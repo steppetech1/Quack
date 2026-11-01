@@ -11,6 +11,8 @@ import { API_MODE, ApiError, get, getToken, idem, patch, setToken, sse, type S }
 const LIVE_SETTLE_MS = 600;
 /** Reconnect delays after the stream drops, the last one repeats */
 const LIVE_RETRY_MS = [1_000, 3_000, 10_000, 30_000];
+/** How often a graph answered with `lag_degraded` is re-read */
+const LAG_RETRY_MS = 5_000;
 
 type Data = {
   /** false until the first load (API mode only) */
@@ -74,10 +76,25 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const [summaries, setSummaries] = useState<S["DomainSummary"][]>([]);
   const [graphs, setGraphs] = useState<Record<string, S["DomainGraphResponse"]>>({});
   const [me, setMe] = useState<S["LearnerMeResponse"] | null>(null);
-  const [active, setActive] = useState<S["ActiveSession"] | null>(null);
+  const [active, setActiveState] = useState<S["ActiveSession"] | null>(null);
+  const [history, setHistory] = useState<S["SessionListItem"][]>([]);
   const [appliedSeq, setAppliedSeq] = useState(0);
   /** Graphs already on screen: the live stream refreshes these */
   const loaded = useRef(new Set<string>());
+
+  const loadHistory = useCallback(async () => {
+    const res = await get<S["SessionListResponse"]>("/v1/sessions");
+    setHistory(res.sessions);
+  }, []);
+
+  // A started or finished session changes the history too
+  const setActive = useCallback(
+    (s: S["ActiveSession"] | null) => {
+      setActiveState(s);
+      void loadHistory().catch(() => {});
+    },
+    [loadHistory],
+  );
 
   const loadGraph = useCallback(async (domainId: string) => {
     try {
@@ -92,14 +109,16 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   const reload = useCallback(async () => {
     try {
-      const [meRes, list, act] = await Promise.all([
+      const [meRes, list, act, hist] = await Promise.all([
         get<S["LearnerMeResponse"]>("/v1/auth/me"),
         get<S["DomainListResponse"]>("/v1/domains"),
         get<S["ActiveSession"] | null>("/v1/sessions/active"),
+        get<S["SessionListResponse"]>("/v1/sessions"),
       ]);
       setMe(meRes);
       setSummaries(list.domains.filter((d) => d.status !== "archived"));
-      setActive(act);
+      setActiveState(act);
+      setHistory(hist.sessions);
       setError(null);
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 401)) setError(t.live.serverDown);
@@ -129,6 +148,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
         .then((list) => setSummaries(list.domains.filter((d) => d.status !== "archived")))
         .catch(() => {});
       for (const id of loaded.current) void loadGraph(id).catch(() => {});
+      void loadHistory().catch(() => {});
     };
     const run = async () => {
       for (let attempt = 0; !stop.signal.aborted; attempt++) {
@@ -166,15 +186,34 @@ function ApiData({ children }: { children: React.ReactNode }) {
       stop.abort();
       clearTimeout(settle);
     };
-  }, [ready, loadGraph]);
+  }, [ready, loadGraph, loadHistory]);
+
+  // A lagging graph is re-read until the backend catches up, even without a new `projection_advanced`
+  useEffect(() => {
+    const lagging = Object.entries(graphs).filter(([, g]) => g.lag_degraded).map(([id]) => id);
+    if (!lagging.length) return;
+    const timer = setTimeout(() => {
+      for (const id of lagging) void loadGraph(id).catch(() => {});
+    }, LAG_RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [graphs, loadGraph]);
 
   // No subjects yet: the first screen is creating one
   useEffect(() => {
     if (ready && !error && summaries.length === 0 && pathname === "/") router.replace("/domains/new");
   }, [ready, error, summaries.length, pathname, router]);
 
-  const labels = useMemo(() => ({ hub: t.live.allTopics, activeSession: t.live.activeSession }), [t]);
-  const domains = useMemo(() => summaries.map((s) => domainFromApi(s, graphs[s.domain_id], labels, active)), [summaries, graphs, labels, active]);
+  const labels = useMemo(
+    () => ({
+      hub: t.live.allTopics,
+      activeSession: t.live.activeSession,
+      modes: t.live.modes,
+      reviewToday: t.live.reviewToday,
+      reviewOverdue: t.live.reviewOverdue,
+    }),
+    [t],
+  );
+  const domains = useMemo(() => summaries.map((s) => domainFromApi(s, graphs[s.domain_id], labels, history)), [summaries, graphs, labels, history]);
 
   const savePreferences = useCallback(async (prefs: Record<string, unknown>) => {
     // the backend merges the keys and returns the whole object
@@ -189,7 +228,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<Data>(
     () => ({ ready, error, domains, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
-    [ready, error, domains, me, active, appliedSeq, reload, loadGraph, savePreferences, logout],
+    [ready, error, domains, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout],
   );
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

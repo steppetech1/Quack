@@ -68,6 +68,17 @@ class ActiveSession(StrictModel):
     last_checkpoint_turn: int
 
 
+class SessionListItem(ActiveSession):
+    """A row of the session history: the active session and the closed ones."""
+
+    goal: str | None
+    ended_at: datetime | None
+
+
+class SessionListResponse(StrictModel):
+    sessions: list[SessionListItem]
+
+
 class TurnView(StrictModel):
     turn_index: int
     turn_id: UUID

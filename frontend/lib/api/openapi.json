@@ -2004,6 +2004,115 @@
         "title": "SessionDetail",
         "type": "object"
       },
+      "SessionListItem": {
+        "additionalProperties": false,
+        "description": "A row of the session history: the active session and the closed ones.",
+        "properties": {
+          "domain_id": {
+            "format": "uuid",
+            "title": "Domain Id",
+            "type": "string"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "last_activity_at": {
+            "format": "date-time",
+            "title": "Last Activity At",
+            "type": "string"
+          },
+          "last_checkpoint_turn": {
+            "title": "Last Checkpoint Turn",
+            "type": "integer"
+          },
+          "last_turn_index": {
+            "title": "Last Turn Index",
+            "type": "integer"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "topic_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Id"
+          }
+        },
+        "required": [
+          "session_id",
+          "domain_id",
+          "topic_id",
+          "mode",
+          "status",
+          "started_at",
+          "last_activity_at",
+          "last_turn_index",
+          "last_checkpoint_turn",
+          "goal",
+          "ended_at"
+        ],
+        "title": "SessionListItem",
+        "type": "object"
+      },
+      "SessionListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionListItem"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "title": "SessionListResponse",
+        "type": "object"
+      },
       "SessionStarted": {
         "additionalProperties": false,
         "properties": {
@@ -5185,6 +5294,87 @@
       }
     },
     "/v1/sessions": {
+      "get": {
+        "operationId": "list_sessions_v1_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "domain_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Domain Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHORIZED: missing, invalid or revoked token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "List Sessions"
+      },
       "post": {
         "operationId": "start_session_v1_sessions_post",
         "requestBody": {
@@ -5988,7 +6178,7 @@
             "content": {
               "text/event-stream": {
                 "schema": {
-                  "description": "named events `event: <name>\\ndata: <json>` (С-§8.5)",
+                  "description": "named events `event: <name>\\ndata: <json>` (С-§8.5); events in order: `turn_started` {turn_id, turn_index, user_seq}; `status` {\"state\": \"thinking\"} once, right after `turn_started`, before the model call (WP6.3); `token` {delta}, one or more; `task_evaluated` when the turn checks a task answer; `task_assigned` when the turn assigns a task, after `task_evaluated` (WP6.4); `turn_completed` {turn_id, committed_seq, degraded_mode} after the turn is committed; `done` last",
                   "type": "string"
                 }
               }

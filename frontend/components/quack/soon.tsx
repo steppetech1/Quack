@@ -3,21 +3,27 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 
-const SoonContext = createContext<(what: string) => void>(() => {});
+const SoonContext = createContext<(what: string, plain?: boolean) => void>(() => {});
 
 /** Для действий, которые ведут на ещё не сделанные экраны */
 export function useSoon() {
   return useContext(SoonContext);
 }
 
+/** Тот же тост без «скоро»: короткое сообщение, например об ошибке */
+export function useNotice() {
+  const show = useContext(SoonContext);
+  return useCallback((text: string) => show(text, true), [show]);
+}
+
 export function SoonProvider({ children }: { children: React.ReactNode }) {
   const t = useT();
-  const [msg, setMsg] = useState<{ text: string; n: number } | null>(null);
+  const [msg, setMsg] = useState<{ text: string; plain?: boolean; n: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const show = useCallback((what: string) => {
+  const show = useCallback((what: string, plain?: boolean) => {
     clearTimeout(timer.current);
-    setMsg((m) => ({ text: what, n: (m?.n ?? 0) + 1 }));
+    setMsg((m) => ({ text: what, plain, n: (m?.n ?? 0) + 1 }));
     timer.current = setTimeout(() => setMsg(null), 2600);
   }, []);
 
@@ -30,7 +36,7 @@ export function SoonProvider({ children }: { children: React.ReactNode }) {
             key={msg.n}
             className="animate-toast rounded-xl border border-seam bg-cloth-raised px-4 py-2.5 text-small text-paper shadow-[0_8px_24px_-8px_rgb(0_0_0/0.6)]"
           >
-            <span className="text-paper-dim">{t.soon.prefix}</span>
+            {!msg.plain && <span className="text-paper-dim">{t.soon.prefix}</span>}
             {msg.text}
           </p>
         )}

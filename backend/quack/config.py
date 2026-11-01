@@ -255,6 +255,9 @@ class Settings(BaseSettings):
     circuit_open_s: float = 30.0
     # WP5.6 (Т-§11.4): roles outside the session token budget.
     session_budget_exempt_roles: tuple[str, ...] = ("extractor",)
+    # GET /v1/sessions: session history page size (frontend sessions panel).
+    session_list_default_limit: int = 50
+    session_list_max_limit: int = 200
     # WP6.3: SSE keepalive comment interval. Phase 3 decision (ТЗ §6.2).
     sse_keepalive_s: float = 15.0
     # WP13 (Т-§10.3): verbatim window and batch collapse into episode lines.

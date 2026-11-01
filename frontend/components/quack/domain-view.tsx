@@ -149,6 +149,11 @@ export function DomainView() {
             ) : (
               <p className="mt-1.5 text-paper-dim">{tx.domain.noDeadlines}</p>
             )}
+            {domain.lagging && (
+              <p role="status" className="mt-1 text-small text-paper-dim">
+                {tx.live.graphLagging}
+              </p>
+            )}
           </div>
           <div className="sm:ml-auto sm:shrink-0">
             <ViewToggle view={view} onChange={setView} count={canvasCount} panelId={panelId} />

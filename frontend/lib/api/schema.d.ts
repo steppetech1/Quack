@@ -458,7 +458,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Sessions */
+        get: operations["list_sessions_v1_sessions_get"];
         put?: never;
         /** Start Session */
         post: operations["start_session_v1_sessions_post"];
@@ -1582,6 +1583,51 @@ export interface components {
             topic_id: string | null;
             /** Turns */
             turns: components["schemas"]["TurnView"][];
+        };
+        /**
+         * SessionListItem
+         * @description A row of the session history: the active session and the closed ones.
+         */
+        SessionListItem: {
+            /**
+             * Domain Id
+             * Format: uuid
+             */
+            domain_id: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** Goal */
+            goal: string | null;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            last_activity_at: string;
+            /** Last Checkpoint Turn */
+            last_checkpoint_turn: number;
+            /** Last Turn Index */
+            last_turn_index: number;
+            /** Mode */
+            mode: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Topic Id */
+            topic_id: string | null;
+        };
+        /** SessionListResponse */
+        SessionListResponse: {
+            /** Sessions */
+            sessions: components["schemas"]["SessionListItem"][];
         };
         /** SessionStarted */
         SessionStarted: {
@@ -3693,6 +3739,56 @@ export interface operations {
             };
             /** @description UNAUTHORIZED: missing, invalid or revoked token */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_sessions_v1_sessions_get: {
+        parameters: {
+            query?: {
+                domain_id?: string | null;
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionListResponse"];
+                };
+            };
+            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

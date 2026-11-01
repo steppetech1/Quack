@@ -27,7 +27,7 @@ export function NewSessionLive() {
   const tx = useT();
   const router = useRouter();
   const errorText = useErrorText();
-  const { pending, domain } = useShell();
+  const { pending, pendingTopic, domain } = useShell();
   const { setActive } = useData();
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
@@ -35,7 +35,7 @@ export function NewSessionLive() {
   useEffect(() => {
     if (started.current || !domain.id) return;
     started.current = true;
-    startSession({ domain_id: domain.id, goal: pending })
+    startSession({ domain_id: domain.id, topic_id: pendingTopic, goal: pending })
       .then((s) => {
         if (pending) {
           try {
@@ -56,7 +56,7 @@ export function NewSessionLive() {
         router.replace(`/session/${s.session_id}`);
       })
       .catch((e) => setError(errorText(e)));
-  }, [domain.id, pending, router, setActive, errorText]);
+  }, [domain.id, pending, pendingTopic, router, setActive, errorText]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col px-4 pt-4 md:px-7 md:pt-6">
