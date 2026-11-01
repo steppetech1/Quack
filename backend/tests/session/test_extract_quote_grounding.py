@@ -9,6 +9,7 @@ import httpx
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
@@ -16,6 +17,7 @@ from quack.jobs.queue import claim_next_job
 from quack.session.schemas import ExtractorEntry, ExtractorOutputV2, TeacherOutput
 from quack.session.workers import run_turn_extract
 from tests.session.helpers import parse_sse, skill_label
+from tests.support.dispatch import project_and_dispatch
 from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
@@ -30,6 +32,7 @@ async def test_ungrounded_quotes_are_not_applied(
     redis: Redis,
     settings: Settings,
     fake_llm: Any,
+    pg_engine: AsyncEngine,
 ) -> None:
     start_resp = await client.post(
         "/v1/sessions",
@@ -59,6 +62,7 @@ async def test_ungrounded_quotes_are_not_applied(
     assert turn_resp.status_code == 200, turn_resp.text
     turn_id = UUID(dict(parse_sse(turn_resp.text))["turn_started"]["turn_id"])
 
+    await project_and_dispatch(settings, db, pg_engine, neo4j, seeded_domain.learner_id)  # §8.9 п.7
     # The DB is shared between tests: skip turn.extract jobs left over by other tests.
     job = None
     while True:

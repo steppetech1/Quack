@@ -71,7 +71,7 @@ async def _claim(db: SessionFactory, worker: str = "w1", kinds_: list[str] | Non
 
 def test_job_kind_catalog() -> None:
     learner, sid, topic, domain = uuid4(), uuid4(), uuid4(), uuid4()
-    extract = kinds.turn_extract(learner, sid, {})
+    extract = kinds.turn_extract(learner, sid, {}, required_seq=None)
     assert (extract.kind, extract.priority, extract.lock_key, extract.coalesce_key) == (
         "turn.extract",
         10,
@@ -84,19 +84,19 @@ def test_job_kind_catalog() -> None:
         f"session:{sid}:checkpoint",
         f"checkpoint:{sid}",
     )
-    fin = kinds.session_finish_artifacts(learner, sid, {})
+    fin = kinds.session_finish_artifacts(learner, sid, {}, required_seq=None)
     assert (fin.priority, fin.lock_key, fin.coalesce_key) == (
         30,
         f"session:{sid}:finish",
         f"finish:{sid}",
     )
-    sheet = kinds.artifact_refresh_cheatsheet(learner, topic, {})
+    sheet = kinds.artifact_refresh_cheatsheet(learner, topic, {}, required_seq=None)
     assert (sheet.priority, sheet.lock_key, sheet.coalesce_key) == (
         40,
         f"topic:{topic}:cheatsheet",
         f"cheatsheet:{topic}",
     )
-    cur = kinds.graph_curate(learner, domain, {})
+    cur = kinds.graph_curate(learner, domain, {}, required_seq=None)
     assert (cur.priority, cur.lock_key, cur.coalesce_key) == (
         80,
         f"learner:{learner}:curate",
@@ -140,8 +140,8 @@ async def test_coalesce_only_while_queued(db: SessionFactory) -> None:
 
 async def test_jobs_without_coalesce_key_are_not_merged(db: SessionFactory) -> None:
     learner, sid = uuid4(), uuid4()
-    a = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 1}))
-    b = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 2}))
+    a = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 1}, required_seq=None))
+    b = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 2}, required_seq=None))
     assert a != b
     assert len(await _q(db, "SELECT id FROM ops.jobs")) == 2
 
@@ -149,7 +149,7 @@ async def test_jobs_without_coalesce_key_are_not_merged(db: SessionFactory) -> N
 async def test_enqueue_inside_append_transaction_rolls_back_together(db: SessionFactory) -> None:
     async with db() as session:
         await session.begin()
-        await enqueue_job(session, kinds.turn_extract(uuid4(), uuid4(), {}))
+        await enqueue_job(session, kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None))
         await session.rollback()
     assert await _q(db, "SELECT id FROM ops.jobs") == []
 
@@ -159,12 +159,12 @@ async def test_enqueue_inside_append_transaction_rolls_back_together(db: Session
 
 async def test_lock_key_mutual_exclusion(db: SessionFactory) -> None:
     learner, sid = uuid4(), uuid4()
-    a = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 1}))
-    b = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 2}))
+    a = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 1}, required_seq=None))
+    b = await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": 2}, required_seq=None))
     first = await _claim(db, "w1")
     assert first is not None and first.id == a
     assert await _claim(db, "w2") is None  # same lock_key is running
-    other = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}))
+    other = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}, required_seq=None))
     got = await _claim(db, "w2")
     assert got is not None and got.id == other
     async with db() as session, session.begin():
@@ -176,7 +176,7 @@ async def test_lock_key_mutual_exclusion(db: SessionFactory) -> None:
 async def test_concurrent_claims_never_run_same_lock_twice(db: SessionFactory) -> None:
     learner, sid = uuid4(), uuid4()
     for i in range(6):
-        await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": i}))
+        await _enqueue(db, kinds.turn_extract(learner, sid, {"turn": i}, required_seq=None))
     results = await asyncio.gather(*(_claim(db, f"w{i}") for i in range(6)))
     assert len([r for r in results if r is not None]) == 1
     running = await _q(db, "SELECT id FROM ops.jobs WHERE status = 'running'")
@@ -185,8 +185,8 @@ async def test_concurrent_claims_never_run_same_lock_twice(db: SessionFactory) -
 
 async def test_priority_then_age_ordering(db: SessionFactory) -> None:
     learner = uuid4()
-    low = await _enqueue(db, kinds.graph_curate(learner, uuid4(), {}))
-    high = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}))
+    low = await _enqueue(db, kinds.graph_curate(learner, uuid4(), {}, required_seq=None))
+    high = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}, required_seq=None))
     mid = await _enqueue(db, kinds.session_checkpoint(learner, uuid4(), {}))
     order = []
     for w in range(3):
@@ -198,7 +198,7 @@ async def test_priority_then_age_ordering(db: SessionFactory) -> None:
 
 async def test_claim_filters_by_kind_and_run_after(db: SessionFactory) -> None:
     future = datetime.now(UTC) + timedelta(minutes=5)
-    spec = kinds.turn_extract(uuid4(), uuid4(), {})
+    spec = kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None)
     await _enqueue(db, JobSpec(**{**spec.__dict__, "run_after": future}))
     assert await _claim(db) is None
     now_job = await _enqueue(db, kinds.session_checkpoint(uuid4(), uuid4(), {}))
@@ -208,7 +208,7 @@ async def test_claim_filters_by_kind_and_run_after(db: SessionFactory) -> None:
 
 
 async def test_heartbeat_and_completion_require_owner(db: SessionFactory) -> None:
-    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}))
+    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None))
     await _claim(db, "w1")
     async with db() as session, session.begin():
         assert await heartbeat_job(session, job_id, "w1") is True
@@ -223,7 +223,7 @@ async def test_heartbeat_and_completion_require_owner(db: SessionFactory) -> Non
 
 
 async def test_retry_with_backoff_then_dlq(db: SessionFactory) -> None:
-    spec = kinds.turn_extract(uuid4(), uuid4(), {"x": 1})
+    spec = kinds.turn_extract(uuid4(), uuid4(), {"x": 1}, required_seq=None)
     job_id = await _enqueue(db, JobSpec(**{**spec.__dict__, "max_attempts": 3}))
     for attempt in (1, 2):
         claimed = await _claim(db)
@@ -255,7 +255,7 @@ async def test_retry_with_backoff_then_dlq(db: SessionFactory) -> None:
 
 
 async def test_stale_running_jobs_are_reaped(db: SessionFactory) -> None:
-    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}))
+    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None))
     await _claim(db, "dead-worker")
     async with db() as session, session.begin():
         assert await reap_stale_jobs(session, stale_after_sec=60) == 0
@@ -269,7 +269,7 @@ async def test_stale_running_jobs_are_reaped(db: SessionFactory) -> None:
 
 
 async def test_stale_job_at_max_attempts_goes_to_dlq(db: SessionFactory) -> None:
-    spec = kinds.turn_extract(uuid4(), uuid4(), {})
+    spec = kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None)
     await _enqueue(db, JobSpec(**{**spec.__dict__, "max_attempts": 1}))
     await _claim(db, "dead")
     await _exec(db, "UPDATE ops.jobs SET heartbeat_at = now() - interval '2 minutes'")

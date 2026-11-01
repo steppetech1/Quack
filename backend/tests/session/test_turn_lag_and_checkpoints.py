@@ -16,6 +16,7 @@ from quack.graph.projector import run_projector_batch
 from quack.session.schemas import TeacherOutput
 from tests.session.fixtures import SeededDomain
 from tests.session.helpers import parse_sse, task_label
+from tests.support.dispatch import dispatch
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -156,6 +157,7 @@ async def test_checkpoint_job_enqueued_on_sixth_reply_and_coalesced(
     db: SessionFactory,
     neo4j: AsyncDriver,
     fake_llm,
+    settings: Settings,
 ) -> None:
     """ТЗ turns test 5: Checkpoint job on 6th reply and coalesced to one queued row in ops.jobs."""
     # 1. Start an active session
@@ -235,6 +237,7 @@ async def test_checkpoint_job_enqueued_on_sixth_reply_and_coalesced(
     assert resp3.status_code == 200
     await _project_all(neo4j, db, seeded_domain.learner_id)
 
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     async with db() as session:
         jobs = (
             await session.execute(
@@ -266,6 +269,7 @@ async def test_checkpoint_job_enqueued_on_sixth_reply_and_coalesced(
         headers=auth_headers,
     )
     assert resp4.status_code == 200
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
 
     async with db() as session:
         jobs_after = (

@@ -30,8 +30,6 @@ class WorkerDeps:
 
 def worker_deps(ctx: JobContext) -> WorkerDeps:
     """`WorkerDeps` over the resources of `ctx`; nothing is created or closed here (WP2.1)."""
-    if ctx.llm is None or ctx.neo4j is None:
-        raise RuntimeError("the job needs the LLM gateway and the Neo4j driver in JobContext")
     return WorkerDeps(
         settings=ctx.settings,
         session_factory=ctx.session_factory,

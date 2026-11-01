@@ -36,7 +36,10 @@ async def test_graph_curate_defer_uses_curation_defer_min(
     await redis.set(presence_key(learner_id), "active-session", ex=300)
     async with db() as session, session.begin():
         job_id = await enqueue_job(
-            session, kinds.graph_curate(learner_id, domain_id, {"domain_id": str(domain_id)})
+            session,
+            kinds.graph_curate(
+                learner_id, domain_id, {"domain_id": str(domain_id)}, required_seq=None
+            ),
         )
     before = datetime.now(UTC)
     runner = JobRunner(

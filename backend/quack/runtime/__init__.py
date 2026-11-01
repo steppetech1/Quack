@@ -15,7 +15,7 @@ from quack.db.redis import create_redis
 from quack.jobs.kinds import JOB_KINDS
 from quack.jobs.runner import JOB_HANDLERS, JobContext, JobHandler
 from quack.llm.gateway import LLMGateway
-from quack.llm.provider import HttpLLMProvider
+from quack.llm.responses_client import ResponsesClient
 
 # WP2.2: modules that hold `@register_job_handler` (kind -> module is checked by T-Q7).
 HANDLER_MODULES: tuple[str, ...] = (
@@ -33,7 +33,7 @@ async def create_job_context(settings: Settings) -> JobContext:
     session_factory = create_session_factory(engine)
     neo4j = create_driver(settings)
     redis = create_redis(settings)
-    provider = HttpLLMProvider(settings.llm_api_base_url, settings.llm_api_key.get_secret_value())
+    provider = ResponsesClient(settings.meta_api_base_url, settings.meta_api_key.get_secret_value())
     return JobContext(
         settings=settings,
         session_factory=session_factory,
@@ -47,16 +47,12 @@ async def create_job_context(settings: Settings) -> JobContext:
 
 async def close_job_context(context: JobContext) -> None:
     """Close in reverse creation order: compute, llm, redis, neo4j, engine (§4.2)."""
-    if context.compute is not None:
-        await context.compute.aclose()
-    if context.llm is not None:
-        await context.llm.aclose()
+    await context.compute.aclose()
+    await context.llm.aclose()
     if context.redis is not None:
         await context.redis.aclose()
-    if context.neo4j is not None:
-        await context.neo4j.close()
-    if context.engine is not None:
-        await context.engine.dispose()
+    await context.neo4j.close()
+    await context.engine.dispose()
 
 
 def register_all_handlers() -> dict[str, JobHandler]:

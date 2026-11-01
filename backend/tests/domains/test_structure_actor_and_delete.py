@@ -122,7 +122,8 @@ async def test_delete_learner_cancels_queued_and_running_jobs(
     async with db() as session, session.begin():
         for name, lid in (("queued", learner_id), ("running", learner_id), ("other", other_id)):
             ids[name] = await enqueue_job(
-                session, kinds.graph_curate(lid, uuid4(), {"domain_id": str(uuid4())})
+                session,
+                kinds.graph_curate(lid, uuid4(), {"domain_id": str(uuid4())}, required_seq=None),
             )
         await session.execute(
             text("UPDATE ops.jobs SET status = 'running' WHERE id = :id"), {"id": ids["running"]}

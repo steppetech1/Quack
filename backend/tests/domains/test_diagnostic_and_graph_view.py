@@ -631,7 +631,9 @@ async def test_graph_curate_defers_when_learner_presence_active(
         events_before = await read_learner_events(session, learner_id)
         job_id = await enqueue_job(
             session,
-            kinds.graph_curate(learner_id, domain_id, {"domain_id": str(domain_id)}),
+            kinds.graph_curate(
+                learner_id, domain_id, {"domain_id": str(domain_id)}, required_seq=None
+            ),
         )
 
     before_run = datetime.now(UTC)
@@ -817,7 +819,9 @@ async def test_graph_curate_deterministic_promotion_dedup_and_curator_model_pass
     async with db() as session, session.begin():
         await enqueue_job(
             session,
-            kinds.graph_curate(learner_id, domain_id, {"domain_id": str(domain_id)}),
+            kinds.graph_curate(
+                learner_id, domain_id, {"domain_id": str(domain_id)}, required_seq=None
+            ),
         )
     async with db() as session, session.begin():
         claimed = await claim_next_job(session, "test-worker", ["graph.curate"])

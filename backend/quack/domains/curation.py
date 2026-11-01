@@ -177,8 +177,6 @@ async def curate_domain_graph(
     driver = driver or ctx.neo4j
     llm = llm or ctx.llm
     redis = redis or ctx.redis
-    if driver is None:
-        raise RuntimeError("graph.curate needs the Neo4j driver in JobContext")
 
     # Redis None = work without Redis (§4.2): no presence information, curate now.
     if redis is not None and await redis.exists(presence_key(learner_id)):
@@ -323,8 +321,6 @@ async def curate_domain_graph(
             ]
         ).decode()
 
-        if llm is None:
-            raise RuntimeError("graph.curate needs the LLM gateway in JobContext")
         res = await llm.generate_structured(
             role="curator",
             prompt_version=1,
