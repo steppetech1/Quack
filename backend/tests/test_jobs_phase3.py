@@ -1,10 +1,8 @@
-"""Phase 3 job queue and workers (ТЗ Фазы 3 §8.3): T-Q1…T-Q4, T-Q8.
-
-T-Q7 and T-Q9 are in `test_jobs_phase3_pending.py` until WP3.3 and WP11.4.
-"""
+"""Phase 3 job queue and workers (ТЗ Фазы 3 §8.3): T-Q1…T-Q5, T-Q7…T-Q11."""
 
 from __future__ import annotations
 
+import ast
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -372,3 +370,74 @@ async def test_pressure_flags_without_redis_block_nothing(
 
     assert await _runner(settings, db, {"turn.extract": handler}).run_one()
     assert seen == [job_id]
+
+
+# --- T-Q9: product code takes resources from the context ------------------------------
+
+_FORBIDDEN_CALLS = {
+    "create_driver",
+    "create_redis",
+    "create_engine",
+    "HttpLLMProvider",
+    "ResponsesClient",
+    "AsyncOpenAI",
+    "ComputeClient",
+}
+_PRODUCT_PACKAGES = ("domains", "session", "artifacts", "practice")
+# The only direct enqueue left after WP11.4 (WP11.2): the cheatsheet refresh endpoint.
+_ENQUEUE_EXCEPTION = ("artifacts/cheatsheets.py", "request_cheatsheet_refresh")
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _violations(path: Path) -> list[str]:
+    rel = path.relative_to(QUACK_ROOT).as_posix()
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docs = _docstring_nodes(tree)
+    found: list[str] = []
+
+    def visit(node: ast.AST, func: str | None) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            func = node.name
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name in _FORBIDDEN_CALLS:
+                found.append(f"{rel}:{node.lineno} calls {name}")
+            if name == "enqueue_job" and (rel, func) != _ENQUEUE_EXCEPTION:
+                found.append(f"{rel}:{node.lineno} calls enqueue_job in {func}")
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docs
+            and "ops.jobs" in node.value
+        ):
+            found.append(f"{rel}:{node.lineno} has SQL on ops.jobs")
+        for child in ast.iter_child_nodes(node):
+            visit(child, func)
+
+    visit(tree, None)
+    return found
+
+
+def test_product_code_uses_context_resources() -> None:
+    problems: list[str] = []
+    for package in _PRODUCT_PACKAGES:
+        for path in sorted((QUACK_ROOT / package).rglob("*.py")):
+            problems.extend(_violations(path))
+    assert problems == []
