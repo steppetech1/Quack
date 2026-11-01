@@ -69,7 +69,7 @@ function ProposeForm({ domainId, name, onDone }: { domainId?: string; name?: boo
     try {
       let target = domainId;
       if (!target) {
-        const created = await post<S["CreateDomainResponse"]>("/v1/domains", { name: String(form.get("name")).trim(), idempotency_key: idem() });
+        const created = await post("/v1/domains", { name: String(form.get("name")).trim(), idempotency_key: idem() });
         target = created.domain_id;
         // the structure screen looks the subject up in the list
         await reload();
@@ -78,7 +78,7 @@ function ProposeForm({ domainId, name, onDone }: { domainId?: string; name?: boo
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      const proposal = await post<Proposal>(`/v1/domains/${target}/structure/propose`, {
+      const proposal = await post(`/v1/domains/${target}/structure/propose`, {
         goals: String(form.get("goals") ?? ""),
         background: String(form.get("background") ?? ""),
         focus_areas: focus,
@@ -357,7 +357,7 @@ export function DiagnosticLive({ domainId }: { domainId: string }) {
     // one diagnostic session per visit, also when dev mode runs effects twice
     if (started.current) return;
     started.current = true;
-    post<S["StartDiagnosticResponse"]>(`/v1/domains/${domainId}/diagnostic/start`, { idempotency_key: idem() })
+    post(`/v1/domains/${domainId}/diagnostic/start`, { idempotency_key: idem() })
       .then((r) => {
         setSessionId(r.session_id);
         setQ(r.next_question);
@@ -373,7 +373,7 @@ export function DiagnosticLive({ domainId }: { domainId: string }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await post<S["AnswerDiagnosticResponse"]>(`/v1/domains/${domainId}/diagnostic/answer`, {
+      const r = await post(`/v1/domains/${domainId}/diagnostic/answer`, {
         session_id: sessionId,
         task_id: q.task_id,
         answer: value,

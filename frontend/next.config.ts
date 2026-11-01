@@ -5,7 +5,8 @@ const API_URL = process.env.QUACK_API_URL ?? "http://localhost:8000";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  // gzip buffers proxied SSE (teacher tokens, learner stream) until the response ends
+  // gzip buffers proxied SSE: teacher tokens would arrive all at once and /v1/learner/stream never.
+  // Compression, if wanted, belongs to the reverse proxy in front of Next, with SSE excluded.
   compress: false,
   cacheComponents: true,
   partialPrefetching: true,

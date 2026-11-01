@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "api:types": "openapi-typescript lib/api/openapi.json -o lib/api/schema.d.ts"
+    "api:types": "openapi-typescript lib/api/openapi.json -o lib/api/schema.d.ts --default-non-nullable false"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

@@ -779,7 +779,7 @@ export interface components {
              * @default archived
              * @constant
              */
-            status: "archived";
+            status?: "archived";
         };
         /** ArtifactListResponse */
         ArtifactListResponse: {
@@ -801,7 +801,7 @@ export interface components {
              * Version
              * @default 1
              */
-            version: number;
+            version?: number;
         };
         /** ArtifactSearchHit */
         ArtifactSearchHit: {
@@ -935,7 +935,7 @@ export interface components {
              * @default active
              * @constant
              */
-            status: "active";
+            status?: "active";
         };
         /** CreateDomainRequest */
         CreateDomainRequest: {
@@ -974,7 +974,7 @@ export interface components {
              * @default pending_purge
              * @constant
              */
-            status: "pending_purge";
+            status?: "pending_purge";
         };
         /** DiagnosticQuestion */
         DiagnosticQuestion: {
@@ -983,7 +983,7 @@ export interface components {
              * @default choice
              * @enum {string}
              */
-            kind: "open" | "math" | "code" | "choice";
+            kind?: "open" | "math" | "code" | "choice";
             /** Options */
             options?: string[];
             /** Prompt Text */
@@ -1033,14 +1033,14 @@ export interface components {
              * Active Structure Version
              * @default 0
              */
-            active_structure_version: number;
+            active_structure_version?: number;
             /** Created At */
             created_at?: string | null;
             /**
              * Created Seq
              * @default 0
              */
-            created_seq: number;
+            created_seq?: number;
             /**
              * Domain Id
              * Format: uuid
@@ -1050,7 +1050,7 @@ export interface components {
              * Has Materials
              * @default false
              */
-            has_materials: boolean;
+            has_materials?: boolean;
             /** Name */
             name: string;
             /** Slug */
@@ -1063,7 +1063,7 @@ export interface components {
              * Updated Seq
              * @default 0
              */
-            updated_seq: number;
+            updated_seq?: number;
         };
         /** EditStructureRequest */
         EditStructureRequest: {
@@ -1105,7 +1105,7 @@ export interface components {
              * Details
              * @default {}
              */
-            details: {
+            details?: {
                 [key: string]: unknown;
             };
             /** Message */
@@ -1341,7 +1341,7 @@ export interface components {
              * Description
              * @default
              */
-            description: string;
+            description?: string;
             /** Last Seen At */
             last_seen_at: number;
             /**
@@ -1372,7 +1372,7 @@ export interface components {
              * @default math
              * @enum {string}
              */
-            kind: "open" | "math" | "code" | "choice";
+            kind?: "open" | "math" | "code" | "choice";
             /**
              * Topic Id
              * Format: uuid
@@ -1509,7 +1509,7 @@ export interface components {
              * Degraded
              * @default false
              */
-            degraded: boolean;
+            degraded?: boolean;
             /**
              * Domain Id
              * Format: uuid
@@ -1698,7 +1698,7 @@ export interface components {
              * Description
              * @default
              */
-            description: string;
+            description?: string;
             /** Distinct Families */
             distinct_families: number;
             /** Effective Mastery */
@@ -1721,24 +1721,24 @@ export interface components {
              * Origin
              * @default structure
              */
-            origin: string;
+            origin?: string;
             /** P Mastery */
             p_mastery: number;
             /**
              * Prior Confidence
              * @default 0
              */
-            prior_confidence: number;
+            prior_confidence?: number;
             /**
              * Prior Mastery
              * @default 0
              */
-            prior_mastery: number;
+            prior_mastery?: number;
             /**
              * Prior Source
              * @default none
              */
-            prior_source: string;
+            prior_source?: string;
             /**
              * Skill Id
              * Format: uuid
@@ -1800,7 +1800,7 @@ export interface components {
              * @default learn
              * @enum {string}
              */
-            mode: "learn" | "practice" | "review";
+            mode?: "learn" | "practice" | "review";
             /** Plan */
             plan?: {
                 [key: string]: unknown;
@@ -1880,7 +1880,7 @@ export interface components {
              * Description
              * @default
              */
-            description: string;
+            description?: string;
             display_state: components["schemas"]["DisplayState"];
             /**
              * Domain Id
@@ -1945,7 +1945,7 @@ export interface components {
              * Hints Used
              * @default 0
              */
-            hints_used: number;
+            hints_used?: number;
             /** Idempotency Key */
             idempotency_key: string;
             /** Related Task Id */
