@@ -23,7 +23,7 @@ CREATE TABLE core.events (
     seq BIGINT NOT NULL,
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     type TEXT NOT NULL,
-    schema_version INT NOT NULL,
+    schema_version BIGINT NOT NULL,
     actor TEXT NOT NULL,
     domain_id UUID NULL,
     session_id UUID NULL,
@@ -70,10 +70,11 @@ CREATE TABLE core.auth_links (
 
 -- content --------------------------------------------------------------------------------
 
+-- Т-§22.9: «Сессий без домена нет».
 CREATE TABLE content.sessions (
     session_id UUID PRIMARY KEY,
     learner_id UUID NOT NULL,
-    domain_id UUID NULL,
+    domain_id UUID NOT NULL,
     intent TEXT NULL,
     topic_id UUID NULL,
     hub_id UUID NULL,
@@ -107,7 +108,7 @@ CREATE TABLE content.canvas_boards (
     session_id UUID NULL,
     task_id UUID NULL,
     doc JSONB NOT NULL DEFAULT '{}'::jsonb,
-    version INT NOT NULL DEFAULT 0,
+    version BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_canvas_boards_learner ON content.canvas_boards (learner_id);
@@ -117,7 +118,7 @@ CREATE TABLE content.tasks (
     learner_id UUID NOT NULL,
     domain_id UUID NULL,
     source TEXT NOT NULL,
-    version INT NOT NULL DEFAULT 1,
+    version BIGINT NOT NULL DEFAULT 1,
     condition JSONB NOT NULL,
     answer_spec JSONB NOT NULL,
     solution_space JSONB NULL,
@@ -133,7 +134,7 @@ CREATE TABLE content.materials (
     session_id UUID NULL,
     object_key TEXT NOT NULL,
     mime TEXT NOT NULL,
-    pages_count INT NULL,
+    pages_count BIGINT NULL,
     status TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -141,7 +142,7 @@ CREATE INDEX idx_materials_learner_domain ON content.materials (learner_id, doma
 
 CREATE TABLE content.material_pages (
     material_id UUID NOT NULL,
-    page INT NOT NULL,
+    page BIGINT NOT NULL,
     learner_id UUID NOT NULL,
     text TEXT NOT NULL,
     image_key TEXT NULL,
@@ -156,16 +157,16 @@ CREATE TABLE content.artifacts (
     domain_id UUID NULL,
     topic_id UUID NULL,
     hub_id UUID NULL,
-    current_version INT NOT NULL DEFAULT 0
+    current_version BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_artifacts_learner ON content.artifacts (learner_id, domain_id);
 
 CREATE TABLE content.artifact_versions (
     artifact_id UUID NOT NULL,
-    version INT NOT NULL,
+    version BIGINT NOT NULL,
     learner_id UUID NOT NULL,
     content JSONB NOT NULL,
-    skill_version INT NULL,
+    skill_version BIGINT NULL,
     created_by TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (artifact_id, version)
@@ -174,7 +175,7 @@ CREATE INDEX idx_artifact_versions_learner ON content.artifact_versions (learner
 
 CREATE TABLE content.learner_skills (
     skill_id UUID NOT NULL,
-    version INT NOT NULL,
+    version BIGINT NOT NULL,
     learner_id UUID NOT NULL,
     name TEXT NOT NULL,
     instruction TEXT NOT NULL,
@@ -211,7 +212,7 @@ CREATE TABLE ops.jobs (
             'skipped_budget'
         )
     ),
-    attempts INT NOT NULL DEFAULT 0,
+    attempts BIGINT NOT NULL DEFAULT 0,
     run_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     heartbeat_at TIMESTAMPTZ NULL,
     visible BOOLEAN NOT NULL DEFAULT false,
@@ -235,7 +236,7 @@ CREATE TABLE ops.coverage (
 
 CREATE TABLE ops.event_types_seen (
     type TEXT NOT NULL,
-    schema_version INT NOT NULL,
+    schema_version BIGINT NOT NULL,
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (type, schema_version)
 );
@@ -262,14 +263,15 @@ CREATE TABLE ops.projector_failures (
 );
 
 -- Т-§3.2: Phase 3 columns + effort, doctrine_version, digest_id, chunk_ids, similar_ids,
--- context_text (sampled turns only). Keyed by turn.committed.manifest_id.
+-- context_text (sampled turns only). Keyed by turn.committed.manifest_id. Versions are
+-- `<role>@N` and `renderer@N` (Т-§11.6, Т-§10.6).
 CREATE TABLE ops.turn_manifests (
     manifest_id UUID PRIMARY KEY,
     learner_id UUID NOT NULL,
     session_id UUID NOT NULL,
-    prompt_version INT NOT NULL,
+    prompt_version TEXT NOT NULL,
     doctrine_version TEXT NULL,
-    renderer_version INT NULL,
+    renderer_version TEXT NULL,
     role TEXT NOT NULL,
     model TEXT NOT NULL,
     effort TEXT NULL,
@@ -301,7 +303,7 @@ CREATE TABLE ops.llm_usage (
     cost_usd NUMERIC(12, 6) NOT NULL DEFAULT 0,
     incomplete BOOLEAN NOT NULL DEFAULT false,
     retried BOOLEAN NOT NULL DEFAULT false,
-    latency_ms INT NULL,
+    latency_ms BIGINT NULL,
     status TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

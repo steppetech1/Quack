@@ -174,19 +174,26 @@ async def test_runs_inside_callers_transaction(pg_db: Db) -> None:
     learner = await create_learner(pg_db)
     session_id = uuid4()
     insert_session = (
-        "INSERT INTO content.sessions (session_id, learner_id, status) "
-        "VALUES (%(session_id)s, %(learner_id)s, 'active')"
+        "INSERT INTO content.sessions (session_id, learner_id, domain_id, status) "
+        "VALUES (%(session_id)s, %(learner_id)s, %(domain_id)s, 'active')"
     )
+    domain_id = uuid4()
     with pytest.raises(RuntimeError):
         async with pg_db.transaction():
-            await pg_db.execute(insert_session, {"session_id": session_id, "learner_id": learner})
+            await pg_db.execute(
+                insert_session,
+                {"session_id": session_id, "learner_id": learner, "domain_id": domain_id},
+            )
             await append_events(pg_db, learner, [_ev("a")])
             raise RuntimeError("caller fails after the append")
     assert await _counter(pg_db, learner) == 0
     assert await pg_db.fetch_all("SELECT session_id FROM content.sessions") == []
 
     async with pg_db.transaction():
-        await pg_db.execute(insert_session, {"session_id": session_id, "learner_id": learner})
+        await pg_db.execute(
+            insert_session,
+            {"session_id": session_id, "learner_id": learner, "domain_id": domain_id},
+        )
         await append_events(pg_db, learner, [_ev("a")])
     assert await _counter(pg_db, learner) == 1
     assert len(await pg_db.fetch_all("SELECT session_id FROM content.sessions")) == 1
