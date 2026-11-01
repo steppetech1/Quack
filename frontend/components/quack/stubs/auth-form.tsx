@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
-import { API_MODE, ApiError, post, setToken, type S } from "@/lib/api/client";
+import { API_MODE, ApiError, post, setToken } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
 import { Duck } from "../duck";
 import { FIELD, Field, PRIMARY_BTN, StubNote } from "./stub-parts";
