@@ -155,10 +155,16 @@ class LLMGateway:
         *,
         prompt_role: str | None = None,
         reasoning_effort: ReasoningEffort | None = None,
+        check: Callable[[T], str | None] | None = None,
     ) -> LLMResult[T]:
         """`prompt_role` takes the template of `prompt_role@prompt_version` while model,
         limits, ledger and outbox stay with `role` (WP5.4); `reasoning_effort` overrides the
-        role effort (WP6.5)."""
+        role effort (WP6.5).
+
+        `check` finds what the schema cannot (an unknown label, WP14.1): its error text goes
+        back to the model once through the repair path; if the second answer is wrong again or
+        does not parse, the first valid answer is returned and the caller drops what is wrong.
+        No second repair after a schema repair: one repair call per request."""
         prompt = self.prompts.load(prompt_role or role, prompt_version)
         rendered = prompt.render(variables)
         model = self.settings.model_for_role(role)
@@ -213,6 +219,7 @@ class LLMGateway:
             async with self._admitted(role, model):
                 response = await self._attempts(ctx, request, totals)
                 value, error = _parse(response_model, response.content)
+                problem = None
                 if value is None:
                     await self._ledger(ctx, response, totals[3], "schema_error", "schema")
                     repair = replace(request, repair_hint=error)
@@ -223,6 +230,18 @@ class LLMGateway:
                         raise LLMSchemaError(
                             f"{prompt.ref}: response does not match schema: {error}"
                         )
+                elif check is not None and (problem := check(value)):
+                    await self._ledger(ctx, response, totals[3], "schema_error", "label")
+                    first, first_response = value, response
+                    response = await self._attempts(
+                        ctx, replace(request, repair_hint=problem), totals
+                    )
+                    again, _ = _parse(response_model, response.content)
+                    if again is None:
+                        await self._ledger(ctx, response, totals[3], "schema_error", "schema")
+                        value, response = first, first_response
+                    else:
+                        value = again
         except LLMError:
             await self._finish_outbox(ctx, "failed", None, totals)
             raise

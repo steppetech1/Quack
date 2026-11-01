@@ -1048,6 +1048,50 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   (`T-H7`, `T-H8` (а) — сторона `task_gen@1`, (б) — сторона `finish_session`).
 - Требует подтверждения владельцем: нет
 
+### D-B-026. WP14.1: неизвестная метка — один возврат модели (`T-M2`)
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP14.1, `Т-§4.5`; `quack/llm/gateway.py::generate_structured(check=…)`,
+  `quack/session/teacher_labels.py::teacher_label_errors`, `quack/session/turns.py`
+- Контекст: метки разрешались сразу — неизвестная отбрасывалась без второго вызова, хотя WP14.1
+  требует вернуть вызов модели один раз с текстом ошибки.
+- Решение:
+  1. Шлюз принимает необязательную проверку `check(value) -> str | None`. Текст ошибки идёт
+     модели тем же путём исправления, что ошибка схемы (`repair_hint`), один раз; в ledger
+     первая попытка — `schema_error` / `label`. Если второй ответ снова с неверной меткой —
+     возвращается он; если он не разбирается схемой — возвращается первый валидный ответ.
+     После исправления схемы второго исправления нет: на запрос один повтор.
+  2. Ход учителя передаёт `teacher_label_errors`: метки `focus_skill_labels`,
+     `assign_task_label`, `concept_explained` (тема и навыки), которых нет в таблице вызова.
+     Разрешение после этого прежнее: неизвестная метка отброшена с записью
+     `teacher_unknown_label`, остальной ответ применён (закон 9). При `assign_task` без метки
+     задачу выбирает код (`pick_task`), как и раньше.
+  3. `extractor@2` проверку не получает: его элементы с неизвестной меткой пишутся с причиной
+     `unknown_label` и не применяются (D-B-022, `Т-§7.6`).
+- Тесты: `T-M2` (`tests/llm/test_labels.py`, два случая: исправлено / снова неверно).
+- Требует подтверждения владельцем: нет
+
+### D-B-027. WP5.7: скрипт живого прогона `scripts/meta_smoke.py` (DoD п.6a)
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP5.7 «Живой прогон», DoD п.6a; `backend/scripts/meta_smoke.py`
+- Решение:
+  1. По одному вызову каждого промпта Фазы 3 (§7.6: `teacher@1`, `extractor@2`, `evaluator@1`,
+     `task_gen@1`, `structurer@1`, `curator@1`, `diagnostic@1`, `artifacts@1`) и
+     `teacher_fallback` на промпте учителя — через `LLMGateway` на `ResponsesClient`, то есть
+     со строгой схемой, `effort`, пределом выхода, ledger и outbox. Нужен Postgres с
+     миграциями (`POSTGRES_DSN`); записи идут под новым `learner_id`.
+  2. Сырой ответ провайдера снимает записывающая обёртка: в отчёте модель, ответившая модель,
+     `effort`, статус (`ok` или класс ошибки шлюза с причиной), токены по видам (вход, выход,
+     кэш, рассуждение), `retry-after` / `x-ratelimit-*`, время. Одна строка JSON на роль; код
+     выхода 1, если хоть одна роль не прошла.
+  3. Входные данные — короткий пример темы «Derivatives»; это данные вызова, не текст промптов.
+- Не проверено (DoD п.6a): живой прогон — нужен ключ команды. Команда для владельца из
+  `backend/`, при поднятом Postgres с миграциями:
+  `META_API_KEY=… META_API_BASE_URL=… POSTGRES_DSN=… uv run python scripts/meta_smoke.py`;
+  вывод — в этот журнал (заодно закрывает \[ПРОВЕРИТЬ\] `maxLength` в строгом режиме).
+- Тесты: `tests/llm/test_meta_smoke.py` — набор вызовов совпадает с `PROMPT_SCHEMAS`; прогон
+  через шлюз на `ScriptedLLMProvider` даёт полный отчёт и код выхода.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1623,6 +1667,8 @@ _(пусто)_
 | WP6.4 (схема) | `uv run pytest -q tests/practice` (коммит `a9aa6ee`) | 14 failed: `NotImplementedError` в `parse_reference_solution` / `reference_solution_payload` |
 | WP6.4 (стыки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase2_seams.py` (тесты `ac949b8` на коде `47f3fc1`) | 4 failed: читатели ждут `sympy`, `task_gen@1` пишет ключи Фазы 2, в payload нет `session_id`. `T-H7` упал из-за фикстур в новом формате (без проверки `compute` нет `task_evaluated`); сам порядок кадров уже верный (A27) |
 | WP6.4 (C: `diagnostic`, `finish_artifacts`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py tests/artifacts/test_artifacts_search_export.py` (коммит `edd0bf9`) | 2 failed: ответ `diagnostic@1` с верным вариантом вне вариантов записан в банк (`actor = diagnostic@1`); обработчик `session.finish_artifacts` берёт `session_id` из lock key (`badly formed hexadecimal UUID string`) |
+| WP14.1 (`T-M2`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py -k unknown_label_returns` (коммит `7359037`) | 2 failed: один вызов учителя вместо двух — повтора с ошибкой метки нет |
+| WP5.7 (`meta_smoke.py`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_meta_smoke.py` (коммит `6fe79a3`) | 2 failed: в скрипте нет `smoke_calls` / `run_smoke` |
 | WP10.2 (`confirm`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `1b209a3`) | 1 failed: тот же ключ с другой `structure_version` → 422 `VALIDATION_ERROR` (проверка версии раньше ключа), ждали 409 |
 | WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
 | WP10.2 (`diagnostic/finish`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py -k same_key_other_session` (коммит `619219c`) | 1 failed: тот же ключ с другим `session_id` → 404 `NOT_FOUND` (сессия ищется раньше ключа), ждали 409 |
