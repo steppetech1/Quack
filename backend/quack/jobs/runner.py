@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
+from quack.jobs.kinds import KIND_LLM_ROLES
 from quack.jobs.queue import (
     ClaimedJob,
     JobDeferred,
@@ -32,6 +33,7 @@ from quack.jobs.queue import (
 )
 from quack.llm.errors import LLMBudgetExceededError
 from quack.llm.gateway import LLMGateway
+from quack.llm.pressure import pressured_models
 from quack.logging import get_logger
 
 log = get_logger(__name__)
@@ -99,12 +101,31 @@ class JobRunner:
         jitter = random.uniform(0, self.settings.daily_budget_defer_jitter_s)
         return JobDeferred((midnight - now).total_seconds() + jitter, str(exc))
 
+    async def _claimable_kinds(self) -> list[str]:
+        """WP5.3 (Т-§22.5): registered kinds minus those whose roles run on a pressured model.
+        The flags are read with one Redis call per claim iteration; without Redis — none."""
+        kinds = sorted(self.handlers)
+        pressured = await pressured_models(self.context.redis)
+        if not pressured:
+            return kinds
+        return [
+            kind
+            for kind in kinds
+            if not any(
+                self.settings.model_for_role(role) in pressured
+                for role in KIND_LLM_ROLES.get(kind, ())
+            )
+        ]
+
     async def run_one(self) -> bool:
         """Claim and execute one job; False when nothing was claimable."""
         if not self.handlers:
             return False
+        kinds = await self._claimable_kinds()
+        if not kinds:
+            return False
         async with self.session_factory() as session, session.begin():
-            job = await claim_next_job(session, self.worker_id, sorted(self.handlers))
+            job = await claim_next_job(session, self.worker_id, kinds)
         if job is None:
             return False
         context = self.context
