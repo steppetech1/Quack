@@ -5,18 +5,26 @@
 
 ## Сводка для владельца
 
-- **Сделано:** WP0 в зоне C. Работа трёх потоков Фазы 2 уже в `main`, сливать нечего.
-  Ветка `phase-3` создана от `main` (`694eb50`). Полный набор проверок `backend/` зелёный
-  (410 тестов), `compute/` зелёный в Linux-контейнере.
-- **Не проверено:** четыре проверки `compute/` на Windows-хосте. Сервис рассчитан только на
-  Linux (`forkserver`, `SIGALRM`), поэтому на Windows проверки падают по устройству сервиса,
-  а не из-за дефекта. В Linux проверки прошли. Подробно — D-C-002.
+На 2026-11-01, `phase-3` = `cc36435`.
+
+- **Сделано:** полный набор проверок `backend/` на `cc36435` зелёный (718 тестов). Поток C: WP0,
+  WP1, WP4, WP7, WP8.3, WP8.7, WP12, WP10.3 (подменный сервер Meta, сценарий Locust) влиты.
+  Сквозной стенд WP10.1–10.2 — в ветке `phase-3-c-e2e-red`: 10 из 11 тестов зелёные, красный
+  `T-E1` ждёт диспетчер WP11 (A); в `phase-3` стенд пойдёт целиком зелёным.
+- **Не проверено:**
+  - DoD п.6a — живой прогон Meta API: нужен ключ команды. Команда — в D-B-027
+    (`META_API_KEY=… META_API_BASE_URL=… POSTGRES_DSN=… uv run python scripts/meta_smoke.py`
+    из `backend/`), вывод — в этот журнал.
+  - Живой прогон Locust и smoke-прогон (DoD §10 п.7) — ждут `ops seed-learners` (WP8.6) и compose
+    (WP9) потока A.
+  - Четыре проверки `compute/` на Windows-хосте: сервис только для Linux, в Linux зелёные (D-C-002).
 - **Заблокировано:** ничего.
-- **Решения класса C, требующие подтверждения:** нет.
-  - D-C-001 (рабочие ветки `phase-3-<поток>-<тема>`) — подтверждено владельцем 2026-10-31.
-  - D-C-004 (токен без строки `auth.users` → 401) — владелец 2026-10-31 передал выбор
-    исполнителю; принят вариант (1).
-- **Ветка / последний коммит:** `phase-3` = `694eb50`; заметки — в `phase-3-c-wp0-notes`; WP1 — в `phase-3-c-wp1-auth-resources`.
+- **Решения класса C, требующие подтверждения:** D-C-025 (ключ `structure/propose`, Q9),
+  D-C-029 (список моделей `T-O5`), D-C-030 (отказ неверного `reference_solution` у того, кто пишет
+  в банк). Вопрос Q10 — подключение новых промптов structurer, curator, artifacts (предложение C —
+  после Фазы 3).
+  - D-C-001 — подтверждено 2026-10-31; D-C-004 — выбор передан исполнителю 2026-10-31, принят
+    вариант (1); D-C-012 — см. Q8 (закрыт).
 
 ## Вход
 
@@ -1092,6 +1100,22 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   через шлюз на `ScriptedLLMProvider` даёт полный отчёт и код выхода.
 - Требует подтверждения владельцем: нет
 
+### D-B-028. Порядок блокировок `finish_session`: `core.learner_seq`, затем строка сессии
+- Класс: B (дефект, найден потоком C на стенде e2e 2026-11-01)
+- WP / место: `quack/session/lifecycle.py::finish_session`
+- Контекст: `finish_session` брал `core.sessions … FOR UPDATE`, затем `append_events` брал
+  `core.learner_seq FOR UPDATE`. Фоновая запись того же ученика идёт в обратном порядке:
+  `append_events` (`learner_seq`) → реляционная проекция `UPDATE core.sessions`
+  (`quack/events/projections.py`). Встречный порядок давал `DeadlockDetectedError`, тесты
+  стенда с `finish_session` на фоне плавали (`T-Q10`, `T-E10`).
+- Решение: `finish_session` первым берёт `core.learner_seq FOR UPDATE` (как `start_session`),
+  затем строку сессии. Другие места зоны B: `start_session` — уже в этом порядке; `heartbeat` и
+  учёт токенов в шлюзе держат одну строку сессии без `learner_seq` — цикла нет.
+- Тесты: `tests/session/test_session_lock_order.py` — фоновая транзакция держит `learner_seq`
+  и обновляет строку сессии, пока ждёт `finish_session`; на старом коде — `DeadlockDetectedError`
+  (коммит red), после правки — проходит.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1732,6 +1756,7 @@ _(пусто)_
 | WP10.2 (`hint`, `submit`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py` (коммит `ea60717`) | 2 failed, 3 passed: тот же ключ с другим `turn_id` (`hint`) и другим ответом (`submit`) → 200 с записанным ответом, ждали 409 |
 | WP10.2 (заметки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k notes_crud` (коммит `d0480a5`) | 1 failed: тот же ключ с другим `title` → 201 с записанной заметкой, ждали 409 |
 | WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
+| D-B-028 (порядок блокировок) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_lock_order.py` (коммит `325e6e6`) | 1 failed: `DeadlockDetectedError` — `finish_session` держит строку сессии и ждёт `learner_seq` |
 | WP14.1 (C: дайджест, `T-M3`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k names_not_ids` (коммит `b87d596`) | 1 failed: в запросе `artifacts@1` (mode digest) `covered_skill_ids` и `task_id` — UUID; найдено потоком B на стенде (`T-M3`, ветка `phase-3-b-e2e-llm-seams`) |
 | WP10.2 (стенд на `phase-3` после WP1, WP2, WP3.1–3.4, WP4, WP6.2) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/e2e` (ветка `phase-3-c-e2e-red`) | 4 failed, 6 passed. Падают: `T-E1`, `T-E5` — `turn.extract` идёт мимо `ScriptedLLMProvider`: `quack/session/workers.py` строит свой шлюз (`_worker_resources`), а не берёт `JobContext.llm` (WP2.1, A/B); `T-E2` — `structure/propose` с тем же ключом и другим телом → 200 (Q9); `T-E10` — нет обработчика `account.purge_deleted` и планировщика (A, WP3.3). Стенд: обработчики — `quack.runtime.register_all_handlers`, один `JobContext` над ресурсами стенда, `create_app(resources=)`. Побочно: кэш `_worker_resources` по `id(settings)` переносит открытый размыкатель из e2e в `tests/session/test_session_checkpoint_worker.py` при полном прогоне (уйдёт с WP2.1) |
 | WP10.2 (стенд + `phase-3-b-workers-jobcontext`, WP2.1 B) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q` (ветка `phase-3-c-e2e-red`) | 3 failed, 598 passed. `T-E5` зелёный; размыкатель между тестами не переносится. Падают: `T-E1` — `turn.extract` без `required_seq`, задачи ставит не диспетчер (A, WP11); `T-E2` — Q9; `T-E10` — WP3.3 (A) |
