@@ -160,6 +160,11 @@ async def test_notes_crud(
     assert again.status_code == 201, again.text
     assert again.json() == note  # A10
     assert await _last_seq(db, learner) == count
+    # T-E2: the same key with another body is 409 and writes nothing.
+    other = await _create_note(client, headers, s, "Other", NOTE_TEXT, "note-1")
+    assert other.status_code == 409, other.text
+    assert other.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
 
     edit = {"title": "Chain rule, edited", "text": "(f(g))' = f'(g) g'", "idempotency_key": "e-1"}
     r = await client.patch(f"/v1/artifacts/notes/{note_id}", json=edit, headers=headers)
@@ -167,6 +172,13 @@ async def test_notes_crud(
     assert (r.json()["artifact_id"], r.json()["version"]) == (note_id, 2)
     [row] = await _artifacts(db, learner, "note")
     assert (row["title"], row["content_md"], row["version"]) == (edit["title"], edit["text"], 2)
+    count = await _last_seq(db, learner)
+    r = await client.patch(
+        f"/v1/artifacts/notes/{note_id}", json={**edit, "text": "other"}, headers=headers
+    )
+    assert r.status_code == 409, r.text  # T-E2
+    assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
     assert note_id in await _listed_ids(client, headers, kind="note")
 
     stranger = await seed.learner()

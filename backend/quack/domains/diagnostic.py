@@ -1075,6 +1075,18 @@ async def finish_diagnostic(
     """Compute `inferred_priors` across the DAG and emit `diagnostic.completed`
     (ТЗ §2.3, §3; Т-§3.3).
     """
+    # The key is checked before the session (T-E2): a used key with another session is 409.
+    previous = await _find_event_by_key(
+        resources.session_factory, learner_id, req.idempotency_key, "diagnostic.completed"
+    )
+    if previous is not None and (
+        previous.domain_id != domain_id or previous.payload["session_id"] != str(req.session_id)
+    ):
+        raise ApiError(
+            "IDEMPOTENCY_CONFLICT",
+            "Idempotency key was used to finish another diagnostic session",
+            status_code=409,
+        )
     state = await _reconstruct_state_from_events(
         resources.session_factory, learner_id, domain_id, req.session_id, settings.diagnostic
     )
