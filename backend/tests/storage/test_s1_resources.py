@@ -141,8 +141,8 @@ async def test_fake_email_sender_logs_links_and_can_be_down() -> None:
 async def test_fake_deletion_journal_lists_since_and_can_be_down() -> None:
     journal = FakeDeletionJournal()
     now = datetime.now(UTC)
-    old = DeletionRecord(uuid4(), uuid4(), "topic", "t1", now - timedelta(days=2))
-    new = DeletionRecord(uuid4(), uuid4(), "account", "l1", now)
+    old = DeletionRecord(uuid4(), uuid4(), "topic", uuid4(), now - timedelta(days=2))
+    new = DeletionRecord(uuid4(), uuid4(), "account", uuid4(), now)
     await journal.write(new)
     await journal.write(old)
     assert await journal.list_since(now - timedelta(days=1)) == [new]

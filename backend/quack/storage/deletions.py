@@ -26,7 +26,7 @@ class DeletionRecord:
     deletion_id: UUID
     learner_id: UUID
     kind: DeletionKind
-    target_id: str
+    target_id: UUID  # topic, domain or learner id (ТЗ §4.9, §6.1 `ops.deletion_log`)
     deleted_at: datetime
 
 
