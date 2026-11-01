@@ -9,7 +9,7 @@ import httpx
 from neo4j import AsyncDriver
 from sqlalchemy import text
 
-from quack.config import FoldParams
+from quack.config import FoldParams, Settings
 from quack.db.postgres import SessionFactory
 from quack.events.reader import EVENT_COLUMNS, row_to_event
 from quack.graph.neo4j_store import Neo4jGraphStore
@@ -17,6 +17,7 @@ from quack.graph.projector import run_projector_batch
 from quack.session.schemas import ConceptExplainedDraft, TeacherOutput
 from tests.session.fixtures import SeededDomain
 from tests.session.helpers import parse_sse, skill_label, task_label
+from tests.support.dispatch import dispatch
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -41,6 +42,7 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     db: SessionFactory,
     neo4j: AsyncDriver,
     fake_llm,
+    settings: Settings,
 ) -> None:
     """ТЗ turns test 1: Full turn pipeline: SSE order/format, events, and turn.extract job."""
     # 1. Start an active session
@@ -176,6 +178,7 @@ async def test_full_turn_sse_order_format_events_and_extract_job(
     assert teacher_event.actor == "teacher@1"
     assert teacher_event.payload["degraded_mode"] is None
 
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     # 6. Check turn.extract job enqueued in ops.jobs
     async with db() as session:
         job = (

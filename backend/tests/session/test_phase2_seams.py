@@ -9,6 +9,7 @@ import httpx
 import pytest
 from neo4j import AsyncDriver
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.compute_client.client import ComputeClient, MathCheckRequest, MathCheckResponse
 from quack.config import FoldParams, Settings
@@ -25,6 +26,7 @@ from quack.session.schemas import TeacherOutput
 from quack.session.spoiler_guard import spoiler_found
 from tests.session.fixtures import SeededDomain
 from tests.session.helpers import parse_sse, task_label
+from tests.support.dispatch import project_and_dispatch
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -241,6 +243,9 @@ async def test_finish_session_payload_names_the_session(
     auth_headers: dict[str, str],
     seeded_domain: SeededDomain,
     db: SessionFactory,
+    settings: Settings,
+    pg_engine: AsyncEngine,
+    neo4j: AsyncDriver,
 ) -> None:
     """T-H8 (б), side of `finish_session`: the job payload is
     `{"session_id", "domain_id", "topic_id"}` (WP6.4 п.2)."""
@@ -261,6 +266,7 @@ async def test_finish_session_payload_names_the_session(
         headers=auth_headers,
     )
     assert finish.status_code == 200, finish.text
+    await project_and_dispatch(settings, db, pg_engine, neo4j, seeded_domain.learner_id)  # §8.9 п.7
     async with db() as session, session.begin():
         job = await claim_next_job(session, "th8", ["session.finish_artifacts"])
     assert job is not None

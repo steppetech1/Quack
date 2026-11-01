@@ -10,6 +10,7 @@ import orjson
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
@@ -19,6 +20,7 @@ from quack.jobs.queue import claim_next_job, complete_job, enqueue_job
 from quack.session.schemas import ExtractorEntry, ExtractorOutputV2, TeacherOutput
 from quack.session.workers import run_turn_extract
 from tests.session.helpers import parse_sse, skill_label
+from tests.support.dispatch import project_and_dispatch
 from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
@@ -33,6 +35,7 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
     redis: Redis,
     settings: Settings,
     fake_llm: Any,
+    pg_engine: AsyncEngine,
 ) -> None:
     """ТЗ worker test 3: turn.extract writes turn.extracted, publishes extractor_done to
     session_events_channel(session_id), and on rerun emits evidence.superseded on the old seq."""
@@ -70,6 +73,7 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
     sse_events = dict(parse_sse(turn_resp.text))
     turn_id = UUID(sse_events["turn_started"]["turn_id"])
 
+    await project_and_dispatch(settings, db, pg_engine, neo4j, seeded_domain.learner_id)  # §8.9 п.7
     # 2. Claim the enqueued turn.extract job
     async with db() as session, session.begin():
         job = await claim_next_job(session, "test-worker", ["turn.extract"])
@@ -191,6 +195,7 @@ async def test_turn_extract_worker_writes_event_publishes_and_supersedes_on_reru
                 seeded_domain.learner_id,
                 session_id,
                 dict(job.payload),
+                required_seq=None,
             ),
         )
         rerun_job = await claim_next_job(session, "test-worker", ["turn.extract"])

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
+from quack.jobs.kinds import KIND_LLM_ROLES
 from quack.jobs.queue import (
     ClaimedJob,
     JobDeferred,
@@ -32,6 +33,7 @@ from quack.jobs.queue import (
 )
 from quack.llm.errors import LLMBudgetExceededError
 from quack.llm.gateway import LLMGateway
+from quack.llm.pressure import pressured_models
 from quack.logging import get_logger
 
 log = get_logger(__name__)
@@ -41,18 +43,18 @@ log = get_logger(__name__)
 class JobContext:
     """Per-process resources of `workers` (ТЗ Фазы 3 §4.2, seam S1).
 
-    The field set is a contract. `engine`, `neo4j`, `redis`, `llm` and `compute` default to
-    `None` only until WP2.1 (stage III): Phase 2 handlers still build their own and tests
-    construct the context from two fields (D-A-002).
+    The field set is a contract. Handlers take the heavy objects only from here and never
+    create them. `redis = None` means work without Redis (§4.2). Tests build the context with
+    `tests.support.resources.build_job_context`.
     """
 
     settings: Settings
     session_factory: SessionFactory
-    engine: AsyncEngine | None = None
-    neo4j: AsyncDriver | None = None
-    redis: Redis | None = None
-    llm: LLMGateway | None = None
-    compute: ComputeClient | None = None
+    engine: AsyncEngine
+    neo4j: AsyncDriver
+    redis: Redis | None
+    llm: LLMGateway
+    compute: ComputeClient
 
 
 type JobHandler = Callable[[ClaimedJob, JobContext], Awaitable[None]]
@@ -79,10 +81,9 @@ class JobRunner:
     settings: Settings
     session_factory: SessionFactory
     worker_id: str
+    # The process-wide resources handed to every handler (WP2.1).
+    context: JobContext
     handlers: dict[str, JobHandler] = field(default_factory=lambda: JOB_HANDLERS)
-    # WP2.1: the process-wide resources handed to every handler; built from the two
-    # fields above when absent (tests of the queue core).
-    context: JobContext | None = None
 
     async def _heartbeat(self, job: ClaimedJob) -> None:
         while True:
@@ -100,15 +101,34 @@ class JobRunner:
         jitter = random.uniform(0, self.settings.daily_budget_defer_jitter_s)
         return JobDeferred((midnight - now).total_seconds() + jitter, str(exc))
 
+    async def _claimable_kinds(self) -> list[str]:
+        """WP5.3 (Т-§22.5): registered kinds minus those whose roles run on a pressured model.
+        The flags are read with one Redis call per claim iteration; without Redis — none."""
+        kinds = sorted(self.handlers)
+        pressured = await pressured_models(self.context.redis)
+        if not pressured:
+            return kinds
+        return [
+            kind
+            for kind in kinds
+            if not any(
+                self.settings.model_for_role(role) in pressured
+                for role in KIND_LLM_ROLES.get(kind, ())
+            )
+        ]
+
     async def run_one(self) -> bool:
         """Claim and execute one job; False when nothing was claimable."""
         if not self.handlers:
             return False
+        kinds = await self._claimable_kinds()
+        if not kinds:
+            return False
         async with self.session_factory() as session, session.begin():
-            job = await claim_next_job(session, self.worker_id, sorted(self.handlers))
+            job = await claim_next_job(session, self.worker_id, kinds)
         if job is None:
             return False
-        context = self.context or JobContext(self.settings, self.session_factory)
+        context = self.context
         beat = asyncio.create_task(self._heartbeat(job))
         try:
             try:

@@ -47,7 +47,7 @@ KIND_LLM_ROLES: dict[str, tuple[str, ...]] = {
 
 
 def turn_extract(
-    learner_id: UUID, session_id: UUID, payload: dict[str, Any], *, required_seq: int | None = None
+    learner_id: UUID, session_id: UUID, payload: dict[str, Any], *, required_seq: int | None
 ) -> JobSpec:
     return JobSpec(
         kind="turn.extract",
@@ -72,7 +72,7 @@ def session_checkpoint(learner_id: UUID, session_id: UUID, payload: dict[str, An
 
 
 def session_finish_artifacts(
-    learner_id: UUID, session_id: UUID, payload: dict[str, Any], *, required_seq: int | None = None
+    learner_id: UUID, session_id: UUID, payload: dict[str, Any], *, required_seq: int | None
 ) -> JobSpec:
     return JobSpec(
         kind="session.finish_artifacts",
@@ -86,7 +86,7 @@ def session_finish_artifacts(
 
 
 def artifact_refresh_cheatsheet(
-    learner_id: UUID, topic_id: UUID, payload: dict[str, Any], *, required_seq: int | None = None
+    learner_id: UUID, topic_id: UUID, payload: dict[str, Any], *, required_seq: int | None
 ) -> JobSpec:
     return JobSpec(
         kind="artifact.refresh_cheatsheet",
@@ -100,7 +100,7 @@ def artifact_refresh_cheatsheet(
 
 
 def graph_curate(
-    learner_id: UUID, domain_id: UUID, payload: dict[str, Any], *, required_seq: int | None = None
+    learner_id: UUID, domain_id: UUID, payload: dict[str, Any], *, required_seq: int | None
 ) -> JobSpec:
     return JobSpec(
         kind="graph.curate",

@@ -15,7 +15,7 @@ from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.domains import curation
 from quack.jobs.queue import ClaimedJob
-from quack.jobs.runner import JobContext
+from tests.support.resources import build_job_context
 
 
 class _Result:
@@ -103,13 +103,7 @@ async def test_handle_graph_curate_uses_context_resources_without_creating_any(
             gateways.append(self)
 
     gateway = _Gateway()
-    ctx = JobContext(
-        settings=settings,
-        session_factory=db,
-        neo4j=driver,  # type: ignore[arg-type]
-        redis=redis,  # type: ignore[arg-type]
-        llm=gateway,  # type: ignore[arg-type]
-    )
+    ctx = build_job_context(settings, db, driver, redis, llm=gateway)  # type: ignore[arg-type]
     for _ in range(2):
         await curation.handle_graph_curate(_job(uuid4(), uuid4()), ctx)
 
@@ -119,13 +113,7 @@ async def test_handle_graph_curate_uses_context_resources_without_creating_any(
     first_run = len(driver.queries)
 
     other_driver = _Driver()
-    other = JobContext(
-        settings=settings,
-        session_factory=db,
-        neo4j=other_driver,  # type: ignore[arg-type]
-        redis=_Redis(),  # type: ignore[arg-type]
-        llm=gateway,  # type: ignore[arg-type]
-    )
+    other = build_job_context(settings, db, other_driver, _Redis(), llm=gateway)  # type: ignore[arg-type]
     await curation.handle_graph_curate(_job(uuid4(), uuid4()), other)
     assert other_driver.queries and len(driver.queries) == first_run
 
@@ -144,7 +132,7 @@ async def test_curation_reads_graph_through_consistent_slice_in_read_mode(
     monkeypatch.setattr(curation, "read_consistent_slice", _spy)
 
     learner_id, domain_id = uuid4(), uuid4()
-    ctx = JobContext(settings=settings, session_factory=db)
+    ctx = build_job_context(settings, db, None, None)
     await curation.curate_domain_graph(
         _job(learner_id, domain_id),
         ctx,
