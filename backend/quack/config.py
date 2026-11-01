@@ -528,6 +528,68 @@ class Settings(BaseSettings):
     # Т-§7.4 «окно горит» ×0.5; ТЗ §6.2 не называет параметр — Phase 3 decision D-C-019.
     hot_window_factor: float = 0.5
 
+    # Phase 4 (ТЗ Фазы 4 §6.7), stream C. Secrets per role — Д-§7; values from Т-§21.3,
+    # Т-§22.11, Д-§14.1. `None` — the value is not in the documents (Phase 4 decision D-C-105).
+    # WP18 (Т-§19.1, Д-§3.1, Д-§7)
+    auth_link_ttl_min: int = 15
+    auth_link_per_email_per_hour: int = 5
+    auth_link_per_ip_per_hour: int = 20
+    auth_session_ttl_days: int = 7
+    session_cookie_domain: str = "qvack.online"
+    auth_success_redirect_url: str | None = None
+    terms_version: str | None = None
+    # Phase 4 decision D-C-104: names of sender and redirect URI are not in §6.7.
+    auth_email_from: str = "login@qvack.online"
+    google_oidc_redirect_url: str = "https://api.qvack.online/auth/google/callback"
+    email_api_key: SecretStr = SecretStr("")
+    google_oidc_client_id: SecretStr = SecretStr("")
+    google_oidc_client_secret: SecretStr = SecretStr("")
+    # WP19 (Т-§19.8, Д-§8.4)
+    upload_max_mb: int = 50
+    object_url_ttl_s: int = 300
+    export_link_ttl_hours: int = 24
+    s3_bucket_learners: str = "quack-learners"
+    s3_endpoint: SecretStr = SecretStr("")
+    s3_access_key: SecretStr = SecretStr("")
+    s3_secret_key: SecretStr = SecretStr("")
+    # WP25 seam S9 (Д-§8.5). Phase 4 decision D-C-103: the R2 endpoint is a config address.
+    deletions_bucket: str = "quack-deletions"
+    deletions_s3_endpoint: str = ""
+    deletions_s3_access_key: SecretStr = SecretStr("")
+    deletions_s3_secret_key: SecretStr = SecretStr("")
+    # WP20 (Т-§10.5, ТЗ §2.3 п.17)
+    materials_k: int = 5
+    embedding_dim: int = 768
+    modal_token_id: SecretStr = SecretStr("")
+    modal_token_secret: SecretStr = SecretStr("")
+    # WP21 (Т-§15, Т-§22.11)
+    stroke_chunk_seconds: int = 10
+    mark_min_confidence: float = 0.8
+    error_grace_ms: int = 8000
+    stuck_idle_s: int = 60
+    max_unprompted_marks_per_task: int = 2
+    min_intervention_gap_s: int = 45
+    # Client parameters served in GET /v1/me (ТЗ §6.7); Т-§21.3 (§15.2, §15.3, §16.2).
+    stroke_batch_ms: int = 300
+    line_pause_ms: int = 1200
+    capture_still_ms: int = 700
+    # WP22 (Т-§16, Т-§22.6)
+    pairing_ttl_s: int = 120
+    sheet_line_match_threshold: float = 0.2
+    new_sheet_match_share: float = 0.3
+    # WP23 (Т-§17)
+    cards_per_topic_max: int = 15
+    cheatsheet_fit_rounds: int = 2
+    # WP9 (Д-§2.1, Д-§4.2, Д-§8.1, Д-§9.3)
+    disk_warn_pct: int = 75
+    disk_crit_pct: int = 90
+    team_daily_alert_usd: float = 60.0
+    backup_interval_hours: int = 6
+    backup_retention_days: int = 14
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["https://app.qvack.online", "https://preview.qvack.online"]
+    )
+
     fold: FoldParams = Field(default_factory=FoldParams)
 
     @model_validator(mode="after")
@@ -598,6 +660,21 @@ class Settings(BaseSettings):
             self.meta_api_key.get_secret_value(),
             self.jwt_secret.get_secret_value(),
             self.neo4j_password.get_secret_value(),
+            *(
+                secret.get_secret_value()
+                for secret in (
+                    self.email_api_key,
+                    self.google_oidc_client_id,
+                    self.google_oidc_client_secret,
+                    self.s3_endpoint,
+                    self.s3_access_key,
+                    self.s3_secret_key,
+                    self.deletions_s3_access_key,
+                    self.deletions_s3_secret_key,
+                    self.modal_token_id,
+                    self.modal_token_secret,
+                )
+            ),
         ]
         return [v for v in values if len(v) >= 4]
 

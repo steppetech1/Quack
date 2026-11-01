@@ -1,5 +1,8 @@
 """Builders of process resources with test dependencies (ТЗ Фазы 3 §4.2, §8.1, seam S1).
 
+ТЗ Фазы 4 §4.2: `AppResources` also gets `storage`, `embeddings`, `email`, `deletions`; by default
+they are the in-memory doubles of `tests.support` (§8.1).
+
 `build_app_resources` assembles `quack.api.resources.AppResources` from the test pools,
 `build_job_context` assembles `quack.jobs.runner.JobContext` (WP2.1, conflict 20 of §2.3).
 """
@@ -12,15 +15,23 @@ from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from quack.api.email import EmailSender
 from quack.api.resources import AppResources
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory, create_session_factory
+from quack.embeddings.client import EmbeddingClient
 from quack.jobs.runner import JobContext
 from quack.llm.gateway import LLMGateway
 from quack.llm.provider import LLMProvider
+from quack.storage.deletions import DeletionJournal
+from quack.storage.objects import ObjectStore
 from tests.support.compute import ComputeScenario, scripted_compute
+from tests.support.deletions import FakeDeletionJournal
+from tests.support.email import FakeEmailSender
+from tests.support.embeddings import FakeEmbeddingClient
 from tests.support.llm import UnavailableLLMProvider
+from tests.support.storage import InMemoryObjectStore
 
 
 def build_app_resources(
@@ -32,10 +43,15 @@ def build_app_resources(
     session_factory: SessionFactory | None = None,
     provider: LLMProvider | None = None,
     compute: ComputeClient | None = None,
+    storage: ObjectStore | None = None,
+    embeddings: EmbeddingClient | None = None,
+    email: EmailSender | None = None,
+    deletions: DeletionJournal | None = None,
 ) -> AppResources:
     """`AppResources` over the test pools. `neo4j` / `redis` may be the broken doubles of
     `tests.support.broken`; by default the LLM is down (`UnavailableLLMProvider`) and compute is an
-    empty `ComputeScenario` (answers 503)."""
+    empty `ComputeScenario` (answers 503); storage, embeddings, email and the deletion journal
+    are the working in-memory doubles."""
     factory = session_factory or create_session_factory(engine)
     return AppResources(
         settings=settings,
@@ -45,6 +61,10 @@ def build_app_resources(
         redis=cast(Redis | None, redis),
         llm=LLMGateway(factory, provider or UnavailableLLMProvider(), settings),
         compute=compute or scripted_compute(ComputeScenario()),
+        storage=storage or InMemoryObjectStore(),
+        embeddings=embeddings or FakeEmbeddingClient(settings.embedding_dim),
+        email=email or FakeEmailSender(),
+        deletions=deletions or FakeDeletionJournal(),
     )
 
 
