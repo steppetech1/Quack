@@ -235,7 +235,7 @@ async def test_sweep_deletes_presence_of_swept_session(
     await _make_stale(db, session_id)
 
     await lifecycle.sweep_inactive_sessions(
-        _sweep_job(), build_job_context(settings, db, None, None)
+        _sweep_job(), build_job_context(settings, db, None, redis)
     )
 
     assert await redis.get(presence_key(seed.learner_id)) is None

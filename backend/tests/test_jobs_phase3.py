@@ -1,10 +1,9 @@
-"""Phase 3 job queue and workers (ТЗ Фазы 3 §8.3): T-Q1…T-Q4, T-Q8.
-
-T-Q7 and T-Q9 are in `test_jobs_phase3_pending.py` until WP3.3 and WP11.4.
-"""
+"""Phase 3 job queue and workers (ТЗ Фазы 3 §8.3): T-Q1…T-Q5, T-Q7…T-Q11."""
 
 from __future__ import annotations
 
+import ast
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,12 +21,13 @@ from quack.api.app import create_app
 from quack.api.auth import issue_access_token
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
+from quack.db.redis import llm_pressure_key
 from quack.events import append_events
 from quack.events.models import NewEvent, StoredEvent
 from quack.graph.neo4j_store import Neo4jGraphStore
 from quack.graph.worker import ProjectorWorker
 from quack.jobs import kinds
-from quack.jobs.kinds import JOB_KINDS, JobDeferred
+from quack.jobs.kinds import JOB_KINDS, KIND_LLM_ROLES, JobDeferred
 from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.queue import ClaimedJob, JobSpec, claim_next_job, enqueue_job
 from quack.jobs.runner import JobContext, JobHandler, JobRunner
@@ -88,7 +88,7 @@ async def test_claim_waits_for_projection(db: SessionFactory) -> None:
     got = await _claim(db)
     assert got is not None and got.id == job_id
     # required_seq IS NULL needs no offsets row.
-    other = await _enqueue(db, kinds.graph_curate(uuid4(), uuid4(), {}))
+    other = await _enqueue(db, kinds.graph_curate(uuid4(), uuid4(), {}, required_seq=None))
     got = await _claim(db, "w2")
     assert got is not None and got.id == other
 
@@ -102,7 +102,7 @@ async def test_coalesce_keeps_max_required_seq(db: SessionFactory) -> None:
     )
     assert rows == [{"status": "queued", "required_seq": 7}]
     learner2, domain2 = uuid4(), uuid4()  # coalesce_key is curate:{domain}, so a new domain
-    await _enqueue(db, kinds.graph_curate(learner2, domain2, {}))
+    await _enqueue(db, kinds.graph_curate(learner2, domain2, {}, required_seq=None))
     await _enqueue(db, kinds.graph_curate(learner2, domain2, {}, required_seq=4))
     rows = await _q(db, "SELECT required_seq FROM ops.jobs WHERE learner_id = :l", l=learner2)
     assert rows == [{"required_seq": 4}]
@@ -133,11 +133,13 @@ async def test_job_deferred_merges_into_queued_duplicate(
     db: SessionFactory, settings: Settings
 ) -> None:
     learner, domain = uuid4(), uuid4()
-    first = await _enqueue(db, kinds.graph_curate(learner, domain, {}))
+    first = await _enqueue(db, kinds.graph_curate(learner, domain, {}, required_seq=None))
     second: list[UUID] = []
 
     async def handler(job: ClaimedJob, ctx: JobContext) -> None:
-        second.append(await _enqueue(db, kinds.graph_curate(learner, domain, {})))
+        second.append(
+            await _enqueue(db, kinds.graph_curate(learner, domain, {}, required_seq=None))
+        )
         raise JobDeferred(600, "learner_present")
 
     assert await _runner(settings, db, {"graph.curate": handler}).run_one()
@@ -151,7 +153,7 @@ async def test_job_deferred_merges_into_queued_duplicate(
 
 
 async def test_budget_errors_route_to_defer_or_dlq(db: SessionFactory, settings: Settings) -> None:
-    daily = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}))
+    daily = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None))
     session_scope = await _enqueue(db, kinds.session_checkpoint(uuid4(), uuid4(), {}))
 
     async def over_daily(job: ClaimedJob, ctx: JobContext) -> None:
@@ -245,7 +247,7 @@ async def test_purge_job_removes_learner_completely(
             break
     assert (await Neo4jGraphStore(neo4j, str(learner)).dump()).nodes != {}
     async with db() as session, session.begin():
-        await enqueue_job(session, kinds.turn_extract(learner, uuid4(), {}))
+        await enqueue_job(session, kinds.turn_extract(learner, uuid4(), {}, required_seq=None))
         await session.execute(
             text(
                 "INSERT INTO ops.dispatcher_offsets (learner_id, last_dispatched_seq) "
@@ -313,3 +315,131 @@ async def test_worker_exits_with_code_1_on_handler_mismatch(
     registry.pop("graph.curate")
     monkeypatch.setattr(cli, "register_all_handlers", lambda: registry)
     assert await cli._worker(settings) == 1
+
+
+# --- T-Q10: pressure flag of a model ---------------------------------------------------
+
+
+async def test_pressure_flag_blocks_kinds_using_that_model(
+    db: SessionFactory, settings: Settings, redis: Redis
+) -> None:
+    """WP5.3: while `llm:pressure:{model}` is set, kinds whose roles run on the model wait;
+    kinds without a model (P1 maintenance) are still claimed. The flag expires → claimed."""
+    model = settings.model_for_role("extractor")
+    assert KIND_LLM_ROLES["turn.extract"] == ("extractor",)
+    learner = uuid4()
+    extract = await _enqueue(db, kinds.turn_extract(learner, uuid4(), {}, required_seq=None))
+    sweep = await _enqueue(db, kinds.session_sweep_inactive())
+    await _exec(
+        db, "UPDATE ops.jobs SET priority = 0 WHERE id = :id", id=extract
+    )  # first in line without the flag
+    await redis.set(llm_pressure_key(model), "x", px=1000)
+
+    claimed: list[UUID] = []
+
+    async def handler(job: ClaimedJob, ctx: JobContext) -> None:
+        claimed.append(job.id)
+
+    context = build_job_context(settings, db, None, redis)
+    runner = JobRunner(
+        settings,
+        db,
+        "w-pressure",
+        context,
+        handlers={"turn.extract": handler, "session.sweep_inactive": handler},
+    )
+    assert await runner.run_one()
+    assert claimed == [sweep]
+    assert await runner.run_one() is False
+    [row] = await _q(db, "SELECT status FROM ops.jobs WHERE id = :id", id=extract)
+    assert row["status"] == "queued"
+
+    await asyncio.sleep(1.1)  # the flag expires by its TTL
+    assert await redis.exists(llm_pressure_key(model)) == 0
+    assert await runner.run_one()
+    assert claimed == [sweep, extract]
+
+
+async def test_pressure_flags_without_redis_block_nothing(
+    db: SessionFactory, settings: Settings
+) -> None:
+    """§4.2: a context without Redis claims every kind and raises nothing."""
+    job_id = await _enqueue(db, kinds.turn_extract(uuid4(), uuid4(), {}, required_seq=None))
+    seen: list[UUID] = []
+
+    async def handler(job: ClaimedJob, ctx: JobContext) -> None:
+        seen.append(job.id)
+
+    assert await _runner(settings, db, {"turn.extract": handler}).run_one()
+    assert seen == [job_id]
+
+
+# --- T-Q9: product code takes resources from the context ------------------------------
+
+_FORBIDDEN_CALLS = {
+    "create_driver",
+    "create_redis",
+    "create_engine",
+    "HttpLLMProvider",
+    "ResponsesClient",
+    "AsyncOpenAI",
+    "ComputeClient",
+}
+_PRODUCT_PACKAGES = ("domains", "session", "artifacts", "practice")
+# The only direct enqueue left after WP11.4 (WP11.2): the cheatsheet refresh endpoint.
+_ENQUEUE_EXCEPTION = ("artifacts/cheatsheets.py", "request_cheatsheet_refresh")
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _violations(path: Path) -> list[str]:
+    rel = path.relative_to(QUACK_ROOT).as_posix()
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docs = _docstring_nodes(tree)
+    found: list[str] = []
+
+    def visit(node: ast.AST, func: str | None) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            func = node.name
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name in _FORBIDDEN_CALLS:
+                found.append(f"{rel}:{node.lineno} calls {name}")
+            if name == "enqueue_job" and (rel, func) != _ENQUEUE_EXCEPTION:
+                found.append(f"{rel}:{node.lineno} calls enqueue_job in {func}")
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docs
+            and "ops.jobs" in node.value
+        ):
+            found.append(f"{rel}:{node.lineno} has SQL on ops.jobs")
+        for child in ast.iter_child_nodes(node):
+            visit(child, func)
+
+    visit(tree, None)
+    return found
+
+
+def test_product_code_uses_context_resources() -> None:
+    problems: list[str] = []
+    for package in _PRODUCT_PACKAGES:
+        for path in sorted((QUACK_ROOT / package).rglob("*.py")):
+            problems.extend(_violations(path))
+    assert problems == []

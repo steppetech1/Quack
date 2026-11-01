@@ -22,6 +22,7 @@ from quack.jobs.runner import JOB_HANDLERS, JobContext
 from quack.session.checkpoint_render import RENDERER_VERSION, render_checkpoint
 from quack.session.schemas import TeacherOutput
 from quack.session.workers import handle_session_checkpoint
+from tests.support.dispatch import dispatch
 from tests.support.resources import build_job_context
 
 if TYPE_CHECKING:
@@ -102,6 +103,7 @@ async def test_session_checkpoint_worker_writes_checkpointed_and_updates_session
         assert resp.status_code == 200, resp.text
         await _project_all(neo4j, db, seeded_domain.learner_id)
 
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     # Claim the enqueued session.checkpoint job (up_to_turn_index == 5)
     async with db() as session, session.begin():
         cp_job_1 = await claim_next_job(session, "test-cp-worker", ["session.checkpoint"])

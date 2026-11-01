@@ -119,6 +119,19 @@ async def enqueue_job(session: AsyncSession, spec: JobSpec) -> UUID:
     return result.scalar_one()
 
 
+async def cancel_learner_jobs(session: AsyncSession, learner_id: UUID) -> int:
+    """Cancel the learner's queued and running jobs (account deletion, Т-§16.3); returns the
+    number of cancelled jobs. `complete_job` of a running one then updates nothing."""
+    result = await session.execute(
+        text(
+            "UPDATE ops.jobs SET status = 'cancelled', updated_at = now() "
+            "WHERE learner_id = :l AND status IN ('queued', 'running') RETURNING id"
+        ),
+        {"l": learner_id},
+    )
+    return len(result.all())
+
+
 async def claim_next_job(
     session: AsyncSession, worker_id: str, kinds: list[str] | None = None
 ) -> ClaimedJob | None:

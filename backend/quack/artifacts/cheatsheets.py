@@ -28,6 +28,7 @@ from quack.artifacts.store import (
 from quack.db.neo4j import read_session
 from quack.db.redis import session_events_channel
 from quack.events import NewEvent, append_events
+from quack.events.reader import last_seq
 from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.topic_display import INACTIVE_SKILL_STATUSES
 from quack.jobs import kinds
@@ -89,12 +90,17 @@ async def request_cheatsheet_refresh(
     body: CheatsheetRefreshRequest,
     resources: AppResources,
 ) -> CheatsheetRefreshResponse:
-    """Enqueue `artifact.refresh_cheatsheet` (spec §7.1)."""
+    """Enqueue `artifact.refresh_cheatsheet` (spec §7.1). The learner's action has no event of
+    its own, so this is the one direct enqueue left in product code (WP11.2 exception):
+    `required_seq` is the learner's current `last_seq`."""
     await require_topic_of_learner(resources.session_factory, learner_id, topic_id)
-    spec = kinds.artifact_refresh_cheatsheet(
-        learner_id, topic_id, {"domain_id": str(body.domain_id)}
-    )
     async with resources.session_factory() as session, session.begin():
+        spec = kinds.artifact_refresh_cheatsheet(
+            learner_id,
+            topic_id,
+            {"domain_id": str(body.domain_id)},
+            required_seq=await last_seq(session, learner_id),
+        )
         job_id = await enqueue_job(session, spec)
     return CheatsheetRefreshResponse(job_id=job_id, status="queued")
 
@@ -256,27 +262,25 @@ async def _digest_event(
 
 
 async def run_finish_artifacts(job: ClaimedJob, deps: WorkerDeps) -> None:
-    """`session.digest_created` (`artifacts@1`, mode digest, or a template) and, for a session
-    with a topic, `artifact.refresh_cheatsheet` in the same transaction (decision 3, A15). The
-    payload is the one of `finish_session`: `{"session_id", "domain_id", "topic_id"}` (WP6.4)."""
+    """`session.digest_created` (`artifacts@1`, mode digest, or a template). For a session with
+    a topic the dispatcher turns that event into `artifact.refresh_cheatsheet` (decision 3, A15,
+    WP11.2). The payload is the one of `finish_session`: `{"session_id", "domain_id",
+    "topic_id"}` (WP6.4)."""
     learner_id = _learner(job)
     session_id = UUID(job.payload["session_id"])
     domain_id = UUID(job.payload["domain_id"])
     topic = job.payload.get("topic_id")
     topic_id = None if topic is None else UUID(topic)
 
-    # A10: a retried job does not write a second digest but still enqueues the cheatsheet.
+    # A10: a retried job does not write a second digest.
     key = f"session.digest_created:{session_id}"
     events: list[NewEvent] = []
     if await stored_event(deps.session_factory, learner_id, key) is None:
         events.append(await _digest_event(deps, learner_id, session_id, domain_id, topic_id, key))
+    # WP11.4: artifact.refresh_cheatsheet is enqueued by the log dispatcher from
+    # session.digest_created (quack/jobs/dispatcher_rules.py).
     async with deps.session_factory() as session, session.begin():
         await append_events(session, learner_id, events, redis=deps.redis)
-        if topic_id is not None:
-            payload = {"domain_id": str(domain_id), "session_id": str(session_id)}
-            await enqueue_job(
-                session, kinds.artifact_refresh_cheatsheet(learner_id, topic_id, payload)
-            )
 
 
 # --- artifact.refresh_cheatsheet ------------------------------------------------------

@@ -22,6 +22,7 @@ from quack.graph.ids import CURRENT_RULES_VERSION
 from quack.graph.neo4j_store import find_learners_with_rules
 from quack.graph.rebuild import rebuild_learner
 from quack.graph.worker import ProjectorWorker
+from quack.jobs.dispatcher import Dispatcher, supervise
 from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.runner import JobRunner
 from quack.logging import configure_logging, get_logger
@@ -42,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m quack.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("api", help="run the HTTP API (uvicorn)")
-    sub.add_parser("worker", help="run the projector and the job executors")
+    sub.add_parser("worker", help="run the projector, the dispatcher and the job executors")
     ops = sub.add_parser("ops", help="operational commands")
     ops_sub = ops.add_subparsers(dest="op", required=True)
     ops_sub.add_parser("migrate", help="alembic upgrade head")
@@ -125,9 +126,14 @@ async def _worker(settings: Settings) -> int:
             handlers=handlers,
             context=context,
         )
+        dispatcher = Dispatcher(settings, context.session_factory, context.redis)
+        pause = settings.dispatcher_restart_pause_s
         log.info("worker_started", worker_id=worker_id)
+        # WP11.1 (Т-§22.4): projector and dispatcher are separate supervised tasks; a crash of
+        # one is logged and restarted after the pause and does not stop the other.
         await asyncio.gather(
-            projector.run_forever(stop),
+            supervise("projector", projector.run_forever, stop, restart_pause_s=pause),
+            supervise("dispatcher", dispatcher.run_forever, stop, restart_pause_s=pause),
             runner.run_forever(stop),
             PeriodicScheduler(settings, context.session_factory).run_forever(stop),
         )

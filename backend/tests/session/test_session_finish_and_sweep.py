@@ -21,6 +21,7 @@ from quack.jobs.runner import JOB_HANDLERS, JobRunner
 from quack.session import lifecycle
 from tests.session.fixtures import SeededDomain
 from tests.session.helpers import make_token
+from tests.support.dispatch import dispatch, mark_dispatched
 from tests.support.resources import build_job_context
 
 pytest_plugins = ["tests.session.fixtures"]
@@ -179,6 +180,10 @@ async def test_finish_session_writes_completed_enqueues_jobs_deletes_presence_an
             {"id": uuid4(), "l": learner, "s": session_id, "t": turn1},
         )
 
+    # The turns above went straight into the log, not through the turn endpoint: their jobs are
+    # not this test's subject (WP11.4, §8.9 п.7).
+    await mark_dispatched(db, learner)
+
     # Foreign learner or unknown session id -> 404 NOT_FOUND, leaving the session active.
     stranger = uuid4()
     stranger_headers = {"Authorization": f"Bearer {make_token(settings, stranger)}"}
@@ -244,6 +249,7 @@ async def test_finish_session_writes_completed_enqueues_jobs_deletes_presence_an
     assert detail.status_code == 200, detail.text
     assert detail.json()["status"] == "completed"
 
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     # Both `session.finish_artifacts` and `graph.curate` are queued in `ops.jobs`.
     jobs = await _jobs(db)
     assert [j["kind"] for j in jobs] == ["session.finish_artifacts", "graph.curate"]
@@ -295,6 +301,7 @@ async def test_finish_session_without_topic_or_turns_sets_null_topic_and_zero_st
     auth_headers: dict[str, str],
     seeded_domain: SeededDomain,
     db: SessionFactory,
+    settings: Settings,
 ) -> None:
     seed = seeded_domain
     started = await _start(client, auth_headers, seed, "start-notopic", mode="practice")
@@ -313,6 +320,7 @@ async def test_finish_session_without_topic_or_turns_sets_null_topic_and_zero_st
     assert stats["tokens_used"] == 0
     assert 0 <= stats["duration_sec"] < 30
 
+    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
     jobs = {j["kind"]: j for j in await _jobs(db)}
     assert set(jobs) == {"session.finish_artifacts", "graph.curate"}
     fin_payload = _payload(jobs["session.finish_artifacts"])

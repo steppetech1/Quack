@@ -183,7 +183,7 @@ async def test_chunked_rebuild_respects_presence(
 
 
 async def test_replay_failed_job(db: SessionFactory) -> None:
-    spec = kinds.turn_extract(uuid4(), uuid4(), {"turn": 3})
+    spec = kinds.turn_extract(uuid4(), uuid4(), {"turn": 3}, required_seq=None)
     async with db() as session, session.begin():
         await enqueue_job(session, JobSpec(**{**spec.__dict__, "max_attempts": 1}))
     async with db() as session, session.begin():
@@ -237,7 +237,9 @@ async def test_job_runner_executes_and_retries(settings: Settings, db: SessionFa
     runner = JobRunner(settings, db, "runner-1", context, handlers={"turn.extract": ok})
     assert await runner.run_one() is False
     async with db() as session, session.begin():
-        await enqueue_job(session, kinds.turn_extract(uuid4(), uuid4(), {"n": 1}))
+        await enqueue_job(
+            session, kinds.turn_extract(uuid4(), uuid4(), {"n": 1}, required_seq=None)
+        )
         await enqueue_job(session, kinds.session_checkpoint(uuid4(), uuid4(), {}))
     assert await runner.run_one() is True
     assert [j.payload for j in seen] == [{"n": 1}]
