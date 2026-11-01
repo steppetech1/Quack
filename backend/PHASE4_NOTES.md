@@ -294,6 +294,16 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 - Тесты: `compute/tests/math/test_grammar.py` (`T-CH5`), `test_equivalence.py` (`T-CH4`, `T-CH7` без размерности).
 - Требует подтверждения владельцем: нет
 
+### D-B-123. Эндпоинты `/v1/math/check`, `/v1/math/transition`
+- Класс: B
+- WP / место: WP11.5, `compute/quack_compute/math/` (`schemas.py`, `service.py`, `latex.py`, `units.py`), маршруты в `compute/quack_compute/app.py` (объявление B по §7.3 п.3, как просил C в #82)
+- Контекст: `Т-§6.5`–`Т-§6.7`, `Т-§15.4` п.1, `Т-§22.7` задают поведение, не форму запроса.
+- Решение: выражение — `{latex?, sympy?}`, `sympy` разбирается первым, без него — LaTeX через ANTLR strict; `kind = quantity` — сырой ответ с единицей и `pint` (СИ, запятая → точка, допуск по `Т-§6.4`, иная размерность — `incorrect` + `dimension`); бюджет вызова — `timeout_ms` из запроса (API — `symbolic_inline_timeout_ms`, страховка — `symbolic_background_timeout_ms`), доля на `simplify` — `simplify_share`; неудача — `status: failed` с `reason` → `check.failed`. Переход строки: уравнение — равенство множеств решений, неравенство — интервалы, иначе — эквивалентность выражений.
+- Почему: §0.4.3 п.2 (буква `Т-§`), п.6 (покрыто тестами).
+- Обратимость: модели в `math/schemas.py`.
+- Тесты: `compute/tests/math/test_service.py`.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-101. Имена рабочих веток

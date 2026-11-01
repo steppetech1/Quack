@@ -91,7 +91,19 @@ def compare(
         a, b = parse(student, variables), parse(reference, variables)
     except ParseRefused as exc:
         return Failed("unparsed", str(exc))
-    rng = random.Random(_seed(mode, student, reference))
+    return compare_parsed(a, b, mode=mode, form_target=form_target, params=params)
+
+
+def compare_parsed(
+    a: Any,
+    b: Any,
+    *,
+    mode: Mode = "equal",
+    form_target: FormTarget | None = None,
+    params: Params,
+) -> Result:
+    """Compare two parsed objects (from `grammar.parse` or the strict LaTeX parser)."""
+    rng = random.Random(_seed(mode, sympy.srepr(a), sympy.srepr(b)))
     try:
         match mode:
             case "equal":

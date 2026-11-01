@@ -31,6 +31,14 @@ from quack_compute.contracts import (
     RenderSnapshotsResponse,
     RenderStrokesRequest,
 )
+from quack_compute.math import service as math_service
+from quack_compute.math.schemas import (
+    MathCheckRequest as MathCheckRequestV4,
+)
+from quack_compute.math.schemas import (
+    MathCheckResponse as MathCheckResponseV4,
+)
+from quack_compute.math.schemas import TransitionRequest, TransitionResponse
 from quack_compute.pool import JobTimeout, TaskPool
 from quack_compute.renderer import Renderer
 from quack_compute.schemas import MathCheckRequest, MathCheckResponse
@@ -71,6 +79,18 @@ def create_app(settings: ComputeSettings | None = None) -> FastAPI:
     async def check_math(request: MathCheckRequest) -> MathCheckResponse:
         """Phase 3 contract; replaced by `/v1/math/check` (WP11.5)."""
         return await run_check(request)
+
+    @app.post("/v1/math/check")
+    async def math_check(body: MathCheckRequestV4, request: Request) -> MathCheckResponseV4:
+        """WP11.5 (stream B): `Т-§6.5`–`Т-§6.7`; the call is killed past `timeout_ms`."""
+        pool: TaskPool = request.app.state.pool
+        return await pool.run(math_service.check_math, body, timeout_s=body.timeout_ms / 1000)
+
+    @app.post("/v1/math/transition")
+    async def math_transition(body: TransitionRequest, request: Request) -> TransitionResponse:
+        """WP11.5 (stream B): does a canvas line follow from the previous one (`Т-§15.4`)."""
+        pool: TaskPool = request.app.state.pool
+        return await pool.run(math_service.check_transition, body, timeout_s=body.timeout_ms / 1000)
 
     @app.post("/v1/pdf/pages")
     async def pdf_pages(body: PdfPagesRequest, request: Request) -> PdfPagesResponse:
