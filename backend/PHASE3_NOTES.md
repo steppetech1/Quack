@@ -429,6 +429,26 @@ UTC-времени эпохи. Склейка по `coalesce_key` держит �
   `worker` на prod; команды `ops status`, `event-registry`, `can-rollback` добавятся в тест вместе
   с WP8.4–8.5.
 
+### D-A-014. WP8.4, WP8.5, WP11.5: `ops status`, реестр событий, `can-rollback`
+
+Класс B, одно место класса C (пометки «без правила»).
+
+- `ops status` (`quack/ops/status.py::collect_status`) печатает один JSON-объект со всеми полями
+  WP8.4, включая `dispatcher.learners_lagging` и `dispatcher.max_lag_events` (WP11.5). Код 0, если
+  Postgres ответил, иначе 2 (значения из Postgres — `null`). Redis или Neo4j недоступны —
+  `dependencies.* = "error"`, `llm.pressure` и `llm.circuit_open` — `null`, код 0. Ошибки
+  зависимостей пишутся в лог только на уровне `debug`: лог и отчёт идут в один stdout, а команда
+  обязана печатать ровно один объект. Проверено живым запуском с недоступными Postgres и Redis.
+- `ops event-registry --out PATH` — пары каталога `(type, schema_version)`, отсортированные, и
+  `rules_version` (`CURRENT_RULES_VERSION`); эталон `tests/fixtures/event_registry.json` (37 пар:
+  36 типов и `turn.extracted@2`, `rules@2`). `ops can-rollback --to-registry PATH` сравнивает с
+  реестром прошлого образа и `ops.event_types_seen`; код 0 при `can_rollback`, иначе 1.
+- **Класс C, T-O6.** ТЗ просит пометку «без правила» «в каталоге», но каталог —
+  `quack/events/catalog.py` (зона C), а правила диспетчера — зона A. Пометки диспетчера лежат
+  рядом с правилами: `dispatcher_rules.NO_DISPATCH_RULE`. Пометка «без обработчика» проектора —
+  запись `_no_graph_effect` в `graph/phase_a.HANDLERS`. Проверка — `ops.registry.registry_gaps()`:
+  новая пара без обработчика проектора или без правила и пометки даёт строку, `T-O6` падает.
+
 ### D-A-012. WP8.6: `ops seed-learners`
 
 Класс B. `quack/ops/seed.py::seed_learners(session_factory, settings, *, count, fixture,

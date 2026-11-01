@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import os
 import signal
 import socket
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 import structlog
@@ -30,7 +31,9 @@ from quack.jobs.periodic import PeriodicScheduler
 from quack.jobs.runner import JobRunner
 from quack.logging import configure_logging, get_logger
 from quack.ops.commands import migrate, purge_deleted, replay_dlq
+from quack.ops.registry import can_rollback, seen_pairs, write_event_registry
 from quack.ops.seed import SeedRefusedError, seed_learners, write_learners
+from quack.ops.status import collect_status
 from quack.runtime import (
     JobHandlersMismatchError,
     check_handlers_complete,
@@ -82,6 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
     replay = ops_sub.add_parser("replay-dlq", help="replay DLQ entries")
     replay.add_argument("--id", action="append", dest="ids", help="DLQ entry id (repeatable)")
     ops_sub.add_parser("purge-deleted", help="physically delete learners with tombstones")
+    ops_sub.add_parser("status", help="print the state of the system as one JSON object")
+    registry = ops_sub.add_parser("event-registry", help="write the event registry JSON")
+    registry.add_argument("--out", required=True, help="path of the registry to write")
+    rollback = ops_sub.add_parser("can-rollback", help="check a rollback to a previous image")
+    rollback.add_argument(
+        "--to-registry", required=True, help="event registry of the previous image"
+    )
     seed = ops_sub.add_parser("seed-learners", help="create test learners for the load stand")
     seed.add_argument("--count", type=int, required=True, help="number of learners")
     seed.add_argument("--out", required=True, help="path of the learners JSON to write")
@@ -274,6 +284,23 @@ async def _ops(settings: Settings, args: argparse.Namespace) -> int:
         return 0
     if args.op == "rebuild":
         return await _rebuild(settings, args)
+    if args.op == "status":
+
+        async def status(engine, session_factory, driver, redis) -> int:
+            report, code = await collect_status(settings, session_factory, driver, redis)
+            print(json.dumps(report, sort_keys=True))
+            return code
+
+        return await _with_resources(settings, status)
+    if args.op == "can-rollback":
+        previous: dict[str, Any] = args.previous
+
+        async def rollback(engine, session_factory, driver, redis) -> int:
+            result = can_rollback(previous, await seen_pairs(session_factory))
+            print(json.dumps(result, sort_keys=True))
+            return 0 if result["can_rollback"] else 1
+
+        return await _with_resources(settings, rollback, redis=False)
     if args.op == "seed-learners":
         return await _seed_learners(settings, args)
     if args.op == "replay-dlq":
@@ -314,6 +341,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.op == "migrate":
         migrate(settings)
         return 0
+    if args.op == "event-registry":
+        write_event_registry(Path(args.out))
+        return 0
+    if args.op == "can-rollback":
+        args.previous = json.loads(Path(args.to_registry).read_text(encoding="utf-8"))
     return asyncio.run(_ops(settings, args))
 
 

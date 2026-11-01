@@ -77,6 +77,46 @@ DISPATCHER_RULES: tuple[DispatcherRule, ...] = (
 )
 
 
+# WP11.5, Д-§5.2 п.6: event types that trigger no job — an explicit "no rule" mark. A new type
+# in the catalog must get a rule or a place here (`ops.registry.registry_gaps`, T-O6).
+NO_DISPATCH_RULE: frozenset[str] = frozenset(
+    {
+        "learner.registered",
+        "learner.preferences_updated",
+        "domain.created",
+        "domain.archived",
+        "structure.interview_completed",
+        "structure.proposed",
+        "structure.confirmed",
+        "structure.edited",
+        "topic.status_changed",
+        "topic.merged",
+        "skill.promoted",
+        "skill.merged",
+        "diagnostic.started",
+        "diagnostic.question_answered",
+        "diagnostic.completed",
+        "session.started",
+        "session.abandoned",
+        "session.checkpointed",
+        "turn.student_replied",
+        "teacher.concept_explained",
+        "turn.extracted",
+        "task.generated",
+        "task.assigned",
+        "task.hint_given",
+        "task.submitted",
+        "task.evaluated",
+        "misconception.resolved",
+        "misconception.merged",
+        "evidence.superseded",
+        "artifact.note_created",
+        "artifact.note_updated",
+        "artifact.note_deleted",
+        "artifact.cheatsheet_updated",
+    }
+)
+
 # Event types whose rules need `EventFacts` (the session row, the student reply of the turn).
 _NEEDS_FACTS = frozenset({"turn.teacher_replied", "session.completed"})
 
