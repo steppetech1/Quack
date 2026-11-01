@@ -146,6 +146,14 @@ async def redis(settings: Settings) -> AsyncIterator[Redis]:
 
 
 @pytest.fixture(autouse=True)
+def _restore_process_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cli.main` writes `PROCESS_ROLE` to the environment (WP8.1); `Settings` of later tests
+    must not inherit it. setenv records the original state, delenv starts the test without it."""
+    monkeypatch.setenv("PROCESS_ROLE", "api")
+    monkeypatch.delenv("PROCESS_ROLE")
+
+
+@pytest.fixture(autouse=True)
 def _clear_local_rate_limits() -> None:
     from quack.api.ratelimit import LOCAL_LIMITS
 
