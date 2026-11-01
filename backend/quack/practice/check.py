@@ -151,7 +151,10 @@ async def check(
                 help_step=help_used.hint_step,
                 solution_shown=help_used.solution_requested,
             )
-    # Fast types and numbers written as expressions go to compute (WP11.3, WP11.5).
+    # Fast types and numbers written as expressions go to compute (WP11.3, WP11.5). Without a
+    # compute call nothing is decided now: the insurance job checks later (Т-§6.1).
+    if compute is None:
+        return NotYet(answer_seq, part)
     raise NotImplementedError
 
 
