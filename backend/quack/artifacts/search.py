@@ -31,11 +31,18 @@ _ARTIFACT_VECTOR = "to_tsvector('english', title || ' ' || content_md)"
 _EVENT_VECTOR = "to_tsvector('english', coalesce(e.payload->>'text', ''))"
 _TEXT_TYPES = ", ".join(f"'{t}'" for t in sorted(TEXT_EVENT_TYPES))
 
-# A13: the domain of an event is its own, else its session's, else its artifact's.
-_EVENT_DOMAIN_JOINS = (
-    " LEFT JOIN core.sessions s ON s.id = e.session_id"
+# The artifact of an event (notes, cheatsheets, digests).
+_EVENT_ARTIFACT_JOIN = (
     " LEFT JOIN core.artifacts a ON a.id = CAST(e.payload->>'artifact_id' AS UUID)"
+    " AND a.learner_id = e.learner_id"
 )
+# Q4 (PHASE3_NOTES): an artifact event is found only while it holds the artifact's current
+# content (`source_seq`), so deleted notes and replaced versions do not come back.
+_EVENT_CURRENT_ARTIFACT = (
+    " AND (e.payload->>'artifact_id' IS NULL OR (NOT a.is_deleted AND a.source_seq = e.seq))"
+)
+# A13: the domain of an event is its own, else its session's, else its artifact's.
+_EVENT_DOMAIN_JOINS = " LEFT JOIN core.sessions s ON s.id = e.session_id"
 _EVENT_DOMAIN_FILTER = " AND coalesce(e.domain_id, s.domain_id, a.domain_id) = :d"
 
 # Live topics of the domain and their live skills (A16).
@@ -74,9 +81,11 @@ async def search_artifacts(
         resources.session_factory,
         "SELECT e.seq, e.type, e.session_id, e.occurred_at, e.payload->>'text' AS text "
         "FROM core.events e"
+        + _EVENT_ARTIFACT_JOIN
         + ("" if domain_id is None else _EVENT_DOMAIN_JOINS)
         + f" WHERE e.learner_id = :l AND e.type IN ({_TEXT_TYPES}) "
         f"AND {_EVENT_VECTOR} @@ {_QUERY}"
+        + _EVENT_CURRENT_ARTIFACT
         + ("" if domain_id is None else _EVENT_DOMAIN_FILTER)
         + f" ORDER BY ts_rank({_EVENT_VECTOR}, {_QUERY}) DESC, e.seq DESC LIMIT :limit",
         **params,
