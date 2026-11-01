@@ -2,11 +2,8 @@
 
 Until the old stack goes away (WP1.3), Phase 4 tables live in a separate database
 `<test db>_p4` on the same server, migrated by dbmate from `backend/db/migrations/`. The
-Alembic database of Phases 1–3 stays as it is for the old tests. Other streams use these
-fixtures by importing them into their `conftest.py`:
-
-    from tests.db.fixtures import p4_db, pg_db  # noqa: F401  (pytest fixtures)
-
+Alembic database of Phases 1–3 stays as it is for the old tests. The fixtures are registered
+once in `tests/conftest.py` (`pytest_plugins`), so every test directory can request them.
 `pg_db` gives a `Db` over a database with every Phase 4 table truncated;
 `create_learner(db)` inserts a `core.learners` row (append_events needs it, Т-§2.3).
 """

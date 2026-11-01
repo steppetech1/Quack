@@ -28,6 +28,10 @@ from quack.db.redis import create_redis
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
+# ТЗ Ф4 WP1.2, D-A-103: Phase 4 Postgres fixtures (`p4_db`, `pg_db`), registered once for all
+# streams; a second registration would re-create the database under an open pool.
+pytest_plugins = ["tests.db.fixtures"]
+
 PG_DSN = os.environ.get(
     "QUACK_TEST_POSTGRES_DSN", "postgresql://quack:quack@localhost:55432/quack_test"
 )
