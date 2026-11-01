@@ -413,7 +413,8 @@ async def test_digest_request_has_names_not_ids(
 
     payload = {"session_id": str(sid), "domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
     await run_finish_artifacts(
-        await _claim(db, kinds.session_finish_artifacts(learner, sid, payload)), worker_deps
+        await _claim(db, kinds.session_finish_artifacts(learner, sid, payload, required_seq=None)),
+        worker_deps,
     )
     [call] = fake_provider.calls_for("ArtifactGenOutput")
     assert UUID_LIKE.findall(call.prompt) == []
@@ -428,7 +429,10 @@ async def test_digest_request_has_names_not_ids(
     fake_provider.respond("ArtifactGenOutput", ProviderUnavailableError("provider timeout"))
     payload = {**payload, "session_id": str(other)}
     await run_finish_artifacts(
-        await _claim(db, kinds.session_finish_artifacts(learner, other, payload)), worker_deps
+        await _claim(
+            db, kinds.session_finish_artifacts(learner, other, payload, required_seq=None)
+        ),
+        worker_deps,
     )
     template = [
         e
