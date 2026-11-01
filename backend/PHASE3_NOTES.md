@@ -439,6 +439,7 @@ UTC-времени эпохи. Склейка по `coalesce_key` держит �
   `dependencies.* = "error"`, `llm.pressure` и `llm.circuit_open` — `null`, код 0. Ошибки
   зависимостей пишутся в лог только на уровне `debug`: лог и отчёт идут в один stdout, а команда
   обязана печатать ровно один объект. Проверено живым запуском с недоступными Postgres и Redis.
+  Neo4j проверяется через `read_session` (WP4.1: вне проектора — только сессии чтения).
 - `ops event-registry --out PATH` — пары каталога `(type, schema_version)`, отсортированные, и
   `rules_version` (`CURRENT_RULES_VERSION`); эталон `tests/fixtures/event_registry.json` (37 пар:
   36 типов и `turn.extracted@2`, `rules@2`). `ops can-rollback --to-registry PATH` сравнивает с

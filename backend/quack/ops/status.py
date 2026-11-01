@@ -17,6 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from quack.config import Settings
+from quack.db.neo4j import read_session
 from quack.db.postgres import SessionFactory
 from quack.db.redis import llm_circuit_key, llm_pressure_key
 from quack.logging import get_logger
@@ -110,7 +111,7 @@ async def _neo4j_ok(driver: AsyncDriver | None) -> bool:
     if driver is None:
         return False
     try:
-        async with driver.session() as session:
+        async with read_session(driver) as session:
             result = await session.run("RETURN 1 AS ok")
             await result.consume()
         return True
