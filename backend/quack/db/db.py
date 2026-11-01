@@ -17,6 +17,7 @@ from uuid import UUID
 
 from psycopg import AsyncConnection
 from psycopg.abc import QueryNoTemplate as Query
+from psycopg.rows import class_row, dict_row
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
@@ -54,15 +55,32 @@ class Db:
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[AsyncConnection[Any]]:
         """Run the block in one transaction; a nested call reuses the outer one."""
-        raise NotImplementedError
-        yield  # type: ignore[misc]  # Stage I: makes this an async generator
+        current = self._current.get()
+        if current is not None:
+            yield current
+            return
+        callbacks: list[Callable[[], None]] = []
+        async with self._pool.connection() as conn, conn.transaction():
+            token = self._current.set(conn)
+            cb_token = self._on_commit.set(callbacks)
+            try:
+                yield conn
+            finally:
+                self._on_commit.reset(cb_token)
+                self._current.reset(token)
+        # Reached only when the outermost transaction committed.
+        for callback in callbacks:
+            callback()
 
     def on_commit(self, callback: Callable[[], None]) -> None:
         """Run `callback` after the outermost transaction of this task commits (not on rollback).
 
         Callbacks must not block: they schedule work (for example, a Redis signal) and return.
         """
-        raise NotImplementedError
+        callbacks = self._on_commit.get()
+        if callbacks is None:
+            raise RuntimeError("on_commit outside Db.transaction()")
+        callbacks.append(callback)
 
     @overload
     async def fetch_one[M: BaseModel](
@@ -77,7 +95,11 @@ class Db:
     async def fetch_one(
         self, query: Query, params: Params | None = None, *, row: type[BaseModel] | None = None
     ) -> Any:
-        raise NotImplementedError
+        async with self.transaction() as conn:
+            factory = class_row(row) if row is not None else dict_row
+            async with conn.cursor(row_factory=factory) as cur:
+                await cur.execute(query, params)
+                return await cur.fetchone()
 
     @overload
     async def fetch_all[M: BaseModel](
@@ -92,14 +114,21 @@ class Db:
     async def fetch_all(
         self, query: Query, params: Params | None = None, *, row: type[BaseModel] | None = None
     ) -> list[Any]:
-        raise NotImplementedError
+        async with self.transaction() as conn:
+            factory = class_row(row) if row is not None else dict_row
+            async with conn.cursor(row_factory=factory) as cur:
+                await cur.execute(query, params)
+                return await cur.fetchall()
 
     async def execute(self, query: Query, params: Params | None = None) -> int:
         """Run a statement; returns the number of affected rows."""
-        raise NotImplementedError
+        async with self.transaction() as conn, conn.cursor() as cur:
+            await cur.execute(query, params)
+            return cur.rowcount
 
     async def executemany(self, query: Query, params_seq: Iterable[Params]) -> None:
-        raise NotImplementedError
+        async with self.transaction() as conn, conn.cursor() as cur:
+            await cur.executemany(query, params_seq)
 
     @asynccontextmanager
     async def advisory_lock(
@@ -111,10 +140,37 @@ class Db:
         calls. Yields True if `pg_(try_)advisory_lock(keyspace, hashtext(key))` was taken;
         always released in `finally`.
         """
-        raise NotImplementedError
-        yield  # type: ignore[misc]  # Stage I: makes this an async generator
+        params = {"ks": int(keyspace), "key": str(key_id)}
+        async with self._pool.connection() as conn:
+            await conn.set_autocommit(True)
+            try:
+                if wait:
+                    await conn.execute("SELECT pg_advisory_lock(%(ks)s, hashtext(%(key)s))", params)
+                    acquired = True
+                else:
+                    cur = await conn.execute(
+                        "SELECT pg_try_advisory_lock(%(ks)s, hashtext(%(key)s))", params
+                    )
+                    found = await cur.fetchone()
+                    acquired = bool(found and found[0])
+                try:
+                    yield acquired
+                finally:
+                    if acquired:
+                        await conn.execute(
+                            "SELECT pg_advisory_unlock(%(ks)s, hashtext(%(key)s))", params
+                        )
+            finally:
+                await conn.set_autocommit(False)
 
 
 async def open_db(settings: Settings) -> Db:
     """Create and open the pool (once per process, `quack.runtime`)."""
-    raise NotImplementedError
+    pool = AsyncConnectionPool(
+        settings.postgres_dsn,
+        min_size=settings.pg_pool_min_size,
+        max_size=settings.pg_pool_max_size,
+        open=False,
+    )
+    await pool.open(wait=True)
+    return Db(pool)

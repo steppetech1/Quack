@@ -12,15 +12,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from redis.asyncio import Redis
 
 from quack.db.db import Db
+from quack.db.redis import learner_signal_channel
 from quack.events.actor import validate_actor
+from quack.events.errors import IdempotencyConflictError
+from quack.events.hashing import payload_hash
 from quack.events.registry import SCHEMA_VERSION, EventPayload, validate_payload
 from quack.logging import get_logger
 
@@ -120,11 +124,16 @@ _MOVE_COUNTER = "UPDATE core.learners SET seq = %(seq)s WHERE learner_id = %(lea
 
 
 async def _publish_signal(redis: Redis, learner_id: UUID, seq: int) -> None:
-    raise NotImplementedError
+    try:
+        await redis.publish(learner_signal_channel(learner_id), str(seq))
+    except Exception:
+        log.warning("learner_signal_publish_failed", learner_id=str(learner_id), seq=seq)
 
 
 def _schedule_signal(redis: Redis, learner_id: UUID, seq: int) -> None:
-    raise NotImplementedError
+    task = asyncio.get_running_loop().create_task(_publish_signal(redis, learner_id, seq))
+    _pending_signals.add(task)
+    task.add_done_callback(_pending_signals.discard)
 
 
 async def append_events(
@@ -135,4 +144,66 @@ async def append_events(
     redis: Redis | None = None,
 ) -> list[StoredEvent]:
     """Write `events` of one learner (Т-§2.3); returns them in input order."""
-    raise NotImplementedError
+    if not events:
+        return []
+    prepared: list[tuple[NewEvent, dict[str, Any], str]] = []
+    for new in events:
+        data = validate_payload(new.type, new.payload, new.schema_version).model_dump(mode="json")
+        prepared.append((new, data, payload_hash(data)))
+    keys = [new.idempotency_key for new in events]
+    if len(set(keys)) != len(keys):
+        raise ValueError("duplicate idempotency_key inside one append_events call")
+
+    result: list[StoredEvent] = []
+    async with db.transaction():
+        locked = await db.fetch_one(_LOCK_LEARNER, {"learner_id": learner_id}, row=_Seq)
+        if locked is None:
+            raise LearnerNotFoundError(learner_id)
+        seq = locked.seq
+        existing = {
+            e.idempotency_key: e
+            for e in await db.fetch_all(
+                _SELECT_BY_KEYS, {"learner_id": learner_id, "keys": keys}, row=StoredEvent
+            )
+        }
+        now = datetime.now(UTC)
+        seen: set[tuple[str, int]] = set()
+        for new, data, digest in prepared:
+            found = existing.get(new.idempotency_key)
+            if found is not None:
+                if found.payload_hash != digest:
+                    raise IdempotencyConflictError(new.idempotency_key, found.payload_hash, digest)
+                result.append(found)
+                continue
+            seq += 1
+            stored = await db.fetch_one(
+                _INSERT_EVENT,
+                {
+                    "learner_id": learner_id,
+                    "seq": seq,
+                    "type": new.type,
+                    "schema_version": new.schema_version,
+                    "actor": new.actor,
+                    "domain_id": new.domain_id,
+                    "session_id": new.session_id,
+                    "causation_seq": new.causation_seq,
+                    "correlation_id": new.correlation_id,
+                    "idempotency_key": new.idempotency_key,
+                    "payload_hash": digest,
+                    "occurred_at": new.occurred_at or now,
+                    "payload": Jsonb(data),
+                    "source_refs": Jsonb(new.source_refs),
+                },
+                row=StoredEvent,
+            )
+            assert stored is not None  # INSERT … RETURNING always yields the row
+            result.append(stored)
+            seen.add((new.type, new.schema_version))
+        if seq != locked.seq:
+            for event_type, version in sorted(seen):
+                await db.execute(_TYPE_SEEN, {"type": event_type, "schema_version": version})
+            await db.execute(_MOVE_COUNTER, {"seq": seq, "learner_id": learner_id})
+            if redis is not None:
+                last = seq
+                db.on_commit(lambda: _schedule_signal(redis, learner_id, last))
+    return result
