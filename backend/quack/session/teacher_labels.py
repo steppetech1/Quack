@@ -4,7 +4,8 @@ The teacher sees the session topic as `T1`, the skills of the slice as `S…`, t
 misconceptions as `M…` and the offered tasks as `K…`; no id reaches the prompt. Code turns
 the labels of the answer back into ids. An unknown label is a labelling error: the element
 is dropped with a log record and the rest of the answer is applied; the turn never fails
-(law 9). The single repair call of WP14.1 goes through the gateway repair path (WP5).
+(law 9). Before that the answer goes back to the model once with the unknown labels named
+(`teacher_label_errors`, the gateway repair path of WP5).
 """
 
 from __future__ import annotations
@@ -166,6 +167,30 @@ def _resolve(labels: LabelMap, kind: LabelKind, label: str) -> UUID | None:
 def _resolve_all(labels: LabelMap, kind: LabelKind, values: Sequence[str]) -> list[UUID]:
     resolved = (_resolve(labels, kind, v) for v in values)
     return list(dict.fromkeys(i for i in resolved if i is not None))
+
+
+def teacher_label_errors(output: TeacherOutput, labels: LabelMap) -> str | None:
+    """The labels of `output` that the table of this call does not have, as the error text
+    of the single repair call (WP14.1, T-M2); None when every label resolves."""
+    used: list[tuple[LabelKind, str]] = [("skill", s) for s in output.focus_skill_labels]
+    if output.assign_task_label is not None:
+        used.append(("task", output.assign_task_label))
+    drafted = output.concept_explained
+    if drafted is not None:
+        used.append(("topic", drafted.topic_label))
+        used.extend(("skill", s) for s in drafted.explained_skill_labels)
+    unknown: list[str] = []
+    for kind, label in used:
+        try:
+            labels.resolve(kind, label.strip())
+        except UnknownLabelError:
+            unknown.append(f"{label} ({kind})")
+    if not unknown:
+        return None
+    return (
+        "unknown labels " + ", ".join(dict.fromkeys(unknown)) + "; use only the labels given in "
+        "the input blocks of this turn"
+    )
 
 
 def resolve_teacher_output(output: TeacherOutput, labels: LabelMap) -> TeacherDecision:

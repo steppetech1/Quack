@@ -20,7 +20,13 @@ from quack.artifacts.schemas import (
     NoteUpdateRequest,
     NoteUpdateResponse,
 )
-from quack.artifacts.store import ARTIFACT_VIEW_COLUMNS, event_key, fetch_rows, stored_event
+from quack.artifacts.store import (
+    ARTIFACT_VIEW_COLUMNS,
+    check_replay,
+    event_key,
+    fetch_rows,
+    stored_event,
+)
 from quack.events import NewEvent, StoredEvent, append_events
 from quack.graph.ids import QUACK_UUID_NS
 
@@ -34,18 +40,20 @@ async def create_note(
     """`artifact.note_created` with the deterministic note id (A11)."""
     key = event_key(body.idempotency_key, "artifact.note_created")
     replay = await stored_event(resources.session_factory, learner_id, key)
-    if replay is None:
+    request = {
+        "domain_id": str(body.domain_id),
+        "topic_id": None if body.topic_id is None else str(body.topic_id),
+        "session_id": None if body.session_id is None else str(body.session_id),
+        "title": body.title,
+        "text": body.text,
+    }
+    if replay is not None:
+        check_replay(replay.payload, request, "note create")
+    else:
         artifact_id = uuid5(QUACK_UUID_NS, f"note:{learner_id}:{body.idempotency_key}")
         event = NewEvent(
             type="artifact.note_created",
-            payload={
-                "artifact_id": str(artifact_id),
-                "domain_id": str(body.domain_id),
-                "topic_id": None if body.topic_id is None else str(body.topic_id),
-                "session_id": None if body.session_id is None else str(body.session_id),
-                "title": body.title,
-                "text": body.text,
-            },
+            payload={"artifact_id": str(artifact_id), **request},
             actor=NOTE_ACTOR,
             idempotency_key=key,
         )
@@ -85,7 +93,10 @@ async def update_note(
     """`artifact.note_updated` with `version = current + 1`; 404 for a missing or foreign note."""
     key = event_key(body.idempotency_key, "artifact.note_updated")
     stored = await stored_event(resources.session_factory, learner_id, key)
-    if stored is None:
+    if stored is not None:
+        request = {"artifact_id": str(artifact_id), "title": body.title, "text": body.text}
+        check_replay(stored.payload, request, "note update")
+    else:
         stored = await _append_to_note(
             resources,
             learner_id,
@@ -112,7 +123,9 @@ async def delete_note(
     """`artifact.note_deleted`; 404 for a missing or foreign note."""
     key = event_key(body.idempotency_key, "artifact.note_deleted")
     stored = await stored_event(resources.session_factory, learner_id, key)
-    if stored is None:
+    if stored is not None:
+        check_replay(stored.payload, {"artifact_id": str(artifact_id)}, "note delete")
+    else:
         stored = await _append_to_note(
             resources,
             learner_id,

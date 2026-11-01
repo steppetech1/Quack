@@ -177,9 +177,3 @@ class ExtractorOutputV2(StrictModel):
     """extractor@2 (WP12.1, D-B-011)."""
 
     entries: list[ExtractorEntry]
-
-
-class CheckpointerOutput(StrictModel):
-    rolling_summary: str
-    open_threads: list[str]
-    key_observations: list[str]
