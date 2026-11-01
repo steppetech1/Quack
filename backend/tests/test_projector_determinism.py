@@ -85,6 +85,45 @@ async def test_batch_size_and_rebuild_equivalence() -> None:
 P_BATCH = 100
 
 
+def _merged_skill_sublog() -> tuple[UUID, list[StoredEvent]]:
+    """`structure.proposed`, `skill.merged` and a `task.evaluated` for the merged skill, numbered
+    without gaps — the counterexample the property test found."""
+    log, _ = build_scenario()
+    picked = [
+        next(e for e in log.events if e.type == "structure.proposed"),
+        next(e for e in log.events if e.type == "skill.merged"),
+    ]
+    merged_from = picked[1].payload["source_skill_id"]
+    picked.append(
+        next(
+            e
+            for e in log.events
+            if e.type == "task.evaluated"
+            and any(x["skill_id"] == merged_from for x in e.payload["skill_scores"])
+        )
+    )
+    return log.learner_id, [e.model_copy(update={"seq": i}) for i, e in enumerate(picked, 1)]
+
+
+async def test_merged_skill_evidence_refreshes_every_topic_of_the_target() -> None:
+    """Found by the property test (Т-§2.5): after `skill.merged` the target skill is PART_OF its
+    own topic and the topic of the merged skill. Evidence for the merged skill in a later batch
+    must refresh both topics, as a rebuild in one pass does."""
+    learner, events = _merged_skill_sublog()
+    by_one = InMemoryGraph()
+    await apply_in_chunks(by_one, learner, events, [1] * len(events))
+    rebuilt = await project_in_memory(learner, events, P, batch_size=len(events))
+    assert by_one.snapshot() == rebuilt.snapshot()
+
+
+async def test_neo4j_merged_skill_evidence_refreshes_every_topic(neo4j: AsyncDriver) -> None:
+    learner, events = _merged_skill_sublog()
+    expected = await project_in_memory(learner, events, P, batch_size=len(events))
+    store = Neo4jGraphStore(neo4j, str(learner))
+    await apply_in_chunks(store, learner, events, [1] * len(events))
+    assert (await store.dump()).snapshot() == expected.snapshot()
+
+
 async def test_reapplying_already_applied_events_changes_nothing() -> None:
     log, _ = build_scenario()
     graph = InMemoryGraph()

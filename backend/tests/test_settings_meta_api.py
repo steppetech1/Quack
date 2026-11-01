@@ -85,3 +85,13 @@ def test_prod_secrets_follow_the_process_role(
                 _settings(env="prod", process_role=role, **values)
         else:
             assert _settings(env="prod", process_role=role, **values).process_role == role
+
+
+def test_prod_jwt_secret_is_at_least_32_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Q6 (PHASE3_NOTES): tokens are HS256, and RFC 7518 §3.2 wants a key at least as long as
+    the hash output (256 bits); prod `api` refuses a shorter `JWT_SECRET`, dev keeps its own."""
+    monkeypatch.setenv("META_API_KEY", "meta-key-1")
+    with pytest.raises(ValidationError, match="JWT_SECRET"):
+        _settings(env="prod", process_role="api", jwt_secret="j" * 31, neo4j_password="pw")
+    assert _settings(env="prod", process_role="api", jwt_secret="j" * 32, neo4j_password="pw")
+    assert _settings(env="dev", jwt_secret="short-dev-secret")

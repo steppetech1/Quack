@@ -108,6 +108,22 @@ async def test_coalesce_keeps_max_required_seq(db: SessionFactory) -> None:
     assert rows == [{"required_seq": 4}]
 
 
+async def test_coalesced_cheatsheet_job_keeps_the_latest_session(db: SessionFactory) -> None:
+    """Q5 (PHASE3_NOTES, O6): two sessions close on one topic while the refresh waits in the
+    queue — one job, and `cheatsheet_ready` goes to the latest session (its payload wins)."""
+    learner, topic, domain = uuid4(), uuid4(), uuid4()
+    for session, seq in ((uuid4(), 3), (latest := uuid4(), 8)):
+        payload = {"domain_id": str(domain), "session_id": str(session)}
+        await _enqueue(
+            db, kinds.artifact_refresh_cheatsheet(learner, topic, payload, required_seq=seq)
+        )
+    rows = await _q(
+        db, "SELECT payload, required_seq FROM ops.jobs WHERE learner_id = :l", l=learner
+    )
+    assert len(rows) == 1
+    assert rows[0]["payload"]["session_id"] == str(latest) and rows[0]["required_seq"] == 8
+
+
 # --- T-Q3, T-Q4: deferral --------------------------------------------------------------
 
 
