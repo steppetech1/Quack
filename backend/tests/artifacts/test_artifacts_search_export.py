@@ -4,6 +4,7 @@ the `session.finish_artifacts` worker, FTS search and the domain export (A10, A1
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -384,6 +385,59 @@ async def test_finish_artifacts_takes_the_payload_of_finish_session(
             "version": 1,
         },
     }
+
+
+UUID_LIKE = re.compile(
+    r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}"
+)
+
+
+async def test_digest_request_has_names_not_ids(
+    seed: Seeder,
+    db: SessionFactory,
+    fake_provider: FakeProvider,
+    worker_deps: WorkerDeps,
+) -> None:
+    """T-M3 (WP14.1, Т-§4.5): the digest request to `artifacts@1` names skills and numbers tasks;
+    no id reaches the model. The template without the model has no ids either."""
+    learner = await seed.learner()
+    s = await seed.seed_structure(learner)
+    sid = await seed.start_session(learner, s.domain_id, s.topic_id)
+    task = await seed.seed_bank_task(
+        learner, s, skill_id=s.skill_a, family="fam-a", kind="math", reference_solution=CHAIN_REF
+    )
+    await seed.solve_task(learner, sid, task, s.topic_id, s.skill_a)
+    await seed.complete_session(learner, sid, s.domain_id)
+    await seed.project(learner)
+    fake_provider.respond("ArtifactGenOutput", DIGEST)
+
+    payload = {"session_id": str(sid), "domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
+    await run_finish_artifacts(
+        await _claim(db, kinds.session_finish_artifacts(learner, sid, payload)), worker_deps
+    )
+    [call] = fake_provider.calls_for("ArtifactGenOutput")
+    assert UUID_LIKE.findall(call.prompt) == []
+    assert s.skill_a_name in call.prompt
+    [digest] = await _events_of(db, learner, "session.digest_created")
+    assert digest["payload"]["covered_skill_ids"] == [str(s.skill_a)]  # the event keeps ids
+
+    other = await seed.start_session(learner, s.domain_id, s.topic_id)
+    await seed.solve_task(learner, other, task, s.topic_id, s.skill_a)
+    await seed.complete_session(learner, other, s.domain_id)
+    await seed.project(learner)
+    fake_provider.respond("ArtifactGenOutput", ProviderUnavailableError("provider timeout"))
+    payload = {**payload, "session_id": str(other)}
+    await run_finish_artifacts(
+        await _claim(db, kinds.session_finish_artifacts(learner, other, payload)), worker_deps
+    )
+    template = [
+        e
+        for e in await _events_of(db, learner, "session.digest_created")
+        if e["payload"]["session_id"] == str(other)
+    ]
+    assert template[0]["actor"] == "code"
+    assert UUID_LIKE.findall(template[0]["payload"]["text"]) == []
+    assert s.skill_a_name in template[0]["payload"]["text"]
 
 
 async def test_search_and_export(
