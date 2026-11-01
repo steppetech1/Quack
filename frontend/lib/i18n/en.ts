@@ -257,6 +257,7 @@ export const en = {
     topicsLabel: "Session topics",
     topicPageSoon: (title: string) => `topic page “${title}”`,
     teacherReading: "Teacher is reading your answer",
+    teacherThinking: "Teacher is thinking it over",
     teacherReply: "Teacher's reply",
     youWrite: (thought: string) => `You write: “${thought}”. Good that you said it out loud, now we can see where the reasoning turned.`,
     duckDrew: "The duck finished the demo",

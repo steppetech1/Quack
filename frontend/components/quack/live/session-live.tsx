@@ -81,6 +81,8 @@ export function SessionLive({ id }: { id: string }) {
   const [detail, setDetail] = useState<S["SessionDetail"] | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
+  /** `status: thinking` arrives after `turn_started`, before the first token */
+  const [thinking, setThinking] = useState(false);
   const [task, setTask] = useState<Task | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +113,7 @@ export function SessionLive({ id }: { id: string }) {
           { text, related_task_id: task?.task_id ?? null, idempotency_key: idem() },
           ({ event, data }) => {
             if (event === "turn_started") turnId = String(data.turn_id);
+            else if (event === "status") setThinking(data.state === "thinking");
             else if (event === "token") {
               reply += String(data.delta ?? "");
               setStreaming(reply);
@@ -128,6 +131,7 @@ export function SessionLive({ id }: { id: string }) {
         if (reply) setLines((l) => [...l, { id: `t-${turnId}`, role: "teacher", text: reply }]);
       } finally {
         setStreaming(null);
+        setThinking(false);
         setBusy(false);
         scrollDown();
       }
@@ -258,7 +262,7 @@ export function SessionLive({ id }: { id: string }) {
                 <RichText text={streaming} />
               ) : (
                 <p role="status" className="flex items-center gap-2 text-small text-paper-dim">
-                  {tx.session.teacherReading}
+                  {thinking ? tx.session.teacherThinking : tx.session.teacherReading}
                   <Dots />
                 </p>
               )}

@@ -258,6 +258,7 @@ export const ru: Dict = {
     topicsLabel: "Темы сессии",
     topicPageSoon: (title: string) => `страница темы «${title}»`,
     teacherReading: "Учитель читает твой ответ",
+    teacherThinking: "Учитель думает над ответом",
     teacherReply: "Ответ учителя",
     youWrite: (thought: string) => `Ты пишешь: «${thought}». Хорошо, что проговорил — так видно, где именно ход мысли свернул.`,
     duckDrew: "Утка дорисовала демо",
