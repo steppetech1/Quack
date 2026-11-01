@@ -312,7 +312,7 @@ async def _evaluated(db: SessionFactory, learner_id: UUID, task_id: UUID) -> dic
 @pytest.mark.parametrize(
     ("kind", "reference", "answer"),
     [
-        ("math", {"sympy": "3*x**2", "hints": ["h1", "h2", "h3"]}, "3*x^2"),
+        ("math", {"expression": "3*x**2", "hints": ["h1", "h2", "h3"]}, "3*x^2"),
         ("choice", {"option": "B", "hints": ["h1", "h2", "h3"]}, "B"),
     ],
 )

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid5
 
@@ -37,8 +38,8 @@ DIGEST = ArtifactGenOutput(
 NOTE_TITLE = "Composite functions"
 NOTE_TEXT = "chain rule for composite functions"
 CHAIN_REF: dict[str, Any] = {
-    "sympy": "2*x*cos(x**2)",
-    "check_mode": "expression_equiv",
+    "expression": "2*x*cos(x**2)",
+    "mode": "expression_equiv",
     "hints": ["Composite function.", "Outer times inner derivative.", "cos(x**2) times 2*x."],
 }
 
@@ -159,6 +160,11 @@ async def test_notes_crud(
     assert again.status_code == 201, again.text
     assert again.json() == note  # A10
     assert await _last_seq(db, learner) == count
+    # T-E2: the same key with another body is 409 and writes nothing.
+    other = await _create_note(client, headers, s, "Other", NOTE_TEXT, "note-1")
+    assert other.status_code == 409, other.text
+    assert other.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
 
     edit = {"title": "Chain rule, edited", "text": "(f(g))' = f'(g) g'", "idempotency_key": "e-1"}
     r = await client.patch(f"/v1/artifacts/notes/{note_id}", json=edit, headers=headers)
@@ -166,6 +172,13 @@ async def test_notes_crud(
     assert (r.json()["artifact_id"], r.json()["version"]) == (note_id, 2)
     [row] = await _artifacts(db, learner, "note")
     assert (row["title"], row["content_md"], row["version"]) == (edit["title"], edit["text"], 2)
+    count = await _last_seq(db, learner)
+    r = await client.patch(
+        f"/v1/artifacts/notes/{note_id}", json={**edit, "text": "other"}, headers=headers
+    )
+    assert r.status_code == 409, r.text  # T-E2
+    assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
     assert note_id in await _listed_ids(client, headers, kind="note")
 
     stranger = await seed.learner()
@@ -289,7 +302,7 @@ async def test_finish_artifacts_creates_digest_and_enqueues_cheatsheet(
     await seed.complete_session(learner, sid, s.domain_id)
     fake_provider.respond("ArtifactGenOutput", DIGEST)
 
-    payload = {"domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
+    payload = {"session_id": str(sid), "domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
     job = await _claim(db, kinds.session_finish_artifacts(learner, sid, payload))
     await run_finish_artifacts(job, worker_deps)
 
@@ -313,6 +326,56 @@ async def test_finish_artifacts_creates_digest_and_enqueues_cheatsheet(
     # A retry of the same job does not create a second digest (A10).
     await run_finish_artifacts(job, worker_deps)
     assert len(await _events_of(db, learner, "session.digest_created")) == 1
+
+
+async def test_finish_artifacts_takes_the_payload_of_finish_session(
+    seed: Seeder,
+    db: SessionFactory,
+    redis: Redis,
+    fake_provider: FakeProvider,
+    worker_deps: WorkerDeps,
+) -> None:
+    """T-H8 (б), side of the handler (WP6.4 п.2): the job with the payload of `finish_session`
+    `{"session_id", "domain_id", "topic_id"}` is taken as is, whatever its lock key; it creates
+    `session.digest_created`, and the cheatsheet job creates `artifact.cheatsheet_updated` and
+    sends `cheatsheet_ready` to `session:events:{session_id}`."""
+    learner = await seed.learner()
+    s = await seed.seed_structure(learner)
+    sid = await seed.start_session(learner, s.domain_id, s.topic_id)
+    await seed.reply(learner, sid, 0, "how do I differentiate sin(x^2)?", teacher=False)
+    await seed.complete_session(learner, sid, s.domain_id)
+    fake_provider.respond("ArtifactGenOutput", DIGEST)
+
+    payload = {"session_id": str(sid), "domain_id": str(s.domain_id), "topic_id": str(s.topic_id)}
+    job = await _claim(db, kinds.session_finish_artifacts(learner, sid, payload))
+    await run_finish_artifacts(replace(job, lock_key=f"learner:{learner}:finish"), worker_deps)
+
+    [digest] = await _events_of(db, learner, "session.digest_created")
+    assert digest["payload"]["session_id"] == str(sid)
+    [refresh] = await _q(
+        db,
+        "SELECT payload FROM ops.jobs WHERE learner_id = :l "
+        "AND kind = 'artifact.refresh_cheatsheet' AND status = 'queued'",
+        l=learner,
+    )
+    pubsub = redis.pubsub()
+    await pubsub.subscribe(session_events_channel(sid))
+    await pubsub.get_message(timeout=1.0)
+    fake_provider.respond("ArtifactGenOutput", SHEET)
+    spec = kinds.artifact_refresh_cheatsheet(learner, s.topic_id, refresh["payload"])
+    await _run_job(db, worker_deps, spec, run_refresh_cheatsheet)
+
+    [update] = await _events_of(db, learner, "artifact.cheatsheet_updated")
+    message = await _next_message(pubsub)
+    await pubsub.aclose()
+    assert message == {
+        "event": "cheatsheet_ready",
+        "data": {
+            "topic_id": str(s.topic_id),
+            "artifact_id": update["payload"]["artifact_id"],
+            "version": 1,
+        },
+    }
 
 
 async def test_search_and_export(

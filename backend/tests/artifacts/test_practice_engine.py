@@ -40,17 +40,17 @@ HINTS = [
     "cos(x**2) times 2*x.",
 ]
 CHAIN_REF: dict[str, Any] = {
-    "sympy": "2*x*cos(x**2)",
+    "expression": "2*x*cos(x**2)",
     "latex": "2x\\cos(x^2)",
-    "check_mode": "expression_equiv",
+    "mode": "expression_equiv",
     "variables": ["x"],
     "hints": HINTS,
 }
 # A non-default check mode and variable: the request to compute must take them from the task.
 INTEGRAL_REF: dict[str, Any] = {
-    "sympy": "t**3/3",
+    "expression": "t**3/3",
     "latex": "\\frac{t^3}{3}",
-    "check_mode": "integral",
+    "mode": "integral",
     "variables": ["t"],
     "hints": ["Use the power rule.", "Raise the power by one.", "t**3 divided by 3."],
 }
@@ -265,8 +265,8 @@ async def test_next_task_targets_new_family(
     )
     assert (bank["family_id"], bank["kind"]) == (family, "math")
     assert bank["reference_solution"]["hints"] == HINTS
-    assert bank["reference_solution"]["sympy"] == CHAIN_REF["sympy"]
-    assert bank["reference_solution"]["check_mode"] == CHAIN_REF["check_mode"]
+    assert bank["reference_solution"]["expression"] == CHAIN_REF["expression"]
+    assert bank["reference_solution"]["mode"] == CHAIN_REF["mode"]
 
     # A10: the same idempotency_key returns the stored answer without new events or LLM calls.
     again = await client.post(f"/v1/sessions/{sid}/tasks/next", json=body, headers=auth(learner))
@@ -274,6 +274,13 @@ async def test_next_task_targets_new_family(
     assert again.json() == task
     assert await _last_seq(db, learner) == before + 2
     assert len(fake_provider.calls) == 1
+
+    # T-E2: the same key with another body is 409 and writes nothing.
+    for other in ({**body, "kind": "open"}, {**body, "turn_id": str(uuid4())}):
+        r = await client.post(f"/v1/sessions/{sid}/tasks/next", json=other, headers=auth(learner))
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == before + 2
 
 
 async def test_next_task_falls_back_to_bank_when_llm_down(
@@ -334,6 +341,12 @@ async def test_hints_progress_and_reduce_independence(
     count = await _last_seq(db, learner)
     assert await _hint(client, headers, sid, task, bodies[2]) == hints[2]  # A10
     assert await _last_seq(db, learner) == count
+    # T-E2: the same key with another turn is 409 and writes nothing.
+    other = {**bodies[2], "turn_id": str(uuid4())}
+    r = await client.post(f"/v1/sessions/{sid}/tasks/{task}/hint", json=other, headers=headers)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
 
     fourth = await _hint(client, headers, sid, task, _hint_body("hint-4"))
     assert (fourth["hint_level"], fourth["hint_text"], fourth["independence_penalty"]) == (
@@ -386,6 +399,15 @@ async def test_submit_math_uses_compute_tier1(
     assert result["independence"] == 1.0
     assert [x["skill_id"] for x in result["skill_scores"]] == [str(s.skill_a)]
     assert result["skill_scores"][0]["tested_depth"] == 0.5  # decision 8
+
+    count = await _last_seq(db, learner)
+    body = {"turn_id": str(uuid4()), "answer": "t^2", "idempotency_key": "submit-1"}
+    r = await client.post(
+        f"/v1/sessions/{sid}/tasks/{task}/submit", json=body, headers=auth(learner)
+    )
+    assert r.status_code == 409, r.text  # T-E2: the same key with another answer
+    assert r.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert await _last_seq(db, learner) == count
 
     submitted, evaluated = await _events_after(db, learner, before)
     assert (submitted["type"], submitted["actor"]) == ("task.submitted", "learner")

@@ -1020,6 +1020,86 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   коммит `a99ac64`); `test_prompt_contracts_file_is_current`, манифест, `T-M5`.
 - Требует подтверждения владельцем: нет
 
+### D-B-025. WP6.4: `ReferenceSolution` в коде B, payload `finish_artifacts`, порядок кадров
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01; разделение с C — вариант (б)
+  по ответу C 2026-11-01)
+- WP / место: WP6.4 п.1–3, A25–A27, D-B-001 (1); `quack/practice/schemas.py`,
+  `quack/practice/generation.py`, `quack/practice/evaluation.py`, `quack/session/spoiler_guard.py`,
+  `quack/session/lifecycle.py`
+- Решение:
+  1. `ReferenceSolution` — по таблице WP6.4 плюс `hints` и `latex`; `extra="forbid"`, у `choice`
+     верный вариант обязан быть среди `options`, у `open` — хотя бы один `key_points`.
+     `parse_reference_solution(kind, data)` → `ValueError` на неверном формате;
+     `reference_solution_payload` — словарь для банка (`None` не пишется).
+  2. Вид `code` (есть в `task.generated`, в таблице нет) читается как `open`: исполнителя кода в
+     Фазе 3 нет, ответ проверяет `evaluator@1` по `key_points`.
+  3. `task_gen@1` → банк (D-B-010): `math` — `expression` = ответ модели, `mode` по типу ответа;
+     `open`/`code` — `key_points` = непустые строки `solution`, иначе `[answer]`, `sample_answer` =
+     ответ. Ключи `solution` и `units` больше не пишутся (читателей нет). Неверный формат —
+     `GeneratedTaskError`, практика уходит на банк, как при ошибке модели.
+  4. Читатели: проверка `math` — `expression`, `mode`, `variables`, `tolerance`; запасной вердикт —
+     `sample_answer` / `answer` / `expression`; защита от спойлера — `expression` (`math`),
+     `answer` (`choice`), `open` не проверяется.
+  5. WP6.4 п.2: `finish_session` ставит `session.finish_artifacts` с
+     `{"session_id", "domain_id", "topic_id"}`. Обработчик C пока берёт `session_id` из
+     `lock_key` — совместимо.
+  6. WP6.4 п.3: порядок `task_evaluated` → `task_assigned` в коде уже такой (A27) — тест `T-H7`.
+- Остаётся у C (ветка `phase-3-c-wp64-diagnostic`, вливается в эту до PR): `diagnostic.py`
+  пишет `reference_solution_payload(ChoiceReference(...))`/`OpenReference`; отказ неверного
+  формата при записи в банк (`task.generated`, `quack/events/**`); вторая половина `T-H8` (а) —
+  ответы `diagnostic@1`; обработчик `finish_artifacts` по `payload["session_id"]`.
+- Правки тестов (§8.9): фикстуры с ключами Фазы 2 `sympy`/`check_mode` → `expression`/`mode`
+  (`tests/session/fixtures.py`, `test_phase3_hot_path.py`, `test_spoiler_guard.py`,
+  `tests/artifacts/test_practice_engine.py`, `test_artifacts_search_export.py` — фикстуры C по
+  договорённости); утверждения те же. Запись `CheckpointerOutput` снята из `SCHEMA_ROLES`.
+- Тесты: `tests/practice/test_reference_solution.py` (14), `tests/session/test_phase2_seams.py`
+  (`T-H7`, `T-H8` (а) — сторона `task_gen@1`, (б) — сторона `finish_session`).
+- Требует подтверждения владельцем: нет
+
+### D-B-026. WP14.1: неизвестная метка — один возврат модели (`T-M2`)
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP14.1, `Т-§4.5`; `quack/llm/gateway.py::generate_structured(check=…)`,
+  `quack/session/teacher_labels.py::teacher_label_errors`, `quack/session/turns.py`
+- Контекст: метки разрешались сразу — неизвестная отбрасывалась без второго вызова, хотя WP14.1
+  требует вернуть вызов модели один раз с текстом ошибки.
+- Решение:
+  1. Шлюз принимает необязательную проверку `check(value) -> str | None`. Текст ошибки идёт
+     модели тем же путём исправления, что ошибка схемы (`repair_hint`), один раз; в ledger
+     первая попытка — `schema_error` / `label`. Если второй ответ снова с неверной меткой —
+     возвращается он; если он не разбирается схемой — возвращается первый валидный ответ.
+     После исправления схемы второго исправления нет: на запрос один повтор.
+  2. Ход учителя передаёт `teacher_label_errors`: метки `focus_skill_labels`,
+     `assign_task_label`, `concept_explained` (тема и навыки), которых нет в таблице вызова.
+     Разрешение после этого прежнее: неизвестная метка отброшена с записью
+     `teacher_unknown_label`, остальной ответ применён (закон 9). При `assign_task` без метки
+     задачу выбирает код (`pick_task`), как и раньше.
+  3. `extractor@2` проверку не получает: его элементы с неизвестной меткой пишутся с причиной
+     `unknown_label` и не применяются (D-B-022, `Т-§7.6`).
+- Тесты: `T-M2` (`tests/llm/test_labels.py`, два случая: исправлено / снова неверно).
+- Требует подтверждения владельцем: нет
+
+### D-B-027. WP5.7: скрипт живого прогона `scripts/meta_smoke.py` (DoD п.6a)
+- Класс: C (решено исполнителем по поручению владельца 2026-11-01)
+- WP / место: WP5.7 «Живой прогон», DoD п.6a; `backend/scripts/meta_smoke.py`
+- Решение:
+  1. По одному вызову каждого промпта Фазы 3 (§7.6: `teacher@1`, `extractor@2`, `evaluator@1`,
+     `task_gen@1`, `structurer@1`, `curator@1`, `diagnostic@1`, `artifacts@1`) и
+     `teacher_fallback` на промпте учителя — через `LLMGateway` на `ResponsesClient`, то есть
+     со строгой схемой, `effort`, пределом выхода, ledger и outbox. Нужен Postgres с
+     миграциями (`POSTGRES_DSN`); записи идут под новым `learner_id`.
+  2. Сырой ответ провайдера снимает записывающая обёртка: в отчёте модель, ответившая модель,
+     `effort`, статус (`ok` или класс ошибки шлюза с причиной), токены по видам (вход, выход,
+     кэш, рассуждение), `retry-after` / `x-ratelimit-*`, время. Одна строка JSON на роль; код
+     выхода 1, если хоть одна роль не прошла.
+  3. Входные данные — короткий пример темы «Derivatives»; это данные вызова, не текст промптов.
+- Не проверено (DoD п.6a): живой прогон — нужен ключ команды. Команда для владельца из
+  `backend/`, при поднятом Postgres с миграциями:
+  `META_API_KEY=… META_API_BASE_URL=… POSTGRES_DSN=… uv run python scripts/meta_smoke.py`;
+  вывод — в этот журнал (заодно закрывает \[ПРОВЕРИТЬ\] `maxLength` в строгом режиме).
+- Тесты: `tests/llm/test_meta_smoke.py` — набор вызовов совпадает с `PROMPT_SCHEMAS`; прогон
+  через шлюз на `ScriptedLLMProvider` даёт полный отчёт и код выхода.
+- Требует подтверждения владельцем: нет
+
 ### Поток C
 
 ### D-C-001. Имена рабочих веток потоков
@@ -1301,7 +1381,10 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
   WP4.1, поэтому `T-A9a` от этого не зависит.
 - Почему: §0.4.4 п.11; §7.4 — `phase-3` зелёная.
 - Обратимость: строка в `_read`, записи списка.
-- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`.
+- Тесты: `T-A9a`, `test_neo4j_session_exceptions_are_still_needed`,
+  `test_graph_store_reads_through_read_session`.
+- Выполнено: B убрал `_ReadOnlyDriver`, список пуст (`0eccdba`); `_read` открывает сессию через
+  `read_session` (ветка `phase-3-c-wp41-store-read`).
 - Требует подтверждения владельцем: нет
 
 ### D-C-017. WP4.2: принадлежность темы проверяется по журналу событий
@@ -1441,6 +1524,23 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/test_meta_mock.py` (27). `T-O5` через `ResponsesClient` — после адаптера WP5.7.
 - Требует подтверждения владельцем: нет
 
+### D-C-024. §2.3 п.8, R4: ID моделей и имена `META_API_*` в `Settings`
+- Класс: B
+- WP / место: §2.3 п.8, R4, §6.2; `quack/config.py`, `quack/api/resources.py`, `quack/artifacts/deps.py`, `quack/domains/curation.py`
+- Контекст: в `Settings` были два набора полей: `llm_api_key`/`llm_api_base_url` (env `LLM_API_*`) и
+  `meta_api_key`/`meta_api_base_url` (блок B, env `META_API_*` с запасными `LLM_API_*`). Код A
+  (`quack/runtime`) и B (`session/workers.py`) читает старые поля: при одном `META_API_KEY` в env они
+  получали бы пустой ключ. Модели по умолчанию — условные `muse-wonder`/`muse-spark`.
+- Варианты: (1) старые поля удалить, оставить их имена свойствами над `meta_api_*`, читателей C
+  перевести на новые имена; (2) править файлы A и B (нет среди исключений §7.3).
+- Решение: (1). `llm_default_model = muse-spark-1.3`, `llm_role_models` = `teacher: muse-wonder-1.0`,
+  `teacher_fallback: muse-spark-1.3` (распределение ролей то же). Прод требует `META_API_KEY`;
+  маскируется `meta_api_key`. A и B переходят на `meta_api_*` в своих файлах, после чего свойства
+  удаляются. `.env.example` (только новые имена, WP5.7) — у B.
+- Почему: §2.3 п.8, R4, §0.4.3 п.2.
+- Обратимость: два свойства и значения по умолчанию в `config.py`.
+- Тесты: `tests/test_settings_meta_api.py` (4).
+- Требует подтверждения владельцем: нет
 ### D-C-025. `structure/propose`: ключ события выводится из клиентского ключа и хэша ввода (Q9, T-E2)
 - Класс: C
 - WP / место: WP10.2 (`T-E2`); `quack/domains/structure.py::proposal_key`, `_check_proposal_key`
@@ -1468,6 +1568,95 @@ PR; поля `PracticeParams` практики удалены из `quack/artifa
 - Тесты: `tests/domains/test_propose_idempotency.py`, `T-E2`.
 - Требует подтверждения владельцем: да (класс C), Q9 закрыт этим решением
 
+### D-C-027. Повтор запроса с занятым ключом: ключ сверяется раньше проверки запроса (T-E2)
+- Класс: C
+- WP / место: WP10.2 (`T-E2`); `quack/domains/structure.py` (`confirm_structure`, `edit_structure`),
+  `quack/domains/diagnostic.py::finish_diagnostic`, `quack/artifacts/practice.py` (`tasks/next`, `hint`, `submit`), `quack/artifacts/notes.py`;
+  общая проверка — `quack/artifacts/store.py::check_replay`
+- Контекст: `T-E2` ждёт 409 `IDEMPOTENCY_CONFLICT` на тот же ключ с другим телом. Девять
+  эндпоинтов отвечали иначе: `confirm` и `diagnostic/finish` проверяли версию или сессию раньше
+  ключа (422, 404); `PATCH structure` писал в нагрузку `structure_version` = активная + 1, и
+  точный повтор после применения правки давал 409; `tasks/next`, `hint`, `submit` и три
+  эндпоинта заметок отдавали записанный ответ, не сверяя тело.
+- Варианты (с уровнями §0.4.1): (а) общий слой в `api` — сверка хэша тела по ключу в отдельной
+  таблице — новая схема БД, вне ТЗ; (б) выводить ключ события из хэша тела, как в D-C-025 —
+  меняет ключи уже записанных событий; (в) в каждом эндпоинте сначала искать событие по ключу и
+  сверять с ним запрос.
+- Решение: (в). `confirm`: хэш нагрузки `structure.confirmed` сверяется до проверки версии.
+  `PATCH structure`: при записанном `structure.edited` запрос собирается под записанной версией
+  и сверяется по хэшу, ответ — записанный. `diagnostic/finish`: `diagnostic.completed` по ключу
+  с другой сессией или доменом → 409. `tasks/next`: сверяются сессия, `turn_id`, вид задачи и
+  тема сгенерированной задачи; тема задачи из банка не сверяется — её выбирают по навыку, и она
+  может не совпасть с запрошенной, а ложный 409 на честный повтор хуже. `hint`: сессия, `turn_id`,
+  задача из `task.hint_given`. `submit`: сессия, `turn_id`, задача, ответ и `response_time_sec`
+  из `task.submitted`. Заметки: поля запроса из `artifact.note_created` / `_updated` /
+  `_deleted` и `artifact_id` пути.
+- Почему: `T-E2` (уровень 2 §0.4.1), `Т-§2.1`; схемы событий и ключи не меняются.
+- Обратимость: код эндпоинтов; данных учеников нет.
+- Тесты: `tests/domains/test_confirm_idempotency.py`,
+  `tests/domains/test_diag_state_from_events.py::test_finish_same_key_other_session_is_conflict`,
+  `tests/artifacts/test_practice_engine.py` (`tasks/next`, `hint`, `submit`),
+  `tests/artifacts/test_artifacts_search_export.py::test_notes_crud`, `T-E2`.
+- Требует подтверждения владельцем: нет (поведение задано `T-E2`; выбор только в способе)
+### D-C-029. T-O5: `CheckpointerOutput` заменён на `ExtractorOutputV2`
+- Класс: C
+- WP / место: WP10.3 (`T-O5`); `tests/test_meta_mock.py::OUTPUT_MODELS`,
+  `tests/support/llm.py`, `tests/test_support_scripted_llm.py`
+- Контекст: `T-O5` перечисляет девять моделей вывода, среди них `CheckpointerOutput`. WP13 (B, #43)
+  строит `session.checkpoint` кодом, #45 удалил `checkpointer@1` из промптов и манифеста; B
+  снимет класс, когда его перестанут читать тесты. `extractor@2` (D-B-022) отвечает
+  `ExtractorOutputV2`, которого в списке нет.
+- Варианты (с уровнями §0.4.1): (а) оставить `CheckpointerOutput` — тест держит удалённую роль и
+  мешает снять класс; (б) убрать без замены — восемь моделей, ослабление теста, класс D;
+  (в) заменить на `ExtractorOutputV2`.
+- Решение: (в). Девять моделей: все модели вывода промптов манифеста (`extractor@1` и `@2`).
+- Почему: `T-O5` проверяет, что подменный сервер отдаёт валидный ответ для каждой модели вывода
+  (уровень 2 §0.4.1); список следует манифесту после WP13.
+- Обратимость: список в тесте.
+- Тесты: `T-O5`, `tests/test_support_scripted_llm.py`.
+- Требует подтверждения владельцем: да (класс C, расходится с буквой таблицы `T-O5`)
+### D-C-030. WP6.4 п.1: неверный `reference_solution` отклоняется у того, кто пишет в банк, а не в `quack/events`
+- Класс: C
+- WP / место: WP6.4 (`T-H8` (а)); `quack/domains/diagnostic.py::_generate_question`,
+  `_reference_solution`
+- Контекст: «запись неправильного формата отклоняется при записи в банк». `core.task_bank` пишет
+  проекция `task.generated` в `quack/events` (слой core), а модель `ReferenceSolution` — в
+  `quack/practice/schemas.py` (слой product), который сам импортирует `quack.events.payloads`.
+  B предложил валидатор `TaskGenerated.reference_solution` через `parse_reference_solution`.
+- Варианты (с уровнями §0.4.1): (а) валидатор в `quack/events/payloads.py` — импорт product из
+  core нарушает §4.1 (`T-A6`) и даёт цикл импортов; (б) регистрация проверки из `practice` в
+  `events` при импорте — проверка зависит от того, импортирован ли `practice` в процессе;
+  (в) перенести модели в core — ТЗ называет место `quack/practice/schemas.py`; (г) отклонять у
+  каждого, кто пишет `task.generated`: `task_gen@1` — `GeneratedTaskError` (B), `diagnostic@1` —
+  `ChoiceReference`, ответ без верного варианта среди вариантов → детерминированный вопрос кода.
+- Решение: (г). Как у `task_gen@1` в тесте B `test_wrong_reference_of_task_gen_is_rejected`.
+  Фикстуры с ключами Фазы 2 не трогаются: проекция их принимает, читатели B их не получают от
+  кода.
+- Почему: §4.1 и `T-A6` (уровень 2 §0.4.1); одна модель в `quack/practice/schemas.py` (WP6.4).
+- Обратимость: код записи в `diagnostic.py`.
+- Тесты: `tests/domains/test_diag_state_from_events.py::test_diagnostic_reference_is_a_choice_reference`,
+  `::test_diagnostic_question_without_a_valid_reference_is_not_banked`.
+- Требует подтверждения владельцем: да (класс C, вместо валидатора в `events` из предложения B)
+
+### D-C-031. WP10.3: сценарий Locust — значения, которых нет в документах
+- Класс: B
+- WP / место: WP10.3; `loadtest/scenario.py`, `loadtest/locustfile.py`, группа `loadtest` в
+  `pyproject.toml`
+- Контекст: `Д-§11` и WP10.3 задают ход и heartbeat раз в 30 с, «иногда» задачу и завершение
+  «после K ходов», файл учеников `ops seed-learners` (WP8.6). Не заданы K, доля ходов с задачей,
+  вид задачи, ответ и текст хода.
+- Решение: `TURNS_PER_SESSION = 10`, `TASK_SHARE = 0.2`, задача `choice` с ответом `A` (её проверяет
+  код, без `compute` и модели), текст хода — один вопрос. Логика — в `loadtest/scenario.py` без
+  импорта Locust (Locust при импорте патчит стандартную библиотеку через gevent и ломает asyncio
+  в pytest); `locustfile.py` только связывает её с `HttpUser`. В отчёте Locust — строки SSE
+  `turn: status` (`teacher_status_p95_ms`), `turn: first token`, `turn: complete` (сбой — оборванный
+  поток, критерий smoke). `[tool.uv] default-groups = ["dev", "loadtest"]`: pyright проверяет
+  `loadtest/`; образ ставится без групп (WP9, A).
+- Почему: §0.4.3 — проще и проверяемо тестом без стенда; значения меняются в одном месте.
+- Обратимость: константы сценария.
+- Тесты: `tests/test_loadtest_scenario.py`; на стенде e2e — `tests/e2e/test_loadtest_stream.py`.
+- Требует подтверждения владельцем: нет
+
 ## Заблокировано
 
 _(пусто)_
@@ -1490,6 +1679,9 @@ _(пусто)_
 | WP8.3 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_app_assembly.py -k healthz` | 1 failed: `GET /healthz` → 404 (маршрута нет) |
 | WP7 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_learner_stream.py` (коммит `9227447`) | 4 failed: маршрут не смонтирован — `GET /v1/learner/stream` → 404 (ждали 200 / 401) |
 | WP10.3 (`meta-mock`) | `uv run pytest -q tests/test_meta_mock.py` (коммит red) | 27 failed: `NotImplementedError` в `minimal_instance`, `latency_s`, `create_app`, `MetaMockConfig.from_env` |
+| WP5.7 (процесс API на `ResponsesClient`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/test_api_llm_provider.py` | 1 failed: провайдер шлюза API — `HttpLLMProvider`, ждали `ResponsesClient` |
+| WP6.3 (кадры хода в `openapi`) | `uv run pytest -q tests/test_app_assembly.py -k turn_stream_documents` | 1 failed: в описании потока хода нет списка событий и `status {"state": "thinking"}` |
+| WP10.3 (`T-O5`) | `uv run pytest -q tests/test_meta_mock.py` | написан после адаптера WP5.7 и `meta-mock`, красного прогона нет; проверка на неверной реализации — тесты провода того же файла (27) были красными до `meta-mock` |
 | WP6.3 (keepalive) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_session_events_stream.py` (коммит `cdd3337`) | 1 failed, 2 passed: `T-H5` — за 0.7 с ни одного `: ping` |
 | WP15 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py` (коммит `233b6ca`) | 3 failed, 1 passed: `T-G1`, `T-G4` — один вызов учителя, ответ в `token`; `T-G2` — `NotImplementedError`; `T-G3` зелёный (защиты ещё нет) |
 | WP14.2 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py` (коммит `97a1a90`) | 1 failed, 13 passed: `T-M4` — строки `ops.turn_manifests` нет (`write_turn_manifest` не вызывается) |
@@ -1499,6 +1691,18 @@ _(пусто)_
 | WP13 | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_checkpoint_law10.py` (коммит `5f56772`) | 5 failed, 1 passed: `T-C1`…`T-C4` и видимая часть — `NotImplementedError` в `checkpoint_render`; `T-C5` зелёный (у `session.checkpoint` уже `required_seq = NULL`) |
 | WP10.2 (`propose`, D-C-025) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_propose_idempotency.py` | 1 failed: тот же ключ с другим телом → 200, ждали 409 |
 | WP15 (причина повтора) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_spoiler_guard.py -k retries_then` (коммит `a99ac64`) | 1 failed: в запросах повторов нет `{"rule": "spoiler"` — в `teacher@1` нет блока `{{ guard_reason }}` |
+| WP6.4 (схема) | `uv run pytest -q tests/practice` (коммит `a9aa6ee`) | 14 failed: `NotImplementedError` в `parse_reference_solution` / `reference_solution_payload` |
+| WP6.4 (стыки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/session/test_phase2_seams.py` (тесты `ac949b8` на коде `47f3fc1`) | 4 failed: читатели ждут `sympy`, `task_gen@1` пишет ключи Фазы 2, в payload нет `session_id`. `T-H7` упал из-за фикстур в новом формате (без проверки `compute` нет `task_evaluated`); сам порядок кадров уже верный (A27) |
+| WP6.4 (C: `diagnostic`, `finish_artifacts`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py tests/artifacts/test_artifacts_search_export.py` (коммит `edd0bf9`) | 2 failed: ответ `diagnostic@1` с верным вариантом вне вариантов записан в банк (`actor = diagnostic@1`); обработчик `session.finish_artifacts` берёт `session_id` из lock key (`badly formed hexadecimal UUID string`) |
+| WP14.1 (`T-M2`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_labels.py -k unknown_label_returns` (коммит `7359037`) | 2 failed: один вызов учителя вместо двух — повтора с ошибкой метки нет |
+| WP5.7 (`meta_smoke.py`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/llm/test_meta_smoke.py` (коммит `6fe79a3`) | 2 failed: в скрипте нет `smoke_calls` / `run_smoke` |
+| WP10.2 (`confirm`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `1b209a3`) | 1 failed: тот же ключ с другой `structure_version` → 422 `VALIDATION_ERROR` (проверка версии раньше ключа), ждали 409 |
+| WP10.2 (`PATCH structure`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_confirm_idempotency.py` (коммит `fb1591a`) | 1 failed, 1 passed: повтор правки с тем же телом после её применения → 409 (в нагрузке `structure_version` = активная + 1, а активная уже выросла) |
+| WP10.2 (`diagnostic/finish`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/domains/test_diag_state_from_events.py -k same_key_other_session` (коммит `619219c`) | 1 failed: тот же ключ с другим `session_id` → 404 `NOT_FOUND` (сессия ищется раньше ключа), ждали 409 |
+| WP10.2 (`tasks/next`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py -k targets_new_family` (коммит `49a03fb`) | 1 failed: тот же ключ с другим `kind` → 200 с записанной задачей, ждали 409 |
+| WP10.2 (`hint`, `submit`) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_practice_engine.py` (коммит `ea60717`) | 2 failed, 3 passed: тот же ключ с другим `turn_id` (`hint`) и другим ответом (`submit`) → 200 с записанным ответом, ждали 409 |
+| WP10.2 (заметки) | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q tests/artifacts/test_artifacts_search_export.py -k notes_crud` (коммит `d0480a5`) | 1 failed: тот же ключ с другим `title` → 201 с записанной заметкой, ждали 409 |
+| WP10.3 (Locust) | `uv run pytest -q tests/test_loadtest_scenario.py` (коммит `2c1eafb`) | collection error: `ModuleNotFoundError: loadtest.scenario` |
 
 ## Правки тестов
 
@@ -1533,6 +1737,7 @@ _(пусто)_
 | Q6 | Прод: `JWT_SECRET` не короче 32 байт (dev-секрет 20 байт) | STREAM3_NOTES §2 |
 | Q8 | ~~DoD п.3: `T-E4`, `T-E6`, `T-E7`, `T-E9` зелёные до реализации~~ — закрыто: D-C-012 | D-C-012 |
 | Q7 | ~~Подтвердить: токен ученика без строки `auth.users` → 401, тест потока 2 меняется~~ — закрыто 2026-10-31: решение передано исполнителю, принят вариант (1) | D-C-004 |
+| Q10 | Проверенные промпты владельца для `structurer`, `curator`, `artifacts` рассчитаны на другие входы и выходы, чем код Фазы 3 (structurer — кусок материала + кандидаты `Т-§4.3`, а не интервью; curator — решения по парам, а не весь граф; artifacts — блоки, карточки, замечания). Подключить их — значит менять схемы вывода и вызовы, чего ТЗ Фазы 3 не называет. Предложение C: оставить контракты Фазы 3, подключение — после Фазы 3. Нужно решение владельца | сообщение B 2026-11-01 |
 
 ## DoD
 

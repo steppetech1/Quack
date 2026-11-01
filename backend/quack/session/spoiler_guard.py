@@ -4,9 +4,10 @@ The answer of an active task (shown in the session, not closed, the solution not
 must not appear in the teacher reply. The check runs on the full reply before the first SSE
 `token`; on a violation the turn goes back to the model, then code removes the sentence.
 
-The answer is taken from `reference_solution` in the keys the bank holds now (D-B-010):
-`math` — `sympy`, `choice` — `answer` (the text of the correct option), `open` — not
-checked (no reference answer). Both sides are normalized locally: lower case, `**` → `^`,
+The answer is taken from `reference_solution` in the format of WP6.4 (`ReferenceSolution`):
+`math` — `expression`, `choice` — `answer` (the text of the correct option), `open` — not
+checked (its `sample_answer` is one possible answer, not the answer). Both sides are
+normalized locally: lower case, `**` → `^`,
 superscripts, no spaces around operators, no `*`. A number is compared by value; an
 expression or an option text — as a whole token. Integers below `spoiler_ignore_abs_below`
 in absolute value and one-letter answers are not checked (Т-§12.4).
@@ -41,7 +42,7 @@ def _normalize(value: str) -> str:
 def _answer(task: TaskToCheck) -> str | None:
     reference = task.reference_solution
     if task.kind == "math":
-        value = reference.get("sympy")
+        value = reference.get("expression")
     elif task.kind == "choice":
         value = reference.get("answer")
     else:

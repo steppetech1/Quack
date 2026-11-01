@@ -23,6 +23,7 @@ from quack.artifacts.schemas import (
     SubmitRequest,
     SubmitResponse,
 )
+from quack.artifacts.store import check_replay
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.neo4j import read_session
@@ -224,17 +225,41 @@ def _bank_response(task: TaskToCheck, *, degraded: bool) -> NextTaskResponse:
     )
 
 
+def _check_same_request(
+    body: NextTaskRequest,
+    session_id: UUID,
+    assigned: dict[str, Any],
+    kind: str,
+    topic_id: str | None,
+) -> None:
+    """`tasks/next`: compared is what the stored events fix: session, turn, kind, and the topic
+    of a generated task (a bank task is picked by skill, its topic need not be the requested
+    one)."""
+    stored = {**assigned, "kind": kind}
+    request: dict[str, Any] = {
+        "session_id": str(session_id),
+        "turn_id": str(body.turn_id),
+        "kind": body.kind,
+    }
+    if topic_id is not None:
+        stored["topic_id"] = topic_id
+        request["topic_id"] = str(body.topic_id)
+    check_replay(stored, request, "tasks/next")
+
+
 async def _replay_next_task(
-    resources: AppResources, learner_id: UUID, session_id: UUID, idempotency_key: str
+    resources: AppResources, learner_id: UUID, session_id: UUID, body: NextTaskRequest
 ) -> NextTaskResponse | None:
     """A10. `degraded` is not stored in events: a bank task assigned after a failed
     `task_gen@1` call is recognised by its non-completed `core.llm_outbox` row."""
+    idempotency_key = body.idempotency_key
     assigned = await _stored(resources, learner_id, _key(idempotency_key, "task.assigned"))
     if assigned is None:
         return None
     generated = await _stored(resources, learner_id, _key(idempotency_key, "task.generated"))
     if generated is not None:
         p = generated.payload
+        _check_same_request(body, session_id, assigned.payload, p["kind"], p["topic_id"])
         return NextTaskResponse(
             task_id=p["task_id"],
             family_id=p["family_id"],
@@ -246,6 +271,7 @@ async def _replay_next_task(
     async with resources.session_factory() as session:
         row = await load_task(session, learner_id, UUID(assigned.payload["task_id"]))
     assert row is not None, "task.assigned of a task missing from core.task_bank"
+    _check_same_request(body, session_id, assigned.payload, row.kind, None)
     failed = await _rows(
         resources,
         "SELECT 1 FROM core.llm_outbox WHERE learner_id = :l AND idempotency_key = :k "
@@ -267,7 +293,7 @@ async def next_task(
     """Bank task of a new family or `task_gen@1` (bank fallback); `task.generated` +
     `task.assigned` (ТЗ §2.2 п.1, A6–A8, A10–A12)."""
     domain_id = await _session_domain(resources, learner_id, session_id)
-    replay = await _replay_next_task(resources, learner_id, session_id, body.idempotency_key)
+    replay = await _replay_next_task(resources, learner_id, session_id, body)
     if replay is not None:
         return replay
 
@@ -393,6 +419,12 @@ async def give_hint(
     await _session_domain(resources, learner_id, session_id)
     replay = await _stored(resources, learner_id, _key(body.idempotency_key, "task.hint_given"))
     if replay is not None:
+        request = {
+            "session_id": str(session_id),
+            "turn_id": str(body.turn_id),
+            "task_id": str(task_id),
+        }
+        check_replay(replay.payload, request, "hint")
         return _hint_response(replay)
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)
@@ -448,6 +480,17 @@ async def submit_answer(
     await _session_domain(resources, learner_id, session_id)
     replay = await _stored(resources, learner_id, _key(body.idempotency_key, "task.evaluated"))
     if replay is not None:
+        submitted = await _stored(
+            resources, learner_id, _key(body.idempotency_key, "task.submitted")
+        )
+        request = {
+            "session_id": str(session_id),
+            "turn_id": str(body.turn_id),
+            "task_id": str(task_id),
+            "answer": body.answer,
+            "response_time_sec": body.response_time_sec,
+        }
+        check_replay(submitted.payload if submitted else {}, request, "submit")
         return _submit_response(replay)
 
     task = await _assigned_task(resources, learner_id, session_id, task_id)

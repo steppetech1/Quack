@@ -17,7 +17,7 @@ from quack.llm.errors import (
 )
 from quack.llm.provider import ProviderRequest
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
-from quack.session.schemas import CheckpointerOutput, ExtractorOutput, TeacherOutput
+from quack.session.schemas import ExtractorOutput, ExtractorOutputV2, TeacherOutput
 from tests.support.llm import ScriptedFailure, ScriptedLLMProvider
 
 OUTPUT_SCHEMAS: tuple[type[BaseModel], ...] = (
@@ -26,7 +26,7 @@ OUTPUT_SCHEMAS: tuple[type[BaseModel], ...] = (
     CuratorOutput,
     TeacherOutput,
     ExtractorOutput,
-    CheckpointerOutput,
+    ExtractorOutputV2,
     TaskGenOutput,
     EvaluatorOutput,
     ArtifactGenOutput,
@@ -48,10 +48,10 @@ async def test_default_responders_are_valid_for_every_output_schema() -> None:
 async def test_answer_is_chosen_by_schema_not_by_order() -> None:
     provider = ScriptedLLMProvider()
     provider.respond("ArtifactGenOutput", lambda _r: {"title": "T", "text": "x"})
-    other = await provider.complete_structured(_request("CheckpointerOutput"))
+    other = await provider.complete_structured(_request("ExtractorOutputV2"))
     mine = await provider.complete_structured(_request("ArtifactGenOutput"))
     assert ArtifactGenOutput.model_validate_json(mine.content).title == "T"
-    CheckpointerOutput.model_validate_json(other.content)
+    ExtractorOutputV2.model_validate_json(other.content)
 
 
 @pytest.mark.parametrize(

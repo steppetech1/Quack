@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import inspect
 from datetime import UTC, datetime, timedelta
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -22,6 +22,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.postgres import SessionFactory
 from quack.domains import diagnostic
@@ -37,6 +38,9 @@ from quack.events.append import append_events
 from quack.events.models import NewEvent, StoredEvent
 from quack.events.reader import read_learner_events
 from quack.graph.worker import ProjectorWorker
+from quack.llm.gateway import LLMGateway
+from quack.practice.evaluation import TaskToCheck, evaluate_answer
+from quack.practice.schemas import parse_reference_solution
 from tests.domains.conftest import FakeLLMProvider
 
 DIAG_SESSION_KEY_PATTERN = "diagnostic:session:*"
@@ -572,3 +576,98 @@ async def test_answer_after_finish_conflicts_and_second_finish_replays_stored_re
 
     assert len(await _events(db, learner_id, "diagnostic.completed")) == 1
     assert len(await _events(db, learner_id)) == len(events_after_finish)
+
+
+async def test_diagnostic_reference_is_a_choice_reference(
+    api_client: httpx.AsyncClient,
+    seeded_learner: tuple[UUID, str],
+    diag_domain: DiagDomain,
+    fake_llm_provider: FakeLLMProvider,
+    db: SessionFactory,
+    settings: Settings,
+) -> None:
+    """T-H8 (а), side of `diagnostic@1`: the stored `reference_solution` passes
+    `ReferenceSolution` (`choice`) and is checked by `quack/practice` as stored."""
+    learner_id, token = seeded_learner
+    q1 = _queue_question(fake_llm_provider, "r1")
+    await _start(api_client, token, diag_domain.domain_id)
+
+    [generated] = await _events(db, learner_id, "task.generated")
+    p = generated.payload
+    reference = p["reference_solution"]
+    parse_reference_solution(p["kind"], reference)
+    task = TaskToCheck(
+        task_id=UUID(p["task_id"]),
+        kind=p["kind"],
+        prompt_text=p["prompt_text"],
+        reference_solution=reference,
+        target_skills=p["target_skills"],
+        target_misconceptions=[],
+        difficulty=p["difficulty"],
+        topic_id=UUID(p["topic_id"]),
+        family_id=p["family_id"],
+    )
+    verdict = await evaluate_answer(
+        task,
+        q1.correct,
+        [],
+        learner_id=learner_id,
+        session_id=uuid4(),
+        turn_id=uuid4(),
+        idempotency_key="th8-diag",
+        gateway=cast(LLMGateway, None),  # a choice answer is checked by code
+        compute=cast(ComputeClient, None),
+        settings=settings,
+    )
+    assert verdict.is_correct
+
+
+async def test_diagnostic_question_without_a_valid_reference_is_not_banked(
+    api_client: httpx.AsyncClient,
+    seeded_learner: tuple[UUID, str],
+    diag_domain: DiagDomain,
+    fake_llm_provider: FakeLLMProvider,
+    db: SessionFactory,
+) -> None:
+    """T-H8 (а), WP6.4 п.1: an answer of `diagnostic@1` whose correct option is not among its
+    options does not reach the bank; the deterministic question of code is written instead."""
+    learner_id, token = seeded_learner
+    fake_llm_provider.enqueue(
+        DiagnosticOutput(
+            prompt_text="Question bad?",
+            options=["one", "two"],
+            correct_answer="three",
+            is_correct=False,
+            score=0.0,
+            tested_depth=0.5,
+        )
+    )
+    await _start(api_client, token, diag_domain.domain_id)
+
+    [generated] = await _events(db, learner_id, "task.generated")
+    assert generated.actor == "code"
+    parse_reference_solution("choice", generated.payload["reference_solution"])
+
+
+async def test_finish_same_key_other_session_is_conflict(
+    api_client: httpx.AsyncClient,
+    seeded_learner: tuple[UUID, str],
+    diag_domain: DiagDomain,
+    fake_llm_provider: FakeLLMProvider,
+    db: SessionFactory,
+) -> None:
+    """T-E2: `finish` with a used key and another `session_id` is 409 `IDEMPOTENCY_CONFLICT`,
+    also when that session does not exist: the key is checked before the session."""
+    learner_id, token = seeded_learner
+    domain_id = diag_domain.domain_id
+    _queue_question(fake_llm_provider, "k1")
+    started = await _start(api_client, token, domain_id)
+    key = f"diag-finish-key:{started['session_id']}"
+    first = await _finish(api_client, token, domain_id, started["session_id"], key=key)
+    assert first.status_code == 200, first.text
+    events = len(await _events(db, learner_id))
+
+    other = await _finish(api_client, token, domain_id, uuid4(), key=key)
+    assert other.status_code == 409, other.text
+    assert other.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert len(await _events(db, learner_id)) == events

@@ -1,38 +1,44 @@
 """Stand-in Meta API server `meta-mock` on the wire (ТЗ Фазы 3 WP10.3, Д-§11, Т-§11.1, Т-§11.8).
 
-The request bodies follow the Responses API contract of `T-L8`. `T-O5` proper (through the
-`ResponsesClient` adapter) waits for the adapter of WP5.7 (stream B, D-B-004).
+The request bodies follow the Responses API contract of `T-L8`; `T-O5` goes through the
+`ResponsesClient` adapter of WP5.7.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel
 
 from loadtest.meta_mock import MetaMockConfig, create_app, latency_s, minimal_instance
 from quack.artifacts.schemas import ArtifactGenOutput
 from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOutput
+from quack.llm.errors import ProviderIncompleteError, ProviderRateLimitedError
+from quack.llm.pressure import parse_retry_after
+from quack.llm.provider import ProviderRequest
+from quack.llm.responses_client import ResponsesClient
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.session.schemas import (
-    CheckpointerOutput,
     ExtractorOutput,
+    ExtractorOutputV2,
     TeacherOutput,
 )
 
-# The nine output models of T-O5.
+# The nine output models of T-O5; `CheckpointerOutput` → `ExtractorOutputV2` (WP13, D-C-029).
 OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
     StructurerOutput,
     DiagnosticOutput,
     CuratorOutput,
     TeacherOutput,
     ExtractorOutput,
-    CheckpointerOutput,
+    ExtractorOutputV2,
     TaskGenOutput,
     EvaluatorOutput,
     ArtifactGenOutput,
@@ -321,3 +327,72 @@ def test_config_from_env() -> None:
     )
     assert config == MetaMockConfig("zero", 10, 1000, False, 0.5, "seconds", 0.25, 80)
     assert MetaMockConfig.from_env({}) == MetaMockConfig()
+
+
+# --- T-O5: through the Responses API adapter (WP5.7) -------------------------------------
+
+
+def _adapter(config: MetaMockConfig = ZERO) -> ResponsesClient:
+    http = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=create_app(config)))
+    return ResponsesClient("http://meta-mock", "any-key", http_client=http)
+
+
+def _request(output: type[BaseModel]) -> ProviderRequest:
+    return ProviderRequest(
+        model="muse-spark-1.3",
+        prompt="Hello",
+        json_schema=to_strict_json_schema(output),
+        schema_name=output.__name__,
+        temperature=0.0,
+        timeout_sec=5.0,
+        reasoning_effort="low",
+        max_output_tokens=4096,
+        prompt_cache_key=f"{output.__name__}@1",
+    )
+
+
+@pytest.mark.parametrize("model", OUTPUT_MODELS, ids=lambda m: m.__name__)
+async def test_meta_mock_outputs_validate(model: type[BaseModel]) -> None:
+    """T-O5: the adapter parses the answer of meta-mock for each of the nine output models;
+    it passes `model_validate_json`; reasoning item, usage and `x-ratelimit-*` are there."""
+    adapter = _adapter()
+    try:
+        response = await adapter.complete_structured(_request(model))
+    finally:
+        await adapter.aclose()
+    model.model_validate_json(response.content)
+    _keys_sorted(json.loads(response.content))
+    assert response.output_items[0]["type"] == "reasoning"
+    assert response.input_tokens > 0 and response.output_tokens > 0
+    assert response.reasoning_tokens > 0
+    for name in RATE_LIMIT_HEADERS:
+        assert name in response.headers, name
+
+
+async def test_meta_mock_429_formats_are_parsed() -> None:
+    """T-O5: with `META_MOCK_429_SHARE = 1` every call is 429; `retry-after` comes in all three
+    formats in turn, and each is parsed by the gateway's parser (WP5.3)."""
+    adapter = _adapter(MetaMockConfig(latency="zero", share_429=1.0))
+    parsed: list[float | None] = []
+    try:
+        for _ in range(3):
+            with pytest.raises(ProviderRateLimitedError) as caught:
+                await adapter.complete_structured(_request(TeacherOutput))
+            raw = caught.value.headers.get("retry-after")
+            parsed.append(parse_retry_after(raw, datetime.now(UTC)))
+    finally:
+        await adapter.aclose()
+    seconds, date, absent = parsed
+    assert seconds is not None and seconds >= 1
+    assert date is not None and date >= 0
+    assert absent is None
+
+
+async def test_meta_mock_incomplete_is_cut() -> None:
+    """T-O5: with `META_MOCK_INCOMPLETE_SHARE = 1` the adapter reports a cut answer."""
+    adapter = _adapter(MetaMockConfig(latency="zero", incomplete_share=1.0))
+    try:
+        with pytest.raises(ProviderIncompleteError):
+            await adapter.complete_structured(_request(TeacherOutput))
+    finally:
+        await adapter.aclose()

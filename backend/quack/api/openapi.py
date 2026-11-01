@@ -32,6 +32,17 @@ SSE_ROUTES = frozenset(
         ("get", "/v1/learner/stream"),
     }
 )
+# Events of a stream in their order, for the frontend (С-§8.5, WP6.3, WP6.4).
+SSE_EVENTS = {
+    ("post", "/v1/sessions/{session_id}/turns"): (
+        "; events in order: `turn_started` {turn_id, turn_index, user_seq}; "
+        '`status` {"state": "thinking"} once, right after `turn_started`, before the model '
+        "call (WP6.3); `token` {delta}, one or more; `task_evaluated` when the turn checks a "
+        "task answer; `task_assigned` when the turn assigns a task, after `task_evaluated` "
+        "(WP6.4); `turn_completed` {turn_id, committed_seq, degraded_mode} after the turn is "
+        "committed; `done` last"
+    ),
+}
 # FastAPI's default validation models, replaced by `ErrorResponse` (VALIDATION_ERROR).
 DEFAULT_VALIDATION_MODELS = ("HTTPValidationError", "ValidationError")
 
@@ -71,14 +82,14 @@ def _error_response(status: str) -> dict[str, Any]:
     }
 
 
-def _sse_response(description: str) -> dict[str, Any]:
+def _sse_response(description: str, events: str = "") -> dict[str, Any]:
     return {
         "description": description,
         "content": {
             "text/event-stream": {
                 "schema": {
                     "type": "string",
-                    "description": "named events `event: <name>\\ndata: <json>` (С-§8.5)",
+                    "description": "named events `event: <name>\\ndata: <json>` (С-§8.5)" + events,
                 }
             }
         },
@@ -97,7 +108,9 @@ def _document(schema: dict[str, Any]) -> dict[str, Any]:
             responses: dict[str, Any] = operation.setdefault("responses", {})
             if (method, path) in SSE_ROUTES:
                 ok = next(s for s in responses if s.startswith("2"))
-                responses[ok] = _sse_response(responses[ok].get("description", ""))
+                responses[ok] = _sse_response(
+                    responses[ok].get("description", ""), SSE_EVENTS.get((method, path), "")
+                )
             for status in _error_statuses(method, path, operation):
                 responses[status] = _error_response(status)
     return schema

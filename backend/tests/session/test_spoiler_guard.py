@@ -120,7 +120,7 @@ def _math_task(reference: str) -> TaskToCheck:
         task_id=uuid4(),
         kind="math",
         prompt_text="Solve",
-        reference_solution={"sympy": reference},
+        reference_solution={"expression": reference},
         target_skills=[],
         target_misconceptions=[],
         difficulty=0.5,
