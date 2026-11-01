@@ -1,36 +1,58 @@
-# PHASE4_NOTES
+# Фаза 4: заметки, аудит и журнал решений
 
-Журнал Фазы 4 (ТЗ Ф4 §0.5, WP0 п.6). Общие разделы ведёт поток C; каждый поток пишет только в свой
-раздел. Файл создан потоком B до общих разделов C: при слиянии общие разделы C встают выше раздела B.
+Файл заметок `ТЗ Фаза 4 (единое).md` (§0.5). Общие разделы ведёт поток C; в разделах потоков
+пишет только сам поток. Ссылки: `Т-§`, `Д-§`, `П-`, `Ф3-§`, `P3N` — как в §0.1 ТЗ.
 
----
+## Сводка для владельца
 
-## Поток B
+Состояние на 2026-11-02 (WP0, поток C).
 
-### Статус пакетов
+- **Нужно от владельца до начала кода фазы:** письменное подтверждение в чате, что ни в одном
+  окружении нет событий настоящих учеников (WP0 п.2, §0.3 «Чистый старт»). Без него фаза не
+  начинается (§0.4.6, причина 1).
+- **Нужно подтверждение решения класса C:** `D-C-101` — имена рабочих веток.
+- `main` `9ef6e3e` зелёный (раздел «Вход»).
+- \[ПРОВЕРИТЬ\] WP0 п.3а закрыт: фильтр внутри векторного индекса работает на Neo4j
+  2026.10.1 Community (раздел «Вход»).
 
-| WP | Статус | Тесты |
+## Вход
+
+Проверка §1.3 (поток C, 2026-11-02).
+
+- `main` — `9ef6e3e` (#70, ТЗ Фазы 4 с поправками) поверх `958d42a` (#69). Фаза 3 (#66) и
+  решения владельца (#67) влиты.
+- Интеграционная ветка `phase-4` уже есть в `origin` и совпадает с `main` `9ef6e3e`; там же
+  `phase-4-a`, `phase-4-b`, `phase-4-c` на том же коммите (рабочие ветки — `D-C-101`).
+- Инфраструктура тестов — по `backend/README.md`: `quack-test-pg` (Postgres 16, :55432),
+  `quack-test-neo4j` (:57687, **Neo4j 2026.06.0** — README и compose называют 2026.10,
+  `D-A-017`; локальный контейнер старше, на итог прогона не влияет), `quack-test-redis`
+  (Redis 7, :56379; compose — 8.2). Docker 29.8.1, uv 0.12.23.
+- **Чистый старт (WP0 п.2): ждёт письменного подтверждения владельца.**
+
+Прогон на `main` `9ef6e3e`:
+
+| Где | Команда | Итог |
 | :-- | :-- | :-- |
-| WP0 (B) | выполнен: аудит B8–B12, B20, B25, B27; список промптов — ниже | — |
-| Этап I контрактов G1 (S7, S8, S11, S13) | в работе | см. «Красные прогоны» |
+| `backend/` | `uv run ruff check .` | All checks passed |
+| `backend/` | `uv run ruff format --check .` | 260 files already formatted |
+| `backend/` | `uv run pyright` | 0 errors |
+| `backend/` | `QUACK_TEST_REQUIRE_INFRA=1 uv run pytest -q` | 774 passed, 351 warnings, 631 s |
+| `compute/` | `uv run ruff check .` / `ruff format --check .` | passed / 7 files already formatted |
+| `compute/` | `uv run pyright --pythonplatform Linux` | 0 errors |
+| `compute/` | `docker run --rm -v "<compute>:/src:ro" ghcr.io/astral-sh/uv:python3.12-bookworm-slim sh -c "cp -r /src /app && cd /app && rm -rf .venv && uv sync -q --frozen && uv run pytest -q"` | 5 passed (три прогона подряд). Первый прогон, параллельно с `pytest` backend, — 2 failed (`test_equation_roots_and_matrix` и ещё один), см. «Вопросы к команде» Q-C-1 |
 
-### Аудит §3 (зона B)
+### \[ПРОВЕРИТЬ\] WP0 п.3
 
-Проверено по `main` `9ef6e3e` (= `phase-4` на начало работы).
+| Пункт | Поток | Скрипт | Итог |
+| :-- | :-: | :-- | :-- |
+| а) `SEARCH … VECTOR INDEX … WHERE learnerId = $id AND searchable = true` (`Т-§3.4.6`, `Т-§1.10`) | C | `scripts/checks/vector_search_filter.py` | **Работает** на `neo4j:2026.10-community` (агент `Neo4j/2026.10.1`, community): индекс с `WITH [c.learnerId, c.searchable]`, запрос `CYPHER 25 MATCH … SEARCH c IN (VECTOR INDEX … FOR $q WHERE … LIMIT 30) SCORE AS score` вернул ровно узлы ученика с `searchable = true`. Запасной путь WP20.4 не нужен |
+| б) составной range-индекс `(learnerId, retDueAtMs)` на `Skill` (`Т-§3.4.8`) | A | — | ждёт поток A |
+| в) параметры `py-fsrs` (`Т-§8.3`) | A | — | ждёт поток A |
+| г) `antlr4-python3-runtime` для SymPy, `parse_latex(…, strict=True)` (`Т-§6.5`) | B | `scripts/checks/wp0_3g_antlr.py` | SymPy 1.14.0 требует **4.11.x**; `strict` есть; с 4.11.1 строгий разбор работает. В `compute` рантайма пока нет — закрепляется в WP11.5. Подробно — ниже, «Поток B: подробности п.3г, п.3д» |
+| д) Meta Model API: `sam-3.1`, `muse-voice-transcribe-1.0` (`Т-§1.3`) | B | — (только документация: вызов запрещён п.3д, скрипту нечего проверять) | `sam-3.1` — `POST /v1/responses`, ответ спецтокенами; голос — `POST /v1/asr/transcribe`, `multipart/form-data`, WAV. Подробно — ниже, «Поток B: подробности п.3г, п.3д» |
+| е) `READ`-сессия Neo4j отклоняет запись (`Д-§14.2`, `T-A9b`) | C (перенос) | `tests/test_neo4j_read_session.py` | **Подтверждено**: 3 passed на Neo4j 2026.06.0 (полный прогон) и на 2026.10.1 (`QUACK_TEST_NEO4J_URI=bolt://127.0.0.1:57688`) |
 
-| # | Итог | Что видно в коде |
-| :-- | :-- | :-- |
-| B8 | подтверждено | `quack/llm/responses_client.py`: `complete_structured` без `stream` и без `tools`; семафоры, давление, размыкатель, повторы, `teacher_fallback` — в `gateway.py`, `pressure.py`; учёт — `ops.llm_ledger` в токенах |
-| B9 | подтверждено | `quack/session/schemas.py`: `TeacherOutput` плоский (`reply_text`, `pedagogical_move`); ход в `turns.py` без LangGraph; гард спойлера по полному тексту (`spoiler_guard.py`) |
-| B10 | подтверждено | `quack/practice/evaluation.py` — каскад Фазы 3; `selection.py` — подбор из `core.task_bank` |
-| B11 | подтверждено | `compute/quack_compute/app.py`: только `POST /v1/check/math` и `/health/live`; каталога `math/` нет |
-| B12 | подтверждено | `quack/session/extraction.py`, `workers.py`: извлечение по ходу, `ExtractorOutputV2` с перечнями `extractor@2` |
-| B13 | подтверждено | `quack/domains/structure.py` (интервью структуры), `diagnostic.py` (диагностика), `curation.py` (задача `graph.curate`, роль `curator@1`) — есть. Удаляются по §2.3 строка 5; сверка и гигиена — WP16.3 (B); сами модули `domains` — зона A |
-| B20 | подтверждено | `quack/practice/generation.py` (`build_generated_task`), роль `task_gen@1`; `task_checker`/`task_arbiter` нет |
-| B25 | подтверждено | `quack/llm/labels.py`: метки `S`/`T`/`K`/`M`, таблица в `ops.turn_manifests` |
-| B27 | подтверждено | `backend/scripts/meta_smoke.py` — роли Фазы 3, без стриминга и инструментов |
-
-### Проверки WP0 п.3 (зона B)
+#### Поток B: подробности п.3г, п.3д
 
 **г) ANTLR для SymPy (`Т-§6.5`).** SymPy закреплена 1.14.0 (`compute/uv.lock`). Она требует
 `antlr4-python3-runtime` **4.11.x**: проверка `version('antlr4-python3-runtime').startswith('4.11')` в
@@ -70,7 +92,50 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 привести к WAV моно 16-бит 16/24 кГц; время отрезка для привязки к строкам (`Т-§15.6`) даёт клиент —
 в `PUSH_TO_TALK` внутренних отметок нет.
 
-### Промпты (WP0 п.5)
+## Статус
+
+| Пакет | Поток | Состояние | Тесты |
+| :-- | :-: | :-- | :-- |
+| WP0 (зона C) | C | частично: ждёт п.2 (владелец) | — (скрипт п.3а) |
+| WP0 (зона B) | B | выполнен: аудит, п.3г, п.3д, п.5 | — (скрипт п.3г) |
+| Этап I G1 (B: S7, S8, S11, S13) | B | контракты в `phase-4-b`, тесты контрактов зелёные | см. «Красные прогоны» |
+| WP10.2–10.3 (B) | B | частично: разбор потока хода и вход шага цикла с инструментами — зелёные (`T-AI2`–`T-AI4`); адаптер стриминга и узел цикла — дальше | 10 passed |
+
+## Аудит
+
+Пункты §3, которые подтверждает поток C (`main` `9ef6e3e`, 2026-11-02).
+
+| # | Итог |
+| :-- | :-- |
+| B11 | Подтверждено: `compute/quack_compute/` — `GET /health/live`, `POST /v1/check/math`; таймаут на `multiprocessing` (`forkserver`), `pebble` нет. Часть WP24 — C, `math/**` — B |
+| B14 | Подтверждено: пароль и JWT в `quack/domains/auth.py`, `quack/api/auth.py`, ссылки в `quack/cli.py`, `quack/config.py`. Пакета `quack/auth/` нет |
+| B15 | Подтверждено: `quack/artifacts/` — `notes.py`, `cheatsheets.py`, `practice.py`, `search.py`, `store.py`, `router.py` |
+| B16 | Подтверждено: `quack/storage/` нет, `aioboto3` в `pyproject.toml` нет |
+| B17 | Подтверждено: `quack/materials/`, `quack/embeddings/` нет; `modal` нет |
+| B18 | Подтверждено: `quack/canvas/` нет; `msgpack` нет |
+| B22 | Подтверждено с уточнением: сеть `backend` и лимиты `Д-§4.1`, `stop_grace_period`, списки `environment:` есть; **сеть `egress` уже есть** (`compose.yaml`: у `api` и `workers`, объявлена в `networks:`) — пункт «сеть `egress`» WP9.1 уже выполнен, проверить значения при WP9. Caddy нет. CI — три job (`backend`, `compute`, `images`), job выкатки нет |
+| B23 | Подтверждено: `ops` — `migrate`, `verify-schema`, `rebuild`, `replay-dlq`, `purge-deleted`, `status`, `event-registry`, `can-rollback`, `seed-learners`, `openapi`. Нет `db-roles`, `backup now`, `restore-check`, `replay-deletions`, `orphan-objects`, `alerts`, `resume` |
+| B24 | Подтверждено: `AppResources` — `settings`, `engine`, `session_factory`, `neo4j`, `redis`, `llm`, `compute`; новых ресурсов и CORS-списка нет |
+| B27 | Подтверждено: `loadtest/meta_mock.py` строит ответ по схеме (`minimal_instance`), без стриминга и инструментов. Часть WP26.2 — C, `meta_smoke.py` — B |
+
+
+Пункты §3, которые подтверждает поток B (`main` `9ef6e3e`, 2026-11-02).
+
+| # | Итог | Что видно в коде |
+| :-- | :-- | :-- |
+| B8 | подтверждено | `quack/llm/responses_client.py`: `complete_structured` без `stream` и без `tools`; семафоры, давление, размыкатель, повторы, `teacher_fallback` — в `gateway.py`, `pressure.py`; учёт — `ops.llm_ledger` в токенах |
+| B9 | подтверждено | `quack/session/schemas.py`: `TeacherOutput` плоский (`reply_text`, `pedagogical_move`); ход в `turns.py` без LangGraph; гард спойлера по полному тексту (`spoiler_guard.py`) |
+| B10 | подтверждено | `quack/practice/evaluation.py` — каскад Фазы 3; `selection.py` — подбор из `core.task_bank` |
+| B11 | подтверждено | `compute/quack_compute/app.py`: только `POST /v1/check/math` и `/health/live`; каталога `math/` нет |
+| B12 | подтверждено | `quack/session/extraction.py`, `workers.py`: извлечение по ходу, `ExtractorOutputV2` с перечнями `extractor@2` |
+| B13 | подтверждено | `quack/domains/structure.py` (интервью структуры), `diagnostic.py` (диагностика), `curation.py` (задача `graph.curate`, роль `curator@1`) — есть. Удаляются по §2.3 строка 5; сверка и гигиена — WP16.3 (B); сами модули `domains` — зона A |
+| B20 | подтверждено | `quack/practice/generation.py` (`build_generated_task`), роль `task_gen@1`; `task_checker`/`task_arbiter` нет |
+| B25 | подтверждено | `quack/llm/labels.py`: метки `S`/`T`/`K`/`M`, таблица в `ops.turn_manifests` |
+| B27 | подтверждено | `backend/scripts/meta_smoke.py` — роли Фазы 3, без стриминга и инструментов |
+
+## Промпты
+
+Поток B, WP0 п.5.
 
 Пакета доктрины владельца (слой 1, §7.6) для ролей Фазы 4 в репозитории нет. В `quack/prompts/` лежат
 только промпты Фазы 3: `teacher@1`, `extractor@1`, `extractor@2`, `evaluator@1`, `task_gen@1`,
@@ -99,7 +164,15 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 в сигнале потока B. Перечни `intent` и `approach` выхода хода (WP13.3) тоже ждут доктрину:
 до неё стоят временные значения (D-B-104).
 
-### Журнал решений
+## Реестр отклонений от основных документов
+
+Как в ТЗ Фазы 4 §2.4 (R4-1…R4-4). Новых строк нет.
+
+## Журнал решений
+
+### Поток A
+
+### Поток B
 
 ### D-B-101. Строки таблицы ролей без строки в `Т-§11.1`
 - Класс: B
@@ -178,14 +251,45 @@ HTTP-адаптер шлюза (допуск, учёт, трасса, размы
 - Тесты: `T-CH6`.
 - Требует подтверждения владельцем: нет
 
-### Заблокировано
+### Поток C
 
-(нет)
+### D-C-101. Имена рабочих веток
+- Класс: C
+- WP / место: §7.4, ветки git
+- Контекст: §7.4 задаёт интеграционную ветку `phase-4` и рабочие `phase-4/c-<тема>`. Git не
+  может держать ветку `phase-4` и ветки `phase-4/…` одновременно (конфликт ссылок: `phase-4` —
+  файл, `phase-4/` — каталог). В `origin` уже есть `phase-4`, `phase-4-a`, `phase-4-b`, `phase-4-c`.
+- Варианты: (1) рабочие ветки `phase-4-c-<тема>`, как в Фазе 3 (`phase-3-c-…`);
+  (2) переименовать интеграционную ветку; (3) работать только в `phase-4-c`.
+- Решение: (1) — `phase-4-<поток>-<тема>`, PR в `phase-4`.
+- Почему: §0.4.3 п.3 и п.7 — интеграционная ветка и уже созданные ветки не меняются,
+  соглашение Фазы 3.
+- Обратимость: имя ветки, ничего в коде.
+- Тесты: нет (процесс).
+- Требует подтверждения владельцем: да
 
-### Красные прогоны
+## Заблокировано
+
+## Красные прогоны
 
 - Этап I G1 (B): `uv run pytest tests/session/test_phase4_contracts.py tests/llm/test_phase4_ai_layer.py tests/practice/test_tasks_markup.py tests/practice/test_check_instant.py tests/test_contracts.py` — 33 красных (`NotImplementedError`: `TurnStreamParser`, `next_step_input`, `validate_markup`, `check`), 26 зелёных (контракты, `T-AI1`, `T-A6`).
 
-### Правки тестов
+## Правки тестов
 
 - `tests/test_contracts.py` (`T-A6`): в `PRODUCT` добавлен `agents` (ТЗ Ф4 §4.1). Сила проверки не меняется.
+
+## Вопросы к команде
+
+- **Q-C-1 (C → владелец, к сведению B).** `compute/` на `main`: в первом прогоне в контейнере,
+  запущенном одновременно с полным `pytest` backend, упали 2 теста из 5
+  (`test_equation_roots_and_matrix` и ещё один); три следующих прогона — 5 passed. Похоже на
+  таймаут проверки под нагрузкой (`multiprocessing` с таймаутом). WP24 переводит пул на
+  `pebble` — проверить там; до этого не трогаю.
+
+## Для фронтенда
+
+Снимок `backend/openapi.json` и таблица «старый эндпоинт → новый» (§6.4) — на каждом гейте.
+
+## DoD
+
+Таблица §10 — заполняется к G4.
