@@ -6,11 +6,16 @@ Resources are built once per process and passed explicitly; they are closed in r
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
+
+from neo4j import AsyncDriver
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.neo4j import create_driver
-from quack.db.postgres import create_engine, create_session_factory
+from quack.db.postgres import SessionFactory, create_engine, create_session_factory
 from quack.db.redis import create_redis
 from quack.jobs.kinds import JOB_KINDS
 from quack.jobs.runner import JOB_HANDLERS, JobContext, JobHandler
@@ -49,6 +54,36 @@ async def close_job_context(context: JobContext) -> None:
     """Close in reverse creation order: compute, llm, redis, neo4j, engine (§4.2)."""
     await context.compute.aclose()
     await context.llm.aclose()
+    if context.redis is not None:
+        await context.redis.aclose()
+    await context.neo4j.close()
+    await context.engine.dispose()
+
+
+@dataclass(frozen=True)
+class ProjectorContext:
+    """Resources of the `projector` process (§4.2): no LLM gateway, no compute client."""
+
+    settings: Settings
+    session_factory: SessionFactory
+    engine: AsyncEngine
+    neo4j: AsyncDriver
+    redis: Redis | None
+
+
+def create_projector_context(settings: Settings) -> ProjectorContext:
+    engine = create_engine(settings)
+    return ProjectorContext(
+        settings=settings,
+        session_factory=create_session_factory(engine),
+        engine=engine,
+        neo4j=create_driver(settings),
+        redis=create_redis(settings),
+    )
+
+
+async def close_projector_context(context: ProjectorContext) -> None:
+    """Reverse creation order: redis, neo4j, engine."""
     if context.redis is not None:
         await context.redis.aclose()
     await context.neo4j.close()

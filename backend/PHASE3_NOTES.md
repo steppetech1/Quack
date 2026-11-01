@@ -400,6 +400,54 @@ UTC-времени эпохи. Склейка по `coalesce_key` держит �
 | Q-A1 | `domains/learner.py:85` отменяет задачи ученика прямым SQL по `ops.jobs`. Для `T-Q9` нужна функция ядра очереди (зона A, например `cancel_learner_jobs`) и вызов её из `domains` — правка зоны C одной строкой в WP11.4. **Сделано в WP11.4 (D-A-011), ждёт ревью C** | C |
 | Q-A2 | D-A-002 и D-A-003 — подтвердить | владелец |
 
+### D-A-013. WP3.5, WP8.1, WP8.2: плавная остановка и роли процессов
+
+Класс B, одно место класса C (последний пункт).
+
+- `JobRunner.run_forever(stop)`: по `stop` циклы не берут новых задач; выполняющиеся ждут не
+  дольше `worker_shutdown_grace_s`, оставшиеся отменяются, и `run_one` сам возвращает задачу в
+  `queued` (`queue.release_job`: `attempt` не растёт, `locked_by`/`heartbeat_at` очищаются, только
+  если владелец — этот исполнитель). Чистильщик и планировщик останавливаются по тому же `stop`.
+  `T-Q6`; проверка на неверной реализации: без `release_job` тест падает.
+- CLI (`§6.7`): `api` (Uvicorn, `workers = api_workers`, `timeout_graceful_shutdown =
+  api_graceful_shutdown_s`), `projector` (проверка схемы Neo4j, проектор и диспетчер под
+  `supervise`), `workers` (регистрация и проверка полноты обработчиков, исполнители с
+  чистильщиком, планировщик), `worker` (обе роли, только для разработки; при `env = prod` — код 2).
+  Ресурсы `projector` — `quack.runtime.create_projector_context` (без шлюза LLM и compute, §4.2).
+- `process_settings(settings, role)` ставит `process_role` до создания ресурсов (§4.3) и
+  привязывает `process` и `version` (`QUACK_VERSION`) к каждой строке лога через contextvars
+  structlog (Д-§9.1). Проверено живым запуском `workers` и `projector` на тестовых базах:
+  строки лога содержат оба поля, SIGTERM — выход с кодом 0.
+- **Класс C:** при `api_workers > 1` Uvicorn запускает дочерние процессы, contextvars туда не
+  переходят. CLI передаёт роль через `PROCESS_ROLE` (её читает `Settings`), но поля `process` и
+  `version` в логах дочерних процессов появятся, только если `create_app` (зона C) привяжет их
+  сам: `structlog.contextvars.bind_contextvars(process=settings.process_role,
+  version=settings.quack_version)`. Вынесено потоку C.
+- `T-O4` (`tests/test_ops_phase3.py`) проверяет команды ролей, `seed-learners`, `openapi` и отказ
+  `worker` на prod; команды `ops status`, `event-registry`, `can-rollback` добавятся в тест вместе
+  с WP8.4–8.5.
+
+### D-A-014. WP8.4, WP8.5, WP11.5: `ops status`, реестр событий, `can-rollback`
+
+Класс B, одно место класса C (пометки «без правила»).
+
+- `ops status` (`quack/ops/status.py::collect_status`) печатает один JSON-объект со всеми полями
+  WP8.4, включая `dispatcher.learners_lagging` и `dispatcher.max_lag_events` (WP11.5). Код 0, если
+  Postgres ответил, иначе 2 (значения из Postgres — `null`). Redis или Neo4j недоступны —
+  `dependencies.* = "error"`, `llm.pressure` и `llm.circuit_open` — `null`, код 0. Ошибки
+  зависимостей пишутся в лог только на уровне `debug`: лог и отчёт идут в один stdout, а команда
+  обязана печатать ровно один объект. Проверено живым запуском с недоступными Postgres и Redis.
+  Neo4j проверяется через `read_session` (WP4.1: вне проектора — только сессии чтения).
+- `ops event-registry --out PATH` — пары каталога `(type, schema_version)`, отсортированные, и
+  `rules_version` (`CURRENT_RULES_VERSION`); эталон `tests/fixtures/event_registry.json` (37 пар:
+  36 типов и `turn.extracted@2`, `rules@2`). `ops can-rollback --to-registry PATH` сравнивает с
+  реестром прошлого образа и `ops.event_types_seen`; код 0 при `can_rollback`, иначе 1.
+- **Класс C, T-O6.** ТЗ просит пометку «без правила» «в каталоге», но каталог —
+  `quack/events/catalog.py` (зона C), а правила диспетчера — зона A. Пометки диспетчера лежат
+  рядом с правилами: `dispatcher_rules.NO_DISPATCH_RULE`. Пометка «без обработчика» проектора —
+  запись `_no_graph_effect` в `graph/phase_a.HANDLERS`. Проверка — `ops.registry.registry_gaps()`:
+  новая пара без обработчика проектора или без правила и пометки даёт строку, `T-O6` падает.
+
 ### D-A-012. WP8.6: `ops seed-learners`
 
 Класс B. `quack/ops/seed.py::seed_learners(session_factory, settings, *, count, fixture,

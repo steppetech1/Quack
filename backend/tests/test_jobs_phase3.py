@@ -29,7 +29,7 @@ from quack.graph.worker import ProjectorWorker
 from quack.jobs import kinds
 from quack.jobs.kinds import JOB_KINDS, KIND_LLM_ROLES, JobDeferred
 from quack.jobs.periodic import PeriodicScheduler
-from quack.jobs.queue import ClaimedJob, JobSpec, claim_next_job, enqueue_job
+from quack.jobs.queue import ClaimedJob, JobSpec, claim_next_job, enqueue_job, release_job
 from quack.jobs.runner import JobContext, JobHandler, JobRunner
 from quack.llm.errors import LLMBudgetExceededError
 from quack.ops.commands import PURGE_TABLES
@@ -443,3 +443,70 @@ def test_product_code_uses_context_resources() -> None:
         for path in sorted((QUACK_ROOT / package).rglob("*.py")):
             problems.extend(_violations(path))
     assert problems == []
+
+
+# --- T-Q6: graceful shutdown of the executors ------------------------------------------
+
+
+async def test_worker_graceful_shutdown_requeues_unfinished(
+    db: SessionFactory, settings: Settings
+) -> None:
+    """WP3.5: on stop the runner takes no new jobs, waits `worker_shutdown_grace_s` for the
+    running ones and puts the rest back to `queued` itself: attempt unchanged, lock cleared."""
+    fast_id = await _enqueue(db, kinds.session_sweep_inactive())
+    forever_id = await _enqueue(db, kinds.account_purge_deleted())
+    fast_done = asyncio.Event()
+
+    async def fast(job: ClaimedJob, ctx: JobContext) -> None:
+        await asyncio.sleep(0.05)
+        fast_done.set()
+
+    async def forever(job: ClaimedJob, ctx: JobContext) -> None:
+        await asyncio.Event().wait()
+
+    quick = settings.model_copy(
+        update={"worker_shutdown_grace_s": 0.3, "worker_concurrency": 2, "consumer_poll_ms": 20}
+    )
+    runner = JobRunner(
+        quick,
+        db,
+        "w-grace",
+        build_job_context(quick, db, None, None),
+        handlers={"session.sweep_inactive": fast, "account.purge_deleted": forever},
+    )
+    stop = asyncio.Event()
+    task = asyncio.create_task(runner.run_forever(stop))
+    for _ in range(100):
+        rows = await _q(db, "SELECT status FROM ops.jobs WHERE id = :id", id=forever_id)
+        if fast_done.is_set() and rows[0]["status"] == "running":
+            break
+        await asyncio.sleep(0.02)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+    assert loop.time() - started < 2
+
+    [fast_row] = await _q(db, "SELECT status FROM ops.jobs WHERE id = :id", id=fast_id)
+    assert fast_row["status"] == "done"
+    [row] = await _q(
+        db,
+        "SELECT status, attempt, locked_by, heartbeat_at FROM ops.jobs WHERE id = :id",
+        id=forever_id,
+    )
+    assert row == {"status": "queued", "attempt": 0, "locked_by": None, "heartbeat_at": None}
+
+
+async def test_requeue_on_shutdown_only_by_the_owner(db: SessionFactory) -> None:
+    """WP3.5 п.3: the job goes back to `queued` only while this executor still owns it."""
+    job_id = await _enqueue(db, kinds.session_sweep_inactive())
+    job = await _claim(db, "owner")
+    assert job is not None and job.id == job_id
+    async with db() as session, session.begin():
+        assert await release_job(session, job_id, "someone-else") is False
+    async with db() as session, session.begin():
+        assert await release_job(session, job_id, "owner") is True
+    [row] = await _q(
+        db, "SELECT status, attempt, locked_by FROM ops.jobs WHERE id = :id", id=job_id
+    )
+    assert row == {"status": "queued", "attempt": 0, "locked_by": None}

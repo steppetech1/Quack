@@ -30,6 +30,7 @@ from quack.jobs.queue import (
     fail_or_retry_job,
     heartbeat_job,
     reap_stale_jobs,
+    release_job,
 )
 from quack.llm.errors import LLMBudgetExceededError
 from quack.llm.gateway import LLMGateway
@@ -135,6 +136,12 @@ class JobRunner:
                 await self.handlers[job.kind](job, context)
             except LLMBudgetExceededError as exc:
                 raise self._budget_outcome(exc) from exc
+        except asyncio.CancelledError:
+            # WP3.5: shutdown after the grace period — back to queued, attempt unchanged.
+            async with self.session_factory() as session, session.begin():
+                released = await release_job(session, job.id, self.worker_id)
+            log.info("job_released_on_shutdown", kind=job.kind, job_id=str(job.id), ok=released)
+            raise
         except JobDeferred as exc:
             log.info("job_deferred", kind=job.kind, job_id=str(job.id), reason=exc.reason)
             async with self.session_factory() as session, session.begin():
@@ -185,5 +192,19 @@ class JobRunner:
                 await asyncio.wait_for(stop.wait(), timeout=self.settings.job_stale_after_sec / 2)
 
     async def run_forever(self, stop: asyncio.Event) -> None:
-        loops = [self._loop(stop) for _ in range(max(1, self.settings.worker_concurrency))]
-        await asyncio.gather(self._reaper(stop), *loops)
+        """WP3.5 (Д-§6.1): on `stop` no new jobs are taken; running ones get
+        `worker_shutdown_grace_s`, the rest are cancelled and put back to `queued`."""
+        loops = [
+            asyncio.create_task(self._loop(stop))
+            for _ in range(max(1, self.settings.worker_concurrency))
+        ]
+        reaper = asyncio.create_task(self._reaper(stop))
+        try:
+            await stop.wait()
+            _, pending = await asyncio.wait(loops, timeout=self.settings.worker_shutdown_grace_s)
+            if pending:
+                log.info("worker_shutdown_grace_expired", unfinished=len(pending))
+        finally:
+            for task in (*loops, reaper):
+                task.cancel()
+            await asyncio.gather(*loops, reaper, return_exceptions=True)
