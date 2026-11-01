@@ -35,7 +35,7 @@ class ExtractedElement(_Strict):
     """One element of `extractor@3`. Skill: a label (`skill`), a new one (`new_skill`, only
     with a quote and if no candidate fits, Т-§4.4) or unclear (`skill_unclear`, no
     evidence). Misconception: a label (`misconception`) or a new statement
-    (`misconception_statement`). `events` — seq numbers of the source events."""
+    (`new_misconception`). `events` — seq numbers of the source events."""
 
     kind: Literal["evidence", "misconception_hypothesis"]
     skill: str | None
@@ -47,7 +47,7 @@ class ExtractedElement(_Strict):
     hint_step: Annotated[int, Field(ge=1, le=3)] | None
     gap_type: GapType
     misconception: str | None
-    misconception_statement: str | None
+    new_misconception: str | None
     root_cause: RootCause | None
     quote: str
     events: list[int]
