@@ -410,6 +410,15 @@ class Settings(BaseSettings):
     symbolic_check_delay_ms: int = 3000
     min_sig_digits: int = 3
     numeric_points: int = 20
+    # WP11.5 (Т-§6.6): numbers of the numeric check sent to compute in `/v1/math/*`; the
+    # documents give none of them. Phase 4 decision D-B-124.
+    math_precision_digits: int = 30
+    math_sample_low: float = -10.0
+    math_sample_high: float = 10.0
+    math_positive_sample_min: float = 1e-3
+    math_max_attempts_per_point: int = 10
+    math_rel_tol: float = 1e-9
+    math_abs_tol: float = 1e-12
     # WP11.6 (Т-§7.7).
     verdict_min_confidence: float = 0.7
     second_opinion_model: str = WONDER
