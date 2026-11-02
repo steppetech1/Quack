@@ -8,17 +8,30 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from quack_compute.app import create_app
 from quack_compute.math.schemas import MathCheckRequest, Tolerance, TransitionRequest
 from quack_compute.math.service import check_math, check_transition
 from quack_compute.settings import ComputeSettings
 
-BASE: dict[str, Any] = {"numeric_points": 20, "timeout_ms": 5000}
+NUMERIC: dict[str, Any] = {
+    "numeric_points": 20,
+    "simplify_share": 0.8,
+    "precision_digits": 30,
+    "sample_low": -10.0,
+    "sample_high": 10.0,
+    "positive_sample_min": 1e-3,
+    "max_attempts_per_point": 10,
+    "rel_tol": 1e-9,
+    "abs_tol": 1e-12,
+}
+BASE: dict[str, Any] = {"numeric": NUMERIC, "timeout_ms": 5000}
+CHECK_BASE: dict[str, Any] = {**BASE, "tolerance": {"min_sig_digits": 3}}
 
 
 def _check(**fields: Any) -> Any:
-    return check_math(MathCheckRequest.model_validate({**BASE, **fields}))
+    return check_math(MathCheckRequest.model_validate({**CHECK_BASE, **fields}))
 
 
 @pytest.mark.parametrize(
@@ -53,7 +66,7 @@ def test_quantity_spec_tolerance() -> None:
         student_text="10 N",
         reference={"sympy": "9.81"},
         unit="N",
-        tolerance=Tolerance(tol_abs=0.5),
+        tolerance=Tolerance(tol_abs=0.5, min_sig_digits=3),
     )
     assert result.outcome == "correct"
 
@@ -99,7 +112,11 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
 async def test_endpoints_through_pool(client: httpx.AsyncClient) -> None:
     check = await client.post(
         "/v1/math/check",
-        json={**BASE, "student": {"sympy": "sin(x)**2 + cos(x)**2"}, "reference": {"sympy": "1"}},
+        json={
+            **CHECK_BASE,
+            "student": {"sympy": "sin(x)**2 + cos(x)**2"},
+            "reference": {"sympy": "1"},
+        },
     )
     assert check.status_code == 200 and check.json()["outcome"] == "correct"
     transition = await client.post(
@@ -107,3 +124,20 @@ async def test_endpoints_through_pool(client: httpx.AsyncClient) -> None:
         json={**BASE, "previous": {"sympy": "x**2 = 4"}, "current": {"sympy": "x = 2"}},
     )
     assert transition.status_code == 200 and transition.json()["follows"] is False
+
+
+@pytest.mark.parametrize("missing", ["numeric", "tolerance"])
+def test_check_thresholds_come_from_the_caller(missing: str) -> None:
+    """ТЗ Ф4 §0.3, D-B-124: no threshold defaults in compute — the API sends its `Settings`."""
+    body = {k: v for k, v in CHECK_BASE.items() if k != missing}
+    with pytest.raises(ValidationError):
+        MathCheckRequest.model_validate({**body, "reference": {"sympy": "1"}})
+
+
+@pytest.mark.parametrize("field", ["simplify_share", "rel_tol"])
+def test_numeric_fields_are_required(field: str) -> None:
+    numeric = {k: v for k, v in NUMERIC.items() if k != field}
+    with pytest.raises(ValidationError):
+        TransitionRequest.model_validate(
+            {**BASE, "numeric": numeric, "previous": {"sympy": "x"}, "current": {"sympy": "x"}}
+        )
