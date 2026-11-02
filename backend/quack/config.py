@@ -410,6 +410,17 @@ class Settings(BaseSettings):
     symbolic_check_delay_ms: int = 3000
     min_sig_digits: int = 3
     numeric_points: int = 20
+    # WP11.5 (Т-§6.6): numbers of the numeric check sent to compute in `/v1/math/*`; the
+    # documents give none of them. Phase 4 decision D-B-124.
+    math_precision_digits: int = 30
+    math_sample_low: float = -10.0
+    math_sample_high: float = 10.0
+    math_positive_sample_min: float = 1e-3
+    math_max_attempts_per_point: int = 10
+    math_rel_tol: float = 1e-9
+    math_abs_tol: float = 1e-12
+    # Share of `timeout_ms` given to `simplify(a − b)` (Т-§6.6 «свой таймаут»). D-B-124.
+    math_simplify_share: float = 0.8
     # WP11.6 (Т-§7.7).
     verdict_min_confidence: float = 0.7
     second_opinion_model: str = WONDER
@@ -516,6 +527,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["https://app.qvack.online", "https://preview.qvack.online"]
     )
+    # WP24: hard timeout of a compute PDF, image or render job — Phase 4 decision D-C-107.
+    compute_task_timeout_s: float = 60.0
 
     fold: FoldParams = Field(default_factory=FoldParams)
 

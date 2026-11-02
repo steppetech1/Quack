@@ -18,7 +18,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.api.email import EmailSender, create_email_sender
-from quack.compute_client.client import ComputeClient
+from quack.compute_client.client import ComputeClient, create_compute_client
 from quack.config import Settings
 from quack.db.neo4j import create_driver
 from quack.db.postgres import SessionFactory, create_engine, create_session_factory
@@ -82,7 +82,7 @@ def create_app_resources(settings: Settings) -> AppResources:
         neo4j=neo4j,
         redis=redis,
         llm=LLMGateway(session_factory, provider, settings),
-        compute=ComputeClient(settings.compute_url, settings.compute_timeout_sec),
+        compute=create_compute_client(settings),
         storage=create_object_store(settings),
         embeddings=create_embedding_client(settings),
         email=create_email_sender(settings),
