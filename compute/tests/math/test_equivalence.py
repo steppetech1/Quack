@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from quack_compute.math.equivalence import (
@@ -9,11 +11,9 @@ from quack_compute.math.equivalence import (
     Failed,
     FormTarget,
     Mode,
-    Params,
     compare,
 )
-
-PARAMS = Params(numeric_points=20, simplify_budget_ms=2000)
+from tests.math.test_params import PARAMS
 
 
 def _eq(
@@ -68,7 +68,7 @@ def test_form_factored() -> None:
 
 def test_numeric_only_when_simplify_out_of_budget() -> None:
     """Т-§6.6: numerically equal, `simplify` did not finish — equivalent, `numeric_only`."""
-    no_time = Params(numeric_points=20, simplify_budget_ms=0)
+    no_time = dataclasses.replace(PARAMS, simplify_budget_ms=0)
     result = compare("(x+1)**2", "x**2 + 2*x + 1", params=no_time)
     assert isinstance(result, Equivalent)
     assert result.equivalent and result.numeric_only

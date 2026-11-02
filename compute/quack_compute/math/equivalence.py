@@ -33,20 +33,22 @@ type FormTarget = Literal["factored", "simplified"]
 type FailReason = Literal["unparsed", "too_few_points", "unsupported"]
 type ErrorHint = Literal["sign", "coefficient"]
 
-PRECISION_DIGITS = 30
-SAMPLE_LOW, SAMPLE_HIGH = -10.0, 10.0
-MAX_ATTEMPTS_PER_POINT = 10
-REL_TOL = 1e-9
-ABS_TOL = 1e-12
-
 
 @dataclass(frozen=True)
 class Params:
-    """Numbers of Т-§6.6 from the caller's settings: `numeric_points` and the budget of one
-    `simplify` call (ms)."""
+    """Numbers of the check from the caller's `Settings` (ТЗ Ф4 §0.3): `numeric_points` and
+    the budget of one `simplify` call (ms) of Т-§6.6; precision of evaluation, the sampling
+    range, attempts per point and the comparison tolerance (D-B-124)."""
 
     numeric_points: int
     simplify_budget_ms: int
+    precision_digits: int
+    sample_low: float
+    sample_high: float
+    positive_sample_min: float
+    max_attempts_per_point: int
+    rel_tol: float
+    abs_tol: float
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,7 @@ def _equal(
     a: sympy.Expr, b: sympy.Expr, rng: random.Random, params: Params, *, hint: bool
 ) -> Equivalent:
     symbols = _symbols(a, b)
-    if not _numeric_equal(a, b, symbols, rng, params.numeric_points):
+    if not _numeric_equal(a, b, symbols, rng, params):
         return Equivalent(False, error_hint=_hint(a, b, symbols, rng, params) if hint else None)
     confirmed = _simplify_within(a - b, params.simplify_budget_ms)
     return Equivalent(True, numeric_only=confirmed is None or confirmed != 0)
@@ -145,14 +147,14 @@ def _solution_sets(a: Any, b: Any, rng: random.Random, params: Params) -> Result
     else:
         given = sympy.FiniteSet(*(a if isinstance(a, tuple) else (a,)))
     if isinstance(expected, sympy.FiniteSet) and isinstance(given, sympy.FiniteSet):
-        return Equivalent(_same_roots(list(given), list(expected)))
+        return Equivalent(_same_roots(list(given), list(expected), params))
     if isinstance(given, sympy.FiniteSet):
         # The reference set is not found symbolically: substitute the learner's roots and
         # compare their count with the numeric roots of the reference (Т-§6.6).
-        roots = [r for r in given if _is_root(reference, variable, r)]
+        roots = [r for r in given if _is_root(reference, variable, r, params)]
         if len(roots) != len(given):
             return Equivalent(False)
-        found = _numeric_roots(reference, variable, rng, params.numeric_points)
+        found = _numeric_roots(reference, variable, rng, params)
         return Equivalent(len(found) == len(roots))
     raise _Unsupported(f"solution set is not finite: {type(given).__name__}")
 
@@ -190,17 +192,23 @@ def _form(
 
 
 def _numeric_equal(
-    a: sympy.Expr, b: sympy.Expr, symbols: Sequence[sympy.Symbol], rng: random.Random, points: int
+    a: sympy.Expr,
+    b: sympy.Expr,
+    symbols: Sequence[sympy.Symbol],
+    rng: random.Random,
+    params: Params,
 ) -> bool:
-    """True if equal at `points` defined points; False at the first explicit mismatch."""
+    """True if equal at `numeric_points` defined points; False at the first explicit
+    mismatch."""
+    points = params.numeric_points
     matched = 0
     complex_ok = a.has(sympy.I) or b.has(sympy.I)
-    for _ in range(points * MAX_ATTEMPTS_PER_POINT):
-        point = {s: _sample(s, rng) for s in symbols}
-        va, vb = _value(a, point, complex_ok), _value(b, point, complex_ok)
+    for _ in range(points * params.max_attempts_per_point):
+        point = {s: _sample(s, rng, params) for s in symbols}
+        va, vb = _value(a, point, params, complex_ok), _value(b, point, params, complex_ok)
         if va is None or vb is None:
             continue
-        if not _close(va, vb):
+        if not _close(va, vb, params):
             return False
         matched += 1
         if matched == points:
@@ -218,7 +226,7 @@ def _hint(
     """Т-§6.2 ориентир: equal to the reference with the opposite sign — `sign`; differs by a
     simple rational factor — `coefficient`."""
     try:
-        if b != 0 and _numeric_equal(a, -b, symbols, rng, params.numeric_points):
+        if b != 0 and _numeric_equal(a, -b, symbols, rng, params):
             return "sign"
     except _TooFewPoints:
         return None
@@ -230,23 +238,23 @@ def _hint(
     return None
 
 
-def _sample(symbol: sympy.Symbol, rng: random.Random) -> float:
+def _sample(symbol: sympy.Symbol, rng: random.Random, params: Params) -> float:
     if symbol.is_positive:
-        return rng.uniform(1e-3, SAMPLE_HIGH)
+        return rng.uniform(params.positive_sample_min, params.sample_high)
     if symbol.is_nonnegative:
-        return rng.uniform(0.0, SAMPLE_HIGH)
+        return rng.uniform(0.0, params.sample_high)
     if symbol.is_integer:
-        return float(rng.randint(int(SAMPLE_LOW), int(SAMPLE_HIGH)))
-    return rng.uniform(SAMPLE_LOW, SAMPLE_HIGH)
+        return float(rng.randint(int(params.sample_low), int(params.sample_high)))
+    return rng.uniform(params.sample_low, params.sample_high)
 
 
 def _value(
-    expr: sympy.Expr, point: Mapping[sympy.Symbol, Any], complex_ok: bool = False
+    expr: sympy.Expr, point: Mapping[sympy.Symbol, Any], params: Params, complex_ok: bool = False
 ) -> complex | None:
     """The value at `point`; `None` where undefined. Variables are real (Т-§6.6), so a
     non-real value is «undefined» unless the expressions use `I` themselves."""
     try:
-        value = sympy.N(expr.subs(list(point.items())), PRECISION_DIGITS)
+        value = sympy.N(expr.subs(list(point.items())), params.precision_digits)
     except (TypeError, ValueError, ZeroDivisionError):
         return None
     if not value.is_number or value.has(sympy.zoo, sympy.nan, sympy.oo, -sympy.oo):
@@ -254,13 +262,13 @@ def _value(
     number = complex(value)
     if not (math.isfinite(number.real) and math.isfinite(number.imag)):
         return None
-    if not complex_ok and abs(number.imag) > ABS_TOL * max(1.0, abs(number.real)):
+    if not complex_ok and abs(number.imag) > params.abs_tol * max(1.0, abs(number.real)):
         return None
     return number
 
 
-def _close(a: complex, b: complex) -> bool:
-    return abs(a - b) <= max(ABS_TOL, REL_TOL * max(abs(a), abs(b)))
+def _close(a: complex, b: complex, params: Params) -> bool:
+    return abs(a - b) <= max(params.abs_tol, params.rel_tol * max(abs(a), abs(b)))
 
 
 def _simplify_within(expr: sympy.Expr, budget_ms: int) -> sympy.Expr | None:
@@ -316,35 +324,37 @@ def _symbols(*exprs: Any) -> list[sympy.Symbol]:
     return sorted(found, key=lambda s: s.name)
 
 
-def _same_roots(given: list[Any], expected: list[Any]) -> bool:
+def _same_roots(given: list[Any], expected: list[Any], params: Params) -> bool:
     if len(given) != len(expected):
         return False
     remaining = [complex(sympy.N(r)) for r in expected]
     for root in given:
         value = complex(sympy.N(root))
-        match = next((r for r in remaining if _close(value, r)), None)
+        match = next((r for r in remaining if _close(value, r, params)), None)
         if match is None:
             return False
         remaining.remove(match)
     return True
 
 
-def _is_root(equation: sympy.Expr, variable: sympy.Symbol, root: Any) -> bool:
-    value = _value(equation, {variable: complex(sympy.N(root))}, complex_ok=True)
-    return value is not None and _close(value, 0)
+def _is_root(equation: sympy.Expr, variable: sympy.Symbol, root: Any, params: Params) -> bool:
+    value = _value(equation, {variable: complex(sympy.N(root))}, params, complex_ok=True)
+    return value is not None and _close(value, 0, params)
 
 
 def _numeric_roots(
-    equation: sympy.Expr, variable: sympy.Symbol, rng: random.Random, starts: int
+    equation: sympy.Expr, variable: sympy.Symbol, rng: random.Random, params: Params
 ) -> list[complex]:
     roots: list[complex] = []
-    for _ in range(starts):
+    for _ in range(params.numeric_points):
         try:
-            found = sympy.nsolve(equation, variable, rng.uniform(SAMPLE_LOW, SAMPLE_HIGH))
+            found = sympy.nsolve(
+                equation, variable, rng.uniform(params.sample_low, params.sample_high)
+            )
             root = complex(sympy.N(found))
         except (ValueError, ZeroDivisionError, TypeError):
             continue
-        if abs(root.imag) < ABS_TOL and not any(_close(root, r) for r in roots):
+        if abs(root.imag) < params.abs_tol and not any(_close(root, r, params) for r in roots):
             roots.append(root)
     return roots
 
