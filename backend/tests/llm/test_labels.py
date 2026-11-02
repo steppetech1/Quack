@@ -17,8 +17,10 @@ from quack.prompts.registry import PromptRegistry
 from quack.session import turns
 from quack.session.schemas import TeacherOutput
 from tests.llm.prompt_contracts import (
+    ALL_PROMPT_SCHEMAS,
     CONTRACTS_PATH,
-    PROMPT_SCHEMAS,
+    DOCTRINE_PENDING,
+    DOCTRINE_PENDING_MARKER,
     render_contracts,
     undeclared_names,
 )
@@ -87,13 +89,34 @@ def test_label_map_follows_settings_limits(settings: Settings) -> None:
     assert sorted(labels.table()) == ["K1", "S1", "S2", "T1"]
 
 
-@pytest.mark.parametrize("ref", sorted(PROMPT_SCHEMAS))
+@pytest.mark.parametrize("ref", sorted(ALL_PROMPT_SCHEMAS))
 def test_prompt_mentions_only_declared_fields(ref: str) -> None:
     """T-M5: backticked names of `## Output contract` are fields of the role schema or
     labels of `LabelMap`."""
     role, version = ref.split("@")
     text = PromptRegistry().load(role, int(version)).text
     assert undeclared_names(ref, text) == []
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        pytest.param(
+            ref,
+            marks=pytest.mark.xfail(strict=True, reason=f"{DOCTRINE_PENDING[ref]}: нет доктрины"),
+        )
+        if ref in DOCTRINE_PENDING
+        else ref
+        for ref in sorted(ALL_PROMPT_SCHEMAS)
+    ],
+)
+def test_prompt_has_owner_doctrine(ref: str) -> None:
+    """ТЗ Ф4 §7.6 п.1, п.5: layer 1 is the owner's doctrine; a role without it runs on a stub
+    and this test is `xfail(strict=True)` with its BLOCKED number until the doctrine
+    arrives."""
+    role, version = ref.split("@")
+    text = PromptRegistry().load(role, int(version)).text
+    assert DOCTRINE_PENDING_MARKER not in text
 
 
 def test_prompt_contracts_file_is_current() -> None:
