@@ -12,6 +12,7 @@ from quack_compute.math.schemas import (
     MathCheckRequest,
     MathCheckResponse,
     MathInput,
+    NumericParams,
     TransitionRequest,
     TransitionResponse,
     Variable,
@@ -32,7 +33,7 @@ def check_math(request: MathCheckRequest) -> MathCheckResponse:
         reference,
         mode=request.mode,
         form_target=request.form_target,
-        params=_params(request.numeric_points, request.simplify_share, request.timeout_ms),
+        params=_params(request.numeric, request.timeout_ms),
     )
     if isinstance(result, Failed):
         return MathCheckResponse(status="failed", reason=result.reason, detail=result.detail)
@@ -59,7 +60,7 @@ def check_transition(request: TransitionRequest) -> TransitionResponse:
         current,
         previous,
         mode=mode,
-        params=_params(request.numeric_points, request.simplify_share, request.timeout_ms),
+        params=_params(request.numeric, request.timeout_ms),
     )
     if isinstance(result, Failed):
         return TransitionResponse(status="failed", reason=result.reason, detail=result.detail)
@@ -98,5 +99,15 @@ def _parsed(value: MathInput | None, variables: list[Variable]) -> Any:
     raise ParseRefused("neither sympy nor latex")
 
 
-def _params(points: int, share: float, timeout_ms: int) -> Params:
-    return Params(numeric_points=points, simplify_budget_ms=int(timeout_ms * share))
+def _params(numeric: NumericParams, timeout_ms: int) -> Params:
+    return Params(
+        numeric_points=numeric.numeric_points,
+        simplify_budget_ms=int(timeout_ms * numeric.simplify_share),
+        precision_digits=numeric.precision_digits,
+        sample_low=numeric.sample_low,
+        sample_high=numeric.sample_high,
+        positive_sample_min=numeric.positive_sample_min,
+        max_attempts_per_point=numeric.max_attempts_per_point,
+        rel_tol=numeric.rel_tol,
+        abs_tol=numeric.abs_tol,
+    )

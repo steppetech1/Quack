@@ -419,6 +419,8 @@ class Settings(BaseSettings):
     math_max_attempts_per_point: int = 10
     math_rel_tol: float = 1e-9
     math_abs_tol: float = 1e-12
+    # Share of `timeout_ms` given to `simplify(a − b)` (Т-§6.6 «свой таймаут»). D-B-124.
+    math_simplify_share: float = 0.8
     # WP11.6 (Т-§7.7).
     verdict_min_confidence: float = 0.7
     second_opinion_model: str = WONDER

@@ -3,8 +3,8 @@
 Every expression comes as `{latex?, sympy?}` (Т-§22.7): `sympy` is parsed first by the
 whitelist grammar; without it `latex` goes through ANTLR in strict mode (Т-§6.5). The budget
 of the whole call is `timeout_ms` (the API sends `symbolic_inline_timeout_ms`, the insurance
-job `symbolic_background_timeout_ms`, Т-§6.1); numeric points and the `simplify` share are
-parameters of the caller's `Settings` (§6.7).
+job `symbolic_background_timeout_ms`, Т-§6.1); every threshold of the check comes from the
+caller's `Settings` (ТЗ Ф4 §0.3, D-B-124), compute has no defaults of its own.
 """
 
 from __future__ import annotations
@@ -39,7 +39,22 @@ class Tolerance(_Model):
 
     tol_abs: float | None = None
     tol_rel: float | None = None
-    min_sig_digits: int = 3
+    min_sig_digits: int = Field(ge=1)
+
+
+class NumericParams(_Model):
+    """Т-§6.6 `numeric_points`, the share of `timeout_ms` for `simplify` and the numbers of the
+    numeric check (`Settings.math_*`, D-B-124)."""
+
+    numeric_points: int = Field(ge=1)
+    simplify_share: float = Field(gt=0, le=1)
+    precision_digits: int = Field(ge=1)
+    sample_low: float
+    sample_high: float
+    positive_sample_min: float = Field(gt=0)
+    max_attempts_per_point: int = Field(ge=1)
+    rel_tol: float = Field(ge=0)
+    abs_tol: float = Field(ge=0)
 
 
 class MathCheckRequest(_Model):
@@ -54,9 +69,8 @@ class MathCheckRequest(_Model):
     form_target: Literal["factored", "simplified"] | None = None
     variables: list[Variable] = []
     unit: str | None = None
-    tolerance: Tolerance = Tolerance()
-    numeric_points: int = Field(ge=1)
-    simplify_share: float = Field(default=0.8, gt=0, le=1)
+    tolerance: Tolerance
+    numeric: NumericParams
     timeout_ms: int = Field(ge=1)
 
 
@@ -78,8 +92,7 @@ class TransitionRequest(_Model):
     previous: MathInput
     current: MathInput
     variables: list[Variable] = []
-    numeric_points: int = Field(ge=1)
-    simplify_share: float = Field(default=0.8, gt=0, le=1)
+    numeric: NumericParams
     timeout_ms: int = Field(ge=1)
 
 
