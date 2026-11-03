@@ -635,6 +635,20 @@ class Settings(BaseSettings):
     # Д-§14.3: the chat is not chosen yet, the body shape follows the setting (ops/notify.py).
     alert_webhook_format: Literal["slack", "discord", "telegram"] = "slack"
     alert_webhook_chat_id: str = ""
+    # `ops alerts` (Д-§9.3): starting values of the table; every run is a fresh container, the
+    # hold times are measured in Redis.
+    heartbeat_alerts_url: SecretStr = SecretStr("")
+    healthz_url: str = "http://api:8000/healthz"
+    host_state_path: str = "/host-state/state.json"
+    alert_healthz_hold_s: int = 300
+    alert_backup_grace_min: int = 30
+    alert_projector_lag_hold_s: int = 600
+    alert_queue_age_s: int = 600
+    alert_failed_share: float = 0.10
+    alert_pressure_hold_s: int = 300
+    alert_renotify_s: int = 3600
+    alert_restart_loop_delta: int = 3
+    alert_host_state_max_age_s: int = 900
     cors_origins: list[str] = Field(
         default_factory=lambda: ["https://app.qvack.online", "https://preview.qvack.online"]
     )
@@ -722,6 +736,7 @@ class Settings(BaseSettings):
                     self.backup_s3_secret_key,
                     self.heartbeat_backup_url,
                     self.alert_webhook_url,
+                    self.heartbeat_alerts_url,
                     self.app_db_password,
                     self.reader_db_password,
                     self.migrator_db_password,

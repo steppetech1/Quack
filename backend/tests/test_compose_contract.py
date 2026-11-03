@@ -22,6 +22,7 @@ SERVICES = {
     "redis",
     "migrate",
     "backup",
+    "alerts",
     "meta-mock",
 }
 # Д-§6.1 table.
@@ -60,7 +61,7 @@ def test_networks_follow_d_3_2(compose: dict[str, Any]):
     for name, service in compose["services"].items():
         networks = set(service["networks"])
         assert "backend" in networks, name
-        wants_internet = name in {"caddy", "api", "workers", "backup"}
+        wants_internet = name in {"caddy", "api", "workers", "backup", "alerts"}
         assert ("egress" in networks) == wants_internet, name
     for name in BACKEND_ONLY:
         assert set(compose["services"][name]["networks"]) == {"backend"}
@@ -121,3 +122,14 @@ def test_secrets_reach_only_the_services_of_d_7(compose: dict[str, Any]):
     assert _holders(compose, "META_API_KEY") == {"api", "workers"}
     assert _holders(compose, "BACKUP_S3_ACCESS_KEY") == {"backup"}
     assert _holders(compose, "NEO4J_PASSWORD") == {"api", "workers", "projector"}
+
+
+def test_alerts_is_short_lived_and_holds_no_model_or_storage_secret(compose: dict[str, Any]):
+    alerts = compose["services"]["alerts"]
+    assert alerts["restart"] == "no"
+    assert alerts["profiles"] == ["alerts"]
+    assert alerts["command"] == ["ops", "alerts"]
+    assert _holders(compose, "HEARTBEAT_ALERTS_URL") == {"alerts"}
+    assert _holders(compose, "ALERT_WEBHOOK_URL") == {"backup", "alerts"}
+    assert not set(alerts["environment"]) & {"META_API_KEY", "NEO4J_PASSWORD", "S3_ACCESS_KEY"}
+    assert all(v.endswith(":ro") for v in alerts["volumes"])

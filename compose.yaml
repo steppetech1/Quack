@@ -307,6 +307,41 @@ services:
     cpus: 0.5
     logging: *default-logging
 
+  alerts:
+    # Д-§9.3: run by the host timer every 5 minutes (`docker compose run --rm alerts`), never
+    # started by `up`. Reads Postgres as `quack_reader` and Redis; containers and disk come from
+    # the file the host timer writes (no Docker socket here).
+    <<: *backend-image
+    profiles: [alerts]
+    restart: "no"
+    command: ["ops", "alerts"]
+    environment:
+      ENV: ${ENV:-prod}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      QUACK_VERSION: ${QUACK_VERSION:-dev}
+      POSTGRES_DSN: postgresql://quack_reader:${READER_DB_PASSWORD:-}@postgres:5432/quack
+      REDIS_URL: redis://redis:6379/0
+      BACKUP_LOCAL_DIR: /backups
+      HOST_STATE_PATH: /host-state/state.json
+      HEALTHZ_URL: http://api:8000/healthz
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_WEBHOOK_FORMAT: ${ALERT_WEBHOOK_FORMAT:-slack}
+      ALERT_WEBHOOK_CHAT_ID: ${ALERT_WEBHOOK_CHAT_ID:-}
+      HEARTBEAT_ALERTS_URL: ${HEARTBEAT_ALERTS_URL:-}
+    volumes:
+      - ${QUACK_BACKUPS_DIR:-/srv/quack/backups}:/backups:ro
+      - /run/quack:/host-state:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [backend, egress]
+    mem_limit: 256m
+    memswap_limit: 320m
+    cpus: 0.5
+    logging: *default-logging
+
   caddy:
     # Д-§3, Д-§3.1: the only service that publishes ports (Д-§10). Config comes from deploy/.
     image: caddy:${CADDY_VERSION:-2.10}
