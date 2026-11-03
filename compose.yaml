@@ -179,6 +179,7 @@ services:
       EMAIL_API_KEY: ${EMAIL_API_KEY:-}
       GOOGLE_OIDC_CLIENT_ID: ${GOOGLE_OIDC_CLIENT_ID:-}
       GOOGLE_OIDC_CLIENT_SECRET: ${GOOGLE_OIDC_CLIENT_SECRET:-}
+      S3_BUCKET_LEARNERS: ${S3_BUCKET_LEARNERS:-quack-learners}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
@@ -244,6 +245,7 @@ services:
       # Д-§7: the secrets of `workers` — embeddings, learner objects, daily deletions check.
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+      S3_BUCKET_LEARNERS: ${S3_BUCKET_LEARNERS:-quack-learners}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
