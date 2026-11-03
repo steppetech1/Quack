@@ -51,8 +51,12 @@ EOF
   mv "$RELEASE_FILE.tmp" "$RELEASE_FILE"
 }
 
-registry_of() { docker run --rm --entrypoint cat "$(backend_image "$1")" /app/event_registry.json; }
-migrations_of() { docker run --rm --entrypoint ls "$(backend_image "$1")" /app/migrations/versions | grep -v __pycache__ | sort; }
+# The running release is read through the image names it was started with (release.env), not
+# rebuilt from QUACK_REGISTRY: after the registry moved to another owner the old tag does not
+# exist under the new prefix.
+current_backend_image() { sed -n "s/^QUACK_BACKEND_IMAGE=//p" "$RELEASE_FILE" | tail -n 1; }
+registry_of_image() { docker run --rm --entrypoint cat "$1" /app/event_registry.json; }
+migrations_of_image() { docker run --rm --entrypoint ls "$1" /app/migrations/versions | grep -v __pycache__ | sort; }
 
 # Prints "events_changed=<0|1> rules_changed=<0|1>" for old -> new registries (Д-§6.1 step 2).
 compare_registries() {
@@ -104,14 +108,16 @@ docker pull "$(backend_image "$SHA")" >/dev/null
 docker pull "$(compute_image "$SHA")" >/dev/null
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-registry_of "$SHA" > "$TMP/new.json"
+NEW_IMAGE="$(backend_image "$SHA")"
+registry_of_image "$NEW_IMAGE" > "$TMP/new.json"
 EVENTS_CHANGED=0; RULES_CHANGED=0; NEW_MIGRATIONS=0
 
 if [[ -n "$PREVIOUS" ]]; then
-  registry_of "$PREVIOUS" > "$TMP/old.json"
+  OLD_IMAGE="$(current_backend_image)"
+  registry_of_image "$OLD_IMAGE" > "$TMP/old.json"
   # 2. New events or rules? Recorded in the journal, the rollback decision depends on it.
   eval "$(compare_registries "$TMP/old.json" "$TMP/new.json" | tr ' ' '\n' | tr a-z A-Z)"
-  migrations_of "$PREVIOUS" > "$TMP/old.mig"; migrations_of "$SHA" > "$TMP/new.mig"
+  migrations_of_image "$OLD_IMAGE" > "$TMP/old.mig"; migrations_of_image "$NEW_IMAGE" > "$TMP/new.mig"
   if [[ -n "$(comm -13 "$TMP/old.mig" "$TMP/new.mig")" ]]; then NEW_MIGRATIONS=1; fi
 else
   NEW_MIGRATIONS=1  # first rollout: the schema does not exist yet
@@ -120,8 +126,7 @@ log "registry sha=$SHA events_changed=$EVENTS_CHANGED rules_changed=$RULES_CHANG
 
 # From here on compose sees the new release; the old file is kept to step back on a failure.
 OLD_RELEASE="$(cat "$RELEASE_FILE" 2>/dev/null || true)"
-restore_release() { if [[ -n "$OLD_RELEASE" ]]; then printf '%s
-' "$OLD_RELEASE" > "$RELEASE_FILE"; else rm -f "$RELEASE_FILE"; fi; }
+restore_release() { if [[ -n "$OLD_RELEASE" ]]; then printf '%s\n' "$OLD_RELEASE" > "$RELEASE_FILE"; else rm -f "$RELEASE_FILE"; fi; }
 write_release "$SHA"
 
 if ((ROLLBACK)); then
@@ -163,7 +168,7 @@ fi
 
 log "check failed sha=$SHA"
 if [[ -n "$PREVIOUS" && "$EVENTS_CHANGED" == 0 && "$RULES_CHANGED" == 0 && "$NEW_MIGRATIONS" == 0 ]]; then
-  write_release "$PREVIOUS"
+  restore_release
   rollout
   check_release && log "ROLLED_BACK sha=$SHA to=$PREVIOUS" || log "ROLLBACK_FAILED sha=$SHA to=$PREVIOUS"
   exit 1
