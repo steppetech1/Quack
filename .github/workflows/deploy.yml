@@ -102,6 +102,7 @@ jobs:
           API_DOMAIN: ${{ vars.API_DOMAIN }}
           QUACK_REGISTRY: ${{ vars.QUACK_REGISTRY }}
           META_API_BASE_URL: ${{ vars.META_API_BASE_URL }}
+          LLM_PRICES: ${{ vars.LLM_PRICES }}
           AUTH_SUCCESS_REDIRECT_URL: ${{ vars.AUTH_SUCCESS_REDIRECT_URL }}
           TERMS_VERSION: ${{ vars.TERMS_VERSION }}
           S3_BUCKET_LEARNERS: ${{ vars.S3_BUCKET_LEARNERS || secrets.S3_BUCKET_LEARNERS }}

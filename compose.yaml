@@ -172,6 +172,8 @@ services:
       COMPUTE_URL: http://compute:8001
       META_API_KEY: ${META_API_KEY:-}
       META_API_BASE_URL: ${META_API_BASE_URL:-}
+      # Т-§11.4: dollars per 1M tokens per model, JSON; `ENV=prod` does not start without it.
+      LLM_PRICES: ${LLM_PRICES:-{}}
       # D-C-133: where sign-in returns (Д-§2.1, Д-§3.1) and the version of the terms (Т-§19.4).
       AUTH_SUCCESS_REDIRECT_URL: ${AUTH_SUCCESS_REDIRECT_URL:-}
       TERMS_VERSION: ${TERMS_VERSION:-}
@@ -242,6 +244,8 @@ services:
       PG_POOL_MAX_SIZE: "5"
       META_API_KEY: ${META_API_KEY:-}
       META_API_BASE_URL: ${META_API_BASE_URL:-}
+      # Т-§11.4: dollars per 1M tokens per model, JSON; `ENV=prod` does not start without it.
+      LLM_PRICES: ${LLM_PRICES:-{}}
       # Д-§7: the secrets of `workers` — embeddings, learner objects, daily deletions check.
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}

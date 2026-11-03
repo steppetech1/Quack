@@ -11,7 +11,7 @@ set -euo pipefail
 template="${1:?usage: render-env.sh <env.example>}"
 # Without these the stack cannot start or would lock itself out of its own databases.
 required=(
-  QUACK_REGISTRY POSTGRES_PASSWORD NEO4J_PASSWORD META_API_KEY
+  QUACK_REGISTRY POSTGRES_PASSWORD NEO4J_PASSWORD META_API_KEY LLM_PRICES
   APP_DB_PASSWORD READER_DB_PASSWORD MIGRATOR_DB_PASSWORD
 )
 

@@ -21,6 +21,7 @@ REQUIRED = {
     "POSTGRES_PASSWORD": "pg-secret-1",
     "NEO4J_PASSWORD": "neo-secret-2",
     "META_API_KEY": "meta-secret-3",
+    "LLM_PRICES": '{"m":{"input":1,"output":2}}',
     "APP_DB_PASSWORD": "app-secret-4",
     "READER_DB_PASSWORD": "reader-secret-5",
     "MIGRATOR_DB_PASSWORD": "migrator-secret-6",

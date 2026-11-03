@@ -167,6 +167,9 @@ if check_release; then
 fi
 
 log "check failed sha=$SHA"
+# The containers of the failed release are about to be replaced: keep their last lines in the
+# output of the rollout (the logs mask secrets, Д-§7).
+dc logs --no-color --tail 25 api projector workers 2>&1 | sed 's/^/  | /' || true
 if [[ -n "$PREVIOUS" && "$EVENTS_CHANGED" == 0 && "$RULES_CHANGED" == 0 && "$NEW_MIGRATIONS" == 0 ]]; then
   restore_release
   rollout
