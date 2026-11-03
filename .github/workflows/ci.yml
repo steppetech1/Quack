@@ -1,6 +1,7 @@
 # CI (ТЗ Фазы 3 WP9.3, Д-§5.2, Д-§5.3). No pull_request_target, no workflow_run; read-only
 # token; third-party actions pinned by commit SHA (release tag in the comment). `publish` is the
 # only job with `packages: write`; it runs on pushes only, never on a pull request (Д-§5.3).
+# `deploy` (deploy.yml) follows it on main.
 name: ci
 
 # Layers (backend/TESTS.md, D-C-146): `fast` runs on every event and needs no services; the
@@ -289,3 +290,16 @@ jobs:
           tags: |
             ${{ steps.names.outputs.compute }}:${{ steps.names.outputs.sha }}
             ${{ steps.names.outputs.compute }}:${{ github.ref_name }}
+
+  deploy:
+    # ТЗ Фазы 4 WP9.4, Д-§6.1: a merge to main rolls out to the server, in the environment
+    # `production`. Only where the repository variable DEPLOY_ENABLED is true (the production
+    # repository); a development repository has no environment, no secrets and no server.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && vars.DEPLOY_ENABLED == 'true'
+    needs: [publish]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
