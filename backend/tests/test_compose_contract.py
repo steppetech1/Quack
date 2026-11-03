@@ -133,3 +133,7 @@ def test_alerts_is_short_lived_and_holds_no_model_or_storage_secret(compose: dic
     assert _holders(compose, "ALERT_WEBHOOK_URL") == {"backup", "alerts"}
     assert not set(alerts["environment"]) & {"META_API_KEY", "NEO4J_PASSWORD", "S3_ACCESS_KEY"}
     assert all(v.endswith(":ro") for v in alerts["volumes"])
+
+
+def test_the_learners_bucket_name_reaches_api_and_workers(compose: dict[str, Any]):
+    assert _holders(compose, "S3_BUCKET_LEARNERS") == {"api", "workers"}
