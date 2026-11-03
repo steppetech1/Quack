@@ -190,6 +190,82 @@ EOF
 systemctl daemon-reload
 systemctl enable --now quack-backup.timer
 
+step "alerts: host state file and timer (Д-§9.3)"
+# The `alerts` container has no Docker socket: this timer writes containers and disk into a file
+# it can read (/run/quack/state.json is on tmpfs, so a reboot starts with no file).
+cat > /usr/local/sbin/quack-host-state <<'EOF'
+#!/bin/sh
+set -eu
+install -d -m 755 /run/quack
+python3 - > /run/quack/state.json.tmp <<'PY'
+import json, shutil, subprocess, time
+ids = subprocess.run(
+    ["docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=quack"],
+    capture_output=True, text=True, check=True,
+).stdout.split()
+containers = []
+if ids:
+    out = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Name}}|{{.State.Status}}|{{.RestartCount}}", *ids],
+        capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    for line in out:
+        name, state, restarts = line.split("|")
+        containers.append({"name": name.lstrip("/"), "state": state, "restart_count": int(restarts)})
+usage = shutil.disk_usage("/")
+print(json.dumps({
+    "generated_at_epoch": time.time(),
+    "disk_used_pct": round(usage.used * 100 / usage.total),
+    "containers": containers,
+}))
+PY
+chmod 644 /run/quack/state.json.tmp
+mv /run/quack/state.json.tmp /run/quack/state.json
+EOF
+chmod 755 /usr/local/sbin/quack-host-state
+cat > /etc/systemd/system/quack-host-state.service <<'EOF'
+[Unit]
+Description=Write containers and disk state for the alerts container
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/quack-host-state
+EOF
+cat > /etc/systemd/system/quack-host-state.timer <<'EOF'
+[Unit]
+Description=Write containers and disk state every minute
+
+[Timer]
+OnCalendar=minutely
+
+[Install]
+WantedBy=timers.target
+EOF
+cat > /etc/systemd/system/quack-alerts.service <<EOF
+[Unit]
+Description=Quack alerts check (docker compose run --rm alerts)
+ConditionPathExists=$SRV/.env
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=$SRV
+Environment=COMPOSE_FILE=compose.yaml
+ExecStart=/usr/bin/docker compose --env-file .env --env-file release.env run --rm alerts
+EOF
+cat > /etc/systemd/system/quack-alerts.timer <<'EOF'
+[Unit]
+Description=Quack alerts check every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now quack-host-state.timer quack-alerts.timer
+
 step "done"
 echo "Check from ANOTHER terminal that 'ssh admin@<this host>' works before closing this session."
 echo "Next: deploy/README.md (provider firewall, DNS, GitHub Environment, first rollout)."
