@@ -63,3 +63,14 @@ docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10 \
 ```
 
 Весь стек с локальным сертификатом: в `.env` `API_DOMAIN=localhost`, затем `docker compose up`; `https://localhost/healthz` отвечает 200, `https://localhost/health/ready` — 404.
+
+## Только `compose.yaml` на сервере
+
+`compose.override.yaml` лежит в репозитории для локальной работы: он публикует базы и API на `127.0.0.1` и подключает их к сети с интернетом. Docker Compose читает его автоматически, поэтому на сервере всегда задавайте `COMPOSE_FILE=compose.yaml` (`deploy.sh` и таймер бэкапа делают это сами). Для ручных команд:
+
+```bash
+export COMPOSE_FILE=compose.yaml
+docker compose --env-file .env --env-file release.env ps
+```
+
+Проверка: у `postgres`, `neo4j`, `redis` и `api` в колонке PORTS ничего нет, 80 и 443 только у `caddy`.

@@ -173,6 +173,7 @@ ConditionPathExists=$SRV/.env
 Type=oneshot
 User=deploy
 WorkingDirectory=$SRV
+Environment=COMPOSE_FILE=compose.yaml
 ExecStart=/usr/bin/docker compose --env-file .env --env-file release.env run --rm backup
 EOF
 cat > /etc/systemd/system/quack-backup.timer <<'EOF'

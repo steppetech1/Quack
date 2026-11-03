@@ -14,6 +14,11 @@ set -euo pipefail
 SHA="${1:?usage: deploy.sh <sha>}"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# Only compose.yaml: Compose also reads compose.override.yaml by default, and that file publishes
+# the databases and the API on 127.0.0.1 and joins them to a network with internet access. It is
+# for local work, never for the server (Д-§10: only Caddy publishes ports). Exported, so every
+# `docker compose` of this script and of the commands it starts sees it.
+export COMPOSE_FILE=compose.yaml
 ENV_FILE=.env
 RELEASE_FILE=release.env
 JOURNAL=deploy.log
