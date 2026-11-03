@@ -49,7 +49,7 @@
 
 - **Тревоги** (`ops alerts`) и таймер systemd для `alerts` (WP9.5).
 - **Перевод `api`, `workers`, `projector` и `migrate` на роли `quack_app` и `quack_migrator`**: ждёт перехода слоя данных на dbmate (поток A), пока они работают под `quack`.
-- **Команды восстановления** `restore-check`, `replay-deletions`, `orphan-objects` (WP9.6); сценарии — Д-§8.3.
+- **Команды восстановления** `replay-deletions` и `orphan-objects` (WP9.6): первая зависит от журнала удалений в R2 (`replay_deletions`, WP25, поток A), вторая от списка ссылок на объекты в Postgres. Сценарии восстановления — Д-§8.3.
 - **Job выкатки** в GitHub Actions и публикация образов в GHCR: WP9.3/9.4.
 - **CORS** API (`cors_origins` уже есть в конфиге, подключение к приложению — отдельный пакет).
 
@@ -74,3 +74,7 @@ docker compose --env-file .env --env-file release.env ps
 ```
 
 Проверка: у `postgres`, `neo4j`, `redis` и `api` в колонке PORTS ничего нет, 80 и 443 только у `caddy`.
+
+## Проверка после восстановления
+
+`docker compose run --rm migrate ops restore-check` сравнивает у каждого ученика `appliedSeq` в Neo4j с `last_seq` в журнале Postgres. Если граф опережает журнал, команда печатает список учеников и завершается кодом 1: тогда `ops rebuild --all`. Отстающий граф проверку не ломает, проектор его догонит. Без пройденной проверки остальные сервисы после восстановления не запускаются (Д-§8.3).
