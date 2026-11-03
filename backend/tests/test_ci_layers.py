@@ -119,8 +119,20 @@ def test_publish_waits_for_every_check_and_only_on_integration_pushes() -> None:
 
 def test_actions_are_pinned_by_commit_sha() -> None:
     for job in _jobs().values():
-        for step in job["steps"]:
+        # A job that calls a workflow of this repository (`uses: ./...`) has no steps and no pin.
+        for step in job.get("steps", []):
             uses = step.get("uses")
             if uses:
                 ref = str(uses).split("@", 1)[1]
                 assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref), uses
+
+
+def test_deploy_follows_publish_on_main_only_where_enabled() -> None:
+    job = _jobs()["deploy"]
+    assert job["needs"] == ["publish"]
+    assert job["uses"] == "./.github/workflows/deploy.yml"
+    condition = str(job["if"])
+    assert "refs/heads/main" in condition and "github.event_name == 'push'" in condition
+    assert "vars.DEPLOY_ENABLED == 'true'" in condition
+    assert "phase-4" not in condition
+    assert job["permissions"] == {"contents": "read"}
