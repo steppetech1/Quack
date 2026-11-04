@@ -1,11 +1,13 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMocks, useT } from "@/lib/i18n/provider";
 import type { Domain } from "@/lib/mock/types";
-import { domainFromApi } from "./adapters";
-import { API_MODE, ApiError, fetchMe, get, idem, logoutApi, patch, sse, type S } from "./client";
+import { TermsGate } from "@/components/quack/live/terms-gate";
+import type { GraphModel } from "@/lib/graph/types";
+import { type ApiHub, domainFromApi, graphModelFromApi } from "./adapters";
+import { API_MODE, ApiError, get, idem, patch, post, sse, type S } from "./client";
 
 /** Projection updates come in bursts (one turn → several events): re-read once they settle */
 const LIVE_SETTLE_MS = 600;
@@ -19,10 +21,10 @@ type Data = {
   ready: boolean;
   error: string | null;
   domains: Domain[];
-  graphs: Record<string, S["DomainGraphResponse"]>;
-  history: S["SessionListItem"][];
-  me: S["LearnerMeResponse"] | null;
-  active: S["ActiveSession"] | null;
+  /** Model of the layered graph per subject (API mode; mocks have their own store) */
+  models: Record<string, GraphModel>;
+  me: S["Me"] | null;
+  active: S["SessionView"] | null;
   /**
    * How far the backend projection (graph, topic states) has caught up, from `/v1/learner/stream`.
    * Pages that show projected data re-fetch when it grows; 0 on mocks and before the stream connects.
@@ -32,7 +34,7 @@ type Data = {
   reload: () => Promise<void>;
   /** Load (or re-load) the topic graph of a subject */
   loadGraph: (domainId: string) => Promise<void>;
-  setActive: (s: S["ActiveSession"] | null) => void;
+  setActive: (s: S["SessionView"] | null) => void;
   /** Merge keys into the learner's preferences on the backend (no-op on mocks) */
   savePreferences: (prefs: Record<string, unknown>) => Promise<void>;
   logout: () => void;
@@ -54,8 +56,7 @@ function MockData({ children }: { children: React.ReactNode }) {
       ready: true,
       error: null,
       domains,
-      graphs: {},
-      history: [],
+      models: {},
       me: null,
       active: null,
       appliedSeq: 0,
@@ -74,13 +75,17 @@ function MockData({ children }: { children: React.ReactNode }) {
 function ApiData({ children }: { children: React.ReactNode }) {
   const t = useT();
   const router = useRouter();
+  const pathname = usePathname();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<S["DomainSummary"][]>([]);
+  const [consentBusy, setConsentBusy] = useState(false);
   const [graphs, setGraphs] = useState<Record<string, S["DomainGraphResponse"]>>({});
-  const [me, setMe] = useState<S["LearnerMeResponse"] | null>(null);
-  const [active, setActiveState] = useState<S["ActiveSession"] | null>(null);
-  const [history, setHistory] = useState<S["SessionListItem"][]>([]);
+  const [hubs, setHubs] = useState<Record<string, ApiHub[]>>({});
+  const [todays, setTodays] = useState<Record<string, S["TodayView"]>>({});
+  const [me, setMe] = useState<S["Me"] | null>(null);
+  const [active, setActiveState] = useState<S["SessionView"] | null>(null);
+  const [history, setHistory] = useState<S["SessionView"][]>([]);
   const [appliedSeq, setAppliedSeq] = useState(0);
   /** Graphs already on screen: the live stream refreshes these */
   const loaded = useRef(new Set<string>());
@@ -92,7 +97,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   // A started or finished session changes the history too
   const setActive = useCallback(
-    (s: S["ActiveSession"] | null) => {
+    (s: S["SessionView"] | null) => {
       setActiveState(s);
       void loadHistory().catch(() => {});
     },
@@ -101,11 +106,18 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   const loadGraph = useCallback(async (domainId: string) => {
     try {
-      const g = await get<S["DomainGraphResponse"]>(`/v1/domains/${domainId}/graph`);
+      // chapters and "today" ride along with the graph; a failed "today" just leaves the strip empty
+      const [g, h, today] = await Promise.all([
+        get<S["DomainGraphResponse"]>(`/v1/domains/${domainId}/graph`),
+        get<ApiHub[]>(`/v1/domains/${domainId}/hubs`).catch(() => [] as ApiHub[]),
+        get<S["TodayView"]>(`/v1/domains/${domainId}/today`).catch(() => undefined),
+      ]);
       loaded.current.add(domainId);
       setGraphs((m) => ({ ...m, [domainId]: g }));
+      setHubs((m) => ({ ...m, [domainId]: h }));
+      if (today) setTodays((m) => ({ ...m, [domainId]: today }));
     } catch (e) {
-      // a subject still in onboarding has no graph yet
+      // a subject without sessions or materials has no graph yet
       if (!(e instanceof ApiError && e.status === 404)) throw e;
     }
   }, []);
@@ -113,13 +125,13 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const reload = useCallback(async () => {
     try {
       const [meRes, list, act, hist] = await Promise.all([
-        fetchMe(),
+        get<S["Me"]>("/v1/me"),
         get<S["DomainListResponse"]>("/v1/domains"),
-        get<S["ActiveSession"] | null>("/v1/sessions/active"),
+        get<S["SessionView"] | null>("/v1/sessions/active"),
         get<S["SessionListResponse"]>("/v1/sessions"),
       ]);
       setMe(meRes);
-      setSummaries(list.domains.filter((d) => d.status !== "archived"));
+      setSummaries(list.domains);
       setActiveState(act);
       setHistory(hist.sessions);
       setError(null);
@@ -144,7 +156,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
     let seen = -1;
     const refresh = () => {
       void get<S["DomainListResponse"]>("/v1/domains")
-        .then((list) => setSummaries(list.domains.filter((d) => d.status !== "archived")))
+        .then((list) => setSummaries(list.domains))
         .catch(() => {});
       for (const id of loaded.current) void loadGraph(id).catch(() => {});
       void loadHistory().catch(() => {});
@@ -197,6 +209,11 @@ function ApiData({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [graphs, loadGraph]);
 
+  // No subjects yet: the first screen is creating one
+  useEffect(() => {
+    if (ready && !error && summaries.length === 0 && pathname === "/") router.replace("/domains/new");
+  }, [ready, error, summaries.length, pathname, router]);
+
   const labels = useMemo(
     () => ({
       hub: t.live.allTopics,
@@ -204,27 +221,61 @@ function ApiData({ children }: { children: React.ReactNode }) {
       modes: t.live.modes,
       reviewToday: t.live.reviewToday,
       reviewOverdue: t.live.reviewOverdue,
+      paceWarning: t.today.paceWarning,
     }),
     [t],
   );
-  const domains = useMemo(() => summaries.map((s) => domainFromApi(s, graphs[s.domain_id], labels, history)), [summaries, graphs, labels, history]);
+  const domains = useMemo(() => summaries.map((s) => domainFromApi(s, graphs[s.domain_id], labels, history, hubs[s.domain_id])), [summaries, graphs, hubs, labels, history]);
+
+  const models = useMemo(() => {
+    const out: Record<string, GraphModel> = {};
+    for (const s of summaries) if (graphs[s.domain_id]) out[s.domain_id] = graphModelFromApi(s, graphs[s.domain_id], hubs[s.domain_id] ?? [], history, todays[s.domain_id], labels);
+    return out;
+  }, [summaries, graphs, hubs, history, todays, labels]);
 
   const savePreferences = useCallback(async (prefs: Record<string, unknown>) => {
-    // the backend merges the keys and returns the whole object
-    const r = await patch("/v1/learner/preferences", { preferences: prefs, idempotency_key: idem() });
-    setMe((m) => (m ? { ...m, preferences: r.preferences } : m));
+    // one key per request: `preference.set {key, value}`; only plain values go through
+    for (const [key, value] of Object.entries(prefs)) {
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") continue;
+      await patch("/v1/learner/preferences", { key, value, idempotency_key: idem() });
+      setMe((m) => (m ? { ...m, settings: { ...m.settings, [key]: value } } : m));
+    }
   }, []);
 
   const logout = useCallback(() => {
     // the cookie is HttpOnly: only the backend can drop it
-    void logoutApi().finally(() => router.replace("/login"));
+    void post("/auth/logout")
+      .catch(() => {})
+      .finally(() => router.replace("/login"));
   }, [router]);
 
+  // Without the current terms accepted a session would start with CONSENT_REQUIRED: ask once, here
+  const termsVersion = me?.terms_version ?? null;
+  const needsTerms = !!me && !me.terms_accepted && !!termsVersion;
+  const acceptTerms = useCallback(async () => {
+    if (!termsVersion) return;
+    setConsentBusy(true);
+    try {
+      await post("/v1/consents", { kind: "terms", version: termsVersion, idempotency_key: idem() });
+      setMe((m) => (m ? { ...m, terms_accepted: true } : m));
+    } catch {
+      setError(t.live.serverDown);
+    } finally {
+      setConsentBusy(false);
+    }
+  }, [termsVersion, t.live.serverDown]);
+
   const value = useMemo<Data>(
-    () => ({ ready, error, domains, graphs, history, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
-    [ready, error, domains, graphs, history, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout],
+    () => ({ ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
+    [ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout],
   );
-  return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
+  // the gate lies over the app (the app stays mounted: the router needs its segments, and the data loads behind it)
+  return (
+    <DataContext.Provider value={value}>
+      {children}
+      {needsTerms && <TermsGate busy={consentBusy} onAccept={() => void acceptTerms()} />}
+    </DataContext.Provider>
+  );
 }
 
 export function DataProvider({ children }: { children: React.ReactNode }) {

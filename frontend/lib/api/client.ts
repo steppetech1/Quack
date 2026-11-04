@@ -22,7 +22,7 @@ export class ApiError extends Error {
 /** Every write on the backend is idempotent by key */
 export const idem = () => crypto.randomUUID();
 
-/** The session is the `quack_session` cookie (HttpOnly, sent through the same-origin proxy): no token in JS */
+/** The session is the `quack_session` cookie (HttpOnly, same origin through the proxy): no token in JS */
 function headers(json: boolean): HeadersInit {
   const h: Record<string, string> = {};
   if (json) h["Content-Type"] = "application/json";
@@ -32,7 +32,7 @@ function headers(json: boolean): HeadersInit {
 /** No cookie or an expired one sends the user to the login screen */
 function onUnauthorized() {
   if (typeof window !== "undefined" && !/^\/(login|signup)/.test(window.location.pathname)) {
-    // full reload on purpose: no router here, and all in-memory data belongs to the old token
+    // full reload on purpose: no router here, and all in-memory data belongs to the old session
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign("/login");
   }
@@ -52,12 +52,11 @@ async function toError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, code, message);
 }
 
-export async function api<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
+export async function api<T>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method,
     headers: headers(body !== undefined),
     body: body === undefined ? undefined : JSON.stringify(body),
-    credentials: "include",
   });
   if (!res.ok) throw await toError(res);
   if (res.status === 204) return undefined as T;
@@ -70,7 +69,7 @@ export async function api<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: 
  * against the schema's path templates (`/v1/topics/{topic_id}/…`), and the body and the response
  * come from that operation. A body that doesn't fit the backend is a compile error, not a 422.
  */
-type WriteMethod = "post" | "patch" | "delete";
+type WriteMethod = "post" | "patch" | "put" | "delete";
 /** `/v1/topics/{topic_id}/x` → `/v1/topics/${string}/x` */
 type Template<P extends string> = P extends `${infer A}{${string}}${infer B}` ? `${A}${string}${Template<B>}` : P;
 type Op<P extends string, M extends WriteMethod> = {
@@ -96,6 +95,8 @@ export const post = <P extends WritePath<"post">>(path: P, ...[body]: BodyArg<P,
   api<ResponseOf<P, "post">>("POST", path, body ?? {});
 export const patch = <P extends WritePath<"patch">>(path: P, ...[body]: BodyArg<P, "patch">) =>
   api<ResponseOf<P, "patch">>("PATCH", path, body);
+export const put = <P extends WritePath<"put">>(path: P, ...[body]: BodyArg<P, "put">) =>
+  api<ResponseOf<P, "put">>("PUT", path, body);
 export const del = <P extends WritePath<"delete">>(path: P, ...[body]: BodyArg<P, "delete">) =>
   api<ResponseOf<P, "delete">>("DELETE", path, body);
 
@@ -106,7 +107,7 @@ export const qs = (params: Record<string, string | number | undefined | null>) =
 
 export type SseEvent = { event: string; data: Record<string, unknown> };
 
-/** SSE over fetch: the backend needs the Authorization header, which EventSource can't send */
+/** SSE over fetch: a POST body (actions) can't go through EventSource */
 export function sse<P extends WritePath<"post">>(
   method: "POST",
   path: P,
@@ -115,7 +116,6 @@ export function sse<P extends WritePath<"post">>(
   signal?: AbortSignal,
 ): Promise<void>;
 export function sse(method: "GET", path: string, body: undefined, onEvent: (e: SseEvent) => void, signal?: AbortSignal): Promise<void>;
-export function sse(method: "POST", path: string, body: unknown, onEvent: (e: SseEvent) => void, signal?: AbortSignal): Promise<void>;
 export async function sse(
   method: "GET" | "POST",
   path: string,
@@ -128,7 +128,6 @@ export async function sse(
     headers: { ...headers(body !== undefined), Accept: "text/event-stream" },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
-    credentials: "include",
   });
   if (!res.ok || !res.body) throw await toError(res);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -149,33 +148,15 @@ export async function sse(
         else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
       }
       if (!data.length) continue;
+      // Only the parse is guarded: an exception from the handler (for example the `error` frame turned into an ApiError)
+      // must reach the caller as it is, not be caught here and replayed as a frame with raw data and no error code
+      let parsed: Record<string, unknown>;
       try {
-        onEvent({ event, data: JSON.parse(data.join("\n")) });
+        parsed = JSON.parse(data.join("\n"));
       } catch {
-        onEvent({ event, data: { raw: data.join("\n") } });
+        parsed = { raw: data.join("\n") };
       }
+      onEvent({ event, data: parsed });
     }
   }
-}
-
-/** Transitional post helper for Phase 4 endpoints */
-export const postRaw = <T = unknown>(path: string, body?: unknown) => api<T>("POST", path, body);
-
-/** Phase 4: send magic link to email */
-export async function sendMagicLink(email: string): Promise<{ ok: boolean }> {
-  return api<{ ok: boolean }>("POST", "/auth/link", { email });
-}
-
-/** Phase 4: logout (the backend drops the HttpOnly cookie) */
-export async function logoutApi(): Promise<void> {
-  try {
-    await api("POST", "/auth/logout");
-  } catch {
-    // ignore if already logged out
-  }
-}
-
-/** Current learner (Phase 4 `/v1/me`); the type is still the Phase 3 one until the screens move to the new schema */
-export async function fetchMe(): Promise<S["LearnerMeResponse"]> {
-  return api<S["LearnerMeResponse"]>("GET", "/v1/me");
 }

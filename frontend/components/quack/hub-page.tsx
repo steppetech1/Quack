@@ -186,10 +186,10 @@ export function HubPage({ id }: { id: string }) {
           const run = () =>
             void start(
               k === "all"
-                ? { domainId: domain.id, topicId: next.id, mode: "learn" }
+                ? { domainId: domain.id, topicId: next.id, intent: "learn" }
                 : k === "review"
-                  ? { domainId: domain.id, topicId: due.id, mode: "review" }
-                  : { domainId: domain.id, mode: "learn" },
+                  ? { domainId: domain.id, topicId: due.id, intent: "review" }
+                  : { domainId: domain.id, intent: "learn" },
             );
           return <ActionButton key={k} label={a} primary={k === primaryAction} soonText="" onClick={run} disabled={busy} />;
         })}

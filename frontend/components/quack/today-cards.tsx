@@ -11,7 +11,7 @@ import { useStartSession } from "./live/use-start-session";
 import { useSoon } from "./soon";
 
 const CARD =
-  "flex min-h-[56px] w-[240px] shrink-0 flex-col justify-center gap-0.5 rounded-[2px] border border-seam px-3.5 py-2 text-left transition-colors duration-(--dur-s) ease-(--ease-out) md:w-auto md:min-w-0 md:max-w-[calc((100%-1.25rem)/3)] md:flex-1";
+  "flex min-h-[64px] w-[240px] shrink-0 flex-col justify-center gap-1 rounded-[2px] border border-seam px-3.5 py-2.5 text-left transition-colors duration-(--dur-s) ease-(--ease-out) md:w-auto md:min-w-0 md:max-w-[calc((100%-1.25rem)/3)] md:flex-1";
 const CARD_ACTIVE = "hover:border-rule hover:bg-cloth-raised focus-visible:border-rule focus-visible:bg-cloth-raised";
 
 /**
@@ -93,8 +93,8 @@ export function TodayCards({
                   type="button"
                   disabled={busy}
                   onClick={() =>
-                    API_MODE && r.topicId && (r.action === "learn" || r.action === "review" || r.action === "practice")
-                      ? void start({ domainId: domain.id, topicId: r.topicId, mode: r.action })
+                    API_MODE && r.topicId && (r.action === "learn" || r.action === "review")
+                      ? void start({ domainId: domain.id, topicId: r.topicId, intent: r.action })
                       : soon(t.soon.session(label ?? ""))
                   }
                   className={cn(CARD, CARD_ACTIVE, "disabled:opacity-50")}

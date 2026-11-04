@@ -26,7 +26,7 @@ export function ProfileMenu({ active }: { active: boolean }) {
   const { me, logout } = useData();
   // С бэкендом — настоящий профиль, на моках — из словаря
   // На бэкенде, пока профиль не загрузился, мок-имя не показываем
-  const name = me ? (me.display_name ?? me.email.split("@")[0]) : API_MODE ? "" : t.profile.name;
+  const name = me ? (typeof me.settings.name === "string" && me.settings.name ? me.settings.name : me.email.split("@")[0]) : API_MODE ? "" : t.profile.name;
   const email = me ? me.email : API_MODE ? "" : t.profile.email;
   const initial = me ? name.charAt(0).toUpperCase() : API_MODE ? "" : t.profile.initial;
   const [open, setOpen] = useState(false);

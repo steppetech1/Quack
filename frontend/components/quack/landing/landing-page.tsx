@@ -1,28 +1,46 @@
 "use client";
 
 import { useRef } from "react";
-import { Backdrop } from "./backdrop";
-import { Compare } from "./compare";
-import { Features } from "./features";
 import { LandingFooter } from "./footer";
 import { Hero } from "./hero";
 import { LandingNav } from "./nav";
-import { Pluses } from "./pluses";
+import { EfficiencyScene } from "./scenes/efficiency-scene";
+import { GraphScene } from "./scenes/graph-scene";
+import { STORY, usePinned } from "./scenes/story";
+import { useStoryController } from "./scenes/story-controller";
 
-/** Лендинг целиком: общий фон, панель, первый экран, сравнение, два блока плюсов и подвал. Страница прокручивается внутри этого контейнера, а не окном: у body overflow hidden */
+/**
+ * Лендинг: панель, первый экран, две сцены и подвал. На большом экране сцены закреплены: первый экран и обе сцены лежат
+ * друг на друге в неподвижной рамке, а прокрутка рассыпает одну сцену на месте и собирает следующую (см. scenes/story.ts).
+ * На телефоне — обычная прокрутка, сцены друг под другом. Прежние блоки и фон с графами пока не показываются (файлы остались).
+ * Страница прокручивается внутри этого контейнера, а не окном: у body overflow hidden
+ */
 export function LandingPage() {
   const scrollRef = useRef<HTMLElement>(null);
+  const pinned = usePinned();
+  useStoryController(scrollRef, pinned);
   return (
     <main
       ref={scrollRef}
-      className="relative isolate h-full overflow-x-hidden overflow-y-auto bg-[#080504] text-[#f1e4d6] motion-safe:scroll-smooth"
+      data-pinned={pinned}
+      className={`relative isolate h-full overflow-x-hidden overflow-y-auto bg-[#080504] text-[#f1e4d6] ${pinned ? "" : "motion-safe:scroll-smooth"}`}
     >
-      <Backdrop scrollRef={scrollRef} />
       <LandingNav scrollRef={scrollRef} />
-      <Hero scrollRef={scrollRef} />
-      <Compare scrollRef={scrollRef} />
-      <Pluses />
-      <Features />
+      {pinned ? (
+        <div className="relative" style={{ height: `${(STORY.end + 1) * 100}dvh` }}>
+          <div className="sticky top-0 h-dvh overflow-hidden">
+            <Hero scrollRef={scrollRef} pinned />
+            <EfficiencyScene scrollRef={scrollRef} slot={1} />
+            <GraphScene scrollRef={scrollRef} slot={2} />
+          </div>
+        </div>
+      ) : (
+        <>
+          <Hero scrollRef={scrollRef} />
+          <EfficiencyScene scrollRef={scrollRef} />
+          <GraphScene scrollRef={scrollRef} />
+        </>
+      )}
       <LandingFooter />
     </main>
   );

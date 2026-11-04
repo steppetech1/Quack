@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
-import { API_MODE, ApiError, sendMagicLink } from "@/lib/api/client";
+import { API_MODE, ApiError, post } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
 import { AuthScene } from "../auth/auth-scene";
 import { StubNote } from "./stub-parts";
@@ -36,7 +36,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setBusy(true);
     setError(null);
     try {
-      await sendMagicLink(String(form.get("email") ?? "").trim());
+      await post("/auth/link", { email: String(form.get("email") ?? "").trim() });
       setSent(true);
     } catch (e) {
       setError(e instanceof ApiError && e.code === "RATE_LIMITED" ? live.rateLimited : e instanceof ApiError && e.status < 500 ? e.message : live.serverDown);

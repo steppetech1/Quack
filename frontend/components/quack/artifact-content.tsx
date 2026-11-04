@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, Space } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useFmt, useT } from "@/lib/i18n/provider";
 import type { Dict } from "@/lib/i18n/dict";
 import type { Canvas, CardKind, CheatSheet, StudyCard, TopicDetails } from "@/lib/mock/types";
@@ -245,18 +245,64 @@ export function DeckCard({ cards }: { cards: StudyCard[] }) {
 const PROGRESS = "num text-small text-paper-dim";
 
 /** Просмотр колоды: одна карточка, ответ по кнопке, оценка «как вспомнилось» */
+/** A key on the legend under the deck: the shape of a key, so it reads as "press this" */
+function Keycap({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
+  return (
+    <kbd
+      className={cn(
+        "inline-flex h-6 items-center justify-center gap-1 rounded-[3px] border border-seam bg-cloth-raised font-mono text-[11px] leading-none text-paper shadow-[0_1px_0_0_var(--seam)]",
+        wide ? "px-2" : "min-w-6 px-1.5",
+      )}
+    >
+      {children}
+    </kbd>
+  );
+}
+
+function KeyHint({ keys, label }: { keys: React.ReactNode; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="inline-flex items-center gap-1">{keys}</span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
+const ARROWS = (
+  <>
+    <Keycap>
+      <ArrowLeft className="size-3.5" aria-label="←" />
+    </Keycap>
+    <Keycap>
+      <ArrowRight className="size-3.5" aria-label="→" />
+    </Keycap>
+  </>
+);
+const SPACE = (
+  <Keycap wide>
+    <Space className="size-3.5" aria-hidden />
+    Space
+  </Keycap>
+);
+
 export function DeckViewer({ cards }: { cards: StudyCard[] }) {
   const t = useT();
   const [i, setI] = useState(0);
+  const [started, setStarted] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [rated, setRated] = useState<(number | null)[]>(() => cards.map(() => null));
   const [done, setDone] = useState(false);
+  /** The rating the arrows are on once the card is turned over ("got it" first: the usual answer) */
+  const [sel, setSel] = useState(2);
+  const rateRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const revealRef = useRef<HTMLButtonElement>(null);
   const last = cards.length - 1;
 
   const step = (to: number) => {
     if (to < 0 || to > last) return;
     setI(to);
     setRevealed(false);
+    setSel(2);
   };
   const rate = (r: number) => {
     setRated((prev) => prev.map((x, k) => (k === i ? r : x)));
@@ -270,12 +316,49 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
     setRevealed(false);
   };
 
+  // The focus follows the card: on the "Show answer" button, and once the card is turned over on the chosen rating,
+  // so Space and Enter do what the button says without any key handling of their own
   useEffect(() => {
-    if (done) return;
+    if (done || !started) return;
+    (revealed ? rateRefs.current[sel] : revealRef.current)?.focus();
+  }, [started, done, revealed, sel, i]);
+
+  // Keys. Before the turn: ← → flip through the cards, Space turns the card over. After it: ← → move over the ratings,
+  // Space (the focused rating) confirms, 1–4 rate at once
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const typing = e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+      if (typing) return;
+      // The list ("Start") and the result ("Go again"): Space or Enter press the one button, whatever has the focus
+      if (!started || done) {
+        if ((e.key === " " || e.key === "Enter") && !(e.target instanceof HTMLButtonElement)) {
+          e.preventDefault();
+          if (done) restart();
+          else setStarted(true);
+        }
+        return;
+      }
+      if (revealed) {
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+          e.preventDefault();
+          setSel((v) => Math.min(t.artifacts.ratings.length - 1, v + 1));
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+          e.preventDefault();
+          setSel((v) => Math.max(0, v - 1));
+        } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= t.artifacts.ratings.length) {
+          e.preventDefault();
+          rate(Number(e.key) - 1);
+        }
+        return;
+      }
       if (e.key === "ArrowRight") step(i + 1);
       else if (e.key === "ArrowLeft") step(i - 1);
+      else if ((e.key === " " || e.key === "Enter") && !(e.target instanceof HTMLButtonElement)) {
+        // focus is nowhere useful: turn the card over; on a button the button does its own job
+        e.preventDefault();
+        setRevealed(true);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -318,6 +401,34 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
     );
   }
 
+  // First the list of the deck and "Start"
+  if (!started) {
+    return (
+      <div className="mx-auto max-w-[640px]">
+        <p className="text-paper-dim">{t.artifacts.deckIntro(cards.length)}</p>
+        <ol className="mt-5 border-t border-seam-soft">
+          {cards.map((c, k) => (
+            <li key={c.id} className="flex items-baseline gap-3 border-b border-seam-soft py-3">
+              <span className="num w-6 shrink-0 text-small text-paper-dim">{k + 1}</span>
+              <span className="min-w-0 flex-1 text-paper">
+                <Inline text={c.front} />
+              </span>
+              <span className={PILL}>{t.artifacts.cardKind[c.kind]}</span>
+            </li>
+          ))}
+        </ol>
+        <button
+          type="button"
+          autoFocus
+          onClick={() => setStarted(true)}
+          className="caps mt-6 inline-flex h-11 items-center rounded-pill bg-ribbon px-8 text-on-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-ribbon-hover"
+        >
+          {t.artifacts.start}
+        </button>
+      </div>
+    );
+  }
+
   const card = cards[i];
   return (
     <div className="mx-auto max-w-[640px]">
@@ -334,7 +445,7 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
         </p>
         {revealed && (
           <div className="mt-6 border-t border-seam-soft pt-5 text-[17px] leading-relaxed text-paper animate-in fade-in slide-in-from-bottom-1 duration-200 motion-reduce:animate-none">
-            <RichText text={card.back} />
+            <RichText text={card.back || t.artifacts.noAnswer} />
           </div>
         )}
       </div>
@@ -349,10 +460,14 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
               <button
                 key={label}
                 type="button"
-                autoFocus={r === 0}
+                ref={(el) => {
+                  rateRefs.current[r] = el;
+                }}
+                tabIndex={r === sel ? 0 : -1}
                 onClick={() => rate(r)}
                 className="caps inline-flex h-10 items-center rounded-pill border border-seam px-5 text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-ribbon hover:bg-cloth-hover"
               >
+                <span className="num mr-2 text-paper-dim">{r + 1}</span>
                 {label}
               </button>
             ))}
@@ -360,7 +475,7 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
         ) : (
           <button
             type="button"
-            autoFocus
+            ref={revealRef}
             onClick={() => setRevealed(true)}
             className="caps inline-flex h-11 flex-1 items-center justify-center rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-ribbon-hover sm:flex-none"
           >
@@ -371,7 +486,21 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
           <ChevronRight />
         </IconButton>
       </div>
-      <p className="mt-3 text-small text-paper-dim max-sm:hidden">{t.artifacts.arrowsHint}</p>
+      {/* What the keys do right now */}
+      <p className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-small text-paper-dim max-sm:hidden" aria-label={t.artifacts.keysLabel}>
+        {revealed ? (
+          <>
+            <KeyHint keys={ARROWS} label={t.artifacts.keysChoose} />
+            <KeyHint keys={SPACE} label={t.artifacts.keysConfirm} />
+            <KeyHint keys={<Keycap wide>1–{t.artifacts.ratings.length}</Keycap>} label={t.artifacts.keysRate} />
+          </>
+        ) : (
+          <>
+            <KeyHint keys={ARROWS} label={t.artifacts.keysFlip} />
+            <KeyHint keys={SPACE} label={t.artifacts.keysTurn} />
+          </>
+        )}
+      </p>
     </div>
   );
 }

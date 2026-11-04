@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -39,8 +40,8 @@ function usePrefs() {
   const t = useT();
   const { me, savePreferences } = useData();
   const defaults = useMemo<Prefs>(
-    () => ({ name: me?.display_name || t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
-    [t, me?.display_name],
+    () => ({ name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
+    [t],
   );
   const [stored, setStored] = useState<Partial<Prefs> | null>(null);
   useEffect(() => {
@@ -52,7 +53,8 @@ function usePrefs() {
       if (raw) setStored(pickPrefs(JSON.parse(raw)));
     } catch {}
   }, []);
-  const remote = useMemo(() => pickPrefs(me?.preferences), [me?.preferences]);
+  // the backend keeps the preferences next to the other settings of the learner (`preference.set {key, value}`)
+  const remote = useMemo(() => pickPrefs(me?.settings), [me?.settings]);
   const saved = useMemo(() => ({ ...defaults, ...(API_MODE ? remote : stored) }), [defaults, remote, stored]);
   const save = useCallback(
     async (next: Prefs) => {
@@ -337,6 +339,10 @@ function DomainsTab() {
           </li>
         ))}
       </ul>
+      <Link href="/domains/new" className={cn(SECONDARY, "mt-5 gap-2")}>
+        <Plus aria-hidden className="size-4" />
+        {tx.shell.newSubject}
+      </Link>
     </div>
   );
 }

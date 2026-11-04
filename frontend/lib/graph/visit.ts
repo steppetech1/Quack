@@ -70,6 +70,28 @@ export function saveSnapshot(learner: string, domainId: string, snap: Snapshot) 
   }
 }
 
+const lastKey = (learner: string, domainId: string) => `quack.graph.${learner}.${domainId}.lastnew`;
+
+/** The last non-empty set of changes: when the next visit finds nothing new, "New" shows this again */
+export function loadLastChanges(learner: string, domainId: string): { topics: string[]; hubs: string[] } | undefined {
+  try {
+    const raw = localStorage.getItem(lastKey(learner, domainId));
+    if (!raw) return undefined;
+    const v = JSON.parse(raw) as { v?: number; topics?: string[]; hubs?: string[] };
+    return v.v === 1 && Array.isArray(v.topics) && Array.isArray(v.hubs) ? { topics: v.topics, hubs: v.hubs } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveLastChanges(learner: string, domainId: string, c: { topics: Iterable<string>; hubs: Iterable<string> }) {
+  try {
+    localStorage.setItem(lastKey(learner, domainId), JSON.stringify({ v: 1, topics: [...c.topics], hubs: [...c.hubs] }));
+  } catch {
+    /* the next visit with no changes just will not blink */
+  }
+}
+
 /** Where the camera stood. The anchor is the topic nearest to the centre: if it is gone, a neighbour takes its place */
 export type SavedCamera = {
   k: number;
