@@ -13,6 +13,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from quack import cli
+from quack.agents.delivery import deliver
+from quack.agents.illustration import illustration_key
 from quack.config import Settings
 from quack.db import Db
 from quack.ops.orphan_objects import REFERENCE_SOURCES, SOURCE_NAMES, orphan_objects
@@ -179,6 +181,38 @@ async def test_orphan_objects_lists_what_postgres_does_not_know(pg_db: Db) -> No
     assert report.deleted == 2
     assert report.dry_run is False
     assert set(store.objects) == {kept, old_key}
+
+
+@pytest.mark.parametrize("apply", [False, True])
+async def test_an_illustration_is_held_by_the_event_that_delivered_it(
+    pg_db: Db, apply: bool
+) -> None:
+    """The prefix `illustrations/` has no source of its own: the picture is named only by
+    `agent.completed.result_ref`, which the source `events` finds (D-C-215, #300). The event is
+    written by `deliver`, so the payload is the real one; a picture nothing delivered is lost."""
+    learner = await create_learner(pg_db)
+    store = InMemoryObjectStore()
+    request = uuid4()
+    kept = illustration_key(learner, request, "image/png")
+    lost = illustration_key(learner, uuid4(), "image/png")
+    await deliver(
+        pg_db,
+        learner_id=learner,
+        request_id=request,
+        job_key=None,
+        kind="illustration",
+        ok=True,
+        actor="agent:illustration",
+        result_ref=kept,
+    )
+    await _put(store, kept)
+    await _put(store, lost)
+
+    report = await orphan_objects(pg_db, store, LONG_AGO, apply=apply)
+
+    assert report.orphans == [lost]
+    assert kept in store.objects
+    assert (lost in store.objects) is (not apply)
 
 
 async def test_another_learners_record_does_not_hold_an_object(pg_db: Db) -> None:

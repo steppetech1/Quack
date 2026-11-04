@@ -23,6 +23,16 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-234. Q-C-1 и `orphan-objects` (#300): `timeout_ms` фоновой проверки в тестах `compute`; префикс `illustrations/` не описывается в `keys.py`, его держит источник `events`
+- Класс: C (тесты; код `quack/**` и `compute/quack_compute` не менялся)
+- WP / место: Q-C-1 (D-A-249 п.12), WP9.6, WP16.5; `compute/tests/test_compute_service.py`, `backend/tests/test_ops_p4_recovery.py`
+- Контекст: A просит (а) не связывать тесты режимов `compute` с продуктовым `timeout_ms` 1500, (б) решить, описывать ли `illustrations/` в `storage/keys.py` и `Т-§3.3`, и покрыть тестом событие `agent.completed.result_ref`, (в) принять к сведению, что `thumbnail_key` и `photo_crop_key` нигде не пишутся.
+- Решение: (а) хелпер `check` по умолчанию шлёт `timeout_ms = 10_000` (`symbolic_background_timeout_ms`, `Т-§6.1`); тест `test_timeout_kills_child` передаёт своё значение и не менялся. (б) Ключ строит `illustration_key` в `quack/agents/illustration.py` (зона B: ключ в префиксе ученика с ULID, `Т-§3.3`); второй построитель в `keys.py` был бы дублем, поэтому префикс там не описывается. Картинку называет только `agent.completed.result_ref`; её находит источник `events`, отдельный источник не нужен. Добавлен тест: событие пишет настоящий `deliver`, картинка с событием остаётся при `--apply`, картинка без события попадает в список и удаляется только с `--apply`. (в) Принято: писателей `thumbnail_key` и `photo_crop_key` нет; когда появится, по D-C-215 нужны свой источник в `orphan_objects.py` и тест.
+- Почему: `Т-§6.1`, `Т-§3.3`, D-C-215, D-A-248, D-A-249 п.12.
+- Обратимость: полная; тесты можно удалить, описание префикса в `keys.py` добавляется без миграций.
+- Тесты: `compute/tests/test_compute_service.py` (5 passed, Linux-контейнер); `backend/tests/test_ops_p4_recovery.py::test_an_illustration_is_held_by_the_event_that_delivered_it` (+ вся группа, 30 passed вместе с `tests/db/test_sql_static.py`)
+- Требует подтверждения владельцем: нет
+
 ### D-C-233. WP18.1/18.2: `T-AU1`–`T-AU3` проверены на реальных адаптерах через подмену транспорта; `nonce` и PKCE в потоке Google не добавлены
 - Класс: C (тесты и подмена `tests/support/google_idp.py`; код `quack/**` не менялся)
 - WP / место: WP18.1, WP18.2, `Т-§19.1`; `backend/tests/auth/test_auth_wire_wp18.py`, `backend/tests/auth/test_auth_adapters.py`, `backend/tests/support/google_idp.py`

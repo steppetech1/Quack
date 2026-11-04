@@ -24,13 +24,23 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
+# Т-§6.1: the insurance job sends `symbolic_background_timeout_ms`. The tests of the modes use it
+# so that they do not depend on the product default of `timeout_ms` (1500, the inline check);
+# `test_timeout_kills_child` passes its own value.
+BACKGROUND_TIMEOUT_MS = 10_000
+
+
 async def check(
     client: httpx.AsyncClient, mode: str, student: str, reference: str, **fields: Any
 ) -> dict[str, Any]:
-    response = await client.post(
-        "/v1/check/math",
-        json={"mode": mode, "student_expr": student, "reference_expr": reference, **fields},
-    )
+    body = {
+        "mode": mode,
+        "student_expr": student,
+        "reference_expr": reference,
+        "timeout_ms": BACKGROUND_TIMEOUT_MS,
+        **fields,
+    }
+    response = await client.post("/v1/check/math", json=body)
     assert response.status_code == 200, response.text
     return response.json()
 

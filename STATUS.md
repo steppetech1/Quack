@@ -211,7 +211,7 @@
 
 1. **WP26.2** — подмены SAM, Voice и эмбеддингов в профиле `loadtest`; формы запросов помечены [ПРОВЕРИТЬ на стенде] (D-C-232).
 2. **WP26.3** (P2) — Locust на 100 учеников; ручной прогон на живой модели (DoD п.6a, формат маски `sam-3.1`).
-3. **WP10.6, хвост** — `tracer=create_tracer(settings)` в сборке `api/resources.py` (C) и `runtime` (A); `workers`/`cli` — шаг 5 (#209).
+3. ~~WP10.6, хвост~~ — сделано: `tracer=create_tracer(settings)` в `api/resources.py` и `runtime/__init__.py` (#295, #209); `cli` (роль `ops`) трассер не получает по `Д-§7`.
 4. **WP23.5** — KaTeX из `deploy/static/viz` в рендер PDF cheat sheet; старую строку `hub.deadline_set` снимает A.
 5. **WP23.7** (P2) — Obsidian, Anki (`genanki`), `POST /v1/learner/export`, `GET /v1/learner/exports/{id}`; вид `data_export` — A.
 6. **Владелец** (#270): определение «ссылки» для `orphan-objects` (D-C-211), голос WAV-only (D-C-152), `LLM_PRICES` и размер пула, `META_API_KEY` для `ops`, пересоздание тома `postgres-data`, слой 1 `artifact_writer@1`/`material_parser@1`, лимиты скана PDF (D-C-214), клиент Google OIDC и ключ Resend, живая выкатка (WP9.4).
