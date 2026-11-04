@@ -183,13 +183,9 @@ async def test_a_sheet_that_fits_is_asked_once(stand: Stand, pg_db: Db) -> None:
     assert len(stand.writer.prompts) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D-B-212: the outbox is gone, a repeat asks the model again and writes version 2; "
-    "stream C dedupes by the request key before the model call (issue #244)",
-)
 async def test_a_repeated_job_writes_no_new_version(stand: Stand, pg_db: Db) -> None:
-    """Law 5: the same request key reads the same answers from the outbox."""
+    """Law 5: the same request key does not ask the model again (D-C-217: the version it wrote
+    is found by the key of its `artifact.updated` event)."""
     learner = await create_learner(pg_db)
     hub, _ = await create_hub(pg_db, learner)
     stand.scenario.push_for(PDF, *_pages(1, 1))
@@ -197,6 +193,34 @@ async def test_a_repeated_job_writes_no_new_version(stand: Stand, pg_db: Db) -> 
     again = await stand.generate(learner, hub, key="request-7")
     assert (first.version, again.version) == (1, 1)
     assert len(stand.writer.prompts) == 1
+
+
+async def test_a_repeat_after_an_interrupted_fit_goes_on_from_the_next_round(
+    stand: Stand, pg_db: Db
+) -> None:
+    """The job died after round 0: the repeat renders what is written, asks for the shortening
+    only (round 1), and the earlier round is not asked again."""
+    learner = await create_learner(pg_db)
+    hub, _ = await create_hub(pg_db, learner)
+    stand.scenario.push_for(PDF, *_pages(3))
+    once = stand.settings.model_copy(update={"cheatsheet_fit_rounds": 0})
+    cut = await stand.generate(learner, hub, key="request-9", settings=once)
+    assert (cut.version, cut.fits) == (1, False) and len(stand.writer.prompts) == 1
+
+    stand.scenario.push_for(PDF, *_pages(3, 1))
+    done = await stand.generate(learner, hub, key="request-9")
+    assert (done.version, done.page_count, done.rounds, done.fits) == (2, 1, 1, True)
+    assert len(stand.writer.prompts) == 2
+    assert "The last version took 3 pages" in stand.writer.prompts[1]
+
+
+async def test_a_new_request_key_asks_again(stand: Stand, pg_db: Db) -> None:
+    learner = await create_learner(pg_db)
+    hub, _ = await create_hub(pg_db, learner)
+    stand.scenario.push_for(PDF, *_pages(1, 1))
+    await stand.generate(learner, hub, key="request-1")
+    again = await stand.generate(learner, hub, key="request-2")
+    assert again.version == 2 and len(stand.writer.prompts) == 2
 
 
 async def test_the_page_count_is_of_the_whole_document(stand: Stand, pg_db: Db) -> None:
