@@ -79,6 +79,7 @@ export const en = {
     paceWarning: (hubName: string, ready: number, notReady: number) => `${hubName} won't be ready in time: ${ready} done, ${notReady} left`,
   },
   empty: {
+    attachHint: "To build the graph, attach a PDF or a photo of your notes with the paperclip below.",
     title: "Nothing here yet, and that's fine",
     body: (subject: string) =>
       `Drop in a lecture, a problem, or just ask something about ${subject}. The duck will sort it out, and the topic graph grows as you go.`,
@@ -362,6 +363,12 @@ export const en = {
     allSkills: "All skills →",
     removeChip: (label: string) => `Remove: ${label}`,
     attach: "Attach a file",
+    material: {
+      uploading: "Uploading the file…",
+      parsing: "Reading the material. Chapters and topics appear in the graph as it finishes; you can leave this page.",
+      done: "The material is read: the graph is updated.",
+      slow: "Reading is taking longer than usual. The graph will update when it is done.",
+    },
     dictate: "Dictate by voice",
     openCanvas: "Open canvas",
     soonReply: "teacher replies to a free-form message",

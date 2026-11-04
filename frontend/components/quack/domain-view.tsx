@@ -7,7 +7,9 @@ import type { TodayRec } from "@/lib/graph/types";
 import { useFmt, useLocale, useMocks, useT } from "@/lib/i18n/provider";
 import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
+import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
+import { useMaterialUpload } from "./live/use-material-upload";
 import { useShell } from "./app-shell";
 import { CanvasesList, CanvasSearch } from "./canvases-page";
 import { Composer } from "./composer";
@@ -83,6 +85,7 @@ export function DomainView() {
   const { locale } = useLocale();
   const { domain, selectDomain, startSession, graphMode, setGraphMode } = useShell();
   const data = useData();
+  const material = useMaterialUpload(domain.id);
   const domains = data.domains.length ? data.domains : [domain];
   const router = useRouter();
   const pathname = usePathname();
@@ -218,13 +221,18 @@ export function DomainView() {
               <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} className="hidden md:grid" />
             </>
           ) : (
-            <EmptyDomain titleDat={domain.titleDat} />
+            <EmptyDomain titleDat={domain.titleDat} attachHint={API_MODE && material.phase === "idle"} />
           )}
         </div>
       </div>
 
       <div className="px-4 pb-4 md:px-7 md:pb-5">
-        <Composer label={tx.domain.composerLabel(domain.title)} onSend={startSession} />
+        {API_MODE && material.phase !== "idle" && (
+          <p role={material.phase === "failed" ? "alert" : "status"} className={cn("mb-2 text-small", material.phase === "failed" ? "text-st-confused" : "text-paper-dim")}>
+            {material.phase === "failed" ? material.error : tx.composer.material[material.phase]}
+          </p>
+        )}
+        <Composer label={tx.domain.composerLabel(domain.title)} onSend={startSession} onAttach={API_MODE ? material.attach : undefined} />
       </div>
     </>
   );

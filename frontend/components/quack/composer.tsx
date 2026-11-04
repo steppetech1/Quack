@@ -24,6 +24,8 @@ type Props = {
   compact?: boolean;
   /** Фокус новой сессии: «тема: …» со снимаемой меткой */
   chip?: { label: string; onRemove: () => void };
+  /** Файл выбран скрепкой (PDF или фото). Без него скрепка пока показывает «скоро» */
+  onAttach?: (file: File) => void;
 };
 
 export function Composer({
@@ -34,6 +36,7 @@ export function Composer({
   primary = true,
   compact = false,
   chip,
+  onAttach,
 }: Props) {
   const t = useT();
   placeholder ??= t.composer.placeholder;
@@ -41,6 +44,7 @@ export function Composer({
   const soon = useSoon();
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const listId = useId();
   const { skills } = useSkills();
@@ -228,9 +232,23 @@ export function Composer({
       )}
       </div>
       <div className={cn("flex items-center gap-1", compact && "max-md:hidden")}>
-        <IconButton label={t.composer.attach} onClick={() => soon(t.composer.soonAttach)}>
+        <IconButton label={t.composer.attach} onClick={() => (onAttach ? fileRef.current?.click() : soon(t.composer.soonAttach))}>
           <Paperclip />
         </IconButton>
+        {onAttach && (
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/pdf,image/*"
+            hidden
+            tabIndex={-1}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = ""; // the same file can be picked again
+              if (f) onAttach(f);
+            }}
+          />
+        )}
         <IconButton label={t.composer.dictate} onClick={() => soon(t.composer.soonVoice)}>
           <Mic />
         </IconButton>

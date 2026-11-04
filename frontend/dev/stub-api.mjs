@@ -449,6 +449,26 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     return json(res, 200, { hits });
   }
 
+  // materials (WP20): the file is "read" in a few seconds and the subject gets a chapter with topics from it
+  if ((g = p.match(/^\/v1\/domains\/([^/]+)\/materials$/))) {
+    const d = domainById(g[1]);
+    if (!d) return err(res, "NOT_FOUND", 404, "no such subject");
+    S.materials ??= [];
+    if (m === "GET") return json(res, 200, { materials: S.materials.filter((x) => x.domain_id === d.did) });
+    const mat = { material_id: randomUUID(), domain_id: d.did, session_id: null, mime: req.headers["content-type"]?.startsWith("multipart/") ? "application/pdf" : "application/octet-stream", status: "uploaded", pages_count: null, created_at: now() };
+    S.materials.push(mat);
+    setTimeout(() => {
+      mat.status = "parsed";
+      mat.pages_count = 12;
+      const n = d.hubs.length + 1;
+      d.hubs.push({ key: `mat${n}`, name: "From the material", deadlineMs: null, topics: [mk(`mat${n}-a`, "Basic definitions"), mk(`mat${n}-b`, "Main theorem"), mk(`mat${n}-c`, "Worked examples")] });
+      d.requires.push([`mat${n}-a`, `mat${n}-b`], [`mat${n}-b`, `mat${n}-c`]);
+      S.seq += 5;
+      for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
+    }, 3000);
+    return json(res, 201, mat);
+  }
+
   // a stroke chunk of the replay (a real backend serves a signed link of the object store): zstd over MessagePack
   if ((g = p.match(/^\/_chunks\/([^/]+)\/(\d+)\.bin$/))) {
     const buf = (S.chunks ?? {})[`${g[1]}/${g[2]}`];

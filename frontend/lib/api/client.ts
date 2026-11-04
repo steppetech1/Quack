@@ -90,6 +90,13 @@ export type ResponseOf<P extends string, M extends WriteMethod> =
 /** The body argument is optional only where the endpoint takes none */
 type BodyArg<P extends string, M extends WriteMethod> = undefined extends BodyOf<P, M> ? [body?: BodyOf<P, M>] : [body: BodyOf<P, M>];
 
+/** A file to the backend (multipart): the browser sets the boundary, so no Content-Type here */
+export async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(BASE + path, { method: "POST", body: form });
+  if (!res.ok) throw await toError(res);
+  return (await res.json()) as T;
+}
+
 export const get = <T>(path: string) => api<T>("GET", path);
 export const post = <P extends WritePath<"post">>(path: P, ...[body]: BodyArg<P, "post">) =>
   api<ResponseOf<P, "post">>("POST", path, body ?? {});
