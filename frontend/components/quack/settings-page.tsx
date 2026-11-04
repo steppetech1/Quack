@@ -40,8 +40,8 @@ function usePrefs() {
   const t = useT();
   const { me, savePreferences } = useData();
   const defaults = useMemo<Prefs>(
-    () => ({ name: me?.display_name || t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
-    [t, me?.display_name],
+    () => ({ name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
+    [t],
   );
   const [stored, setStored] = useState<Partial<Prefs> | null>(null);
   useEffect(() => {
@@ -53,7 +53,8 @@ function usePrefs() {
       if (raw) setStored(pickPrefs(JSON.parse(raw)));
     } catch {}
   }, []);
-  const remote = useMemo(() => pickPrefs(me?.preferences), [me?.preferences]);
+  // the backend keeps the preferences next to the other settings of the learner (`preference.set {key, value}`)
+  const remote = useMemo(() => pickPrefs(me?.settings), [me?.settings]);
   const saved = useMemo(() => ({ ...defaults, ...(API_MODE ? remote : stored) }), [defaults, remote, stored]);
   const save = useCallback(
     async (next: Prefs) => {
@@ -69,9 +70,9 @@ function usePrefs() {
 }
 
 const FIELD =
-  "h-10 w-full rounded-control border border-seam bg-cloth px-3 text-body text-paper placeholder:text-paper-dim hover:border-rule";
+  "h-10 w-full rounded-control border border-seam bg-cloth px-3 text-body text-paper transition-colors duration-(--dur-s) ease-out placeholder:text-paper-dim hover:border-rule focus-visible:border-ribbon";
 const SECONDARY =
-  "inline-flex h-10 shrink-0 items-center justify-center rounded-control border border-seam px-4 text-body font-semibold text-paper transition-colors hover:border-rule hover:bg-cloth-hover";
+  "caps inline-flex h-10 shrink-0 items-center justify-center rounded-pill border border-seam px-6 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon";
 
 export function SettingsPage() {
   const tx = useT();
@@ -114,14 +115,14 @@ export function SettingsPage() {
 
   return (
     <PageShell width={960}>
-      <h1 className="mt-2 font-serif text-display font-bold tracking-[-0.01em] text-paper">{tx.settings.title}</h1>
+      <h1 className="display-caps mt-2 text-display text-paper">{tx.settings.title}</h1>
 
       <div className="mt-5 flex gap-8 max-md:flex-col max-md:gap-4">
         <div
           role="tablist"
           aria-label={tx.settings.tabsLabel}
           aria-orientation="vertical"
-          className="flex w-52 shrink-0 flex-col gap-0.5 max-md:-mx-4 max-md:w-auto max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:px-4"
+          className="flex w-52 shrink-0 flex-col md:border-l md:border-seam-soft max-md:-mx-4 max-md:w-auto max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:px-4"
         >
           {TABS.map((t, i) => (
             <button
@@ -138,8 +139,8 @@ export function SettingsPage() {
               onClick={() => go(t.id)}
               onKeyDown={(e) => onKey(e, i)}
               className={cn(
-                "min-h-10 shrink-0 rounded-option px-3 text-left text-body whitespace-nowrap transition-colors",
-                tab === t.id ? "bg-cloth-raised text-paper" : "text-paper-dim hover:bg-cloth-hover hover:text-paper",
+                "caps min-h-10 shrink-0 px-4 text-left whitespace-nowrap transition-colors duration-(--dur-s) ease-out md:border-l-2 max-md:border-b-2",
+                tab === t.id ? "border-ribbon text-paper" : "border-transparent text-paper-dim hover:text-paper",
               )}
             >
               {t.label}
@@ -148,7 +149,7 @@ export function SettingsPage() {
         </div>
 
         <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} tabIndex={0} className="min-w-0 max-w-[640px] flex-1 outline-none">
-          <h2 className="font-serif text-[1.375rem] font-bold text-paper">{current.label}</h2>
+          <h2 className="display-caps text-[1.375rem] text-paper">{current.label}</h2>
           {tab === "general" && <GeneralTab prefs={prefs} onSave={saved} />}
           {tab === "domains" && <DomainsTab />}
           {tab === "skills" && <div className="mt-4"><SkillsTab /></div>}
@@ -162,7 +163,7 @@ export function SettingsPage() {
         {toast && (
           <p
             key={toast.n}
-            className="animate-toast rounded-xl border border-seam bg-cloth-raised px-4 py-2.5 text-small text-paper shadow-[0_8px_24px_-8px_rgb(0_0_0/0.6)]"
+            className="animate-toast caps rounded-pill border border-seam bg-cloth-raised px-5 py-2.5 text-paper shadow-[0_8px_24px_-8px_rgb(0_0_0/0.6)]"
           >
             {toast.failed ? tx.settings.saveFailed : tx.settings.saved}
           </p>
@@ -176,7 +177,7 @@ export function SettingsPage() {
 function Row({ label, help, children, id }: { label: string; help?: string; children: React.ReactNode; id?: string }) {
   return (
     <div className="border-t border-seam-soft py-5 first-of-type:mt-4">
-      <p id={id} className="font-medium text-paper">
+      <p id={id} className="caps text-paper">
         {label}
       </p>
       {help && <p className="mt-0.5 text-small text-paper-dim">{help}</p>}
@@ -205,8 +206,8 @@ function Radio<T extends string>({
         <label
           key={o.id}
           className={cn(
-            "flex min-h-10 cursor-pointer items-center gap-3 rounded-option px-3 text-body transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ribbon",
-            value === o.id ? "bg-cloth-raised text-paper" : "text-paper-dim hover:bg-cloth-hover hover:text-paper",
+            "flex min-h-10 cursor-pointer items-center gap-3 rounded-control border px-3 text-body transition-colors duration-(--dur-s) ease-out has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ribbon",
+            value === o.id ? "border-seam text-paper" : "border-transparent text-paper-dim hover:border-seam-soft hover:text-paper",
             o.disabled && "cursor-not-allowed opacity-80",
           )}
         >
@@ -217,11 +218,11 @@ function Radio<T extends string>({
             checked={value === o.id}
             disabled={o.disabled}
             onChange={() => onChange(o.id)}
-            className="size-4 shrink-0 accent-[var(--paper)]"
+            className="size-4 shrink-0 accent-[var(--ribbon)]"
           />
           <span className="flex-1">{o.label}</span>
           {o.hint && <span className="text-small text-paper-dim">{o.hint}</span>}
-          {o.soon && <span className="num text-small text-paper-dim">{tx.settings.soonTag}</span>}
+          {o.soon && <span className="caps text-paper-dim">{tx.settings.soonTag}</span>}
         </label>
       ))}
     </div>
@@ -253,12 +254,12 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
       <div className="mt-4 mb-5 flex items-center gap-4">
         <div
           aria-hidden
-          className="flex size-14 shrink-0 items-center justify-center rounded-full border border-seam bg-cloth-raised font-heading text-[1.5rem] text-paper"
+          className="flex size-14 shrink-0 items-center justify-center rounded-pill border border-seam font-display text-[1.5rem] text-paper"
         >
           {me ? prefs.name.trim().charAt(0).toUpperCase() || tx.profile.initial : tx.profile.initial}
         </div>
         <div className="min-w-0">
-          <p className="text-body font-medium text-paper">{me ? prefs.name : tx.profile.name}</p>
+          <p className="display-caps text-body text-paper">{me ? prefs.name : tx.profile.name}</p>
           <p className="truncate text-small text-paper-dim">{me?.email ?? tx.profile.email}</p>
         </div>
       </div>
@@ -283,8 +284,8 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
       </Row>
       <Row label={tx.settings.themeLabel} id={`${uid}-theme`}>
         <div role="radiogroup" aria-labelledby={`${uid}-theme`} className="flex flex-col gap-0.5">
-          <div className="flex min-h-10 items-center gap-3 rounded-option bg-cloth-raised px-3 text-body text-paper">
-            <input type="radio" name="theme" checked readOnly className="size-4 accent-[var(--paper)]" aria-label={tx.settings.dark} />
+          <div className="flex min-h-10 items-center gap-3 rounded-control border border-seam px-3 text-body text-paper">
+            <input type="radio" name="theme" checked readOnly className="size-4 accent-[var(--ribbon)]" aria-label={tx.settings.dark} />
             {tx.settings.dark}
           </div>
           <button
@@ -292,9 +293,9 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
             role="radio"
             aria-checked="false"
             onClick={() => soon(tx.settings.lightSoon)}
-            className="flex min-h-10 items-center gap-3 rounded-option px-3 text-left text-body text-paper-dim transition-colors hover:bg-cloth-hover hover:text-paper"
+            className="flex min-h-10 items-center gap-3 rounded-control border border-transparent px-3 text-left text-body text-paper-dim transition-colors duration-(--dur-s) ease-out hover:border-seam-soft hover:text-paper"
           >
-            <span aria-hidden className="size-4 rounded-full border border-paper-dim" />
+            <span aria-hidden className="size-4 rounded-pill border border-paper-dim" />
             {tx.settings.light}
           </button>
         </div>
@@ -304,7 +305,7 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
         <div className="border-t border-seam-soft pt-5">
           <button
             type="submit"
-            className="h-10 rounded-control bg-ribbon px-4 text-body font-semibold text-on-ribbon transition-colors hover:bg-ribbon-hover"
+            className="caps h-10 rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-out hover:bg-ribbon-hover"
           >
             {tx.settings.save}
           </button>
@@ -326,12 +327,12 @@ function DomainsTab() {
             <button
               type="button"
               onClick={() => selectDomain(d.id)}
-              className="flex min-h-12 w-full items-center gap-3 rounded-option px-1 py-2 text-left transition-colors hover:bg-cloth-hover"
+              className="flex min-h-12 w-full items-center gap-3 rounded-option px-1 py-2 text-left transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover"
             >
-              <span className="min-w-0 flex-1 text-paper">
+              <span className="display-caps min-w-0 flex-1 text-paper">
                 {d.title}
               </span>
-              <span className="num shrink-0 text-small text-paper-dim">
+              <span className="caps num shrink-0 text-paper-dim">
                 {d.readiness !== undefined ? tx.settings.readiness(d.readiness) : tx.settings.topicsCount(d.topics.length)}
               </span>
             </button>
@@ -354,7 +355,7 @@ function Meter({ label, value, text, note }: { label: string; value: number; tex
         <p id={id} className="text-body text-paper">
           {label}
         </p>
-        <p className="num shrink-0 text-small text-paper">{text}</p>
+        <p className="caps num shrink-0 text-paper">{text}</p>
       </div>
       <div
         role="progressbar"
@@ -363,9 +364,9 @@ function Meter({ label, value, text, note }: { label: string; value: number; tex
         aria-valuemax={100}
         aria-valuenow={value}
         aria-valuetext={text}
-        className="mt-2 h-2 overflow-hidden rounded-full bg-seam"
+        className="mt-2 h-px overflow-hidden bg-seam"
       >
-        <div className="h-full rounded-full bg-paper-dim" style={{ width: `${value}%` }} />
+        <div className="h-full bg-ribbon" style={{ width: `${value}%` }} />
       </div>
       {note && <p className="mt-1.5 text-small text-paper-dim">{note}</p>}
     </div>
@@ -379,7 +380,7 @@ function UsageTab() {
     <div className="mt-4">
       <div className="flex items-center justify-between gap-4 pb-4">
         <p className="text-body text-paper">
-          {tx.settings.plan} <span className="font-medium">{tx.profile.plan}</span>
+          {tx.settings.plan} <span className="caps">{tx.profile.plan}</span>
         </p>
         <button type="button" onClick={() => soon(tx.soon.plans)} className={TEXT_BTN}>
           {tx.settings.upgrade}
@@ -469,7 +470,7 @@ function AccountTab() {
       </Row>
       <Row label={tx.settings.deleteLabel} help={tx.settings.deleteHelp}>
         {confirm ? (
-          <div role="group" aria-label={tx.settings.deleteConfirmLabel} className="rounded-[14px] border border-seam p-4">
+          <div role="group" aria-label={tx.settings.deleteConfirmLabel} className="rounded-[2px] border border-seam p-4">
             <p className="text-body text-paper">{tx.settings.deleteConfirm}</p>
             <div className="mt-3 flex gap-2">
               <button
@@ -484,7 +485,7 @@ function AccountTab() {
                   // the backend tombstones the learner and purges the data later; the token stops working
                   void apiDelete("/v1/learner").then(logout, () => soon(tx.settings.deleteSoon));
                 }}
-                className="h-10 rounded-control border border-st-confused px-4 text-body font-semibold text-st-confused transition-colors hover:bg-cloth-hover"
+                className="caps h-10 rounded-pill border border-st-confused px-6 text-st-confused transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover"
               >
                 {tx.settings.deleteYes}
               </button>
@@ -505,7 +506,7 @@ function AccountTab() {
             ref={del}
             type="button"
             onClick={() => setConfirm(true)}
-            className="inline-flex h-10 items-center rounded-control px-3 text-body font-semibold text-st-confused transition-colors hover:bg-cloth-hover"
+            className="caps inline-flex h-10 items-center rounded-pill px-4 text-st-confused transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover"
           >
             {tx.settings.deleteLabel}
           </button>

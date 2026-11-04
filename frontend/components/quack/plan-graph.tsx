@@ -33,15 +33,15 @@ export function PlanGraph({
   ];
 
   return (
-    <section aria-label={tx.plan.title} className={cn("rounded-[16px] border border-seam bg-cloth-raised", className)}>
+    <section aria-label={tx.plan.title} className={cn("rounded-[2px] border border-seam bg-cloth-raised", className)}>
       <button
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="relative flex min-h-11 w-full flex-wrap items-baseline gap-x-2 rounded-[16px] py-2.5 pr-9 pl-3.5 text-left"
+        className="relative flex min-h-11 w-full flex-wrap items-baseline gap-x-2 rounded-[2px] py-2.5 pr-9 pl-3.5 text-left"
       >
-        <span className="font-semibold text-paper">{tx.plan.heading}</span>
-        <span className="text-small text-paper-dim">
+        <span className="display-caps text-[1.0625rem] text-paper">{tx.plan.heading}</span>
+        <span className="caps text-paper-dim">
           {tx.plan.progress(progress.label, progress.done, progress.total)}
         </span>
         <ChevronDown
@@ -70,7 +70,7 @@ export function PlanGraph({
                 <span
                   className={cn(
                     "text-small",
-                    kind === "current" ? "font-semibold text-paper" : kind === "done" ? "text-paper" : "text-paper-dim",
+                    kind === "current" ? "font-medium text-paper" : kind === "done" ? "text-paper" : "text-paper-dim",
                   )}
                 >
                   {step.label}
@@ -81,13 +81,13 @@ export function PlanGraph({
             return (
               <li key={step.id} className={cn("relative", step.branch && "pl-5")}>
                 {step.branch && (
-                  <span aria-hidden className="absolute top-0 left-[9px] h-[17px] w-4 rounded-bl-[6px] border-b border-l border-seam" />
+                  <span aria-hidden className="absolute top-0 left-[9px] h-[17px] w-4 rounded-bl-[2px] border-b border-l border-seam" />
                 )}
                 {clickable ? (
                   <button
                     type="button"
                     onClick={() => (kind === "next" ? soon(tx.plan.jumpSoon(step.label)) : step.anchor && onJump(step.anchor))}
-                    className="flex min-h-10 w-full items-start gap-2.5 rounded-option px-1.5 py-1.5 text-left transition-colors hover:bg-cloth-hover"
+                    className="flex min-h-10 w-full items-start gap-2.5 rounded-option px-1.5 py-1.5 text-left transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover"
                   >
                     {label}
                   </button>

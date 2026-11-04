@@ -26,9 +26,11 @@ type Ctx = {
 
 const ArtifactContext = createContext<Ctx | null>(null);
 
-const EASE = "cubic-bezier(.2,.8,.2,1)";
-const DURATION = 280;
-const CLOSE_DURATION = 240;
+// та же кривая, что --ease-out в globals.css
+const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+const DURATION = 420;
+const CLOSE_DURATION = 340;
+const WIPE_DURATION = 600;
 const noopSubscribe = () => () => {};
 
 const reducedMotion = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -148,7 +150,7 @@ export function ExpandableCard({
         aria-haspopup="dialog"
         onClick={(e) => open(artifact, e.currentTarget)}
         className={cn(
-          "relative block min-h-10 w-full rounded-[16px] border border-seam bg-cloth-raised text-left transition-[transform,border-color] duration-150 hover:-translate-y-px hover:border-rule focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ribbon motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+          "relative block min-h-10 w-full rounded-[2px] border border-seam bg-cloth-raised text-left transition-[transform,border-color] duration-(--dur-s) ease-(--ease-out) hover:-translate-y-px hover:border-ribbon focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ribbon motion-reduce:transition-none motion-reduce:hover:translate-y-0",
           buttonClassName,
         )}
       >
@@ -188,7 +190,7 @@ export function ArtifactWindow({
     latest.current = { onClosed, targetRect };
   });
 
-  // Появление: окно едет из карточки, содержимое проявляется чуть позже
+  // Появление: окно едет из карточки, содержимое открывается шторкой-маской чуть позже
   useLayoutEffect(() => {
     const p = panel.current;
     const c = content.current;
@@ -206,10 +208,18 @@ export function ArtifactWindow({
       anims.push(
         p.animate([{ transform: flip(from, win) }, { transform: "none" }], { duration: DURATION, easing: EASE, fill: "backwards" }),
         b.animate({ opacity: [0, 1] }, { duration: DURATION, easing: EASE, fill: "backwards" }),
-        c.animate({ opacity: [0, 1] }, { duration: 160, delay: 120, easing: "ease-out", fill: "backwards" }),
       );
+      // шторка: --mask-y уходит 100% -> 0% (см. mask-wipe в globals.css); класс снимаем по окончании
+      c.classList.add("mask-wipe");
+      const wipe = c.animate({ "--mask-y": ["100%", "0%"] }, { duration: WIPE_DURATION, delay: 100, easing: EASE, fill: "backwards" });
+      const done = () => c.classList.remove("mask-wipe");
+      wipe.finished.then(done, () => {});
+      anims.push(wipe);
     }
-    return () => anims.forEach((a) => a.cancel());
+    return () => {
+      anims.forEach((a) => a.cancel());
+      c.classList.remove("mask-wipe");
+    };
   }, [from]);
 
   // Закрытие: обратно в карточку, фон гаснет
@@ -303,15 +313,15 @@ export function ArtifactWindow({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="absolute inset-x-3 top-4 bottom-3 overflow-hidden rounded-[18px] border border-seam bg-cloth shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)] outline-none md:inset-x-12 md:top-8 md:bottom-6"
+        className="absolute inset-x-3 top-4 bottom-3 overflow-hidden rounded-[2px] border border-seam bg-cloth shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)] outline-none md:inset-x-12 md:top-8 md:bottom-6"
       >
         <div ref={content} className="flex h-full flex-col">
           <header className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-seam-soft px-5 py-3 md:px-7">
             <div className="order-1 min-w-0 flex-1 pt-1">
-              <h2 id={titleId} className="font-serif text-[22px] leading-tight font-bold text-paper">
+              <h2 id={titleId} className="display-caps text-[1.75rem] text-paper">
                 {title}
               </h2>
-              {meta && <p className="num mt-0.5 text-small text-paper-dim">{meta}</p>}
+              {meta && <p className="caps mt-1.5 text-paper-dim">{meta}</p>}
             </div>
             <div className="order-3 flex flex-wrap items-center gap-1 max-sm:w-full sm:order-2">{actions}</div>
             <IconButton label={t.shell.close} onClick={onClose} className="order-2 -mr-2 sm:order-3 sm:-mr-3">

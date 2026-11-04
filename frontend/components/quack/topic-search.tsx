@@ -68,14 +68,14 @@ export function TopicSearch({ domain, onPick }: { domain: Domain; onPick: (id: s
             setOpen(false);
           }
         }}
-        className="h-10 w-full rounded-control border border-seam bg-cloth-deep pr-3 pl-9 text-body text-paper transition-colors hover:border-rule focus-visible:border-ribbon/70 [&::-webkit-search-cancel-button]:hidden"
+        className="h-10 w-full rounded-control border border-seam bg-transparent pr-3 pl-9 text-body text-paper transition-colors duration-[var(--dur-s)] ease-out hover:border-rule focus-visible:border-ribbon/70 [&::-webkit-search-cancel-button]:hidden"
       />
       {showList && (
         <ul
           id={listId}
           role="listbox"
           aria-label={t.search.results}
-          className="absolute top-12 right-0 z-30 w-full min-w-72 rounded-[16px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
+          className="absolute top-12 right-0 z-30 w-full min-w-72 rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-16px_rgb(0_0_0/0.6)]"
         >
           {results.length === 0 ? (
             <li className="px-3 py-2.5 text-small text-paper-dim">{t.search.none}</li>
@@ -96,7 +96,7 @@ export function TopicSearch({ domain, onPick }: { domain: Domain; onPick: (id: s
               >
                 <StateDot state={t.state} />
                 <span className="truncate">{t.title}</span>
-                <span className="num ml-auto shrink-0 text-small text-paper-dim">{t.hubId ? `§ ${hubNum.get(t.hubId)}` : noChapter}</span>
+                <span className="caps ml-auto shrink-0 text-paper-dim">{t.hubId ? `§ ${hubNum.get(t.hubId)}` : noChapter}</span>
               </li>
             ))
           )}
