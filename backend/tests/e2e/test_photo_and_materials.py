@@ -127,7 +127,7 @@ def parser_answer(request: Any) -> dict[str, Any]:
                 "uses": ["Power rule"] if first else ["Product rule"],
             }
         )
-    return {"title": "Calculus lectures", "chunks": chunks, "deadlines": []}
+    return {"title": "Calculus lectures", "chunks": chunks, "deadlines": [], "seminar_tasks": []}
 
 
 def builder_answer(_request: Any) -> dict[str, Any]:
