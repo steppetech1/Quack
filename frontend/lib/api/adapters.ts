@@ -1,5 +1,5 @@
 import type { Domain, Hub, Session, TodayItem, Topic, TopicState } from "@/lib/mock/types";
-import { type GraphHub, type GraphModel, type GraphTopic, onGraph } from "@/lib/graph/types";
+import { type GraphHub, type GraphModel, type GraphTopic, type TodayRec } from "@/lib/graph/types";
 import type { S } from "./client";
 
 /** Backend → the shapes the UI was built on (lib/mock/types.ts). The UI itself does not change. */
@@ -157,13 +157,44 @@ const KNOWN_HUB_KINDS = new Set<string>(["material", "request", "deadline", "dom
 const STATUSES = new Set<string>(["proposed", "active", "hidden", "off_domain"]);
 const VISIBILITIES = new Set<string>(["shown", "pale", "hidden"]);
 
+export type TodayApiLabels = { paceWarning: (hubName: string, ready: number, notReady: number) => string };
+
+/**
+ * `GET …/today` → the "Today" strip of the layered graph. Real recommendations (skill-level `due`,
+ * `consolidation`, `misconception`) replace the old client-side guess at `nearest_due_at_ms` (14.4);
+ * a pace warning has no topic, only a ready-made sentence about its hub (14.6).
+ */
+export function todayFromApi(view: S["TodayView"] | undefined, hubNameOf: (hubId: string) => string | undefined, labels: TodayApiLabels): TodayRec[] {
+  if (!view) return [];
+  const ACTION: Record<string, TodayRec["action"]> = { due: "review", consolidation: "practice", misconception: "practice" };
+  const items = (view.items ?? [])
+    .filter((it) => it.topic_id)
+    .sort((a, b) => b.score - a.score)
+    .map((it) => ({ id: it.skill_id, kind: "item" as const, topicId: it.topic_id as string, action: ACTION[it.reasons[0] ?? "due"] ?? "review" }));
+  const warnings = (view.pace_warnings ?? []).map((w) => ({
+    id: `pace-${w.hub_id}`,
+    kind: "pace_warning" as const,
+    hubId: w.hub_id,
+    text: labels.paceWarning(hubNameOf(w.hub_id) ?? "", w.ready, w.not_ready),
+  }));
+  return [...items, ...warnings].slice(0, TODAY_MAX);
+}
+
 /**
  * `GET …/graph` + `GET …/hubs` + the session history → the model of the layered graph (lib/graph/types.ts).
  * That model was written to the contract of the backend, so this is a plain renaming: `requires {from, to}` means
  * `to` needs `from` first; display codes and `nearest_due_at_ms` go over as they are; `domain_all` stays in the list
  * (the graph does not draw it as a node).
  */
-export function graphModelFromApi(summary: S["DomainSummary"], graph: S["DomainGraphResponse"], hubs: ApiHub[], history: S["SessionView"][], now = Date.now()): GraphModel {
+export function graphModelFromApi(
+  summary: S["DomainSummary"],
+  graph: S["DomainGraphResponse"],
+  hubs: ApiHub[],
+  history: S["SessionView"][],
+  today: S["TodayView"] | undefined,
+  labels: TodayApiLabels,
+  now = Date.now(),
+): GraphModel {
   const topics: GraphTopic[] = graph.topics.map((t) => ({
     id: t.topic_id,
     name: t.name,
@@ -172,11 +203,7 @@ export function graphModelFromApi(summary: S["DomainSummary"], graph: S["DomainG
     displayState: t.display?.display_state && t.display.display_state !== "none" ? t.display.display_state : undefined,
     nearestDueAtMs: t.nearest_due_at_ms ? t.nearest_due_at_ms : undefined,
   }));
-  const onGraphIds = new Set(topics.filter(onGraph).map((t) => t.id));
-  const due = topics
-    .filter((t) => onGraphIds.has(t.id) && t.nearestDueAtMs && t.nearestDueAtMs < new Date(now).setHours(24, 0, 0, 0))
-    .sort((a, b) => (a.nearestDueAtMs ?? 0) - (b.nearestDueAtMs ?? 0))
-    .slice(0, TODAY_MAX);
+  const hubNames = new Map(hubs.map((h) => [h.hub_id, h.name]));
   return {
     domainId: summary.domain_id,
     domainName: summary.name,
@@ -193,7 +220,7 @@ export function graphModelFromApi(summary: S["DomainSummary"], graph: S["DomainG
     recentSessions: history
       .filter((x) => x.domain_id === summary.domain_id && x.topic_id)
       .map((x) => ({ id: x.session_id, atMs: Date.parse(x.last_activity_at) || now, topicIds: [x.topic_id as string] })),
-    today: due.map((t) => ({ id: t.id, kind: "item" as const, topicId: t.id, name: t.name, action: "review" as const })),
+    today: todayFromApi(today, (id) => hubNames.get(id), labels),
     nowMs: now,
   };
 }

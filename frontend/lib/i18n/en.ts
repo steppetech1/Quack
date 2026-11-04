@@ -73,6 +73,7 @@ export const en = {
     heading: "Where to start?",
     min: (n: number) => `${n} min`,
     num: (n: number) => `No. ${n}`,
+    paceWarning: (hubName: string, ready: number, notReady: number) => `${hubName} won't be ready in time: ${ready} done, ${notReady} left`,
   },
   empty: {
     title: "Nothing here yet, and that's fine",
