@@ -4,6 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:stub": "node dev/run.mjs stub",
+    "dev:real": "node dev/run.mjs real",
+    "dev:mock": "node dev/run.mjs mock",
+    "dev:fixtures": "node dev/export-mocks.mjs",
+    "dev:grow": "node dev/grow.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -19,6 +24,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "shadcn": "^4.23.0",
+    "three": "^0.187.0",
     "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
@@ -27,6 +33,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.187.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
     "openapi-typescript": "^7.4.4",

@@ -18,7 +18,7 @@ type Props = {
   onSend?: (text: string) => void;
   placeholder?: string;
   submitText?: string;
-  /** Главное действие экрана — охряная заливка. Одна такая кнопка на экран */
+  /** Главное действие экрана — бежевая заливка. Одна такая кнопка на экран */
   primary?: boolean;
   /** На телефоне — одна строка без инструментов (пока открыт вопрос) */
   compact?: boolean;
@@ -101,14 +101,14 @@ export function Composer({
   return (
     <form
       onSubmit={submit}
-      className="relative rounded-[16px] border border-seam bg-cloth-raised p-2 transition-colors has-[textarea:focus-visible]:border-rule has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-ribbon"
+      className="relative rounded-[2px] border border-seam bg-cloth-deep p-2 transition-colors duration-[var(--dur-s)] ease-out has-[textarea:focus-visible]:border-ribbon/70 has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-ribbon"
     >
       {open && (
         <ul
           id={listId}
           role="listbox"
           aria-label={t.composer.skills}
-          className="absolute right-0 bottom-full left-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-[14px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
+          className="absolute right-0 bottom-full left-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-16px_rgb(0_0_0/0.6)]"
         >
           {found.map((s, i) => (
             <li
@@ -151,15 +151,15 @@ export function Composer({
       </label>
       {chip && (
         <div className="flex px-1.5 pt-1">
-          <span className="inline-flex h-8 items-center rounded-full border border-seam pl-3 text-small text-paper-dim">
+          <span className="caps inline-flex h-8 items-center rounded-pill border border-seam pl-3 text-paper-dim">
             <span className="truncate">{chip.label}</span>
             <button
               type="button"
               aria-label={t.composer.removeChip(chip.label)}
               onClick={chip.onRemove}
-              className="group -my-1 -mr-1 inline-flex size-10 items-center justify-center rounded-full"
+              className="group -my-1 -mr-1 inline-flex size-10 items-center justify-center rounded-pill"
             >
-              <span className="inline-flex size-6 items-center justify-center rounded-full group-hover:bg-cloth-hover group-hover:text-paper">
+              <span className="inline-flex size-6 items-center justify-center rounded-pill group-hover:bg-cloth-hover group-hover:text-paper">
                 <X aria-hidden className="size-3.5" />
               </span>
             </button>
@@ -221,7 +221,7 @@ export function Composer({
         <button
           type="submit"
           disabled={empty}
-          className="h-10 shrink-0 rounded-control border border-seam px-3.5 text-body font-semibold text-paper disabled:cursor-default disabled:opacity-40 md:hidden"
+          className="caps h-10 shrink-0 rounded-pill border border-seam px-4 text-paper transition-colors duration-[var(--dur-s)] ease-out disabled:cursor-default disabled:opacity-40 md:hidden"
         >
           {submitText}
         </button>
@@ -241,7 +241,7 @@ export function Composer({
           type="submit"
           disabled={empty}
           className={cn(
-            "ml-auto h-10 rounded-control px-4 text-body font-semibold transition-colors disabled:cursor-default disabled:opacity-40",
+            "caps ml-auto h-10 rounded-pill px-6 transition-colors duration-[var(--dur-s)] ease-out disabled:cursor-default disabled:opacity-40",
             primary
               ? "bg-ribbon text-on-ribbon enabled:hover:bg-ribbon-hover"
               : "border border-seam text-paper enabled:hover:border-rule enabled:hover:bg-cloth-hover",

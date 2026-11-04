@@ -4,10 +4,115 @@ const PAD = 12;
 
 /** Ширина подписи главы на экране, px: название и под ним строка дедлайна */
 export const hubLabelPx = (hub: Domain["hubs"][number]) => {
-  const title = hub.title.replace(/­/g, "").length * 8.8;
+  const title = hub.title.replace(/­/g, "").length * 9.4; // Forum капсом 14px
   const dl = hub.deadline ? 22 + 6 * 9 + 10 * 9 : 0; // утка + «колл. 1 ноября»
   return 22 + Math.max(title, dl);
 };
+
+/** Размер подписи главы на экране, px (текст без отступа от нода) */
+export type HubLabelSize = { w: number; h: number };
+/** Запасной размер, пока шрифт не измерен: по оценке hubLabelPx */
+export const hubLabelSizeEst = (hub: Domain["hubs"][number]): HubLabelSize => ({
+  w: hubLabelPx(hub) - 22,
+  h: hub.deadline ? 34 : 16,
+});
+
+/**
+ * Где на экране стоит подпись главы: сторона от нода (1 — справа, −1 — слева), над или под нодом,
+ * плюс сдвиги в px: dx — дальше от нода по горизонтали, dy — по вертикали (вниз положительный)
+ */
+export type HubLabelSpot = { side: 1 | -1; below: boolean; dx: number; dy: number };
+
+/**
+ * Подписи глав постоянного экранного размера, а расстояния между нодами растут с масштабом k, поэтому
+ * раскладка, посчитанная при LABEL_K, на малом k накладывает подписи друг на друга и на кольца.
+ * Здесь подписи расставляются заново в пикселях при текущем k: берём место из раскладки; если оно занято
+ * другой подписью, кольцом главы или точкой темы, пробуем другой угол нода (по вертикали, по горизонтали,
+ * по диагонали), затем сдвиги вдоль вертикали и от нода. Берём вариант без пересечений, ближайший к исходному;
+ * если свободного нет — с наименьшим наложением. Детерминировано, вызывается на каждый кадр камеры.
+ * @param hubR радиус кольца нода на экране, px
+ * @param topicR радиус точки темы на экране вместе с кольцом памяти, px
+ * @param view видимая область в тех же координатах (экран без сдвига камеры: x·k): подпись главы, чей нод в кадре,
+ *   должна целиком остаться в кадре (иначе её обрежет край графа); выход за край дороже наложения
+ */
+export function placeHubLabels(
+  layout: GraphLayout,
+  sizes: HubLabelSize[],
+  k: number,
+  hubR: number,
+  topicR: number,
+  view?: { x0: number; x1: number; y0: number; y1: number },
+): HubLabelSpot[] {
+  const hubs = layout.hubs;
+  const n = hubs.length;
+  const H = hubs.map((h) => ({ x: h.x * k, y: h.y * k }));
+  const T = layout.topics.map((t) => ({ x: t.x * k, y: t.y * k }));
+  const MARGIN = 5;
+  const NEAR = hubR + 8;
+  const rectOf = (i: number, s: HubLabelSpot): Rect => {
+    const { w, h } = sizes[i];
+    const x0 = s.side > 0 ? H[i].x + NEAR + s.dx : H[i].x - NEAR - s.dx - w;
+    const y0 = (s.below ? H[i].y + 3 : H[i].y - 3 - h) + s.dy;
+    return { x0, x1: x0 + w, y0, y1: y0 + h };
+  };
+  /** Глубина наложения прямоугольника на круг, 0 — не касается */
+  const circleDepth = (r: Rect, cx: number, cy: number, rad: number) => {
+    const dx = Math.max(r.x0 - cx, 0, cx - r.x1), dy = Math.max(r.y0 - cy, 0, cy - r.y1);
+    const d = Math.sqrt(dx * dx + dy * dy);
+    return d < rad ? rad - d + 1 : 0;
+  };
+  const prefs: [1 | -1, boolean][] = hubs.map((h) => [h.labelSide, h.labelBelow]);
+  const spots: HubLabelSpot[] = prefs.map(([side, below]) => ({ side, below, dx: 0, dy: 0 }));
+  const rects: Rect[] = spots.map((s, i) => rectOf(i, s));
+  const DY = [0, 10, -10, 20, -20, 32, -32, 46, -46, 62, -62];
+  const DX = [0, 12, 26, 44];
+  /** На сколько px подпись выходит за видимую область; считается только у глав, чей нод в кадре */
+  const outside = (i: number, r: Rect) => {
+    // нод у самого края (в пределах кольца) тоже считается в кадре
+    const tol = hubR + 6;
+    if (!view || H[i].x < view.x0 - tol || H[i].x > view.x1 + tol || H[i].y < view.y0 - tol || H[i].y > view.y1 + tol) return 0;
+    return Math.max(0, view.x0 - r.x0) + Math.max(0, r.x1 - view.x1) + Math.max(0, view.y0 - r.y0) + Math.max(0, r.y1 - view.y1);
+  };
+  const cost = (i: number, r: Rect) => {
+    let depth = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      depth += circleDepth(r, H[j].x, H[j].y, hubR + 4);
+      const o = rects[j];
+      const ox = Math.min(r.x1, o.x1 + MARGIN) - Math.max(r.x0, o.x0 - MARGIN);
+      const oy = Math.min(r.y1, o.y1 + MARGIN) - Math.max(r.y0, o.y0 - MARGIN);
+      if (ox > 0 && oy > 0) depth += Math.min(ox, oy) + 1;
+    }
+    for (const p of T) depth += circleDepth(r, p.x, p.y, topicR + 4);
+    return depth;
+  };
+  for (let round = 0; round < 6; round++) {
+    let changed = false;
+    for (let i = 0; i < n; i++) {
+      const [s0, b0] = prefs[i];
+      const combos: [1 | -1, boolean][] = [[s0, b0], [s0, !b0], [-s0 as 1 | -1, b0], [-s0 as 1 | -1, !b0]];
+      let best = { c: Infinity, spot: spots[i], rect: rects[i] };
+      combos.forEach(([side, below], ci) => {
+        for (const dx of DX) {
+          for (const dy of DY) {
+            const spot: HubLabelSpot = { side, below, dx, dy };
+            const rect = rectOf(i, spot);
+            const depth = cost(i, rect);
+            const out = outside(i, rect);
+            const c = (out > 0 ? 3e4 + out * 10 : 0) + (depth > 0 ? 1e4 + depth * 10 : 0) + ci * 60 + dx * 1.2 + Math.abs(dy);
+            if (c < best.c) best = { c, spot, rect };
+          }
+        }
+      });
+      const cur = spots[i];
+      if (best.spot.side !== cur.side || best.spot.below !== cur.below || best.spot.dx !== cur.dx || best.spot.dy !== cur.dy) changed = true;
+      spots[i] = best.spot;
+      rects[i] = best.rect;
+    }
+    if (!changed) break;
+  }
+  return spots;
+}
 
 /** Режим графа: обзор глав или одна глава крупно */
 export type GraphMode = { kind: "overview" } | { kind: "hub"; hubId: string };

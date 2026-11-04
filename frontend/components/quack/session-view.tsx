@@ -82,7 +82,7 @@ function RadiusSession({ data }: { data: SessionData }) {
         <p
           aria-hidden={!headerGone}
           className={cn(
-            "min-w-0 truncate font-serif font-bold text-paper transition-opacity duration-200",
+            "display-caps min-w-0 truncate text-paper transition-opacity duration-(--dur-s) ease-out",
             headerGone ? "opacity-100" : "opacity-0",
           )}
         >
@@ -91,7 +91,7 @@ function RadiusSession({ data }: { data: SessionData }) {
         {!replied && (
           <p
             role="status"
-            className="ml-auto flex shrink-0 items-center gap-2 rounded-full border border-seam-soft px-3 py-1 text-small text-paper-dim"
+            className="ml-auto flex shrink-0 items-center gap-2 rounded-pill caps border border-seam-soft px-3 py-1 text-paper-dim"
           >
             <Duck className="h-3.5 w-4" />
             <span className="max-sm:hidden">{data.agent.task}</span>
@@ -102,15 +102,15 @@ function RadiusSession({ data }: { data: SessionData }) {
       </div>
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6 @[52rem]:pr-[17rem]">
         <header ref={header} className={MEASURE}>
-          <h1 className="font-serif text-display font-bold tracking-[-0.01em] text-paper">{data.title}</h1>
-          <p className="mt-1.5 text-paper-dim">{tx.session.goal(data.goal)}</p>
+          <h1 className="display-caps text-display text-paper">{data.title}</h1>
+          <p className="mt-2 text-paper-dim">{tx.session.goal(data.goal)}</p>
           <ul className="mt-3 flex flex-wrap gap-1.5" aria-label={tx.session.topicsLabel}>
             {data.topics.map((t) => (
               <li key={t.title}>
                 <button
                   type="button"
                   onClick={() => soon(tx.session.topicPageSoon(t.title))}
-                  className="flex h-10 items-center gap-2 rounded-full border border-seam px-3 text-small text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+                  className="caps flex h-10 items-center gap-2 rounded-pill border border-seam px-4 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon"
                 >
                   <StateDot state={t.state} className="size-2" />
                   {t.title}
@@ -213,7 +213,7 @@ function TurnView({
         <button
           type="button"
           onClick={() => onMemory(turn.memory!.session)}
-          className="mb-3 flex min-h-10 items-center gap-2 rounded-full border border-seam-soft px-3 text-small text-paper-dim transition-colors hover:border-rule hover:text-paper"
+          className="caps mb-3 flex min-h-10 items-center gap-2 rounded-pill border border-seam-soft px-4 text-paper-dim transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-paper"
         >
           <History aria-hidden className="size-3.5" />
           {tx.session.fromMemory}: «{turn.memory.session}», <span className="num">{dayLabel(turn.memory.date)}</span>
@@ -222,7 +222,7 @@ function TurnView({
       <RichText text={turn.text} />
       {turn.thinking && (
         <details className="group mt-4">
-          <summary className="flex min-h-10 w-fit cursor-pointer list-none items-center gap-1.5 rounded-control text-small text-paper-dim transition-colors hover:text-paper [&::-webkit-details-marker]:hidden">
+          <summary className="caps flex min-h-10 w-fit cursor-pointer list-none items-center gap-1.5 rounded-control text-paper-dim transition-colors duration-(--dur-s) ease-out hover:text-paper [&::-webkit-details-marker]:hidden">
             <ChevronRight aria-hidden className="size-3.5 transition-transform group-open:rotate-90" />
             {tx.session.thinking}
           </summary>
@@ -241,8 +241,8 @@ function NewSession() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
         <header className={MEASURE}>
-          <h1 className="line-clamp-2 font-serif text-display font-bold tracking-[-0.01em] text-paper">{tx.session.newTitle}</h1>
-          <p className="mt-1.5 text-paper-dim">{tx.session.newMeta(domain.title)}</p>
+          <h1 className="display-caps line-clamp-2 text-display text-paper">{tx.session.newTitle}</h1>
+          <p className="mt-2 text-paper-dim">{tx.session.newMeta(domain.title)}</p>
         </header>
         <div className={cn("mt-6 flex flex-col gap-7", MEASURE)}>
           <StudentLine text={text} />
@@ -264,8 +264,8 @@ function NewSession() {
 function StudentLine({ id, text }: { id?: string; text: string }) {
   const tx = useT();
   return (
-    <p id={id} className="flex scroll-mt-16 gap-3 border-y border-seam-soft py-3 whitespace-pre-wrap text-paper">
-      <span className="num shrink-0 pt-0.5 text-small text-paper-dim">{tx.session.you}</span>
+    <p id={id} className="flex scroll-mt-16 gap-4 border-y border-seam-soft py-3 whitespace-pre-wrap text-paper">
+      <span className="caps shrink-0 pt-1 text-paper-dim">{tx.session.you}</span>
       <span>{text}</span>
     </p>
   );
@@ -278,7 +278,7 @@ function Dots() {
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className="size-1 animate-pulse rounded-full bg-paper-dim"
+          className="size-1 animate-pulse rounded-pill bg-paper-dim"
           style={{ animationDelay: `${i * 180}ms` }}
         />
       ))}
