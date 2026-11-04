@@ -24,7 +24,7 @@ import io
 import json
 import zipfile
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, LiteralString
 from uuid import UUID
 
 from quack.artifacts.delivery import deliver
@@ -42,7 +42,7 @@ ACTOR = "code"
 EVENTS_PAGE = 1000
 # Tables with `learner_id`, in the order of the archive; the secrets of the login (`core.auth_*`)
 # and the exports themselves are not the learner's data.
-DOCUMENT_TABLES: tuple[str, ...] = (
+DOCUMENT_TABLES: tuple[LiteralString, ...] = (
     "core.learners",
     "content.sessions",
     "content.session_plans",
@@ -68,7 +68,10 @@ _ARTIFACTS = (
     "WHERE a.learner_id = %(learner_id)s AND v.learner_id = %(learner_id)s "
     "ORDER BY a.kind, a.artifact_id"
 )
-_EXPORT = "SELECT status FROM content.exports WHERE export_id = %(export_id)s"
+_EXPORT = (
+    "SELECT status FROM content.exports "
+    "WHERE export_id = %(export_id)s AND learner_id = %(learner_id)s"
+)
 _READY = (
     "INSERT INTO content.exports (export_id, learner_id, status, object_key, expires_at) "
     "VALUES (%(export_id)s, %(learner_id)s, 'ready', %(object_key)s, %(expires_at)s) "
@@ -134,7 +137,7 @@ async def export_learner_data(
     ctx: JobContext, *, learner_id: UUID, export_id: UUID, now: datetime | None = None
 ) -> None:
     """Build, store and publish the archive of `export_id`; a finished export is left alone."""
-    row = await ctx.db.fetch_one(_EXPORT, {"export_id": export_id})
+    row = await ctx.db.fetch_one(_EXPORT, {"export_id": export_id, "learner_id": learner_id})
     if row is not None and row["status"] in ("ready", "expired"):
         return
     moment = now or datetime.now(UTC)
