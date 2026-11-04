@@ -3,6 +3,8 @@
 import { Check, ChevronDown, PenLine, Plus, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { API_MODE } from "@/lib/api/client";
+import { useApiCanvases } from "@/lib/api/use-canvases";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Canvas } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -144,7 +146,8 @@ export function CanvasesList({ query, onResetQuery }: { query: string; onResetQu
   const [topic, setTopic] = useState<string | null>(null);
   const [solved, setSolved] = useState<"all" | "done" | "no">("all");
 
-  const all = useMemo(() => canvasesOf(domain.id), [domain.id, canvasesOf]);
+  const live = useApiCanvases(domain.id);
+  const all = useMemo(() => (API_MODE ? live : canvasesOf(domain.id)), [live, domain.id, canvasesOf]);
   const topicName = useMemo(() => new Map(domain.topics.map((t) => [t.id, clean(t.title)])), [domain.topics]);
   const topicOptions = useMemo(() => {
     const ids = new Set(all.flatMap((c) => c.topics));
@@ -262,11 +265,11 @@ export function CanvasesList({ query, onResetQuery }: { query: string; onResetQu
                     </h2>
                     <ul className="columns-2 gap-4 sm:columns-[190px]">
                       {items.map(({ c, line }) => {
-                        const blockId = line ? line.blockId : firstTaskBlock(c).id;
+                        const blockId = line ? line.blockId : firstTaskBlock(c)?.id;
                         return (
                           <li key={c.id} className="mb-5 break-inside-avoid">
                             <Link
-                              href={`/canvas/${c.id}?block=${blockId}`}
+                              href={blockId ? `/canvas/${c.id}?block=${blockId}` : `/canvas/${c.id}`}
                               className="group block rounded-[2px] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ribbon"
                             >
                               <CanvasThumb canvas={c} />

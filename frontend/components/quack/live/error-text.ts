@@ -1,10 +1,11 @@
+import { useCallback } from "react";
 import { ApiError } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
 
 /** Human message for a failed request */
 export function useErrorText() {
   const t = useT().live;
-  return (e: unknown) => {
+  return useCallback((e: unknown) => {
     if (e instanceof ApiError) {
       if (e.code === "CONSENT_REQUIRED") return t.consentRequired;
       if (e.code === "LLM_DEGRADED" || e.code === "LLM_UNAVAILABLE") return t.llmDown;
@@ -17,5 +18,5 @@ export function useErrorText() {
     }
     // no answer at all: fetch rejected (network, server down) or the stream broke
     return t.serverDown;
-  };
+  }, [t]);
 }

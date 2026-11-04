@@ -650,6 +650,9 @@ export const en = {
   },
   live: {
     serverDown: "Can't reach the server. Is the backend running?",
+    canvasOpening: "Opening a canvas…",
+    canvasLoading: "Loading the canvas…",
+    canvasMissing: "This canvas isn't here. It may belong to another account, or it was deleted.",
     serverError: "Something broke on our side. Try again in a moment.",
     turnFailed: "The teacher couldn't finish the answer. Send your message again.",
     retry: "Try again",
