@@ -16,8 +16,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from quack.agents.delivery import completed_key, deliver
 from quack.artifacts.accuracy import WRITER_ROLE
+from quack.artifacts.delivery import completed_key, deliver
 from quack.artifacts.documents import ArtifactKind, artifact_id_for
 from quack.artifacts.topic_refresh import Prefetch, refresh_topic_cards, refresh_topic_notes
 from quack.events.event_types import AgentRequested

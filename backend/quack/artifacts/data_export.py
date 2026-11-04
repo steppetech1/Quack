@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from quack.agents.delivery import deliver
+from quack.artifacts.delivery import deliver
 from quack.db import Db
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob
