@@ -811,7 +811,8 @@ def _seminar_specs(
     specs: list[SeminarSpec] = []
     for n, problem in enumerate(problems):
         mark = marks.get(str(problem["chunk_id"]), {})
-        for name in [*mark.get("teaches", []), *mark.get("uses", [])]:
+        for raw in [*mark.get("teaches", []), *mark.get("uses", [])]:
+            name = str(raw)
             skill = canonical.get(name.casefold(), name)
             skill_id = found.get(("skill", skill))
             if skill_id is None:
