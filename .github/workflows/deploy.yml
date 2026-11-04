@@ -1,0 +1,173 @@
+# Rollout to the server (ТЗ Фазы 4 WP9.4, Д-§6.1, Д-§5.3). Runs after `publish` on a push to main
+# (called from ci.yml) and by hand (workflow_dispatch: a first rollout, a rollback, a dry run).
+# No workflow_run, no pull_request_target; read-only token; the environment `production` holds the
+# secrets; at most one rollout at a time; paused by the repository variable DEPLOY_FREEZE = true.
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: Full commit sha to roll out; empty means the commit of this run
+        type: string
+        default: ""
+      dry_run:
+        description: Compare the rendered .env with the server's and stop
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit sha to roll out (40 characters); empty means this ref's head
+        type: string
+        default: ""
+      dry_run:
+        description: Compare the rendered .env with the server's and stop (names only)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      # Everything that reaches the shell comes through env, never through ${{ }} in `run:`.
+      INPUT_SHA: ${{ inputs.sha }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      EVENT_SHA: ${{ github.sha }}
+      REPOSITORY: ${{ github.repository }}
+      FROZEN: ${{ vars.DEPLOY_FREEZE }}
+    steps:
+      - name: Freeze
+        id: freeze
+        run: |
+          if [[ "$FROZEN" == "true" ]]; then
+            echo "DEPLOY_FREEZE is true: the rollout is skipped (Д-§6.1)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.freeze.outputs.skip != 'true'
+        with:
+          persist-credentials: false
+      - name: Commit to roll out
+        id: commit
+        if: steps.freeze.outputs.skip != 'true'
+        run: |
+          sha="${INPUT_SHA:-$EVENT_SHA}"
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be 40 hex characters"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha::7}" >> "$GITHUB_OUTPUT"
+      - name: SSH access
+        if: steps.freeze.outputs.skip != 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The host key is checked against DEPLOY_KNOWN_HOSTS: a replaced server gets no .env.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host quack
+            HostName $DEPLOY_HOST
+            User deploy
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            BatchMode yes
+            ConnectTimeout 20
+          EOF
+          ssh quack true
+      - name: Render .env from the environment
+        if: steps.freeze.outputs.skip != 'true'
+        # Every name of deploy/env.example must be mapped here (test_deploy_workflow). A value
+        # that may live as a variable or as a secret is read from either.
+        env:
+          ENV: ${{ vars.ENV }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          API_DOMAIN: ${{ vars.API_DOMAIN }}
+          QUACK_REGISTRY: ${{ vars.QUACK_REGISTRY }}
+          META_API_BASE_URL: ${{ vars.META_API_BASE_URL }}
+          LLM_PRICES: ${{ vars.LLM_PRICES }}
+          LLM_POOL_BUDGET_USD: ${{ vars.LLM_POOL_BUDGET_USD }}
+          VIZ_STATIC_BASE_URL: ${{ vars.VIZ_STATIC_BASE_URL }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          AUTH_SUCCESS_REDIRECT_URL: ${{ vars.AUTH_SUCCESS_REDIRECT_URL }}
+          TERMS_VERSION: ${{ vars.TERMS_VERSION }}
+          S3_BUCKET_LEARNERS: ${{ vars.S3_BUCKET_LEARNERS || secrets.S3_BUCKET_LEARNERS }}
+          DELETIONS_S3_ENDPOINT: ${{ vars.DELETIONS_S3_ENDPOINT || secrets.DELETIONS_S3_ENDPOINT }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+          META_API_KEY: ${{ secrets.META_API_KEY }}
+          EMAIL_API_KEY: ${{ secrets.EMAIL_API_KEY }}
+          GOOGLE_OIDC_CLIENT_ID: ${{ secrets.GOOGLE_OIDC_CLIENT_ID }}
+          GOOGLE_OIDC_CLIENT_SECRET: ${{ secrets.GOOGLE_OIDC_CLIENT_SECRET }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          DELETIONS_S3_ACCESS_KEY: ${{ secrets.DELETIONS_S3_ACCESS_KEY }}
+          DELETIONS_S3_SECRET_KEY: ${{ secrets.DELETIONS_S3_SECRET_KEY }}
+          APP_DB_PASSWORD: ${{ secrets.APP_DB_PASSWORD }}
+          READER_DB_PASSWORD: ${{ secrets.READER_DB_PASSWORD }}
+          MIGRATOR_DB_PASSWORD: ${{ secrets.MIGRATOR_DB_PASSWORD }}
+          BACKUP_S3_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_ACCESS_KEY: ${{ secrets.BACKUP_S3_ACCESS_KEY }}
+          BACKUP_S3_SECRET_KEY: ${{ secrets.BACKUP_S3_SECRET_KEY }}
+          HEARTBEAT_BACKUP_URL: ${{ secrets.HEARTBEAT_BACKUP_URL }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL || (secrets.TELEGRAM_BOT_TOKEN && format('https://api.telegram.org/bot{0}/sendMessage', secrets.TELEGRAM_BOT_TOKEN)) || (secrets.TELEGRAM_ALERT_BOT_TOKEN && format('https://api.telegram.org/bot{0}/sendMessage', secrets.TELEGRAM_ALERT_BOT_TOKEN)) }}
+          HEARTBEAT_ALERTS_URL: ${{ secrets.HEARTBEAT_ALERTS_URL }}
+          ALERT_WEBHOOK_FORMAT: ${{ vars.ALERT_WEBHOOK_FORMAT || secrets.ALERT_WEBHOOK_FORMAT || ((secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_ALERT_BOT_TOKEN || contains(secrets.ALERT_WEBHOOK_URL, 'api.telegram.org')) && 'telegram') }}
+          ALERT_WEBHOOK_CHAT_ID: ${{ vars.ALERT_WEBHOOK_CHAT_ID || secrets.ALERT_WEBHOOK_CHAT_ID || secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_ALERT_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_ALERT_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ vars.ALERT_WEBHOOK_CHAT_ID || secrets.ALERT_WEBHOOK_CHAT_ID || secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_ALERT_CHAT_ID }}
+          BACKUP_AGE_PUBLIC_KEY: ${{ vars.BACKUP_AGE_PUBLIC_KEY }}
+        run: |
+          bash deploy/render-env.sh deploy/env.example > "$RUNNER_TEMP/new.env"
+          ssh quack 'cat /srv/quack/.env 2>/dev/null || true' > "$RUNNER_TEMP/old.env"
+          {
+            echo "### .env on the server vs GitHub (names only)"
+            echo '```'
+            bash deploy/env-diff.sh "$RUNNER_TEMP/old.env" "$RUNNER_TEMP/new.env"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Install .env and the code of this commit
+        if: steps.freeze.outputs.skip != 'true' && env.DRY_RUN != 'true'
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          # Mode 600, owner deploy; written next to the target and moved, so it is never half there.
+          ssh quack 'umask 077; cat > /srv/quack/.env.new && mv /srv/quack/.env.new /srv/quack/.env' \
+            < "$RUNNER_TEMP/new.env"
+          # The server keeps compose.yaml and deploy/ of the commit it rolls out. SHA and
+          # REPOSITORY are expanded on this side on purpose; SHA is checked to be 40 hex digits.
+          # shellcheck disable=SC2029
+          ssh quack "cd /srv/quack && git remote set-url origin 'https://github.com/${REPOSITORY}.git' \
+            && git fetch --depth 50 origin '${SHA}' && git checkout -f '${SHA}'"
+      - name: Roll out
+        if: steps.freeze.outputs.skip != 'true' && env.DRY_RUN != 'true'
+        env:
+          SHORT: ${{ steps.commit.outputs.short }}
+        run: |
+          # deploy.sh: roles, dump, `dbmate up` (service `migrate`, D-C-160), and only then
+          # projector, workers and api (all of them run the Phase 4 processes, D-A-223).
+          # shellcheck disable=SC2029  # SHORT is 7 hex characters, checked in the commit step
+          ssh quack "cd /srv/quack && bash ./deploy/deploy.sh '${SHORT}'"
+      - name: Journal of the rollout
+        if: always() && steps.freeze.outputs.skip != 'true' && env.DRY_RUN != 'true'
+        run: ssh quack 'tail -n 30 /srv/quack/deploy.log' || true

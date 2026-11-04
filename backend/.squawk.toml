@@ -1,0 +1,6 @@
+# squawk (ТЗ Ф4 WP1.4, S16; Д-§5.2 п.2, Д-§6.2). Postgres 16; dbmate wraps each migration in a
+# transaction, which squawk cannot see — so it assumes one, and a file with
+# `-- migrate:up transaction:false` says `-- squawk-disable-assume-in-transaction` next to it.
+# squawk reads `pg_version` as a string (2.71.0: an integer is a configuration error).
+pg_version = "16.0"
+assume_in_transaction = true

@@ -7,14 +7,14 @@ the learner graph in Neo4j, Redis is used for locks, presence, pub/sub and rate 
 
 ## Tech stack
 - Python 3.12+ (`.python-version`), package manager `uv` (`backend/uv.lock`).
-- FastAPI, SQLAlchemy async + asyncpg, Alembic, neo4j driver, redis-py, pydantic v2, structlog, PyJWT.
+- FastAPI, psycopg 3 + dbmate, neo4j driver, redis-py, pydantic v2, structlog, PyJWT.
 - Dev: pytest + pytest-asyncio (auto mode), ruff, pyright (standard mode).
 
 ## Structure
 - `backend/quack/` - packages: `events/`, `graph/`, `jobs/`, `llm/`, `prompts/`, `compute_client/`, `api/`, `ops/`, `db/` (Phase 1 core, frozen);
   `session/` (Phase 2 Stream 2), `domains/` (Stream 1), `artifacts/` (Stream 3).
 - `backend/tests/` - Phase 1 tests; `backend/tests/session/` - Stream 2 tests.
-- `backend/migrations/` - Alembic schema (source of truth for tables).
+- `backend/db/migrations/` - dbmate SQL migrations (source of truth for tables).
 - `documentation/` - tech doc, spec of Phases 1-2, ТЗ of each Phase 2 stream.
 - `backend/PHASE1_NOTES.md` - Phase 1 decisions and open questions.
 

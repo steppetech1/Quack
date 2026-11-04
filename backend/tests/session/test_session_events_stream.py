@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator, MutableMapping
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -25,11 +25,9 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 
 from quack.config import Settings
+from quack.db import Db
 from quack.db.redis import session_events_channel
-from tests.session.helpers import make_token, parse_sse
-
-if TYPE_CHECKING:
-    from tests.session.fixtures import SeededDomain
+from tests.session.helpers import Learner, make_learner, parse_sse
 
 pytest_plugins = ["tests.session.fixtures"]
 
@@ -166,8 +164,7 @@ async def _read_one_sse_event(
 async def test_session_events_stream_relays_published_events_and_unsubscribes_on_disconnect(
     session_app: FastAPI,
     client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
+    learner: Learner,
     redis: Redis,
 ) -> None:
     """T-014: `GET /v1/sessions/{id}/events` subscribes to `session_events_channel(session_id)`,
@@ -178,11 +175,11 @@ async def test_session_events_stream_relays_published_events_and_unsubscribes_on
     start_resp = await client.post(
         "/v1/sessions",
         json={
-            "domain_id": str(seeded_domain.domain_id),
-            "topic_id": str(seeded_domain.topic_id),
-            "idempotency_key": "start-sse-events-1",
+            "domain_id": str(learner.domain_id),
+            "intent": "learn",
+            "idempotency_key": str(uuid4()),
         },
-        headers=auth_headers,
+        cookies=learner.cookies,
     )
     assert start_resp.status_code == 201, start_resp.text
     session_id = UUID(start_resp.json()["session_id"])
@@ -194,7 +191,7 @@ async def test_session_events_stream_relays_published_events_and_unsubscribes_on
             transport=StreamingASGITransport(session_app), base_url="http://test"
         ) as stream_client,
         stream_client.stream(
-            "GET", f"/v1/sessions/{session_id}/events", headers=auth_headers
+            "GET", f"/v1/sessions/{session_id}/events", cookies=learner.cookies
         ) as resp,
     ):
         assert resp.status_code == 200
@@ -221,7 +218,7 @@ async def test_session_events_stream_relays_published_events_and_unsubscribes_on
         artifact_id = uuid4()
         cheatsheet_payload = {
             "artifact_id": str(artifact_id),
-            "topic_id": str(seeded_domain.topic_id),
+            "topic_id": str(uuid4()),
             "version": 3,
         }
         await redis.publish(
@@ -238,30 +235,29 @@ async def test_session_events_stream_relays_published_events_and_unsubscribes_on
 
 async def test_session_events_foreign_or_unknown_session_returns_404(
     client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
+    learner: Learner,
+    pg_db: Db,
     settings: Settings,
 ) -> None:
     """T-014: `GET /v1/sessions/{id}/events` returns 404 NOT_FOUND for a foreign/unknown session."""
-    # 1. Start a session owned by `seeded_domain.learner_id`
+    # 1. Start a session owned by `learner`
     start_resp = await client.post(
         "/v1/sessions",
         json={
-            "domain_id": str(seeded_domain.domain_id),
-            "topic_id": str(seeded_domain.topic_id),
-            "idempotency_key": "start-sse-foreign-1",
+            "domain_id": str(learner.domain_id),
+            "intent": "learn",
+            "idempotency_key": str(uuid4()),
         },
-        headers=auth_headers,
+        cookies=learner.cookies,
     )
     assert start_resp.status_code == 201, start_resp.text
     session_id = UUID(start_resp.json()["session_id"])
 
     # 2. Another learner requesting `/v1/sessions/{session_id}/events` gets 404 NOT_FOUND
-    foreign_learner = uuid4()
-    foreign_headers = {"Authorization": f"Bearer {make_token(settings, foreign_learner)}"}
+    foreign = await make_learner(pg_db, settings)
     foreign_resp = await client.get(
         f"/v1/sessions/{session_id}/events",
-        headers=foreign_headers,
+        cookies=foreign.cookies,
     )
     assert foreign_resp.status_code == 404, foreign_resp.text
     assert foreign_resp.json()["error"]["code"] == "NOT_FOUND"
@@ -269,7 +265,7 @@ async def test_session_events_foreign_or_unknown_session_returns_404(
     # 3. Unknown session_id for the authenticated learner also gets 404 NOT_FOUND
     unknown_resp = await client.get(
         f"/v1/sessions/{uuid4()}/events",
-        headers=auth_headers,
+        cookies=learner.cookies,
     )
     assert unknown_resp.status_code == 404, unknown_resp.text
     assert unknown_resp.json()["error"]["code"] == "NOT_FOUND"
@@ -278,8 +274,7 @@ async def test_session_events_foreign_or_unknown_session_returns_404(
 async def test_sse_keepalive(
     session_app: FastAPI,
     client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
+    learner: Learner,
     settings: Settings,
 ) -> None:
     """T-H5 (WP6.3, Д-§3.1): `sse_keepalive_s = 0.2`, `GET /v1/sessions/{id}/events` without
@@ -288,11 +283,11 @@ async def test_sse_keepalive(
     start_resp = await client.post(
         "/v1/sessions",
         json={
-            "domain_id": str(seeded_domain.domain_id),
-            "topic_id": str(seeded_domain.topic_id),
-            "idempotency_key": "start-sse-keepalive",
+            "domain_id": str(learner.domain_id),
+            "intent": "learn",
+            "idempotency_key": str(uuid4()),
         },
-        headers=auth_headers,
+        cookies=learner.cookies,
     )
     assert start_resp.status_code == 201, start_resp.text
     session_id = UUID(start_resp.json()["session_id"])
@@ -303,7 +298,7 @@ async def test_sse_keepalive(
             transport=StreamingASGITransport(session_app), base_url="http://test"
         ) as stream_client,
         stream_client.stream(
-            "GET", f"/v1/sessions/{session_id}/events", headers=auth_headers
+            "GET", f"/v1/sessions/{session_id}/events", cookies=learner.cookies
         ) as resp,
     ):
         assert resp.status_code == 200

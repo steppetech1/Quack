@@ -4,7 +4,7 @@ WP12.2 п.1–2, `Т-§7.6`). Seam S6: the `turn.extract` handler of stream B ca
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Protocol
@@ -17,6 +17,13 @@ from quack.events.payloads import (
     NewSkillRef,
     SkillRef,
 )
+from quack.events.records import (
+    ExtractedElementRecord,
+    RejectedElementRecord,
+    RootCauseRecord,
+)
+from quack.events.values import GapType as P4GapType
+from quack.events.values import NewSkill
 
 # The extractor's word for "skill not clear" (`Т-§7.6`): no evidence.
 UNCLEAR_SKILL = "unclear"
@@ -146,3 +153,192 @@ def _check(
     if item.level is not None and caps and item.level > min(caps):
         return "level_above_task"
     return None
+
+
+# --- Phase 4: `extractor@3` (ТЗ Ф4 WP15 п.4, п.8; `Т-§7.6`) --------------------------------
+#
+# The extractor output of stream B (`quack.agents.schemas.ExtractedElement`) is checked here
+# before `observation.extracted` is written: labels become ids (`ExtractedElementRecord`),
+# failed elements stay in the observation with the reason (`RejectedElementRecord`). The core
+# cannot import the product model (§4.1), so the input is a protocol of the same fields.
+
+type RejectionReason = Literal[
+    "unknown_label",
+    "incomplete_element",
+    "source_outside_episode",
+    "missing_quote",
+    "quote_not_in_source",
+    "level_above_task",
+    "code_verdict_exists",
+]
+
+
+class RootCauseLike(Protocol):
+    @property
+    def skill(self) -> str: ...
+    @property
+    def confidence(self) -> Literal["low", "medium", "high"]: ...
+
+
+class ExtractorElementLike(Protocol):
+    """One element of `extractor@3` (`Т-§7.6`, WP15 п.3) with short labels."""
+
+    @property
+    def kind(self) -> Literal["evidence", "misconception_hypothesis"]: ...
+    @property
+    def skill(self) -> str | None: ...
+    @property
+    def new_skill(self) -> NewSkill | None: ...
+    @property
+    def skill_unclear(self) -> bool: ...
+    @property
+    def level(self) -> int | None: ...
+    @property
+    def outcome(self) -> Literal["correct", "incorrect", "partial"] | None: ...
+    @property
+    def help(self) -> Literal["none", "hint", "shown_solution"]: ...
+    @property
+    def hint_step(self) -> int | None: ...
+    @property
+    def gap_type(self) -> P4GapType: ...
+    @property
+    def misconception(self) -> str | None: ...
+    @property
+    def new_misconception(self) -> str | None: ...
+    @property
+    def root_cause(self) -> RootCauseLike | None: ...
+    @property
+    def quote(self) -> str: ...
+    @property
+    def events(self) -> Sequence[int]: ...
+
+
+@dataclass(frozen=True)
+class EpisodeSource:
+    """An event of the episode that an element may cite: its text and time (`Т-§2.1`)."""
+
+    seq: int
+    text: str
+    at_ms: int
+
+
+@dataclass(frozen=True)
+class EpisodeCheckContext:
+    """What code knows when it checks the elements of one `observation.extracted`.
+
+    - `skill_labels` / `misconception_labels`: label → id of the call (`LabelMap.labels`);
+    - `episode`: the events of the episode by seq — the context turns before it are not
+      citable (`Т-§7.5`: only the episode is interpreted);
+    - `task_levels`: seq of an event of a task → the highest level of the task markup;
+    - `code_verdicts`: `(skill_id, level)` with a verdict of class code in the episode
+      (WP15 п.8)."""
+
+    skill_labels: Mapping[str, UUID]
+    misconception_labels: Mapping[str, UUID]
+    episode: Mapping[int, EpisodeSource]
+    task_levels: Mapping[int, int] = field(default_factory=dict)
+    code_verdicts: frozenset[tuple[UUID, int]] = frozenset()
+
+
+@dataclass(frozen=True)
+class CheckedElements:
+    """`elements` and `rejected` of `observation.extracted`; `rejected[i].index` — the position
+    of the element in the extractor output."""
+
+    elements: list[ExtractedElementRecord]
+    rejected: list[RejectedElementRecord]
+
+
+def check_extracted(
+    elements: Sequence[ExtractorElementLike], ctx: EpisodeCheckContext
+) -> CheckedElements:
+    """The checks of `Т-§7.6` and WP15 п.4, п.8 for every element, in output order."""
+    accepted: list[ExtractedElementRecord] = []
+    rejected: list[RejectedElementRecord] = []
+    for index, element in enumerate(elements):
+        checked = _check_element(element, ctx)
+        if isinstance(checked, ExtractedElementRecord):
+            accepted.append(checked)
+        else:
+            rejected.append(RejectedElementRecord(index=index, reason=checked, quote=element.quote))
+    return CheckedElements(accepted, rejected)
+
+
+def _check_element(
+    element: ExtractorElementLike, ctx: EpisodeCheckContext
+) -> ExtractedElementRecord | RejectionReason:
+    """The element with ids, or the reason it is rejected — checks in the order of `Т-§7.6`."""
+    skill_id = misconception_id = root_cause = None
+    if element.skill is not None:
+        skill_id = ctx.skill_labels.get(element.skill)
+        if skill_id is None:
+            return "unknown_label"
+    if element.misconception is not None:
+        misconception_id = ctx.misconception_labels.get(element.misconception)
+        if misconception_id is None:
+            return "unknown_label"
+    if element.root_cause is not None:
+        root_skill_id = ctx.skill_labels.get(element.root_cause.skill)
+        if root_skill_id is None:
+            return "unknown_label"
+        root_cause = RootCauseRecord(
+            skill_id=root_skill_id, confidence=element.root_cause.confidence
+        )
+    if not _complete(element):
+        return "incomplete_element"
+    if not element.events or any(seq not in ctx.episode for seq in element.events):
+        return "source_outside_episode"
+    quote = element.quote.strip()
+    # A negative element, a misconception hypothesis (`Т-§7.6`) and a new skill (`Т-§4.4`)
+    # stand only on a quote.
+    needs_quote = (
+        element.kind == "misconception_hypothesis"
+        or element.outcome == "incorrect"
+        or element.new_skill is not None
+    )
+    if not quote:
+        if needs_quote:
+            return "missing_quote"
+    elif not any(quote in ctx.episode[seq].text for seq in element.events):
+        return "quote_not_in_source"
+    caps = [ctx.task_levels[seq] for seq in element.events if seq in ctx.task_levels]
+    if element.level is not None and caps and element.level > min(caps):
+        return "level_above_task"
+    if (
+        element.kind == "evidence"
+        and skill_id is not None
+        and element.level is not None
+        and (skill_id, element.level) in ctx.code_verdicts
+    ):
+        return "code_verdict_exists"
+    return ExtractedElementRecord(
+        kind=element.kind,
+        skill_id=skill_id,
+        new_skill=element.new_skill,
+        skill_unclear=element.skill_unclear,
+        level=element.level,
+        outcome=element.outcome,
+        help=element.help,
+        hint_step=element.hint_step,
+        gap_type=element.gap_type,
+        misconception_id=misconception_id,
+        new_misconception=element.new_misconception,
+        root_cause=root_cause,
+        quote=element.quote,
+        events=list(element.events),
+        at_ms=max(ctx.episode[seq].at_ms for seq in element.events),
+    )
+
+
+def _complete(element: ExtractorElementLike) -> bool:
+    """Evidence names exactly one of: a skill label, a new skill, «unclear» (`Т-§7.6`), and has
+    a level and an outcome; a hypothesis names a known misconception or a new wording. Help and
+    gap type agree (WP15 п.3, `Т-§7.6`): only a hint has a step, a positive element has `none`."""
+    if (element.help == "hint") != (element.hint_step is not None):
+        return False
+    if element.outcome == "correct" and element.gap_type != "none":
+        return False
+    if element.kind == "misconception_hypothesis":
+        return element.misconception is not None or bool((element.new_misconception or "").strip())
+    named = [element.skill is not None, element.new_skill is not None, element.skill_unclear]
+    return named.count(True) == 1 and element.level is not None and element.outcome is not None

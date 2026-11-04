@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
-from uuid import UUID
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,105 +12,42 @@ from quack.events.payloads import (
     ExtractedObservation,
     Unit,
 )
+from quack.session.sessions import FeedEvent, SessionView
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# --- HTTP requests ---
-
-
-class StartSessionRequest(StrictModel):
-    domain_id: UUID
-    topic_id: UUID | None = None
-    mode: Literal["learn", "practice", "review"] = "learn"
-    goal: str | None = None
-    plan: list[dict[str, Any]] | None = None
-    idempotency_key: str
-
-
-class FinishSessionRequest(StrictModel):
-    idempotency_key: str
-
-
-class TurnRequest(StrictModel):
-    text: str
-    related_task_id: UUID | None = None
-    hints_used: int = 0
-    response_time_sec: float | None = Field(default=None, ge=0.0)
-    idempotency_key: str
-
-
-# --- HTTP responses ---
-
-
-class SessionStarted(StrictModel):
-    session_id: UUID
-    domain_id: UUID
-    topic_id: UUID | None
-    mode: str
-    status: Literal["active", "completed", "abandoned"]
-    plan: list[dict[str, Any]]
-    start_seq: int
-
-
-class ActiveSession(StrictModel):
-    session_id: UUID
-    domain_id: UUID
-    topic_id: UUID | None
-    mode: str
-    status: str
-    started_at: datetime
-    last_activity_at: datetime
-    last_turn_index: int
-    last_checkpoint_turn: int
-
-
-class SessionListItem(ActiveSession):
-    """A row of the session history: the active session and the closed ones."""
-
-    goal: str | None
-    ended_at: datetime | None
+# --- HTTP responses (ТЗ Ф4 WP13.10; the request of the start is `sessions.StartSession`) ---
 
 
 class SessionListResponse(StrictModel):
-    sessions: list[SessionListItem]
+    sessions: list[SessionView]
 
 
-class TurnView(StrictModel):
-    turn_index: int
-    turn_id: UUID
-    role: Literal["student", "teacher"]
-    text: str
-    seq: int
-    related_task_id: UUID | None = None
-    pedagogical_move: str | None = None
-    degraded_mode: str | None = None
+class SessionDetail(SessionView):
+    """`GET /v1/sessions/{id}`: the session and its feed of events by `seq` (D-B-210)."""
+
+    events: list[FeedEvent]
 
 
-class CheckpointView(StrictModel):
-    up_to_turn_index: int
-    rolling_summary: str
-    open_threads: list[str]
-    key_observations: list[str]
+class SessionJob(StrictModel):
+    """A row of the learner's plaque (Т-§13.8): a visible job of the session."""
+
+    job_key: str
+    kind: str
+    status: str  # `queued` or `running`
+    created_at: datetime
 
 
-class SessionDetail(ActiveSession):
-    turns: list[TurnView]
-    checkpoint: CheckpointView | None = None
+class SessionJobsResponse(StrictModel):
+    jobs: list[SessionJob]
 
 
 class HeartbeatResponse(StrictModel):
     status: Literal["ok"]
     ttl_sec: int
-
-
-class FinishResponse(StrictModel):
-    session_id: UUID
-    status: Literal["completed"]
-    summary_stats: dict[str, Any]
-    end_seq: int
 
 
 # --- LLM output schemas (ТЗ §4) ---

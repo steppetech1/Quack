@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from quack.config import Settings
-from quack.events.models import StoredEvent
+from quack.events.log import StoredEvent
 
 RENDERER_VERSION = "renderer@1"
 
@@ -75,7 +75,7 @@ def _turns(events: Sequence[StoredEvent]) -> list[_Turn]:
 
 
 def _turn_id(event: StoredEvent) -> str | None:
-    raw = event.payload.get("turn_id", event.turn_id)
+    raw = event.payload.get("turn_id")
     return None if raw is None else str(raw)
 
 

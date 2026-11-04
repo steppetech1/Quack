@@ -8,25 +8,24 @@ the integration tests are skipped, unless QUACK_TEST_REQUIRE_INFRA=1 (then they 
 
 from __future__ import annotations
 
-import asyncio
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.config import Settings
 from quack.db.neo4j import create_driver, verify_schema
-from quack.db.postgres import SessionFactory, create_engine, create_session_factory
 from quack.db.redis import create_redis
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+# ТЗ Ф4 WP1.2, D-A-103: Phase 4 Postgres fixtures (`p4_db`, `pg_db`), registered once for all
+# streams; a second registration would re-create the database under an open pool.
+# The SQLAlchemy / Alembic database of Phases 1–3 (`pg_engine`, `db`) is gone (WP1.3, D-A-234).
+pytest_plugins = ["tests.db.fixtures"]
 
 PG_DSN = os.environ.get(
     "QUACK_TEST_POSTGRES_DSN", "postgresql://quack:quack@localhost:55432/quack_test"
@@ -36,25 +35,6 @@ NEO4J_USER = os.environ.get("QUACK_TEST_NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("QUACK_TEST_NEO4J_PASSWORD", "quacktest123")
 REDIS_URL = os.environ.get("QUACK_TEST_REDIS_URL", "redis://localhost:56379/0")
 REQUIRE_INFRA = os.environ.get("QUACK_TEST_REQUIRE_INFRA") == "1"
-
-ALL_TABLES = (
-    "auth.users",
-    "core.learner_seq",
-    "core.events",
-    "core.sessions",
-    "core.artifacts",
-    "core.domains",
-    "core.task_bank",
-    "core.llm_outbox",
-    "ops.jobs",
-    "ops.dlq",
-    "ops.llm_ledger",
-    "ops.deletion_tombstones",
-    "ops.projector_offsets",
-    "ops.event_types_seen",
-    "ops.dispatcher_offsets",
-    "ops.turn_manifests",
-)
 
 
 def _unavailable(what: str, exc: BaseException) -> None:
@@ -77,38 +57,6 @@ def settings() -> Settings:
         # the retries of WP5.2 are covered by T-L2/T-L3 with their own settings.
         llm_retry_attempts=0,
     )
-
-
-def _migrate(dsn: str) -> None:
-    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", dsn)
-    command.upgrade(cfg, "head")
-
-
-@pytest.fixture(scope="session")
-async def pg_engine(settings: Settings) -> AsyncIterator[AsyncEngine]:
-    engine = create_engine(settings, pool_size=5)
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-    except Exception as exc:  # pragma: no cover - depends on environment
-        await engine.dispose()
-        _unavailable("Postgres", exc)
-    async with engine.begin() as conn:
-        for schema in ("ops", "core", "auth"):
-            await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        await conn.execute(text("DROP TABLE IF EXISTS public.alembic_version"))
-    await asyncio.to_thread(_migrate, settings.sqlalchemy_dsn)
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-async def db(pg_engine: AsyncEngine) -> SessionFactory:
-    async with pg_engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE {', '.join(ALL_TABLES)}"))
-    return create_session_factory(pg_engine)
 
 
 @pytest.fixture(scope="session")

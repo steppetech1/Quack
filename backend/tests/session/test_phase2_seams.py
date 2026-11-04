@@ -3,111 +3,17 @@
 from __future__ import annotations
 
 from typing import Any, cast
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import httpx
 import pytest
-from neo4j import AsyncDriver
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.compute_client.client import ComputeClient, MathCheckRequest, MathCheckResponse
-from quack.config import FoldParams, Settings
-from quack.db.postgres import SessionFactory
-from quack.events.reader import EVENT_COLUMNS, row_to_event
-from quack.graph.neo4j_store import Neo4jGraphStore
-from quack.graph.projector import run_projector_batch
-from quack.jobs.queue import claim_next_job
+from quack.config import Settings
 from quack.llm.gateway import LLMGateway
 from quack.practice.evaluation import TaskToCheck, evaluate_answer, rubric_lines
 from quack.practice.generation import GeneratedTaskError, build_generated_task
 from quack.practice.schemas import TaskGenOutput, parse_reference_solution
-from quack.session.schemas import TeacherOutput
 from quack.session.spoiler_guard import spoiler_found
-from tests.session.fixtures import SeededDomain
-from tests.session.helpers import parse_sse, task_label
-from tests.support.dispatch import project_and_dispatch
-
-pytest_plugins = ["tests.session.fixtures"]
-
-
-async def _project_all(neo4j: AsyncDriver, db: SessionFactory, learner_id: UUID) -> None:
-    async with db() as session:
-        result = await session.execute(
-            text(f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l ORDER BY seq"),
-            {"l": learner_id},
-        )
-        events = [row_to_event(r) for r in result.all()]
-    store = Neo4jGraphStore(neo4j, str(learner_id))
-    await run_projector_batch(learner_id, events, store, FoldParams())
-
-
-# --- T-H7 --------------------------------------------------------------------------------
-
-
-async def test_turn_sse_frame_order(
-    client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
-    db: SessionFactory,
-    neo4j: AsyncDriver,
-    fake_llm: Any,
-    fake_compute: Any,
-) -> None:
-    """T-H7: a turn that checks a task answer and assigns the next task sends
-    `task_evaluated` before `task_assigned` (WP6.4 п.3), also on a replay by its key."""
-    learner = seeded_domain.learner_id
-    start = await client.post(
-        "/v1/sessions",
-        json={
-            "domain_id": str(seeded_domain.domain_id),
-            "topic_id": str(seeded_domain.topic_id),
-            "idempotency_key": "th7-start",
-        },
-        headers=auth_headers,
-    )
-    assert start.status_code == 201, start.text
-    session_id = UUID(start.json()["session_id"])
-    await _project_all(neo4j, db, learner)
-
-    answered, following = seeded_domain.math_task_ids
-    label = await task_label(db, learner, seeded_domain.topic_id, session_id, following)
-    fake_compute.push_result(True)
-    fake_llm.push(
-        "teacher",
-        TeacherOutput(
-            reply_text="Right. Now try the next one.",
-            pedagogical_move="assign_task",
-            assign_task_label=label,
-        ),
-    )
-    body = {
-        "text": "3*x^2",
-        "related_task_id": str(answered),
-        "idempotency_key": "th7-turn",
-    }
-    first = await client.post(f"/v1/sessions/{session_id}/turns", json=body, headers=auth_headers)
-    assert first.status_code == 200, first.text
-    replay = await client.post(f"/v1/sessions/{session_id}/turns", json=body, headers=auth_headers)
-    assert replay.status_code == 200, replay.text
-
-    expected = [
-        "turn_started",
-        "status",
-        "token",
-        "task_evaluated",
-        "task_assigned",
-        "turn_completed",
-        "done",
-    ]
-    for response in (first, replay):
-        events = parse_sse(response.text)
-        names = [name for name, _ in events]
-        # `token` comes once or more; the order of the other frames is fixed.
-        assert list(dict.fromkeys(names)) == expected
-        assert dict(events)["task_assigned"]["task_id"] == str(following)
-        assert dict(events)["task_evaluated"]["task_id"] == str(answered)
-
 
 # --- T-H8 (а): reference_solution of task_gen@1 -------------------------------------------
 
@@ -233,45 +139,3 @@ def test_wrong_reference_of_task_gen_is_rejected() -> None:
             uuid4(),
             [],
         )
-
-
-# --- T-H8 (б): finish_session → session.finish_artifacts ---------------------------------
-
-
-async def test_finish_session_payload_names_the_session(
-    client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
-    db: SessionFactory,
-    settings: Settings,
-    pg_engine: AsyncEngine,
-    neo4j: AsyncDriver,
-) -> None:
-    """T-H8 (б), side of `finish_session`: the job payload is
-    `{"session_id", "domain_id", "topic_id"}` (WP6.4 п.2)."""
-    start = await client.post(
-        "/v1/sessions",
-        json={
-            "domain_id": str(seeded_domain.domain_id),
-            "topic_id": str(seeded_domain.topic_id),
-            "idempotency_key": "th8-start",
-        },
-        headers=auth_headers,
-    )
-    assert start.status_code == 201, start.text
-    session_id = start.json()["session_id"]
-    finish = await client.post(
-        f"/v1/sessions/{session_id}/finish",
-        json={"idempotency_key": "th8-finish"},
-        headers=auth_headers,
-    )
-    assert finish.status_code == 200, finish.text
-    await project_and_dispatch(settings, db, pg_engine, neo4j, seeded_domain.learner_id)  # §8.9 п.7
-    async with db() as session, session.begin():
-        job = await claim_next_job(session, "th8", ["session.finish_artifacts"])
-    assert job is not None
-    assert job.payload == {
-        "session_id": session_id,
-        "domain_id": str(seeded_domain.domain_id),
-        "topic_id": str(seeded_domain.topic_id),
-    }

@@ -1,365 +1,123 @@
-"""Pydantic schemas for HTTP requests/responses and LLM structured outputs of the domains
-stream (ТЗ §3, §4; spec §5.2; Т-§3.1–3.3, Т-§8.6, Т-§10, Т-§16, Т-§19, Т-§22.2).
+"""Pydantic schemas of the domains stream (ТЗ Ф4 §6.4; Т-§4, Т-§8.6, Т-§22.2).
+
+HTTP models of the routes of stream A: domains, preferences, the graph of a domain. The state of
+a topic is `TopicDisplay` (codes and parameters, not text, `Т-§22.2`).
+
+The structured outputs of the roles `structurer`, `diagnostic` and `curator` at the end of the
+file are not routes of this stream: the roles stay in the LLM stack of stream B (prompts, role
+table, contract tests) until B removes them with the Phase 3 prompts (D-A-208).
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from quack.events.payloads import (
-    MisconceptionDraft,
-    PrereqEdge,
-    SkillDepEdge,
-    SkillDraft,
-    SkillPatch,
-    TopicDraft,
-    TopicPatch,
-    TopicPriorItem,
-    Unit,
-)
-from quack.graph.topic_display import DisplayState
+from quack.events.payloads import Unit
+from quack.graph.read.models import TopicDisplay, TopicRequires
 
 __all__ = [
-    "AnswerDiagnosticRequest",
-    "AnswerDiagnosticResponse",
-    "ArchiveDomainRequest",
-    "ArchiveDomainResponse",
-    "ArtifactRefView",
-    "AuthResponse",
-    "ConfirmStructureRequest",
-    "ConfirmStructureResponse",
     "CreateDomainRequest",
     "CreateDomainResponse",
     "CuratorMerge",
     "CuratorOutput",
     "CuratorPromotion",
-    "DeleteLearnerResponse",
     "DiagnosticOutput",
-    "DiagnosticQuestion",
-    "DisplayState",
     "DomainGraphResponse",
     "DomainListResponse",
     "DomainSummary",
-    "EditStructureRequest",
-    "EditStructureResponse",
-    "FinishDiagnosticRequest",
-    "FinishDiagnosticResponse",
-    "LearnerMeResponse",
-    "LoginRequest",
-    "MisconceptionDraft",
-    "MisconceptionNodeView",
-    "PrereqEdge",
-    "ProposeStructureRequest",
-    "ProposeStructureResponse",
-    "RegisterRequest",
-    "SkillDepEdge",
-    "SkillDraft",
-    "SkillNodeView",
-    "SkillPatch",
-    "StartDiagnosticRequest",
-    "StartDiagnosticResponse",
+    "SetPreferenceRequest",
+    "SetPreferenceResponse",
     "StructurerMisconception",
     "StructurerOutput",
     "StructurerPrereq",
     "StructurerSkill",
     "StructurerSkillDep",
     "StructurerTopic",
-    "TopicDetailResponse",
-    "TopicDraft",
     "TopicNodeView",
-    "TopicPatch",
-    "TopicPriorItem",
-    "Unit",
-    "UpdatePreferencesRequest",
-    "UpdatePreferencesResponse",
-    "UpdateTopicStatusRequest",
-    "UpdateTopicStatusResponse",
 ]
 
 
-# --- 1. Auth & Learner Profile (Т-§16.3, Т-§19, Т-§22.2) ---
+# --- 1. Learner preferences (Т-§9.5) ---
+
+# The key becomes the property `pref<Key>` of the learner's `Profile` (WP5.3): a short snake_case
+# name, so a key can never be a path into anything else (D-A-207).
+PreferenceKey = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
 
 
-class RegisterRequest(BaseModel):
-    email: Annotated[str, Field(min_length=1)]
-    password: Annotated[str, Field(min_length=8)]
-    display_name: str | None = None
-    preferences: dict[str, Any] = Field(default_factory=dict)
+class SetPreferenceRequest(BaseModel):
+    """`preference.set {key, value}` (ТЗ Ф4 §6.4 «Ученик»)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: PreferenceKey
+    value: Annotated[str, Field(max_length=500)] | int | float | bool
+    idempotency_key: Annotated[str, Field(min_length=1, max_length=200)]
 
 
-class LoginRequest(BaseModel):
-    email: Annotated[str, Field(min_length=1)]
-    password: Annotated[str, Field(min_length=1)]
-
-
-class AuthResponse(BaseModel):
-    token: str
-    learner_id: UUID
-    email: str
-    display_name: str | None = None
-    preferences: dict[str, Any] = Field(default_factory=dict)
-
-
-class LearnerMeResponse(BaseModel):
-    learner_id: UUID
-    email: str
-    display_name: str | None = None
-    preferences: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-
-
-class UpdatePreferencesRequest(BaseModel):
-    preferences: dict[str, Any]
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class UpdatePreferencesResponse(BaseModel):
-    preferences: dict[str, Any]
+class SetPreferenceResponse(BaseModel):
+    key: str
+    value: str | int | float | bool
     seq: int
 
 
-class DeleteLearnerResponse(BaseModel):
-    status: Literal["pending_purge"] = "pending_purge"
-    requested_at: datetime
-
-
-# --- 2. Domains CRUD (Т-§16.1) ---
+# --- 2. Domains (Т-§4.8) ---
 
 
 class CreateDomainRequest(BaseModel):
-    name: Annotated[str, Field(min_length=1)]
-    slug: str | None = None
-    idempotency_key: Annotated[str, Field(min_length=1)]
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    idempotency_key: Annotated[str, Field(min_length=1, max_length=200)]
 
 
 class CreateDomainResponse(BaseModel):
     domain_id: UUID
     name: str
-    slug: str
-    status: str
     seq: int
 
 
 class DomainSummary(BaseModel):
+    """A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1)."""
+
     domain_id: UUID
     name: str
-    slug: str
-    status: str
-    has_materials: bool = False
-    active_structure_version: int = 0
-    created_seq: int = 0
-    updated_seq: int = 0
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    created_seq: int
+    created_at: datetime
 
 
 class DomainListResponse(BaseModel):
     domains: list[DomainSummary]
 
 
-class ArchiveDomainRequest(BaseModel):
-    reason: str | None = None
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class ArchiveDomainResponse(BaseModel):
-    domain_id: UUID
-    status: Literal["archived"] = "archived"
-    seq: int
-
-
-# --- 3. Structure Onboarding & Editing (Т-§3.1, Т-§3.2, Т-§16.2) ---
-
-
-class ProposeStructureRequest(BaseModel):
-    goals: str
-    background: str
-    focus_areas: list[str]
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class ProposeStructureResponse(BaseModel):
-    domain_id: UUID
-    structure_version: int
-    topics: list[TopicDraft]
-    skills: list[SkillDraft]
-    prereqs: list[PrereqEdge]
-    skill_deps: list[SkillDepEdge]
-    misconceptions: list[MisconceptionDraft] = Field(default_factory=list)
-    degraded: bool = False
-
-
-class ConfirmStructureRequest(BaseModel):
-    structure_version: int
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class ConfirmStructureResponse(BaseModel):
-    domain_id: UUID
-    status: Literal["active"] = "active"
-    active_structure_version: int
-    seq: int
-
-
-class EditStructureRequest(BaseModel):
-    added_topics: list[TopicDraft] = Field(default_factory=list)
-    updated_topics: list[TopicPatch] = Field(default_factory=list)
-    archived_topic_ids: list[UUID] = Field(default_factory=list)
-    added_prereqs: list[PrereqEdge] = Field(default_factory=list)
-    removed_prereqs: list[PrereqEdge] = Field(default_factory=list)
-    added_skills: list[SkillDraft] = Field(default_factory=list)
-    updated_skills: list[SkillPatch] = Field(default_factory=list)
-    archived_skill_ids: list[UUID] = Field(default_factory=list)
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class EditStructureResponse(BaseModel):
-    domain_id: UUID
-    active_structure_version: int
-    seq: int
-
-
-class UpdateTopicStatusRequest(BaseModel):
-    status: Literal["active", "skipped", "archived"]
-    reason: str | None = None
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class UpdateTopicStatusResponse(BaseModel):
-    topic_id: UUID
-    status: str
-    seq: int
-
-
-# --- 4. Adaptive Diagnostics (Т-§3.3) ---
-
-
-class DiagnosticQuestion(BaseModel):
-    task_id: UUID
-    topic_id: UUID
-    skill_id: UUID
-    kind: Literal["open", "math", "code", "choice"] = "choice"
-    prompt_text: str
-    options: list[str] = Field(default_factory=list)
-
-
-class StartDiagnosticRequest(BaseModel):
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class StartDiagnosticResponse(BaseModel):
-    session_id: UUID
-    candidate_topic_ids: list[UUID]
-    next_question: DiagnosticQuestion
-
-
-class AnswerDiagnosticRequest(BaseModel):
-    session_id: UUID
-    task_id: UUID
-    answer: str
-    confidence_self_report: Unit | None = None
-    response_time_sec: float | None = None
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class AnswerDiagnosticResponse(BaseModel):
-    is_correct: bool
-    score: float
-    next_question: DiagnosticQuestion | None = None
-    should_finish: bool
-
-
-class FinishDiagnosticRequest(BaseModel):
-    session_id: UUID
-    idempotency_key: Annotated[str, Field(min_length=1)]
-
-
-class FinishDiagnosticResponse(BaseModel):
-    tested_topic_ids: list[UUID]
-    inferred_priors: list[TopicPriorItem]
-    seq: int
-
-
-# --- 5. Knowledge Map Views for UI (Т-§8.6, Т-§22.2) ---
+# --- 3. The graph of a domain (Т-§8.6, Т-§22.2) ---
 
 
 class TopicNodeView(BaseModel):
-    topic_id: UUID
-    domain_id: UUID
-    name: str
-    description: str = ""
-    status: str
-    mastery: float
-    coverage: float
-    confidence: float
-    hub_score: float
-    nearest_review_at: int
-    display_state: DisplayState
-    skill_count: int
+    """A topic on the map: the state is the code and its parameters, never a sentence."""
 
-
-class SkillNodeView(BaseModel):
-    skill_id: UUID
     topic_id: UUID
     name: str
-    description: str = ""
     status: str
-    origin: str = "structure"
-    p_mastery: float
-    effective_mastery: float
-    confidence: float
-    mastery_status: str
-    is_rusty: bool
-    evidence_count: int
-    distinct_families: int
-    stability: float
-    last_practiced_at: int
-    last_reviewed_at: int
-    next_review_at: int
-    prior_mastery: float = 0.0
-    prior_confidence: float = 0.0
-    prior_source: str = "none"
-
-
-class MisconceptionNodeView(BaseModel):
-    misconception_id: UUID
-    skill_id: UUID
-    name: str
-    description: str = ""
-    status: str
-    occurrences: int
-    last_seen_at: int
-    resist_count: int
-
-
-class ArtifactRefView(BaseModel):
-    artifact_id: UUID
-    kind: str
-    title: str
-    version: int = 1
+    visibility: str
+    display: TopicDisplay
+    nearest_due_at_ms: int = 0
+    skill_count: int = 0
 
 
 class DomainGraphResponse(BaseModel):
+    """`projected_seq` — how far the graph has read the log; `lag_degraded` — it is behind the
+    learner's last event (the map may miss the latest events, Т-§2.6)."""
+
     domain_id: UUID
-    applied_seq: int
+    projected_seq: int
     lag_degraded: bool
     topics: list[TopicNodeView]
-    prereqs: list[PrereqEdge]
+    requires: list[TopicRequires]
 
 
-class TopicDetailResponse(BaseModel):
-    topic: TopicNodeView
-    skills: list[SkillNodeView]
-    skill_deps: list[SkillDepEdge]
-    misconceptions: list[MisconceptionNodeView]
-    artifacts: list[ArtifactRefView]
-
-
-# --- 6. Prompt Structured Output Schemas (ТЗ §4) ---
+# --- 4. Structured outputs of the roles of stream B (D-A-208); `Curator*` are re-exported ---
 
 
 class StructurerTopic(BaseModel):

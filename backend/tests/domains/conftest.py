@@ -1,53 +1,47 @@
-"""Shared test fixtures for `tests/domains/` (ТЗ §0.1, §5).
-
-Avoids `TestClient` event-loop conflicts with asyncpg/Neo4j by using `httpx.AsyncClient`
-with `ASGITransport` and attaching existing test pools directly to `app.state.resources`.
-"""
+"""Fixtures of `tests/domains/` (ТЗ Ф4 WP1.3, D-A-207): the app over the Phase 4 `Db`, a learner
+signed in with a Phase 4 session, and a tracer that records the deletion of traces."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
-import jwt
 import pytest
 from fastapi import FastAPI
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.api.app import create_app
-from quack.api.auth import DEV_JWT_SECRET, JWT_ALGORITHM
+from quack.api.resources import AppResources
 from quack.config import Settings
-from quack.db.postgres import SessionFactory
-from quack.events.append import append_events
-from quack.events.models import NewEvent
-from tests.support.llm import FakeLLMProvider, QueuedLLMItem
+from quack.db import Db
+from tests.db.fixtures import create_learner
+from tests.support.auth import session_token
 from tests.support.resources import build_app_resources
-
-__all__ = ["FakeLLMProvider", "QueuedLLMItem"]
-
-
-@pytest.fixture
-def fake_llm_provider() -> FakeLLMProvider:
-    return FakeLLMProvider()
+from tests.support.tracer import RecordingTracer
 
 
 @pytest.fixture
-def domains_app(
+def tracer() -> RecordingTracer:
+    return RecordingTracer()
+
+
+@pytest.fixture
+def resources(
     settings: Settings,
-    pg_engine: AsyncEngine,
-    db: SessionFactory,
+    pg_db: Db,
     neo4j: AsyncDriver,
     redis: Redis,
-    fake_llm_provider: FakeLLMProvider,
-) -> FastAPI:
-    resources = build_app_resources(
-        settings, pg_engine, neo4j, redis, session_factory=db, provider=fake_llm_provider
-    )
+    tracer: RecordingTracer,
+) -> AppResources:
+    built = build_app_resources(settings, neo4j, redis, db=pg_db)
+    built.llm.tracer = tracer
+    return built
+
+
+@pytest.fixture
+def domains_app(settings: Settings, resources: AppResources) -> FastAPI:
     return create_app(settings, resources=resources)
 
 
@@ -59,56 +53,8 @@ async def api_client(domains_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 
 @pytest.fixture
-async def seeded_learner(
-    db: SessionFactory,
-    settings: Settings,
-) -> tuple[UUID, str]:
-    """Seed a test learner directly into `auth.users` + `core.events` (`learner.registered`)
-    and return `(learner_id, bearer_jwt)` so Contour 2 and Contour 3 tests do not depend on
-    `/v1/auth/register` being implemented yet.
-    """
-    learner_id = uuid4()
-    email = f"learner-{learner_id.hex[:8]}@example.com"
-    async with db() as session, session.begin():
-        await session.execute(
-            text(
-                "INSERT INTO auth.users (id, email, password_hash, display_name, preferences) "
-                "VALUES (:id, :email, :pw, :name, CAST(:prefs AS JSONB))"
-            ),
-            {
-                "id": learner_id,
-                "email": email,
-                "pw": "$argon2id$v=19$m=65536,t=3,p=4$seeded$seeded",
-                "name": "Seeded Learner",
-                "prefs": "{}",
-            },
-        )
-        await append_events(
-            session,
-            learner_id,
-            [
-                NewEvent(
-                    type="learner.registered",
-                    actor="learner",
-                    idempotency_key=f"register:{learner_id}",
-                    payload={
-                        "email": email,
-                        "display_name": "Seeded Learner",
-                        "preferences": {},
-                    },
-                )
-            ],
-            publish_wakeup=False,
-        )
-    now = datetime.now(UTC)
-    secret = settings.jwt_secret.get_secret_value() or DEV_JWT_SECRET
-    token = jwt.encode(
-        {
-            "sub": str(learner_id),
-            "iat": int(now.timestamp()),
-            "exp": int((now + timedelta(days=7)).timestamp()),
-        },
-        secret,
-        algorithm=JWT_ALGORITHM,
-    )
-    return learner_id, token
+async def seeded_learner(pg_db: Db, settings: Settings) -> tuple[UUID, str]:
+    """A learner of Phase 4 (`core.learners`) with a live session: `(learner_id, token)`; the
+    requests send the token with `tests.support.auth.session_cookie`."""
+    learner_id = await create_learner(pg_db)
+    return learner_id, await session_token(pg_db, learner_id, settings)

@@ -1,25 +1,6 @@
-"""Job queue on ops.jobs."""
+"""Job queue on `ops.jobs` (Phase 4): the queue is `quack.jobs.queue_p4`, the executor is
+`quack.jobs.executor_p4`; the types shared with the handlers are re-exported here."""
 
-from quack.jobs.queue import (
-    ClaimedJob,
-    JobSpec,
-    RetryDecision,
-    claim_next_job,
-    complete_job,
-    enqueue_job,
-    fail_or_retry_job,
-    heartbeat_job,
-    reap_stale_jobs,
-)
+from quack.jobs.types import ClaimedJob, JobDeferred, JobFailedPermanently, JobSpec
 
-__all__ = [
-    "ClaimedJob",
-    "JobSpec",
-    "RetryDecision",
-    "claim_next_job",
-    "complete_job",
-    "enqueue_job",
-    "fail_or_retry_job",
-    "heartbeat_job",
-    "reap_stale_jobs",
-]
+__all__ = ["ClaimedJob", "JobDeferred", "JobFailedPermanently", "JobSpec"]

@@ -15,9 +15,38 @@ from uuid import UUID
 
 from quack.config import Settings
 
-type LabelKind = Literal["skill", "topic", "task", "misconception"]
+type LabelKind = Literal[
+    "skill",
+    "topic",
+    "task",
+    "misconception",
+    "hub",
+    "chunk",
+    "card",
+    "request",
+    "evidence",
+    "line",
+    "domain",
+]
 
-LABEL_PREFIX: dict[LabelKind, str] = {"skill": "S", "topic": "T", "task": "K", "misconception": "M"}
+# Phase 4 decision D-B-108: hubs `H`, material chunks `P`, cards `C`, pending agent
+# requests `R`, evidence `E` and canvas lines `L` get labels too (ТЗ Ф4 WP13.3, WP13.7,
+# WP14.4: deadlines, links, card series, cancelling requests, memory tool arguments);
+# like misconceptions, no limit of their own. D-B-131: domains `D` (Т-§4.9: the domain
+# classifier picks one of the learner's domains by label).
+LABEL_PREFIX: dict[LabelKind, str] = {
+    "skill": "S",
+    "topic": "T",
+    "task": "K",
+    "misconception": "M",
+    "hub": "H",
+    "chunk": "P",
+    "card": "C",
+    "request": "R",
+    "evidence": "E",
+    "line": "L",
+    "domain": "D",
+}
 
 
 class UnknownLabelError(ValueError):
@@ -51,6 +80,13 @@ class LabelMap:
         topics: Sequence[UUID] = (),
         tasks: Sequence[UUID] = (),
         misconceptions: Sequence[UUID] = (),
+        hubs: Sequence[UUID] = (),
+        chunks: Sequence[UUID] = (),
+        cards: Sequence[UUID] = (),
+        requests: Sequence[UUID] = (),
+        evidence: Sequence[UUID] = (),
+        lines: Sequence[UUID] = (),
+        domains: Sequence[UUID] = (),
     ) -> LabelMap:
         """Labels in the given order, cut at the limits of `settings`. Misconceptions have
         no limit of their own (`M1…Mn`, ТЗ §2.3 row 18)."""
@@ -60,6 +96,13 @@ class LabelMap:
                 "topic": _unique(topics)[: settings.label_max_topics],
                 "task": _unique(tasks)[: settings.label_max_tasks],
                 "misconception": _unique(misconceptions),
+                "hub": _unique(hubs),
+                "chunk": _unique(chunks),
+                "card": _unique(cards),
+                "request": _unique(requests),
+                "evidence": _unique(evidence),
+                "line": _unique(lines),
+                "domain": _unique(domains),
             }
         )
 

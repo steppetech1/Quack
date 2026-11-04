@@ -10,7 +10,6 @@ from uuid import UUID
 import anyio
 import orjson
 from redis.exceptions import RedisError
-from sqlalchemy import text
 
 from quack.api.errors import ApiError
 from quack.api.resources import AppResources
@@ -18,6 +17,11 @@ from quack.db.redis import session_events_channel
 from quack.logging import get_logger
 
 log = get_logger(__name__)
+
+_OWNED = (
+    "SELECT 1 AS found FROM content.sessions "
+    "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s"
+)
 
 # How long one `get_message` waits before looping; bounds nothing but idle wake-ups.
 _POLL_TIMEOUT_SEC = 1.0
@@ -31,13 +35,9 @@ async def stream_session_events(
     The check runs before the response starts, so the 404 reaches the client as JSON.
     Messages `{"event", "data"}` (`extractor_done`, `cheatsheet_ready`) are forwarded as-is.
     """
-    async with resources.session_factory() as session:
-        owned = (
-            await session.execute(
-                text("SELECT 1 FROM core.sessions WHERE id = :id AND learner_id = :l"),
-                {"id": session_id, "l": learner_id},
-            )
-        ).one_or_none()
+    owned = await resources.db.fetch_one(
+        _OWNED, {"learner_id": learner_id, "session_id": session_id}
+    )
     if owned is None:
         raise ApiError("NOT_FOUND", "session not found", status_code=404)
     return _relay(resources, session_id)

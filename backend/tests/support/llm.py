@@ -3,15 +3,16 @@
 - `FakeLLMProvider`: queue of responses in call order (moved from `tests/domains/conftest.py`).
 - `ScriptedLLMProvider`: response chosen by `schema_name`, not by order, because background
   jobs in e2e tests run concurrently; failure kinds follow the provider interface of WP5.7
-  (seam S12).
+  (seam S12). Phase 4 (ТЗ Ф4 §8.1, seam S13): `stream_structured` — the stream of
+  `quack.llm.streaming` with tool steps; the format of items and failures is D-B-125.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import orjson
 from pydantic import BaseModel
@@ -22,7 +23,22 @@ from quack.llm.errors import (
     ProviderRateLimitedError,
     ProviderUnavailableError,
 )
+from quack.llm.media import (
+    IllustrationRequest,
+    ImageResponse,
+    SegmentRequest,
+    TranscribeRequest,
+    TranscribeResponse,
+)
 from quack.llm.provider import ProviderRequest, ProviderResponse
+from quack.llm.streaming import (
+    OutputItemDone,
+    StreamCompleted,
+    StreamEvent,
+    StreamRequest,
+    StreamUsage,
+    TextDelta,
+)
 
 type QueuedLLMItem = dict[str, Any] | BaseModel | str | Exception
 
@@ -221,6 +237,101 @@ def _content(item: QueuedLLMItem) -> str:
     return item
 
 
+# Stream of the stub (D-C-108): the answer text goes out in deltas of this many characters.
+STREAM_DELTA_CHARS = 16
+SCRIPTED_INPUT_TOKENS = 100
+SCRIPTED_OUTPUT_TOKENS = 40
+COMMENTARY_TEXT = "Thinking it over."
+PROVIDER_ERRORS = frozenset({"unavailable", "rate_limited", "bad_request"})
+# Failures a tool step leaves for the answer step (D-B-125 п.5).
+TOOL_STEP_SKIPS = frozenset({"invalid_json"})
+
+
+@dataclass(frozen=True)
+class ScriptedToolCall:
+    """One `function_call` of a scripted step: tool name and its arguments."""
+
+    name: str
+    arguments: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class ScriptedToolStep:
+    """A step of the tool loop (Т-§11.5): an optional `phase: commentary` message, then the
+    calls in order (two in one step are allowed, §8.1). A step with calls has no answer."""
+
+    calls: tuple[ScriptedToolCall, ...]
+    commentary: str | None = None
+
+
+def _sorted_json(data: Any) -> str:
+    return orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode()
+
+
+def _stream_text(item: QueuedLLMItem, *, body_before_head: bool) -> str:
+    """The answer text of a stream: keys in alphabetical order at every level (Т-§11.8); with
+    `body_before_head` the key `p2_body` goes before `p1_head` (§8.1, Т-§12.2)."""
+    if isinstance(item, Exception):
+        raise item
+    if isinstance(item, str):
+        return item
+    data: Any = item.model_dump(mode="json") if isinstance(item, BaseModel) else item
+    if not (body_before_head and isinstance(data, dict) and "p2_body" in data):
+        return _sorted_json(data)
+    fields: dict[str, Any] = data
+    rest = {key: value for key, value in fields.items() if key != "p2_body"}
+    parts = [_sorted_json({"p2_body": fields["p2_body"]})[1:-1], _sorted_json(rest)[1:-1]]
+    return "{" + ",".join(part for part in parts if part) + "}"
+
+
+def _reasoning_item(schema_name: str, step: int) -> dict[str, Any]:
+    return {
+        "type": "reasoning",
+        "id": f"rs_{schema_name}_{step}",
+        "encrypted_content": f"scripted-{schema_name}-{step}",
+        "summary": [],
+    }
+
+
+def _message_item(item_id: str, text: str, *, commentary: bool = False) -> dict[str, Any]:
+    message: dict[str, Any] = {
+        "type": "message",
+        "id": item_id,
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": text}],
+    }
+    if commentary:
+        message["phase"] = "commentary"
+    return message
+
+
+def _call_id(schema_name: str, step: int, index: int) -> str:
+    return f"call_{schema_name}_{step}_{index}"
+
+
+def _answered_steps(
+    schema_name: str,
+    steps: tuple[ScriptedToolStep, ...],
+    input_items: Sequence[Mapping[str, Any]],
+) -> int:
+    """How many scripted steps are done: every `call_id` of the step has a
+    `function_call_output` in the input (D-B-125 п.2). A call carried without its output
+    fails the test loudly."""
+    called = {str(i.get("call_id")) for i in input_items if i.get("type") == "function_call"}
+    answered = {
+        str(i.get("call_id")) for i in input_items if i.get("type") == "function_call_output"
+    }
+    if missing := called - answered:
+        raise AssertionError(f"ScriptedLLMProvider: no function_call_output for {sorted(missing)}")
+    done = 0
+    for step, scripted in enumerate(steps):
+        ids = {_call_id(schema_name, step, index) for index in range(len(scripted.calls))}
+        if not ids <= answered:
+            break
+        done += 1
+    return done
+
+
 @dataclass
 class Hold:
     arrived: asyncio.Event = field(default_factory=asyncio.Event)
@@ -239,6 +350,17 @@ class ScriptedLLMProvider:
     failures: list[ScriptedFailure] = field(default_factory=list)
     calls: list[ProviderRequest] = field(default_factory=list)
     gates: dict[str, Hold] = field(default_factory=dict)
+    tool_steps: dict[str, tuple[ScriptedToolStep, ...]] = field(default_factory=dict)
+    stream_calls: list[StreamRequest] = field(default_factory=list)
+    body_before_head: bool = False
+    # Non-text roles (D-B-187; the gateway wants `segment`, `transcribe`, `illustrate`): the
+    # journals, the special-token text `sam-3.1` answers with and the transcript of the audio,
+    # each a constant or a function of the request; `media_error` is raised by every call.
+    segment_calls: list[SegmentRequest] = field(default_factory=list)
+    transcribe_calls: list[TranscribeRequest] = field(default_factory=list)
+    segment_text: str | Callable[[SegmentRequest], str] = ""
+    transcript: str | Callable[[TranscribeRequest], str] = "scripted transcript"
+    media_error: Exception | None = None
 
     def __post_init__(self) -> None:
         for schema_name, item in _default_responses().items():
@@ -247,6 +369,10 @@ class ScriptedLLMProvider:
     def respond(self, schema_name: str, responder: Responder) -> None:
         """Override the default responder of one schema."""
         self.responders[schema_name] = responder
+
+    def script_tools(self, schema_name: str, *steps: ScriptedToolStep) -> None:
+        """Streamed calls of `schema_name` go through `steps` before the answer (§8.1)."""
+        self.tool_steps[schema_name] = steps
 
     def hold(self, schema_name: str) -> Hold:
         """Calls of `schema_name` wait until `release` is set; `arrived` is set when the first
@@ -271,8 +397,13 @@ class ScriptedLLMProvider:
             and (schema_name is None or c.schema_name == schema_name)
         ]
 
-    def _take_failure(self, request: ProviderRequest) -> ScriptedFailure | None:
+    def _take_failure(
+        self, request: ProviderRequest, skip: frozenset[str] = frozenset()
+    ) -> ScriptedFailure | None:
+        """The first matching failure; kinds in `skip` are left for a later call."""
         for failure in self.failures:
+            if failure.kind in skip:
+                continue
             if failure.times <= 0:
                 continue
             if failure.model not in (None, request.model):
@@ -282,6 +413,23 @@ class ScriptedLLMProvider:
             failure.times -= 1
             return failure
         return None
+
+    async def segment(self, request: SegmentRequest) -> ProviderResponse:
+        self.segment_calls.append(request)
+        if self.media_error is not None:
+            raise self.media_error
+        text = self.segment_text(request) if callable(self.segment_text) else self.segment_text
+        return ProviderResponse(text, 100, 10, 0, request.model)
+
+    async def transcribe(self, request: TranscribeRequest) -> TranscribeResponse:
+        self.transcribe_calls.append(request)
+        if self.media_error is not None:
+            raise self.media_error
+        text = self.transcript(request) if callable(self.transcript) else self.transcript
+        return TranscribeResponse(text, 0, 0, 0, request.model, audio_duration_ms=1000)
+
+    async def illustrate(self, request: IllustrationRequest) -> ImageResponse:
+        raise AssertionError("ScriptedLLMProvider: `illustrator` is not scripted")
 
     async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
         self.calls.append(request)
@@ -320,3 +468,82 @@ class ScriptedLLMProvider:
             output_items=output_items,
             headers=headers,
         )
+
+    async def stream_structured(self, request: StreamRequest) -> AsyncIterator[StreamEvent]:
+        """Seam S13 (D-B-125): the next scripted tool step of `request.base.schema_name`, or
+        the answer of its responder in text deltas. `StreamCompleted` is always last; provider
+        errors are raised before the first event. The whole request goes to `stream_calls`,
+        its `base` to `calls`."""
+        base = request.base
+        self.stream_calls.append(request)
+        self.calls.append(base)
+        gate = self.gates.get(base.schema_name)
+        if gate is not None:
+            gate.arrived.set()
+            await gate.release.wait()
+        steps = self.tool_steps.get(base.schema_name, ())
+        step = _answered_steps(base.schema_name, steps, request.input_items)
+        tool_step = step < len(steps)
+        # D-B-125 п.5: `invalid_json` breaks the answer text, so on a tool step it waits for
+        # the answer step.
+        failure = self._take_failure(base, TOOL_STEP_SKIPS if tool_step else frozenset())
+        kind = None if failure is None else failure.kind
+        if failure is not None and kind in PROVIDER_ERRORS:
+            _failed_content(failure)
+        headers: dict[str, str] = {}
+        if failure is not None and kind == "ratelimit_headers":
+            headers = _ratelimit_headers(failure.remaining_share or 0.0)
+        status: Literal["completed", "incomplete"] = "completed"
+        # D-B-125 п.5: `commentary_only` gives only the commentary, `incomplete` only text
+        # (on a tool step — nothing: no `function_call`, only `StreamCompleted`).
+        if kind not in ("commentary_only", "incomplete"):
+            yield OutputItemDone(_reasoning_item(base.schema_name, step))
+        if kind == "commentary_only":
+            item_id = f"msg_{base.schema_name}_{step}_c"
+            yield OutputItemDone(_message_item(item_id, COMMENTARY_TEXT, commentary=True))
+        elif tool_step and kind == "incomplete":
+            status = "incomplete"
+        elif tool_step:
+            for event in _tool_step(base.schema_name, step, steps[step]):
+                yield event
+        else:
+            text = "{not json" if kind == "invalid_json" else self._answer_text(base)
+            if kind == "incomplete":
+                text, status = text[: max(1, len(text) // 2)], "incomplete"
+            for start in range(0, len(text), STREAM_DELTA_CHARS):
+                yield TextDelta(text[start : start + STREAM_DELTA_CHARS])
+            if status == "completed":
+                yield OutputItemDone(_message_item(f"msg_{base.schema_name}_{step}", text))
+        yield StreamCompleted(
+            status=status,
+            usage=StreamUsage(
+                input_tokens=SCRIPTED_INPUT_TOKENS, output_tokens=SCRIPTED_OUTPUT_TOKENS
+            ),
+            model=base.model,
+            headers=headers,
+        )
+
+    def _answer_text(self, request: ProviderRequest) -> str:
+        responder = self.responders.get(request.schema_name)
+        if responder is None:
+            raise AssertionError(f"ScriptedLLMProvider: no responder for {request.schema_name!r}")
+        return _stream_text(responder(request), body_before_head=self.body_before_head)
+
+
+def _tool_step(schema_name: str, step: int, scripted: ScriptedToolStep) -> list[StreamEvent]:
+    """Items of a scripted tool step: the commentary, then each `function_call` (D-B-125 п.2)."""
+    events: list[StreamEvent] = []
+    if scripted.commentary is not None:
+        item_id = f"msg_{schema_name}_{step}_c"
+        events.append(OutputItemDone(_message_item(item_id, scripted.commentary, commentary=True)))
+    for index, call in enumerate(scripted.calls):
+        item = {
+            "type": "function_call",
+            "id": f"fc_{schema_name}_{step}_{index}",
+            "call_id": _call_id(schema_name, step, index),
+            "name": call.name,
+            "arguments": _sorted_json(dict(call.arguments)),
+            "status": "completed",
+        }
+        events.append(OutputItemDone(item))
+    return events

@@ -2,8 +2,9 @@
 
 - `resolve_degraded_mode` (ТЗ Фазы 3 §4.4, seam S7): the one value of `degraded_mode` in
   `turn.teacher_replied` and SSE `turn_completed`; the first reason in priority order wins.
-- `teacher_reasoning_effort` (WP6.5, Т-§12.9): `high` only on the first turn of a session and
-  on the second failure in a row on the same skill; `teacher_fallback` is always `low`.
+- `teacher_reasoning_effort` (WP6.5, ТЗ Ф4 WP13.8, Т-§12.9): `high` on the first turn of a
+  session and a goal change, building a plan, review of a proof and the second failure in a
+  row on the same skill; `teacher_fallback` is always `low`.
 - `MEMORY_UNAVAILABLE_MARKER` (WP6.1, Т-§20.7): the line of the memory slot while Neo4j is
   down; part of the prompt contract of `teacher@1` (§7.6).
 """
@@ -55,15 +56,19 @@ def teacher_reasoning_effort(
     role: Literal["teacher", "teacher_fallback"],
     is_first_turn: bool,
     session_evaluations: Sequence[TaskEvaluated],
+    goal_changed: bool = False,
+    builds_plan: bool = False,
+    proof_answer: bool = False,
 ) -> Literal["low", "high"]:
-    """Effort of the teacher call (`T-H9`); `session_evaluations` in `seq` order.
+    """Effort of the teacher call (`T-H9`, `T-TT8`); `session_evaluations` in `seq` order.
 
-    `high` on the first turn of the session and when the two latest `task.evaluated` of the
-    session both failed on one skill (Т-§12.9); `teacher_fallback` is always `low`.
+    `high` by the table of Т-§12.9: the first turn of the session or a goal change, a turn
+    that builds a plan, the review of a `proof` answer, and the two latest `task.evaluated`
+    of the session both failed on one skill; `teacher_fallback` is always `low`.
     """
     if role == "teacher_fallback":
         return "low"
-    if is_first_turn:
+    if is_first_turn or goal_changed or builds_plan or proof_answer:
         return "high"
     if len(session_evaluations) < 2:
         return "low"

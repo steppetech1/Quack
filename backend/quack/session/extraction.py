@@ -28,7 +28,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from quack.events.models import StoredEvent
+from quack.events.log import StoredEvent
 from quack.events.payloads import ExtractedElement, TurnExtractedV2
 from quack.graph.evidence_validation import ExtractionContext, SourceEvent, to_extracted_element
 from quack.llm.labels import LabelMap

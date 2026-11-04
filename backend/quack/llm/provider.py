@@ -5,9 +5,28 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    from quack.llm.media import (
+        IllustrationRequest,
+        ImageResponse,
+        SegmentRequest,
+        TranscribeRequest,
+        TranscribeResponse,
+    )
 
 type ReasoningEffort = Literal["low", "high"]
+# Т-§11.1 «Spark с изображением» (recognizer, verdict_free, viz_checker); D-B-170.
+type ImageMime = Literal["image/png", "image/webp"]
+
+
+@dataclass(frozen=True)
+class ImageInput:
+    """An image of a role call (seam S12): the rendered canvas line, a photo, a drawing."""
+
+    mime: ImageMime
+    data: bytes
 
 
 @dataclass(frozen=True)
@@ -26,6 +45,8 @@ class ProviderRequest:
     reasoning_effort: ReasoningEffort | None = None
     max_output_tokens: int | None = None
     prompt_cache_key: str | None = None
+    # Images after the prompt text, in order (D-B-170).
+    images: tuple[ImageInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +101,15 @@ class HttpLLMProvider:
 
     async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
         return await self._impl.complete_structured(request)
+
+    async def segment(self, request: SegmentRequest) -> ProviderResponse:
+        return await self._impl.segment(request)
+
+    async def transcribe(self, request: TranscribeRequest) -> TranscribeResponse:
+        return await self._impl.transcribe(request)
+
+    async def illustrate(self, request: IllustrationRequest) -> ImageResponse:
+        return await self._impl.illustrate(request)
 
     async def aclose(self) -> None:
         await self._impl.aclose()
