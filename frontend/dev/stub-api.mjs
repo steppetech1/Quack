@@ -431,6 +431,12 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const blocks = S.cheats[hit.h.key];
     return blocks ? json(res, m === "POST" ? 201 : 200, { artifact_id: id("a-ch-" + hit.h.key), kind: "cheatsheet", topic_id: null, hub_id: g[1], version: 1, offer: false, blocks }) : err(res, "NOT_FOUND", 404, "no cheat sheet yet");
   }
+  // "I know this" / "not needed": 202 with the seq of the event (the stub keeps no state for them)
+  if (m === "POST" && (g = p.match(/^\/v1\/topics\/([^/]+)\/(known|hide)$/))) {
+    S.seq += 1;
+    for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
+    return json(res, 202, { seq: S.seq });
+  }
   if ((g = p.match(/^\/v1\/artifacts\/([^/]+)\/blocks\/([^/]+)$/))) {
     for (const [key, blocks] of Object.entries(S.notes)) {
       if (id("a-notes-" + key) !== g[1]) continue;

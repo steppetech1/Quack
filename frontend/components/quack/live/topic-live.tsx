@@ -45,7 +45,7 @@ export function TopicLive({ id }: { id: string }) {
   const router = useRouter();
   const errorText = useErrorText();
   const notice = useNotice();
-  const { domains, appliedSeq, setActive } = useData();
+  const { domains, appliedSeq, setActive, loadGraph } = useData();
   const { focusDomain } = useShell();
   const [data, setData] = useState<Loaded | null>(null);
   /** The page for this topic is on screen: a failed live re-fetch keeps it instead of showing an error */
@@ -132,6 +132,23 @@ export function TopicLive({ id }: { id: string }) {
     }
   };
 
+  /** "I know this" and "not needed": one POST, the graph is re-read by the live stream or right away */
+  const mark = async (what: "known" | "hide") => {
+    setBusy(true);
+    try {
+      await post(`/v1/topics/${topic.topic_id}/${what}`);
+      notice(what === "known" ? t.knownDone : t.hiddenDone);
+      if (what === "hide") {
+        await loadGraph(topic.domain_id).catch(() => {});
+        router.push("/");
+      }
+    } catch (e) {
+      notice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // the documents of the page: notes (blocks), cards (prompts), the cheat sheet of the hub
   type Doc = { key: string; title: string; kind: "note" | "cheatsheet"; text: string };
   const joined = (blocks: Block[]) => blocks.map((b) => b.content).join("\n\n");
@@ -197,6 +214,15 @@ export function TopicLive({ id }: { id: string }) {
             className={cn(ACTION_BTN, state === "review" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.review}
+          </button>
+        </div>
+
+        <div className="mt-2 flex flex-wrap gap-x-2">
+          <button type="button" disabled={busy} onClick={() => void mark("known")} className={cn(TEXT_BTN, "-ml-3")}>
+            {t.iKnowThis}
+          </button>
+          <button type="button" disabled={busy} onClick={() => void mark("hide")} className={TEXT_BTN}>
+            {t.hideTopic}
           </button>
         </div>
 
