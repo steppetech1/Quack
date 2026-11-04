@@ -15,22 +15,35 @@ changes nothing: not `Settings`, not the database, no event (Т-§18.5: a person
   `p_derived`) or `p` alone; the proposal is the value of `p` that makes the predictions of the
   rule add up to the observed successes: `Σ outcome / Σ R` (`R = 1` for a constant rule), kept
   in [0, 1]. Under `calibration_min_reports` observations the rule gets no proposal (law 8).
-- The weights of the evidence kinds (Т-§7.4) get no proposal: the documents say «a kind that
-  systematically fails to confirm is lowered» without a threshold, a step or the way to blame a
-  kind for an attempt (D-A-221).
+- The weights of the evidence kinds (D-A-245): a kind is a tier T1–T4 (Т-§7.2 п.5), the
+  calibrated numbers are `Settings.fold.tier_base_weights` (Т-§7.4); the multipliers of §7.4
+  (hint, «burning» window, guess) are not calibrated. The unit is an observation above (attempt ×
+  tested level). For every tier the active evidence of that tier on the skill and level before the
+  answer gives `q`, the share of `correct`; `x = q − 0.5` against `y' = outcome − 0.5`. The
+  strength of the tier is the least-squares slope through zero `w* = Σxy' / Σx²` (the trust with
+  which the tier moves the expectation 0.5; it minimises the Brier score of `0.5 + w·x`) with the
+  standard error `se`. T1 is the scale (its weight is 1.0): `ρ = w*_T / w*_T1`. A tier T2–T4
+  gets a **lowered** weight only when it has `min_units` units, T1 is positive with the one-sided
+  95% confidence (`z`) and the upper bound of `ρ` is below the current weight («systematically
+  fails to confirm», Т-§7.11): `max(ρ, current × (1 − max_step), floor)`. A raise is never
+  proposed (`above_current` in the report); after that the order of tiers is kept (reliability
+  falls with the tier, Т-§7.2). The numbers of `WeightRule` are starting values.
 """
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any
 from uuid import UUID
 
 from quack.config import Settings
 from quack.db import Db
+from quack.graph.calibration_read import EvidenceReader, read_tier_evidence, unit_evidence
 from quack.graph.read import GraphReader, LevelFact, SkillFact, create_graph_reader
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob
@@ -56,6 +69,41 @@ _ATTEMPTS = (
     "AND v.payload->>'outcome' IN ('correct', 'incorrect') "
     "ORDER BY v.occurred_at, v.learner_id, v.seq"
 )
+
+
+@dataclass(frozen=True)
+class WeightRule:
+    """The rule that proposes new base weights of the tiers (D-A-245); starting values."""
+
+    min_units: int = 30  # units per tier, and of T1, before a proposal
+    z: float = 1.645  # one-sided 95%
+    max_step: float = 0.5  # a weight falls by at most this share per proposal
+    floor: float = 0.05  # and never below
+
+
+WEIGHT_RULE = WeightRule()
+TIERS: tuple[int, ...] = (1, 2, 3, 4)
+
+
+@dataclass
+class TierSums:
+    """Sums of one tier over the units with `x ≠ 0` (`x = q − 0.5`, `y' = outcome − 0.5`)."""
+
+    units: int = 0
+    ties: int = 0
+    sxx: float = 0.0
+    sxy: float = 0.0
+    syy: float = 0.0
+
+    def add(self, share_correct: float, correct: bool) -> None:
+        x, y = share_correct - 0.5, (0.5 if correct else -0.5)
+        if x == 0:
+            self.ties += 1
+            return
+        self.units += 1
+        self.sxx += x * x
+        self.sxy += x * y
+        self.syy += y * y
 
 
 @dataclass
@@ -94,27 +142,50 @@ async def calibration_proposal(
     db: Db,
     settings: Settings,
     reader: Callable[[UUID], GraphReader],
+    evidence: EvidenceReader,
     since: datetime,
     until: datetime,
+    weight_rule: WeightRule = WEIGHT_RULE,
 ) -> dict[str, Any]:
-    """Brier score, calibration curve and the proposed `p_*` per rule over `[since, until)`.
-    Reads only; JSON-ready."""
+    """Brier score, calibration curve and the proposed `p_*` per rule, and the proposed tier
+    weights, over `[since, until)`. Reads only; JSON-ready."""
     rows = await db.fetch_all(_ATTEMPTS, {"since": since, "until": until})
     rows = rows[-settings.metrics_brier_max_attempts :]
     observed: dict[str, _Rule] = {name: _Rule() for name in RULES}
+    sums = {tier: TierSums() for tier in TIERS}
     skipped = 0
+    units_of: list[list[tuple[UUID, int]]] = []
+    skills_of: dict[UUID, set[UUID]] = defaultdict(set)
     for row in rows:
-        tested = [t for t in row["tests"] or [] if t.get("skill_id") is not None]
-        if not tested:
+        units = list(
+            dict.fromkeys(
+                (UUID(str(t["skill_id"])), int(t["level"]))
+                for t in row["tests"] or []
+                if t.get("skill_id") is not None
+            )
+        )
+        units_of.append(units)
+        skills_of[row["learner_id"]].update(skill for skill, _ in units)
+    # One read of the evidence per learner (all the skills of the window).
+    found = {
+        learner_id: await evidence(learner_id, sorted(skill_ids, key=str))
+        for learner_id, skill_ids in skills_of.items()
+    }
+    for row, units in zip(rows, units_of, strict=True):
+        if not units:
             continue
-        skill_ids = [UUID(str(t["skill_id"])) for t in tested]
+        answer_seq = int(row["answer_seq"])
         state = await reader(row["learner_id"]).state_at(
-            row["learner_id"], int(row["answer_seq"]) - 1, skill_ids
+            row["learner_id"], answer_seq - 1, [skill for skill, _ in units]
         )
         by_id = {s.skill_id: s for s in state.skills}
-        for skill_id, level in dict.fromkeys(
-            (UUID(str(t["skill_id"])), int(t["level"])) for t in tested
-        ):
+        correct = row["outcome"] == "correct"
+        for skill_id, level in units:
+            for tier in TIERS:
+                of_tier = unit_evidence(found[row["learner_id"]], skill_id, level, tier, answer_seq)
+                if of_tier:
+                    share = sum(e.outcome == "correct" for e in of_tier) / len(of_tier)
+                    sums[tier].add(share, correct)
             name, recall = rule_of(by_id.get(skill_id), level)
             if recall is None:
                 skipped += 1
@@ -122,12 +193,13 @@ async def calibration_proposal(
             bucket = observed[name]
             bucket.predicted.append(getattr(settings, name) * recall)
             bucket.recall.append(recall)
-            bucket.outcome.append(1.0 if row["outcome"] == "correct" else 0.0)
+            bucket.outcome.append(1.0 if correct else 0.0)
     every = [
         pair
         for rule in observed.values()
         for pair in zip(rule.predicted, rule.outcome, strict=True)
     ]
+    weights, reason = calibrate_weights(sums, settings.fold.tier_base_weights, weight_rule)
     return {
         "since": since.isoformat(),
         "until": until.isoformat(),
@@ -136,9 +208,77 @@ async def calibration_proposal(
         "skipped_unknown_recall": skipped,
         "brier": _brier(every),
         "rules": {name: _rule_report(settings, name, rule) for name, rule in observed.items()},
-        "evidence_weights": None,
-        "evidence_weights_reason": "no recalculation rule in Т-§7.4, Т-§7.11, Т-§18.5 (D-A-221)",
+        "evidence_weights": weights,
+        "evidence_weights_reason": reason,
     }
+
+
+def _strength(sums: TierSums) -> tuple[float, float] | None:
+    """`(w*, se)` of one tier; `None` under two units or without spread of `x`."""
+    if sums.units < 2 or sums.sxx <= 0:
+        return None
+    strength = sums.sxy / sums.sxx
+    rss = max(0.0, sums.syy - sums.sxy * sums.sxy / sums.sxx)
+    return strength, math.sqrt(rss / (sums.units - 1) / sums.sxx)
+
+
+def calibrate_weights(
+    sums: Mapping[int, TierSums], current: Sequence[float], rule: WeightRule
+) -> tuple[dict[str, Any], str | None]:
+    """The tier-weight report and its reason (D-A-245): `(evidence_weights, reason)`. `reason` is
+    set when the scale (T1) is undefined, not positive with the confidence, or has too few units."""
+    fit = {tier: _strength(sums[tier]) for tier in TIERS}
+    ref = fit[1]
+    reason: str | None = None
+    if ref is None or sums[1].units < rule.min_units:
+        reason = "the reference tier T1 has too few units or no spread (D-A-245)"
+    elif ref[0] - rule.z * ref[1] <= 0:
+        reason = "the strength of the reference tier T1 is not positive with confidence (D-A-245)"
+    tiers: dict[str, dict[str, Any]] = {}
+    proposed: dict[int, float | None] = {1: None}
+    for tier in TIERS:
+        found = fit[tier]
+        relative = found[0] / ref[0] if found and ref and ref[0] > 0 else None
+        direction, new = "insufficient", None
+        if tier == 1:
+            direction = "reference"
+        elif reason is None and found and ref and sums[tier].units >= rule.min_units:
+            cur = current[tier - 1]
+            low_ref, high_ref = ref[0] - rule.z * ref[1], ref[0] + rule.z * ref[1]
+            if (found[0] + rule.z * found[1]) / low_ref < cur:
+                direction = "below_current"
+                new = min(cur, max(found[0] / ref[0], cur * (1 - rule.max_step), rule.floor))
+                if new >= cur:
+                    direction, new = "keep", None
+            elif (found[0] - rule.z * found[1]) / high_ref > cur:
+                direction = "above_current"
+            else:
+                direction = "keep"
+        proposed[tier] = new
+        tiers[f"T{tier}"] = {
+            "units": sums[tier].units,
+            "ties": sums[tier].ties,
+            "strength": found[0] if found else None,
+            "se": found[1] if found else None,
+            "relative": relative,
+            "direction": direction,
+            "proposed": new,
+            "capped_by_order": False,
+        }
+    # Reliability falls with the tier (Т-§7.2): a tier never weighs more than the one above it.
+    for tier in (2, 3, 4):
+        above = proposed[tier - 1]
+        ceiling = current[tier - 2] if above is None else above
+        own = proposed[tier]
+        value = current[tier - 1] if own is None else own
+        if value > ceiling:
+            proposed[tier] = tiers[f"T{tier}"]["proposed"] = ceiling
+            tiers[f"T{tier}"]["capped_by_order"] = True
+    return {
+        "current": {f"T{t}": current[t - 1] for t in TIERS},
+        "reference_strength": ref[0] if ref else None,
+        "tiers": tiers,
+    }, reason
 
 
 def _brier(pairs: list[tuple[float, float]]) -> float | None:
@@ -174,5 +314,7 @@ async def handle_calibration_weekly(job: ClaimedJob, ctx: JobContext) -> None:
     def reader(learner_id: UUID) -> GraphReader:
         return create_graph_reader(ctx.neo4j, ctx.settings, learner_id=learner_id, db=ctx.db)
 
-    proposal = await calibration_proposal(ctx.db, ctx.settings, reader, since, until)
+    proposal = await calibration_proposal(
+        ctx.db, ctx.settings, reader, partial(read_tier_evidence, ctx.neo4j), since, until
+    )
     log.info("calibration_proposal", period=period, **proposal)

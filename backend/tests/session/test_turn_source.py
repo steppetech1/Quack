@@ -8,6 +8,8 @@ import json
 from typing import Any, cast
 from uuid import UUID, uuid4, uuid5
 
+import pytest
+
 from quack.config import Settings
 from quack.db import Db
 from quack.events.event_types import (
@@ -26,6 +28,7 @@ from quack.events.records import (
     TestedLevelRecord,
 )
 from quack.events.values import AnswerSpec, MathValue, Verdict
+from quack.graph.memory import InMemoryGraph
 from quack.llm.gateway import LLMGateway
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.task_store import create_task
@@ -446,7 +449,9 @@ def test_route_builds_the_source_from_the_resources() -> None:
     from quack.api.errors import ApiError
     from quack.session.router import get_turn_context_source
 
-    resources = SimpleNamespace(db=None, llm=None, settings=SETTINGS, neo4j=None, redis=None)
+    resources = SimpleNamespace(
+        db=None, llm=None, settings=SETTINGS, neo4j=None, redis=None, embeddings=None
+    )
     state = SimpleNamespace(resources=resources)
     request = cast(Any, SimpleNamespace(app=SimpleNamespace(state=state)))
     source = get_turn_context_source(request)
@@ -456,3 +461,186 @@ def test_route_builds_the_source_from_the_resources() -> None:
         get_turn_context_source(
             cast(Any, SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace())))
         )
+
+
+async def test_session_overlay_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WP2.3 (D-B-215): the turn waits for the end of the journal, the overlay brings the session
+    tail of a lagging projector; no driver or a failed event — an empty overlay."""
+    from neo4j import AsyncDriver
+
+    from quack.graph import overlay_build
+    from quack.graph.overlay import SessionOverlay
+    from quack.graph.projection.phase_a import EventFailed
+    from quack.session import turn_source
+
+    request = _request(fx.LEARNER, SESSION, 5)
+    built = SessionOverlay(applied_seq=3, overlay_seq=5, events=[], graph=InMemoryGraph())
+    outcome: list[SessionOverlay | Exception] = [built]
+
+    async def fake(*_args: Any, **_kwargs: Any) -> SessionOverlay:
+        result = outcome[0]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(turn_source, "build_session_overlay", fake)
+
+    def source(neo4j: object | None) -> MemoryTurnContextSource:
+        return MemoryTurnContextSource(
+            db=cast(Db, None),
+            gateway=cast(LLMGateway, None),
+            settings=SETTINGS,
+            reader=lambda _learner: fx.FixedGraphReader(),
+            neo4j=cast(AsyncDriver | None, neo4j),
+        )
+
+    lagging = await source(object())._overlay(request, 9)
+    assert (lagging.applied_seq, lagging.overlay_seq) == (3, 9)
+    outcome[0] = EventFailed(4, ValueError("bad"))
+    failed = await source(object())._overlay(request, 9)
+    assert (failed.applied_seq, failed.overlay_seq, failed.events) == (0, 9, [])
+    assert overlay_build.empty_overlay(0).applied_seq == 0
+    none = await source(None)._overlay(request, 9)
+    assert (none.applied_seq, none.overlay_seq) == (0, 0)
+
+
+async def test_turn_reads_the_verdict_of_its_own_action(pg_db: Db) -> None:
+    """T-E1 (#279, D-B-221): the verdict is written right after the answer
+    (`causation_seq = answer seq`); the turn reads it, so a correct answer is `solved`."""
+    from quack.events.event_types import AnswerSubmitted
+    from quack.events.values import LearnerAnswer, Verdict
+
+    learner_id = await create_learner(pg_db)
+    session_id, task_id = uuid4(), uuid4()
+    await create_task(
+        pg_db,
+        learner_id=learner_id,
+        task_id=task_id,
+        family_id=uuid4(),
+        source="generated",
+        condition=TaskCondition(text="Add 1/2 and 1/3", latex=None),
+        markup=_markup(fx.SKILL_FAILED),
+        verification="checked",
+        actor="teacher@2",
+        idempotency_key=f"task:{task_id}",
+        session_id=session_id,
+        domain_id=fx.DOMAIN,
+    )
+    [answer] = await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="answer.submitted",
+                payload=AnswerSubmitted(
+                    task_id=task_id, answer=LearnerAnswer(kind="number", value="5/6"), source="chat"
+                ),
+                actor="learner",
+                idempotency_key=f"answer:{uuid4()}",
+                session_id=session_id,
+                domain_id=fx.DOMAIN,
+            )
+        ],
+    )
+    await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="verdict.recorded",
+                payload=Verdict(
+                    answer_seq=answer.seq,
+                    part="main",
+                    outcome="correct",
+                    method="exact",
+                    verification="code",
+                ),
+                actor="code",
+                idempotency_key=f"verdict:{answer.seq}:main",
+                session_id=session_id,
+                domain_id=fx.DOMAIN,
+                causation_seq=answer.seq,
+            )
+        ],
+    )
+    source = MemoryTurnContextSource(
+        db=pg_db,
+        gateway=LLMGateway(ScriptedLLMProvider(), SETTINGS, db=pg_db),
+        settings=SETTINGS,
+        reader=lambda _learner: fx.FixedGraphReader(),
+        clock=lambda: NOW_MS,
+    )
+    setup = await source.assemble(_request(learner_id, session_id, answer.seq))
+    assert setup.answered is not None and setup.answered.solved is True
+
+
+async def test_neo4j_down_marks_the_turn_memory_unavailable(pg_db: Db) -> None:
+    """T-E11 (#279, D-B-221): `ServiceUnavailable` of Neo4j does not escape the assembly —
+    slots 3, 4, 7 are empty and the turn carries the mark."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    class _Down(fx.FixedGraphReader):
+        async def profile(self, learner_id: UUID) -> Any:
+            raise ServiceUnavailable("neo4j is down")
+
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    seq = await _message(pg_db, learner_id, session_id, text="hello", intent=None, topic_id=None)
+    source = MemoryTurnContextSource(
+        db=pg_db,
+        gateway=LLMGateway(ScriptedLLMProvider(), SETTINGS, db=pg_db),
+        settings=SETTINGS,
+        reader=lambda _learner: _Down(),
+        clock=lambda: NOW_MS,
+    )
+    setup = await source.assemble(_request(learner_id, session_id, seq))
+    assert setup.assembled.degraded_mode == "memory_unavailable"
+
+
+async def test_material_search_is_wired_to_the_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T-E7 (#279, D-B-221): the query is embedded and the graph search is bound to the learner
+    and the domain of the turn; Modal down — the tool answers «search temporarily unavailable»."""
+    from neo4j import AsyncDriver
+
+    from quack.embeddings.client import EmbeddingsUnavailable
+    from quack.graph.read.materials import ChunkHit
+    from quack.session import turn_source
+    from tests.support.embeddings import FakeEmbeddingClient
+
+    seen: dict[str, Any] = {}
+
+    async def fake_search(_driver: Any, **kwargs: Any) -> list[ChunkHit]:
+        seen.update(kwargs)
+        return [
+            ChunkHit(
+                chunk_id=uuid4(),
+                material_id=None,
+                page=3,
+                text="Ratio test",
+                teaches_focus=True,
+                score=0.9,
+            )
+        ]
+
+    monkeypatch.setattr(turn_source, "materials_search", fake_search)
+
+    def source(embeddings: FakeEmbeddingClient | None) -> MemoryTurnContextSource:
+        return MemoryTurnContextSource(
+            db=cast(Db, None),
+            gateway=cast(LLMGateway, None),
+            settings=SETTINGS,
+            reader=lambda _learner: fx.FixedGraphReader(),
+            neo4j=cast(AsyncDriver, object()),
+            embeddings=embeddings,
+        )
+
+    assert source(None)._search(fx.LEARNER, fx.DOMAIN) is None
+    search = source(FakeEmbeddingClient(8))._search(fx.LEARNER, fx.DOMAIN)
+    assert search is not None
+    [chunk] = await search("ratio test", [fx.SKILL_FAILED], 5)
+    assert chunk.page == 3 and chunk.text == "Ratio test"
+    assert seen["learner_id"] == fx.LEARNER and seen["domain_id"] == fx.DOMAIN and seen["k"] == 5
+    down = source(FakeEmbeddingClient(8, available=False))._search(fx.LEARNER, fx.DOMAIN)
+    assert down is not None
+    with pytest.raises(EmbeddingsUnavailable):
+        await down("ratio test", [], 5)

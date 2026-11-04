@@ -1,47 +1,72 @@
-"""`ops orphan-objects --since <t> [--dry-run]` (Д-§8.3 step 8, ТЗ Ф4 WP9.6, D-C-211).
+"""`ops orphan-objects --since <t> [--apply]` (Д-§8.3 step 8, ТЗ Ф4 WP9.6, D-C-211, D-C-215).
 
 After Postgres is restored from a dump, `quack-learners` may hold files that the restored log
 does not know: uploads whose events were lost. They belong to no record, and account deletion by
-the journal does not cover them, so they are deleted. Only objects newer than `since` (the time
-of the dump) are looked at; an object is kept when Postgres refers to it:
+the journal does not cover them. Only objects newer than `since` (the time of the dump) are
+looked at; an object is kept when Postgres refers to it. Without `apply` the command only
+reports what it would delete (dry run, the default); objects are deleted only with `apply`.
 
-- a canvas chunk (`learners/{learner}/canvas/{session}/{canvas}/...`) when the canvas has a row
-  in `content.canvas_boards` (chunks are found by prefix, no row names them);
-- any other key when it is the key of a material, a material page or an export, or when it
-  stands in an event of the same learner (`photo.uploaded`, `agent.completed.result_ref`, ...)
-  or in an artifact version of the learner.
+Every place that may name a file is one entry of `REFERENCE_SOURCES`; a new column or table
+with a key is added there and gets a case in `tests/test_ops_p4_recovery.py`, which fails for
+a source without a test.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import LiteralString
 from uuid import UUID
 
 from quack.db import Db
 from quack.storage.objects import ObjectInfo, ObjectStore
 
-_KEYS_IN_TABLES = (
-    "SELECT 1 AS found FROM content.materials "
-    "WHERE learner_id = %(learner_id)s AND object_key = %(key)s "
-    "UNION ALL SELECT 1 FROM content.material_pages "
-    "WHERE learner_id = %(learner_id)s AND image_key = %(key)s "
-    "UNION ALL SELECT 1 FROM content.exports "
-    "WHERE learner_id = %(learner_id)s AND object_key = %(key)s "
-    "LIMIT 1"
+
+@dataclass(frozen=True)
+class ReferenceSource:
+    """One place in Postgres that names a file of a learner. `query` takes `learner_id` and
+    `key` and returns a row when the key is named; the learner of the key is the only one
+    looked at (isolation)."""
+
+    name: str
+    query: LiteralString
+
+
+REFERENCE_SOURCES: tuple[ReferenceSource, ...] = (
+    ReferenceSource(
+        "materials",
+        "SELECT 1 AS found FROM content.materials "
+        "WHERE learner_id = %(learner_id)s AND object_key = %(key)s LIMIT 1",
+    ),
+    ReferenceSource(
+        "material_pages",
+        "SELECT 1 AS found FROM content.material_pages "
+        "WHERE learner_id = %(learner_id)s AND image_key = %(key)s LIMIT 1",
+    ),
+    ReferenceSource(
+        "exports",
+        "SELECT 1 AS found FROM content.exports "
+        "WHERE learner_id = %(learner_id)s AND object_key = %(key)s LIMIT 1",
+    ),
+    ReferenceSource(
+        "events",
+        "SELECT 1 AS found FROM core.events "
+        "WHERE learner_id = %(learner_id)s AND strpos(payload::text, %(key)s) > 0 LIMIT 1",
+    ),
+    ReferenceSource(
+        "artifact_versions",
+        "SELECT 1 AS found FROM content.artifact_versions "
+        "WHERE learner_id = %(learner_id)s AND strpos(content::text, %(key)s) > 0 LIMIT 1",
+    ),
 )
-_KEY_IN_EVENTS = (
-    "SELECT 1 AS found FROM core.events "
-    "WHERE learner_id = %(learner_id)s AND strpos(payload::text, %(key)s) > 0 LIMIT 1"
-)
-_KEY_IN_ARTIFACTS = (
-    "SELECT 1 AS found FROM content.artifact_versions "
-    "WHERE learner_id = %(learner_id)s AND strpos(content::text, %(key)s) > 0 LIMIT 1"
-)
-_CANVAS = (
+# Canvas chunks are named by no column: they are found by the prefix of the canvas, and the
+# canvas is kept when it has a row.
+CANVAS_SOURCE = ReferenceSource(
+    "canvas_boards",
     "SELECT 1 AS found FROM content.canvas_boards "
-    "WHERE learner_id = %(learner_id)s AND canvas_id = %(canvas_id)s"
+    "WHERE learner_id = %(learner_id)s AND canvas_id = %(canvas_id)s LIMIT 1",
 )
+SOURCE_NAMES = frozenset(source.name for source in (*REFERENCE_SOURCES, CANVAS_SOURCE))
 
 _PREFIX = "learners/"
 _CANVAS_PARTS = 6  # learners / {learner} / canvas / {session} / {canvas} / {file}
@@ -52,6 +77,7 @@ class OrphanReport:
     checked: int
     orphans: list[str]
     deleted: int
+    dry_run: bool = True
 
 
 def _uuid(text: str) -> UUID | None:
@@ -63,13 +89,11 @@ def _uuid(text: str) -> UUID | None:
 
 async def _referenced(db: Db, learner_id: UUID, key: str, canvas_id: UUID | None) -> bool:
     if canvas_id is not None:
-        return (
-            await db.fetch_one(_CANVAS, {"learner_id": learner_id, "canvas_id": canvas_id})
-            is not None
-        )
+        params: dict[str, object] = {"learner_id": learner_id, "canvas_id": canvas_id}
+        return await db.fetch_one(CANVAS_SOURCE.query, params) is not None
     params = {"learner_id": learner_id, "key": key}
-    for query in (_KEYS_IN_TABLES, _KEY_IN_EVENTS, _KEY_IN_ARTIFACTS):
-        if await db.fetch_one(query, params) is not None:
+    for source in REFERENCE_SOURCES:
+        if await db.fetch_one(source.query, params) is not None:
             return True
     return False
 
@@ -88,12 +112,17 @@ async def _kept(db: Db, info: ObjectInfo) -> bool:
 
 
 async def orphan_objects(
-    db: Db, store: ObjectStore, since: datetime, *, dry_run: bool = False
+    db: Db, store: ObjectStore, since: datetime, *, apply: bool = False
 ) -> OrphanReport:
-    """Objects of `quack-learners` newer than `since` without a reference in Postgres; they are
-    deleted unless `dry_run`. Sorted by key."""
+    """Objects of `quack-learners` newer than `since` without a reference in Postgres, sorted
+    by key. They are deleted only when `apply` is true; by default nothing is touched."""
     newer = [o for o in await store.list_objects(_PREFIX) if o.last_modified > since]
     orphans = sorted([o.key for o in newer if not await _kept(db, o)])
-    if orphans and not dry_run:
+    if orphans and apply:
         await store.delete_keys(orphans)
-    return OrphanReport(checked=len(newer), orphans=orphans, deleted=0 if dry_run else len(orphans))
+    return OrphanReport(
+        checked=len(newer),
+        orphans=orphans,
+        deleted=len(orphans) if apply else 0,
+        dry_run=not apply,
+    )

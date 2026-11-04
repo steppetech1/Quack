@@ -45,6 +45,7 @@ from quack.artifacts.documents import (
     get_artifact,
     write_system_blocks,
 )
+from quack.artifacts.learner_skills import bound_skill, writer_text
 from quack.artifacts.writer import ArtifactWriterOutput, WrittenCard
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
@@ -64,7 +65,6 @@ log = get_logger(__name__)
 
 NOTES_TYPE = "notes"
 CARDS_TYPE = "cards"
-NO_LEARNER_SKILL = "None."
 
 type Prefetch = Callable[[Sequence[UUID]], Awaitable[list[ChunkHit]]]
 
@@ -86,6 +86,7 @@ class WriterInput:
     labels: LabelMap
     chunks: dict[UUID, ChunkHit]
     current: tuple[Block, ...]
+    skill_version: int | None = None  # the learner's skill the artifact is written under
 
 
 async def worked_phrasings(
@@ -125,6 +126,7 @@ async def writer_input(
     topic_id: UUID,
     artifact_type: str = NOTES_TYPE,
     current_text: str | None = None,
+    skill_type: str = NOTES_TYPE,
 ) -> WriterInput | None:
     """The four layers for the topic's notes (or, with `artifact_type` and `current_text`, for its
     cards: the text of the cards already there); `None` — the graph does not know the topic."""
@@ -146,9 +148,10 @@ async def writer_input(
     if current_text is None:
         notes = await get_artifact(db, learner_id=learner_id, kind="notes", owner_id=topic_id)
         current = notes.blocks
+    skill = await bound_skill(db, learner_id=learner_id, artifact_type=skill_type)
     variables = {
         "artifact_type": artifact_type,
-        "learner_skill": NO_LEARNER_SKILL,
+        "learner_skill": writer_text(skill),
         "topic_graph": _topic_graph(topic, labels, await _neighbours(reader, topic)),
         "material_chunks": chunks_text(hits, labels),
         "worked_phrasings": phrasings_text(phrasings, labels),
@@ -160,6 +163,7 @@ async def writer_input(
         labels=labels,
         chunks={h.chunk_id: h for h in hits},
         current=current,
+        skill_version=None if skill is None else skill.version,
     )
 
 
@@ -319,6 +323,7 @@ async def refresh_topic_notes(
         owner_id=topic_id,
         blocks=blocks,
         created_by=prompt,
+        skill_version=context.skill_version,
         redis=redis,
     )
     return notes.version
@@ -349,7 +354,7 @@ async def refresh_topic_cards(
     context = await writer_input(
         db, reader, prefetch, settings, learner_id=learner_id, topic_id=topic_id,
         artifact_type=f"{CARDS_TYPE} (at most {room} new cards)",
-        current_text=numbered_cards_text(current.cards),
+        current_text=numbered_cards_text(current.cards), skill_type=CARDS_TYPE,
     )  # fmt: skip
     if context is None:
         log.info("topic_refresh_unknown_topic", topic_id=str(topic_id))
@@ -400,7 +405,7 @@ async def refresh_topic_cards(
             stored.append(Card(card_id=task_id, kind=card.kind, prompt=card.prompt, owner="system"))
         written = await write_system_cards(
             db, settings, learner_id=learner_id, topic_id=topic_id, cards=stored,
-            created_by=prompt, redis=redis,
+            created_by=prompt, skill_version=context.skill_version, redis=redis,
         )  # fmt: skip
     return written.version
 

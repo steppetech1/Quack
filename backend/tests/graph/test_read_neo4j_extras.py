@@ -327,6 +327,8 @@ async def test_extraction_candidates_session_nearest_and_restriction(
 async def test_review_candidates_reasons_scope_and_isolation(
     g: Graph, other: Graph, reader: Reader
 ) -> None:
+    """T-RV1 (`test_review_candidates_at_read`): the reasons of `Т-§14.1`, the allowed forgetting
+    of an idle domain, scopes and isolation; the candidates are read, never stored."""
     recent: dict[str, Any] = {"lastPracticeAtMs": NOW - DAY}
     due = await g.skill(
         retStability=2.0, retLastRecallAtMs=NOW - 30 * DAY // 10, retDueAtMs=NOW - 1, **recent
@@ -379,6 +381,11 @@ async def test_review_candidates_reasons_scope_and_isolation(
     assert [str(c.skill_id) for c in by_topic] == [due_topic]
     assert len(await reader.review_candidates(UUID(g.learner), NOW, ReviewScope(max_items=1))) == 1
     assert await reader.review_candidates(uuid4(), NOW) == []
+    # T-RV4: past the date (the grade is offered and entered after it, `Т-§14.8`) the deadline
+    # weighs nothing; the topics go to ordinary repetition.
+    await g.run("MATCH (h:Hub {id: $id}) SET h.deadlineAtMs = $at", id=hub, at=NOW - DAY)
+    assert due_topic not in {str(c.skill_id) for c in await reader.review_candidates(
+        UUID(g.learner), NOW)}  # fmt: skip
 
 
 async def test_prep_context_readiness_days_and_candidates(g: Graph, reader: Reader) -> None:

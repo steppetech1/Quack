@@ -68,8 +68,8 @@ type Row = dict[str, Any]
 LEVELS: Final = (1, 2, 3, 4, 5, 6)
 # Т-§10.2: the misconceptions the teacher sees.
 VISIBLE_MISCONCEPTIONS: Final = ("suspected", "confirmed", "in_work", "watching")
-# D-A-141: last exposures per skill in a slice; verbatim quotes per misconception (model: max 2).
-RECENT_EXPOSURES: Final = 3
+# D-A-141: verbatim quotes per misconception (the schema of the model: max 2); the number of
+# exposures per skill is `Settings.slice_recent_exposures` (D-A-242).
 MAX_QUOTES: Final = 2
 # Т-§9.4: a root cause is a prerequisite that several hypotheses point to.
 ROOT_CAUSE_MIN_HYPOTHESES: Final = 2
@@ -351,7 +351,7 @@ class Neo4jGraphReader(ExtraReads):
             "at: x.atMs})[..$n] AS xs",
             ids=live,
             l=l_,
-            n=RECENT_EXPOSURES,
+            n=self._settings.slice_recent_exposures,
         ):
             out.skills[r["sid"]].exposures = [
                 _Exposure(x["id"], x["kind"], int(x["seq"]), int(x["at"])) for x in r["xs"]
@@ -457,7 +457,7 @@ class Neo4jGraphReader(ExtraReads):
                     _Exposure(xid, _s(props, "kind"), _i(props, "sourceSeq"), _i(props, "atMs"))
                 )
                 data.exposures.sort(key=lambda x: (-x.at_ms, -x.seq, x.id))
-                del data.exposures[RECENT_EXPOSURES:]
+                del data.exposures[self._settings.slice_recent_exposures :]
         by_id = {m.id: m for m in loaded.misconceptions}
         for mid, props in graph.nodes_with_label("Misconception"):
             about = [
