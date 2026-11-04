@@ -17,8 +17,9 @@ TEXT = "Every term is a third of the one before it."
 NUMBER = {"type": "number", "value": {"latex": r"\frac{1}{3}", "sympy": "1/3"}}
 
 
-def teacher_turn(*, with_task: bool) -> dict[str, Any]:
-    """`teacher@2` output: the head, the body and the markup; one task as an element."""
+def teacher_turn(*, with_task: bool, with_skills: bool = True) -> dict[str, Any]:
+    """`teacher@2` output: the head, the body and the markup; one task as an element. Without
+    `with_skills` the turn names no skill (memory is down: there are no skill labels)."""
     blocks: list[dict[str, Any]] = [{"block_id": "b1", "text": TEXT, "element_id": None}]
     tasks: list[dict[str, Any]] = []
     elements: list[dict[str, Any]] = []
@@ -27,7 +28,7 @@ def teacher_turn(*, with_task: bool) -> dict[str, Any]:
         tasks.append(
             {
                 "element_id": "e1",
-                "tests": [{"skill": "S1", "level": 2}],
+                "tests": [{"skill": "S1", "level": 2}] if with_skills else [],
                 "methodNamed": False,
                 "answer": NUMBER,
             }
@@ -43,7 +44,7 @@ def teacher_turn(*, with_task: bool) -> dict[str, Any]:
     return {
         "p1_head": {
             "intent": "explain",
-            "targetSkills": ["S1"],
+            "targetSkills": ["S1"] if with_skills else [],
             "verdict_stance": None,
             "branchType": None,
             "topicLabel": None,
@@ -53,7 +54,11 @@ def teacher_turn(*, with_task: bool) -> dict[str, Any]:
         "p3_markup": {
             "tasks": tasks,
             "elements": elements,
-            "exposures": [{"skill": "S1", "kind": "explained", "approach": "example_first"}],
+            "exposures": (
+                [{"skill": "S1", "kind": "explained", "approach": "example_first"}]
+                if with_skills
+                else []
+            ),
             "targetsMisconception": None,
             "planUpdate": {
                 "completed_steps": [],
@@ -122,10 +127,16 @@ def script_task_checker(system: System) -> None:
     )
 
 
-def script_teacher(system: System, pattern: tuple[bool, ...] = (True,)) -> None:
+def script_teacher(
+    system: System, pattern: tuple[bool, ...] = (True,), *, with_skills: bool = True
+) -> None:
     """The turns offer a task where `pattern` says so; the turns after it only talk."""
-    turns = iter([teacher_turn(with_task=with_task) for with_task in pattern])
-    system.llm.respond(SCHEMA, lambda _r: next(turns, teacher_turn(with_task=False)))
+    turns = iter(
+        [teacher_turn(with_task=with_task, with_skills=with_skills) for with_task in pattern]
+    )
+    system.llm.respond(
+        SCHEMA, lambda _r: next(turns, teacher_turn(with_task=False, with_skills=with_skills))
+    )
 
 
 def script_extractor(system: System, *, events: list[int], skill: str = "S1") -> None:

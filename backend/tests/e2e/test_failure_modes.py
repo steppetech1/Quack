@@ -15,7 +15,13 @@ import pytest
 from tests.e2e.conftest import StandFactory
 from tests.e2e.journey import ok, onboard
 from tests.e2e.system import System
-from tests.e2e.text_journey import act, run_text_journey, script_teacher, start_session
+from tests.e2e.text_journey import (
+    act,
+    event_types,
+    run_text_journey,
+    script_teacher,
+    start_session,
+)
 from tests.session.helpers import parse_sse
 from tests.support.broken import BrokenNeo4jDriver, BrokenRedis
 from tests.support.deletions import FakeDeletionJournal
@@ -28,9 +34,10 @@ ALWAYS = 1_000_000
 PDF = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n"
 
 
-async def turn_mark(system: System) -> str | None:
-    """A message to the teacher on a topic; the `degraded_mode` of the committed turn."""
-    script_teacher(system, ())
+async def turn_mark(system: System, *, with_skills: bool = True) -> str | None:
+    """A message to the teacher on a topic; the `degraded_mode` of the committed turn. Where the
+    memory is down the teacher has no skill labels to name, so `with_skills` is off."""
+    script_teacher(system, (), with_skills=with_skills)
     learner = await system.sign_in_by_link()
     domain_id, topic_id = await onboard(system, learner, f"te11:{uuid4()}")
     session_id = await start_session(system, learner, domain_id, topic_id)
@@ -44,12 +51,28 @@ async def turn_mark(system: System) -> str | None:
 
 
 async def meta_is_down(system: System) -> None:
+    """Т-§20.7, Т-§12.1: the provider is down — the teacher answers with an `error` frame
+    `LLM_DEGRADED` (`retryable`), and there is no turn: no `turn_committed`, no `turn.committed`."""
     system.llm.fail(ScriptedFailure("unavailable", times=ALWAYS))
-    assert await turn_mark(system) == "llm_unavailable"
+    script_teacher(system, ())
+    learner = await system.sign_in_by_link()
+    domain_id, topic_id = await onboard(system, learner, f"te11:{uuid4()}")
+    session_id = await start_session(system, learner, domain_id, topic_id)
+    response = await act(system, learner, session_id, {"kind": "message", "text": "Hello"})
+    assert response.status_code == 200, response.text
+    frames = parse_sse(response.content)
+    names = [n for n, _ in frames]
+    assert names[0] == "action_recorded" and names[-1] == "error", frames
+    assert "turn_committed" not in names, frames
+    error = frames[-1][1]
+    assert error["code"] == "LLM_DEGRADED" and error["retryable"] is True, frames
+    await system.settle()
+    types = await event_types(system, learner)
+    assert "turn.committed" not in [t for _, t in types], types
 
 
 async def neo4j_is_down(system: System) -> None:
-    assert await turn_mark(system) == "memory_unavailable"
+    assert await turn_mark(system, with_skills=False) == "memory_unavailable"
 
 
 async def redis_is_down(system: System) -> None:
@@ -116,22 +139,7 @@ ROWS: dict[str, Row] = {
 }
 
 
-# Rows that are red on the code of today (D-C-191): needed from stream B / A, not changed here.
-RED = {
-    "meta": "B: turn_source sets llm_unavailable=False; a down provider ends the turn with an "
-    "`error` frame LLM_DEGRADED instead of a turn marked llm_unavailable (ТЗ §4.4)",
-    "neo4j": "A/B: ServiceUnavailable of Neo4j escapes the assembly of the turn (`turn_failed`) "
-    "instead of the mark memory_unavailable",
-}
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        pytest.param(n, marks=pytest.mark.xfail(strict=True, reason=RED[n])) if n in RED else n
-        for n in ROWS
-    ],
-)
+@pytest.mark.parametrize("name", list(ROWS))
 async def test_failure_modes_t207(stand: StandFactory, name: str) -> None:
     """T-E11."""
     resources, behaviour = ROWS[name]

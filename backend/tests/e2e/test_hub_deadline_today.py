@@ -11,8 +11,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
-
 from tests.e2e.conftest import StandFactory
 from tests.e2e.journey import ok, onboard
 from tests.e2e.system import System
@@ -101,11 +99,6 @@ async def test_hub_deadline_today(stand: StandFactory) -> None:
         assert plans[0]["plan"]["current_step"] == "Recall the ratio", plans
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B: nothing adopts the prepared plan (`prepared_session_id`) when a session starts "
-    "from a «Сегодня» item (WP16.8, WP13.6; D-C-191)",
-)
 async def test_session_from_today_item_has_its_plan(stand: StandFactory) -> None:
     """T-E9, the last step: the session started on the topic of the item opens with the plan the
     planner prepared."""

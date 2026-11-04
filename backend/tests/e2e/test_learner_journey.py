@@ -9,24 +9,10 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from tests.e2e.journey import ok
 from tests.e2e.system import System
 from tests.e2e.text_journey import event_types, run_text_journey
 
-# `read_journal` of the teacher turn reads the session events only up to the seq of the answer,
-# and the instant verdict is written right after it: `answered.solved` is never true, so the turn
-# after a correct answer does not close the task (`task.closed`) and the episode stays open.
-# Needed from stream B (`quack/session/turn_source.py`, `assemble`): read the events up to the end
-# of the action batch (the verdicts whose `answer_seq` is the action). D-C-191.
-SOLVED_NEVER_CLOSES = (
-    "B: turn_source.assemble reads the session up to the seq of the answer, before its verdict; "
-    "the solved task is not closed (D-C-191)"
-)
-
-
-@pytest.mark.xfail(strict=True, reason=SOLVED_NEVER_CLOSES)
 async def test_learner_journey_text(system: System) -> None:
     """T-E1."""
     journey = await run_text_journey(system)

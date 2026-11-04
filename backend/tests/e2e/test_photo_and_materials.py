@@ -11,8 +11,6 @@ import re
 from typing import Any
 from uuid import UUID, uuid4
 
-import pytest
-
 from quack.api.auth import SESSION_COOKIE
 from quack.compute_client.contracts import AlignResponse, PdfPage, PdfPagesResponse
 from tests.e2e.journey import ok, onboard, sse_events
@@ -207,14 +205,6 @@ async def test_materials_journey(system: System) -> None:
     await parsed_material(system)
 
 
-MODAL_NOT_WIRED = (
-    "B: `source_of` builds `MemoryTurnContextSource` without the embeddings client, so the "
-    "`ToolContext` has no `search`: `search_materials` always answers «search temporarily "
-    "unavailable» in the real process (WP14.4, D-C-191)"
-)
-
-
-@pytest.mark.xfail(strict=True, reason=MODAL_NOT_WIRED)
 async def test_search_materials_tool_finds_the_chunk(system: System) -> None:
     """T-E7, the second half: a teacher turn calls `search_materials` and gets the chunk."""
     learner, domain_id, topic_id = await parsed_material(system)
