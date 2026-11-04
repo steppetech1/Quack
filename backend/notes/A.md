@@ -23,6 +23,26 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-A-247. WP3.4: веса выведенных свидетельств (×0.5, ×0.6) — в `Settings`
+- Класс: A
+- WP / место: WP3.4, WP4; `quack/config.py` (`derived_indirect_factor`, `derived_transfer_factor`), `quack/graph/projection/skill_fold.py` (`FoldParams.from_settings`)
+- Контекст: ревью `phase-4` (#284): множители `{direct: 1.0, indirect: 0.5, transfer: 0.6}` лежали в `FoldParams.derived_factor` числами в коде. Т-§7.9 задаёт значения «×0.5» и «×0.6»; правило проекта: числа — в конфиг под именем, значения документов — стартовые (`backend/CLAUDE.md`, §0.4)
+- Решение: два параметра `Settings.derived_indirect_factor = 0.5`, `derived_transfer_factor = 0.6` рядом с `requires_min_confidence`/`same_idea_min_confidence` (Т-§7.9); `FoldParams.from_settings` собирает из них `derived_factor`, у `direct` остаётся 1.0. Значения по умолчанию совпадают с прежними, свёртка и `rules@3` не меняются; смена значения — новая версия правил и пересборка (Т-§2.5)
+- Почему: Т-§7.9, Т-§7.4 («все числа — стартовые»), закон 2 в части «числа не в коде»; прецедент добавления параметра в `config.py` — D-A-242 (`slice_recent_exposures`)
+- Обратимость: полная
+- Тесты: `tests/graph/test_skill_fold.py::test_derived_evidence_factors_come_from_settings`
+- Требует подтверждения владельцем: нет
+
+### D-A-246. WP7.5: `dispatcher.episode_idle` каждый опрос — оставлено, замер
+- Класс: A
+- WP / место: WP7.5, `quack/jobs/dispatcher_p4.py::close_idle_episodes`, `_IDLE_LEARNERS`
+- Контекст: ревью `phase-4` (#284): проверка простоя эпизодов на каждом опросе (`consumer_poll_ms` = 500 мс) читает JSONB `ops.dispatcher_offsets.counters` по всем ученикам. ТЗ WP7.5 задаёт период этой проверки равным `consumer_poll_ms` (`Т-§7.5`)
+- Решение: запрос и период не меняются. Замер на тестовой базе (две открытых сессии у каждого ученика, запрос `_IDLE_LEARNERS`): 1 000 учеников — 3,6 мс на проверку, 10 000 — 18,6 мс; при 100 учениках (DoD 7a, ТЗ §10) — меньше 1 мс, то есть доли процента одного ядра базы. Реже проверять нельзя без отхода от ТЗ (реестр §2.4), кэш «следующего срока» в памяти ломается при нескольких процессах диспетчера. Порог пересмотра: больше 10 000 учеников или проверка дольше 20 мс — тогда отдельный индекс срока в `ops.dispatcher_offsets` (миграция A) вместо разбора JSONB
+- Почему: ТЗ WP7.5 (период `consumer_poll_ms`), Т-§7.5, замер выше
+- Обратимость: полная
+- Тесты: нет новых (поведение не меняется); `tests/jobs/test_dispatcher_p4.py` проверяет закрытие по простою
+- Требует подтверждения владельцем: нет
+
 ### D-A-245. WP7.5: правило пересчёта базовых весов ярусов Т1–Т4 в `calibration.weekly` (заменяет D-A-221)
 - Класс: A
 - WP / место: WP7.5; `quack/jobs/calibration_p4.py` (`WeightRule`, `WEIGHT_RULE`, `TierSums`, `calibrate_weights`), `quack/graph/calibration_read.py` (новый), `tests/jobs/test_calibration_p4.py`, `tests/graph/test_calibration_read.py`
