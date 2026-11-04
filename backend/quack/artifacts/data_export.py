@@ -114,9 +114,7 @@ def _readable(kind: str, content: dict[str, Any] | None) -> str:
     return "\n\n".join(parts) + "\n"
 
 
-async def build_archive(
-    db: Db, store: ObjectStore, learner_id: UUID, *, events_page: int
-) -> bytes:
+async def build_archive(db: Db, store: ObjectStore, learner_id: UUID, *, events_page: int) -> bytes:
     """The zip of `learner_id`; every query is scoped to the learner (T-ST isolation)."""
     prefix = learner_prefix(learner_id)
     buffer = io.BytesIO()
