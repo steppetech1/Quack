@@ -10,6 +10,7 @@ from collections.abc import Callable
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import httpx2
 import pytest
 from joserfc import jwt
 from joserfc.jwk import KeySet, RSAKey
@@ -40,6 +41,7 @@ def _sender(handler: Handler) -> ResendEmailSender:
         api_key="re_test_key",
         sender="login@qvack.online",
         link_ttl_min=15,
+        timeout_s=5.0,
         client=_client(handler),
     )
 
@@ -105,7 +107,7 @@ class Google:
         self.key = RSAKey.generate_key(2048, auto_kid=True)
         self.code_claims: dict[str, dict[str, object]] = {}
         self.token_status = 200
-        self.requests: list[httpx.Request] = []
+        self.requests: list[httpx2.Request] = []
 
     def claims(self, **override: object) -> dict[str, object]:
         base: dict[str, object] = {
@@ -123,16 +125,16 @@ class Google:
         signer = key or self.key
         return jwt.encode({"alg": "RS256", "kid": signer.kid}, claims, signer)
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
         if str(request.url) == CERTS_URL:
-            return httpx.Response(200, json=KeySet([self.key]).as_dict(private=False))
+            return httpx2.Response(200, json=KeySet([self.key]).as_dict(private=False))
         if str(request.url) == TOKEN_URL:
             if self.token_status != 200:
-                return httpx.Response(self.token_status, json={"error": "invalid_grant"})
+                return httpx2.Response(self.token_status, json={"error": "invalid_grant"})
             form = parse_qs(request.content.decode())
             claims = self.code_claims[form["code"][0]]
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "access_token": "ya29.token",
@@ -141,7 +143,7 @@ class Google:
                     "id_token": self.id_token(claims),
                 },
             )
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
 
 @pytest.fixture
@@ -162,12 +164,14 @@ def oidc_settings(settings: Settings) -> Settings:
 
 @pytest.fixture
 def oidc(google: Google, oidc_settings: Settings) -> AuthlibGoogleOIDC:
-    return AuthlibGoogleOIDC(oidc_settings, transport=httpx.MockTransport(google.handler))
+    return AuthlibGoogleOIDC(oidc_settings, transport=httpx2.MockTransport(google.handler))
 
 
 def test_authorize_url_asks_google_for_a_code_with_the_state(oidc: AuthlibGoogleOIDC) -> None:
     url = urlsplit(oidc.authorize_url(state="state-1"))
-    assert f"{url.scheme}://{url.netloc}{url.path}" == "https://accounts.google.com/o/oauth2/v2/auth"
+    assert (
+        f"{url.scheme}://{url.netloc}{url.path}" == "https://accounts.google.com/o/oauth2/v2/auth"
+    )
     query = parse_qs(url.query)
     assert query["client_id"] == [CLIENT_ID]
     assert query["redirect_uri"] == ["https://api.qvack.online/auth/google/callback"]
@@ -220,17 +224,19 @@ async def test_identity_refuses_a_bad_token(
 async def test_identity_refuses_a_foreign_signature(
     google: Google, oidc: AuthlibGoogleOIDC
 ) -> None:
-    stranger = RSAKey.generate_key(2048, kid=google.key.kid)
+    kid = google.key.kid
+    assert kid is not None
+    stranger = RSAKey.generate_key(2048, parameters={"kid": kid})
     token = google.id_token(google.claims(), key=stranger)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if str(request.url) == TOKEN_URL:
-            return httpx.Response(200, json={"access_token": "t", "id_token": token})
+            return httpx2.Response(200, json={"access_token": "t", "id_token": token})
         return google.handler(request)
 
     forged = AuthlibGoogleOIDC(
         oidc._settings,  # pyright: ignore[reportPrivateUsage]
-        transport=httpx.MockTransport(handler),
+        transport=httpx2.MockTransport(handler),
     )
     with pytest.raises(OidcFailed):
         await forged.identity(code="x")
@@ -245,9 +251,9 @@ async def test_identity_refuses_a_code_google_rejects(
 
 
 async def test_identity_when_google_is_unreachable(oidc_settings: Settings) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("no route", request=request)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("no route", request=request)
 
-    down = AuthlibGoogleOIDC(oidc_settings, transport=httpx.MockTransport(handler))
+    down = AuthlibGoogleOIDC(oidc_settings, transport=httpx2.MockTransport(handler))
     with pytest.raises(OidcFailed):
         await down.identity(code="x")
