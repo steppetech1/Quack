@@ -14,6 +14,8 @@ from quack.practice.check import Verdict
 from quack.session.guards import (
     Boundary,
     GuardViolation,
+    drop_unknown_head_labels,
+    drop_unknown_markup_labels,
     head_violations,
     markup_violations,
     settle_stance,
@@ -98,6 +100,37 @@ def test_turn_without_target_skills_is_not_marked() -> None:
     assert _reasons(violations) == ["no_target_skills"]
     split = _head(targetSkills=[], intent="split_topic", topicLabel="T1")  # the topic is the object
     assert head_violations(split, answered_verdict=None, skill_labels=SKILLS) == []
+
+
+def test_domain_without_skills_may_have_no_target_skills() -> None:
+    """No skills in the label table: nothing to target, so an empty list is fine and a hub
+    label in it is told to leave the list empty."""
+    assert head_violations(_head(targetSkills=[]), answered_verdict=None, skill_labels=set()) == []
+    [violation] = head_violations(
+        _head(targetSkills=["H1"]), answered_verdict=None, skill_labels=set()
+    )
+    assert violation.reason == "unknown_skill_label" and "leave the list empty" in violation.detail
+
+
+def test_unknown_labels_are_dropped_after_the_retries() -> None:
+    head = drop_unknown_head_labels(_head(targetSkills=["S1", "H1"]), SKILLS)
+    assert head.target_skills == ["S1"]
+    same = _head(targetSkills=["S2"])
+    assert drop_unknown_head_labels(same, SKILLS) is same
+    markup = _markup(
+        exposures=[
+            {"skill": "S2", "kind": "explained", "approach": "none"},
+            {"skill": "S7", "kind": "example", "approach": "none"},
+        ],
+        targetsMisconception="M5",
+    )
+    settled = drop_unknown_markup_labels(
+        markup, skill_labels=SKILLS, misconception_labels=MISCONCEPTIONS
+    )
+    assert [e.skill for e in settled.exposures] == ["S2"] and settled.targets_misconception is None
+    assert (
+        markup_violations(settled, skill_labels=SKILLS, misconception_labels=MISCONCEPTIONS) == []
+    )
 
 
 def test_unknown_target_skill_label() -> None:
