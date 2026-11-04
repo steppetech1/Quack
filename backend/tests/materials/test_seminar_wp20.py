@@ -1,5 +1,5 @@
 """WP20.2: the problems of a material become seminar tasks (ТЗ Ф4 WP20.2; Т-§5.6; #271;
-D-C-216). `material_parser@1` returns `seminar_tasks` in its layer 2; the structure step of
+D-C-217). `material_parser@1` returns `seminar_tasks` in its layer 2; the structure step of
 `material.parse` hands them, with the id of the skill the chunk teaches, to
 `quack.practice.seminar_tasks.create_seminar_task` (stream B, D-B-218) through a seam, and
 `reconcile_domain` stays the seam of the skills. The LLM, compute, storage, the graph
@@ -13,14 +13,16 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from quack.agents.reconcile import Resolution, ReconcileResult, Subject
+from quack.agents.reconcile import ReconcileResult, Resolution, Subject
+from quack.config import Settings
+from quack.db import Db
+from quack.jobs.runner import JobContext
 from quack.materials.parse import (
     MaterialParserOutput,
     SeminarSpec,
     parse_step,
     structure_step,
 )
-from quack.jobs.runner import JobContext
 from quack.practice.seminar_tasks import SeminarTask
 from tests.materials.test_parse_wp20 import (
     PAGE_ONE,
@@ -30,8 +32,13 @@ from tests.materials.test_parse_wp20 import (
     _Resolver,
     _structure_job,
     _World,
-    world,  # noqa: F401  (the fixture)
 )
+
+
+@pytest.fixture
+def world(pg_db: Db, settings: Settings) -> _World:
+    return _World(pg_db, settings)
+
 
 PROBLEMS = [
     {"statement": "Differentiate sin(x^2).", "answer": "2x cos(x^2)", "chunk": "P1", "page": 1},
@@ -129,9 +136,9 @@ async def test_structure_step_hands_the_problems_to_the_writer(world: _World) ->
     assert second.skill_id == resolver.ids[("skill", "Integration by parts")]
     assert (second.answer, second.topic_name) == (None, "Integrals")
     assert first.course_context == "Calculus lectures"
-    assert (
-        await world.types(learner, "material.parsed")
-    )[0]["payload"]["material_id"] == str(material)
+    assert (await world.types(learner, "material.parsed"))[0]["payload"]["material_id"] == str(
+        material
+    )
 
     await structure_step(world.ctx, job, resolver, writer)
     assert len(writer.calls) == 1
@@ -156,7 +163,9 @@ async def test_a_problem_of_a_chunk_that_teaches_nothing_uses_what_the_chunk_use
     await parse_step(world.ctx, _job(learner, material))
     resolver, writer = _Resolver(), _Writer()
 
-    await structure_step(world.ctx, await _structure_job(world, learner, material), resolver, writer)
+    await structure_step(
+        world.ctx, await _structure_job(world, learner, material), resolver, writer
+    )
 
     [(_, [only])] = writer.calls
     assert only.statement == "Differentiate sin(x^2)."
@@ -181,9 +190,7 @@ async def test_a_failing_writer_leaves_the_material_unparsed_and_the_repeat_fini
     writer.fail = False
     await structure_step(world.ctx, job, resolver, writer)
     assert len(await world.types(learner, "material.parsed")) == 1
-    assert [s.key for s in writer.calls[0][1]] == [
-        f"seminar:{material}:{n}" for n in range(3)
-    ]
+    assert [s.key for s in writer.calls[0][1]] == [f"seminar:{material}:{n}" for n in range(3)]
 
 
 async def test_a_material_without_problems_calls_no_writer(world: _World) -> None:
@@ -191,7 +198,9 @@ async def test_a_material_without_problems_calls_no_writer(world: _World) -> Non
     world.pdf_pages(PAGE_ONE)
     await parse_step(world.ctx, _job(learner, material))
     writer = _Writer()
-    await structure_step(world.ctx, await _structure_job(world, learner, material), _Resolver(), writer)
+    await structure_step(
+        world.ctx, await _structure_job(world, learner, material), _Resolver(), writer
+    )
     assert writer.calls == []
 
 
@@ -218,16 +227,19 @@ async def test_the_handler_reconciles_the_skills_and_creates_the_seminar_tasks(
         assert (learner_id, domain_id) == (learner, domain)
         reconciled.append((origin, [s.name for s in subjects]))
         return ReconcileResult(
-            [
-                Resolution(s, "linked", nodes.setdefault((s.kind, s.name), uuid4()))
-                for s in subjects
-            ]
+            [Resolution(s, "linked", nodes.setdefault((s.kind, s.name), uuid4())) for s in subjects]
         )
 
     created: list[tuple[SeminarTask, UUID]] = []
 
     async def fake_create(
-        db: Any, gateway: Any, settings: Any, task: SeminarTask, *, learner_id: UUID, compute: Any = None
+        db: Any,
+        gateway: Any,
+        settings: Any,
+        task: SeminarTask,
+        *,
+        learner_id: UUID,
+        compute: Any = None,
     ) -> UUID | None:
         created.append((task, learner_id))
         return None if task.statement.startswith("Integrate") else uuid4()
@@ -270,4 +282,3 @@ async def test_the_step_that_reconciles_nothing_creates_no_task(
     monkeypatch.setattr(glue, "create_seminar_task", never)
     await glue.handle_material_parse(await _structure_job(world, learner, material), world.ctx)
     assert len(await world.types(learner, "material.parsed")) == 1
-

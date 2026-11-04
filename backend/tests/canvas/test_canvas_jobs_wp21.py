@@ -1,5 +1,5 @@
 """WP21.3 п.4, WP21.4 п.4: the handlers of the jobs `second_opinion.diagnosis` and
-`canvas.rediagnose` (#263; D-C-217). Postgres is real, the models are `ScriptedLLMProvider`,
+`canvas.rediagnose` (#263; D-C-218). Postgres is real, the models are `ScriptedLLMProvider`,
 compute a `ComputeScenario`."""
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+import quack.canvas.jobs  # noqa: F401  (registers the handlers, as HANDLER_MODULES does)
 from quack.canvas.step_check import StepEnv, check_step
 from quack.config import Settings
 from quack.db import Db
@@ -153,7 +154,9 @@ async def test_second_opinion_job_skips_what_it_must_not_judge(
     assert confident.diagnosed_seq and question.diagnosed_seq
     handler = JOB_HANDLERS["second_opinion.diagnosis"]
 
-    await handler(_job("second_opinion.diagnosis", learner, trigger_seq=confident.diagnosed_seq), w.ctx)
+    await handler(
+        _job("second_opinion.diagnosis", learner, trigger_seq=confident.diagnosed_seq), w.ctx
+    )
 
     await append_events(
         pg_db,
@@ -168,7 +171,9 @@ async def test_second_opinion_job_skips_what_it_must_not_judge(
             )
         ],
     )
-    await handler(_job("second_opinion.diagnosis", learner, trigger_seq=question.diagnosed_seq), w.ctx)
+    await handler(
+        _job("second_opinion.diagnosis", learner, trigger_seq=question.diagnosed_seq), w.ctx
+    )
     assert w.provider.calls_for(schema_name=SECOND) == []
     assert await events(pg_db, learner, "observation.second_opinion") == []
 
@@ -266,7 +271,13 @@ async def test_rediagnose_leaves_alone_what_is_gone(pg_db: Db, settings: Setting
     handler = JOB_HANDLERS["canvas.rediagnose"]
     for line_id in ("l1", "nope"):
         await handler(
-            _job("canvas.rediagnose", learner, trigger_seq=1, canvas_id=str(canvas_id), line_id=line_id),
+            _job(
+                "canvas.rediagnose",
+                learner,
+                trigger_seq=1,
+                canvas_id=str(canvas_id),
+                line_id=line_id,
+            ),
             w.ctx,
         )
     assert w.provider.calls == []
@@ -274,6 +285,8 @@ async def test_rediagnose_leaves_alone_what_is_gone(pg_db: Db, settings: Setting
     stranger = await create_learner(pg_db)
     with pytest.raises(JobFailedPermanently):
         await handler(
-            _job("canvas.rediagnose", stranger, trigger_seq=1, canvas_id=str(canvas_id), line_id="l1"),
+            _job(
+                "canvas.rediagnose", stranger, trigger_seq=1, canvas_id=str(canvas_id), line_id="l1"
+            ),
             w.ctx,
         )

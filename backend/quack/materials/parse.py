@@ -15,7 +15,10 @@ One job kind, two steps; the second is queued by the first.
    skills in batches of `candidate_k`; `uses` of the chunk that teaches a skill become its
    `REQUIRES` (origin `material`). Then, in one transaction: `chunk.indexed` for every chunk with
    the ids of the skills, the hub «from the material» with its topics, `material.parsed` and the
-   status of the row.
+   status of the row. The problems the parser found (`seminar_tasks`) go to the writer of
+   seminar tasks (stream B, behind the `SeminarWriter` seam) once their skills are linked and
+   before the material is `parsed`: a task per problem, on the skill its chunk teaches
+   (D-C-217).
 
 The text of a material is data (Т-§19.8): the prompt says so, and nothing in the output of the
 parser is executed or trusted as a rule.
@@ -125,16 +128,32 @@ class ParsedDeadline(BaseModel):
     covers: list[str]
 
 
+class ParsedSeminarTask(BaseModel):
+    """A problem of the material for the learner to solve (WP12.5, #271). Only what the text
+    gives: the statement, the answer when the material has one, and the place: `chunk` is `P`
+    and the number of the chunk in the input (`P3`), `page` its page. The markup of the task
+    (skills, level, form of the check) is written by stream B, not here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    statement: str
+    answer: str | None
+    chunk: str
+    page: int | None
+
+
 class MaterialParserOutput(BaseModel):
     """`material_parser@1`: the title of the material as its pages call it (empty when they
-    give none; the first non-empty one of the batches is kept), the marks of the chunks and the
-    dated controls of the course (empty unless the chunks are a syllabus)."""
+    give none; the first non-empty one of the batches is kept), the marks of the chunks, the
+    dated controls of the course (empty unless the chunks are a syllabus) and the problems of
+    the material (empty unless it has some)."""
 
     model_config = ConfigDict(extra="forbid")
 
     title: str
     chunks: list[ParsedChunk]
     deadlines: list[ParsedDeadline]
+    seminar_tasks: list[ParsedSeminarTask]
 
 
 class SheetBox(BaseModel):
@@ -419,7 +438,7 @@ async def _mark_batch(
     index: int,
     batch: Sequence[Chunk],
     gate: asyncio.Semaphore,
-) -> tuple[str, dict[UUID, ParsedChunk], list[ParsedDeadline]]:
+) -> tuple[str, dict[UUID, ParsedChunk], list[ParsedDeadline], list[dict[str, Any]]]:
     prompt = ctx.settings.llm_roles[PARSER_ROLE].prompt
     if prompt is None:
         raise ValueError("role 'material_parser' has no prompt")
@@ -438,7 +457,45 @@ async def _mark_batch(
     for mark in answer.value.chunks:  # a number out of range or repeated is dropped
         if 1 <= mark.n <= len(batch):
             marks.setdefault(batch[mark.n - 1].chunk_id, mark)
-    return answer.value.title.strip(), marks, answer.value.deadlines
+    problems = [
+        found for task in answer.value.seminar_tasks if (found := _problem(task, batch)) is not None
+    ]
+    return answer.value.title.strip(), marks, answer.value.deadlines, problems
+
+
+_CHUNK_LABEL = re.compile(r"\s*P?\s*(\d+)\s*", re.IGNORECASE)
+
+
+def _problem(task: ParsedSeminarTask, batch: Sequence[Chunk]) -> dict[str, Any] | None:
+    """A problem of the batch for the second step, or `None` when it has no statement or no
+    place. The chunk is named by its label (`P2`); a label out of range falls back to the first
+    chunk of the page the parser gave, else the problem is dropped (D-C-217)."""
+    statement = task.statement.strip()
+    if not statement:
+        return None
+    label = _CHUNK_LABEL.fullmatch(task.chunk)
+    chunk = batch[int(label[1]) - 1] if label and 1 <= int(label[1]) <= len(batch) else None
+    if chunk is None and task.page is not None:
+        chunk = next((c for c in batch if c.page == task.page), None)
+    if chunk is None:
+        return None
+    answer = (task.answer or "").strip()
+    return {
+        "statement": statement,
+        "answer": answer or None,
+        "chunk_id": str(chunk.chunk_id),
+        "page": chunk.page,
+    }
+
+
+def _seminar_payload(found: Sequence[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """The problems of all batches for the second step in the order of the material: a repeat
+    of a statement (case and spaces do not matter) is dropped, at most `limit` are kept. The
+    place in this list is the number in the key of the task (law 5)."""
+    seen: dict[str, dict[str, Any]] = {}
+    for item in found:
+        seen.setdefault(" ".join(str(item["statement"]).split()).casefold(), item)
+    return list(seen.values())[:limit]
 
 
 def _deadline_payload(found: Sequence[ParsedDeadline], limit: int) -> list[dict[str, Any]]:
@@ -481,10 +538,13 @@ async def parse_step(ctx: JobContext, job: ClaimedJob) -> None:
     answers = await asyncio.gather(
         *(_mark_batch(ctx, job, material, i, b, gate) for i, b in enumerate(batches))
     )
-    title = next((t for t, _, _ in answers if t), "")
-    marks = {chunk_id: mark for _, found, _ in answers for chunk_id, mark in found.items()}
+    title = next((t for t, _, _, _ in answers if t), "")
+    marks = {chunk_id: mark for _, found, _, _ in answers for chunk_id, mark in found.items()}
     deadlines = _deadline_payload(
-        [d for _, _, found in answers for d in found], settings.material_deadlines_max
+        [d for _, _, found, _ in answers for d in found], settings.material_deadlines_max
+    )
+    problems = _seminar_payload(
+        [p for _, _, _, found in answers for p in found], settings.material_seminar_tasks_max
     )
     limit = settings.material_marks_per_chunk
     payload: dict[str, Any] = {
@@ -493,6 +553,7 @@ async def parse_step(ctx: JobContext, job: ClaimedJob) -> None:
         "trigger_seq": job.payload.get("trigger_seq"),
         "title": title,
         "deadlines": deadlines,
+        "seminar_tasks": problems,
         "chunks": [
             {
                 "chunk_id": str(c.chunk_id),
@@ -553,6 +614,33 @@ class StructureResolver(Protocol):
         domain_id: UUID,
         subjects: Sequence[SubjectSpec],
     ) -> dict[tuple[str, str], UUID]: ...
+
+
+@dataclass(frozen=True)
+class SeminarSpec:
+    """One problem of the material with the skill it is hung on, for stream B's
+    `create_seminar_task` (the glue of the assembly layer makes a `SeminarTask` of it). `key` is
+    `seminar:{material_id}:{n}`, `n` the place of the problem in the payload of the step."""
+
+    key: str
+    statement: str
+    answer: str | None
+    skill_id: UUID
+    skill_name: str
+    topic_name: str
+    domain_id: UUID
+    course_context: str
+
+
+class SeminarWriter(Protocol):
+    """The seam to `quack.practice.seminar_tasks.create_seminar_task` (stream B, D-B-218): a
+    task per spec, markup and check included; a task it throws away is not an error. Called
+    before the material is `parsed`, so a failure retries the step; the keys make the retry
+    write nothing twice."""
+
+    async def __call__(
+        self, ctx: JobContext, *, learner_id: UUID, tasks: Sequence[SeminarSpec]
+    ) -> None: ...
 
 
 @dataclass
@@ -709,9 +797,53 @@ def _syllabus_events(
     return events
 
 
-async def structure_step(ctx: JobContext, job: ClaimedJob, resolve: StructureResolver) -> None:
+def _seminar_specs(
+    material: _Material,
+    title: str,
+    problems: Sequence[dict[str, Any]],
+    marks: dict[str, dict[str, Any]],
+    canonical: dict[str, str],
+    found: dict[tuple[str, str], UUID],
+) -> list[SeminarSpec]:
+    """A spec per problem whose chunk has a skill the reconciliation linked: the first skill it
+    teaches, else the first it uses (a page of a problem set teaches nothing). A problem with
+    no such skill is skipped (D-C-217)."""
+    specs: list[SeminarSpec] = []
+    for n, problem in enumerate(problems):
+        mark = marks.get(str(problem["chunk_id"]), {})
+        for name in [*mark.get("teaches", []), *mark.get("uses", [])]:
+            skill = canonical.get(name.casefold(), name)
+            skill_id = found.get(("skill", skill))
+            if skill_id is None:
+                continue
+            specs.append(
+                SeminarSpec(
+                    key=f"seminar:{material.material_id}:{n}",
+                    statement=str(problem["statement"]),
+                    answer=problem.get("answer"),
+                    skill_id=skill_id,
+                    skill_name=skill,
+                    topic_name=str(mark.get("topic") or "") or title or skill,
+                    domain_id=material.domain_id,
+                    course_context=title,
+                )
+            )
+            break
+        else:
+            log.info("seminar_task_without_skill", material_id=str(material.material_id), n=n)
+    return specs
+
+
+async def structure_step(
+    ctx: JobContext,
+    job: ClaimedJob,
+    resolve: StructureResolver,
+    seminar: SeminarWriter | None = None,
+) -> None:
     """Step 2 (WP20.2 п.4–5), under `domain:{id}`. Nothing is written while the reconciliation
-    fails (law 7); the events of the material are one transaction with the status."""
+    fails (law 7); the events of the material are one transaction with the status. The seminar
+    tasks come first: they are idempotent by key, and the material is `parsed` only once they
+    are written."""
     learner_id = _learner(job)
     material = await _load(ctx.db, learner_id, UUID(str(job.payload["material_id"])))
     if material.status == STATUS_PARSED:
@@ -742,6 +874,13 @@ async def structure_step(ctx: JobContext, job: ClaimedJob, resolve: StructureRes
     def ids(names: Sequence[str]) -> list[UUID]:
         resolved = (found.get(("skill", canonical.get(n.casefold(), n))) for n in names)
         return list(dict.fromkeys(i for i in resolved if i is not None))
+
+    if seminar is not None:
+        specs = _seminar_specs(
+            material, title, list(job.payload.get("seminar_tasks", [])), marks, canonical, found
+        )
+        if specs:
+            await seminar(ctx, learner_id=learner_id, tasks=specs)
 
     trigger = job.payload.get("trigger_seq")
     refs = [{"seq": trigger}] if isinstance(trigger, int) else []
