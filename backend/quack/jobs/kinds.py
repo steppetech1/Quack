@@ -48,6 +48,8 @@ JOB_KINDS: tuple[str, ...] = (
     "material.parse",
     "agent.topic_split",
     "embedding.compute",
+    "agent.artifact",
+    "export.data",
     "second_opinion.diagnosis",
     "canvas.rediagnose",
 )
@@ -80,6 +82,8 @@ KIND_LLM_ROLES: dict[str, tuple[str, ...]] = {
     "material.parse": ("material_parser",),
     "agent.topic_split": ("builder",),
     "embedding.compute": (),
+    "agent.artifact": ("artifact_writer",),
+    "export.data": (),
     "second_opinion.diagnosis": ("second_opinion",),
     "canvas.rediagnose": ("canvas_diagnoser",),
 }
