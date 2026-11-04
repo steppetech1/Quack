@@ -256,3 +256,47 @@ async def test_sessions_of_another_learner_are_not_seen(pg_db: Db) -> None:
         await end_session(pg_db, learner_id=other, session_id=started.session_id)
     assert await list_sessions(pg_db, learner_id=other) == []
     assert datetime.now(UTC) >= started.started_at
+
+
+async def test_session_of_a_today_item_takes_the_prepared_plan(pg_db: Db) -> None:
+    """T-E9 (#279, D-B-222): the session started on the topic (or by `today_item`) of an item of
+    the latest `today.shown` takes the id of the prepared plan; the next start does not."""
+    from psycopg.types.json import Jsonb
+
+    from quack.events.event_types import TodayItem, TodayShown
+    from quack.practice.today_plan import prepared_session_id
+
+    learner_id = await create_learner(pg_db)
+    domain_id = await _domain(pg_db, learner_id)
+    topic, skill = uuid4(), uuid4()
+    [shown] = await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="today.shown",
+                payload=TodayShown(
+                    domain_id=domain_id,
+                    items=[TodayItem(skill_id=skill, topic_id=topic, reasons=["due"], score=1.0)],
+                ),
+                actor="system",
+                idempotency_key=f"today:{uuid4()}",
+                domain_id=domain_id,
+            )
+        ],
+    )
+    planned = prepared_session_id(learner_id, shown.seq, skill)
+    await pg_db.execute(
+        "INSERT INTO content.session_plans (session_id, learner_id, plan, status) "
+        "VALUES (%(s)s, %(l)s, %(p)s, 'prepared')",
+        {"s": planned, "l": learner_id, "p": Jsonb({"current_step": "Recall the ratio"})},
+    )
+
+    first = await start_session(pg_db, learner_id=learner_id, body=_body(domain_id, topic_id=topic))
+    assert first.session_id == planned
+    again = await start_session(pg_db, learner_id=learner_id, body=_body(domain_id, topic_id=topic))
+    assert again.session_id != planned  # the plan is taken once
+    other = await start_session(
+        pg_db, learner_id=learner_id, body=_body(domain_id, topic_id=uuid4())
+    )
+    assert other.session_id not in (planned, again.session_id)

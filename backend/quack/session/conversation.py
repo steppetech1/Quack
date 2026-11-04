@@ -24,6 +24,7 @@ from quack.events.event_types import (
     AnswerSubmitted,
     CanvasLineCommitted,
     CanvasLineErased,
+    CanvasRef,
     CheckSkipped,
     ElementResponded,
     HandwritingCorrected,
@@ -110,6 +111,9 @@ class _Lines:
     def number(self, canvas_id: UUID, line_id: str) -> int:
         return self._numbers.setdefault((canvas_id, line_id), len(self._numbers) + 1)
 
+    def known(self, canvas_id: UUID, line_id: str) -> int | None:
+        return self._numbers.get((canvas_id, line_id))
+
 
 def _ref(labels: LabelMap, kind: LabelKind, object_id: UUID | None, fallback: str) -> str:
     label = labels.label(kind, object_id) if object_id is not None else None
@@ -126,6 +130,19 @@ def _answer_seqs(turn_events: Sequence[StoredEvent]) -> dict[int, UUID]:
         for e in turn_events
         if e.type == "answer.submitted"
     }
+
+
+def _lasso(refs: Sequence[CanvasRef], lines: _Lines) -> list[str]:
+    """The lasso «ask about this» (Т-§15.6): the lines by their numbers in the session, a block
+    of the board by its id."""
+    out: list[str] = []
+    for ref in refs:
+        if ref.line_id is not None:
+            number = lines.known(ref.canvas_id, ref.line_id)
+            out.append(f"canvas line L{number}" if number else "a canvas line")
+        if ref.block_id is not None:
+            out.append(f"block {ref.block_id}")
+    return out
 
 
 def _verbatim(
@@ -145,6 +162,8 @@ def _verbatim(
                 out.append(f'Learner pressed "{_INTENT_BUTTONS[message.intent]}" on {target}')
             if message.text:
                 out.append(f"Learner: {message.text}")
+            if message.canvas_refs:
+                out.append("Learner points at: " + ", ".join(_lasso(message.canvas_refs, lines)))
             return out
         case "answer.submitted":
             answer = AnswerSubmitted.model_validate(data)

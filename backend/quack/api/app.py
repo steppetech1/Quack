@@ -23,6 +23,7 @@ from quack.api.resources import AppResources, create_app_resources
 from quack.artifacts.cards_routes import router as cards_router
 from quack.artifacts.hub_cheatsheet_routes import router as hub_cheatsheet_router
 from quack.artifacts.notes_routes import router as notes_router
+from quack.artifacts.skills_routes import router as skills_router
 from quack.artifacts.viz_routes import router as viz_router
 from quack.auth.consents import has_current_terms
 from quack.auth.google import AuthlibGoogleOIDC, GoogleOIDC
@@ -228,6 +229,7 @@ def create_app(
     app.include_router(session_router, dependencies=[Depends(enforce_action_rate_limit)])
     app.include_router(notes_router)
     app.include_router(cards_router)
+    app.include_router(skills_router)
     app.include_router(viz_router)
     app.include_router(hub_cheatsheet_router)
     app.include_router(learner_stream_router)

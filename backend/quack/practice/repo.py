@@ -22,6 +22,11 @@ _SESSION_UP_TO = (
     f"SELECT {_COLUMNS} FROM core.events WHERE learner_id = %(learner_id)s "
     "AND session_id = %(session_id)s AND seq <= %(to_seq)s ORDER BY seq"
 )
+_SESSION_OF_ACTION = (
+    f"SELECT {_COLUMNS} FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND session_id = %(session_id)s AND (seq <= %(action_seq)s OR causation_seq = %(action_seq)s) "
+    "ORDER BY seq"
+)
 _AGENT_REQUEST = (
     f"SELECT {_COLUMNS} FROM core.events WHERE learner_id = %(learner_id)s "
     "AND type = 'agent.requested' AND payload->>'request_id' = %(request_id)s LIMIT 1"
@@ -55,6 +60,15 @@ async def session_events_up_to(
     """The session's events up to `to_seq`, in order."""
     params = {"learner_id": learner_id, "session_id": session_id, "to_seq": to_seq}
     return await db.fetch_all(_SESSION_UP_TO, params, row=StoredEvent)
+
+
+async def session_events_of_action(
+    db: Db, *, learner_id: UUID, session_id: UUID, action_seq: int
+) -> list[StoredEvent]:
+    """The session's events up to the action and what the action itself caused (its verdicts,
+    `causation_seq = action_seq`): the turn answers the action together with its check (D-B-221)."""
+    params = {"learner_id": learner_id, "session_id": session_id, "action_seq": action_seq}
+    return await db.fetch_all(_SESSION_OF_ACTION, params, row=StoredEvent)
 
 
 async def task_events(

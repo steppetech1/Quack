@@ -36,7 +36,7 @@ NONE_LINE = "(none)"
 # Т-§5.5, Т-§11.1 «для сложных — Wonder»: the same rule as the solution space (WP12.4).
 HARD_LEVEL = 6
 
-type Purpose = Literal["practice", "retest", "probe", "known_check", "card"]
+type Purpose = Literal["practice", "retest", "probe", "known_check", "card"]  # "seminar": own text
 
 
 @dataclass(frozen=True)

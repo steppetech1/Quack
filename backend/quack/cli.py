@@ -137,12 +137,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--since", type=_since, required=True, help="ISO 8601 time of the dump; no zone means UTC"
     )
     orphans = ops_sub.add_parser(
-        "orphan-objects", help="delete learner files newer than a time without a record in Postgres"
+        "orphan-objects",
+        help="list learner files newer than a time without a record in Postgres "
+        "(dry run; --apply deletes them)",
     )
     orphans.add_argument(
         "--since", type=_since, required=True, help="ISO 8601 time of the dump; no zone means UTC"
     )
-    orphans.add_argument("--dry-run", action="store_true", help="list, delete nothing")
+    orphans.add_argument(
+        "--apply", action="store_true", help="delete the listed files (without it: only report)"
+    )
     ops_sub.add_parser("status", help="print the state of the system as one JSON object")
     registry = ops_sub.add_parser("event-registry", help="write the event registry JSON")
     registry.add_argument("--out", required=True, help="path of the registry to write")
@@ -483,12 +487,12 @@ async def _replay_deletions(settings: Settings, args: argparse.Namespace) -> int
 
 
 async def _orphan_objects(settings: Settings, args: argparse.Namespace) -> int:
-    """WP9.6, Д-§8.3 step 8: files of learners newer than the dump with no record are deleted
-    (`--dry-run` only lists them)."""
+    """WP9.6, Д-§8.3 step 8: files of learners newer than the dump with no record are listed;
+    they are deleted only with `--apply` (D-C-215)."""
     db = await open_db(settings)
     store = create_object_store(settings)
     try:
-        report = await orphan_objects(db, store, args.since, dry_run=args.dry_run)
+        report = await orphan_objects(db, store, args.since, apply=args.apply)
     finally:
         await store.aclose()
         await db.close()
@@ -498,7 +502,7 @@ async def _orphan_objects(settings: Settings, args: argparse.Namespace) -> int:
                 "checked": report.checked,
                 "orphans": report.orphans,
                 "deleted": report.deleted,
-                "dry_run": args.dry_run,
+                "dry_run": report.dry_run,
             },
             sort_keys=True,
         )

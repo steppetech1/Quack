@@ -1,4 +1,6 @@
-"""WP6.4: `Neo4jGraphReader` core on a test Neo4j (D-A-140…D-A-143).
+"""WP6.4: `Neo4jGraphReader` core on a test Neo4j (D-A-140…D-A-143). T-TH4 (`test_read_functions`,
+§8.4): `test_frontier`, `test_topic_readiness_direct_basis_only`, `test_why`,
+`test_topic_requires_is_derived_from_skill_links`.
 
 The data is written with the projector's mutations (`UpsertNode` / `UpsertRel`, compiled by
 `compile_mutations`) in the `rules@3` shape of Т-§3.4. The tests never wipe the database:

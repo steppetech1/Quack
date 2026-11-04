@@ -329,6 +329,8 @@ class Settings(BaseSettings):
         }
     )
     why_recent_n: int = 3
+    # D-A-141, D-A-242: last exposures per skill in the slice of the teacher (no number in Т-§10.2).
+    slice_recent_exposures: int = 3
     # Т-§9.2, Т-§9.5: misconceptions and profile.
     fix_min_resists: int = 2
     watch_days: int = 3
@@ -674,6 +676,8 @@ class Settings(BaseSettings):
     # WP23 (Т-§17)
     cards_per_topic_max: int = 15
     cheatsheet_fit_rounds: int = 2
+    # Т-§17.8 (WP23.6): longest instruction of a learner skill, in characters (D-C-216)
+    learner_skill_max_chars: int = 2000
     # Т-§17.4 (WP23.3): formulas of one block that code sends to compute; the rest stay unchecked
     artifact_formulas_per_block_max: int = 5
     # Т-§17.4 (WP23.3): longest side of a formula sent to compute (the `MathInput` limit)
