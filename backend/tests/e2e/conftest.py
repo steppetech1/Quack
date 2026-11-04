@@ -102,10 +102,14 @@ def stand(
 
     @asynccontextmanager
     async def make(
-        *, neo4j_driver: Any = None, redis_client: Any = redis, **resources: Any
+        *,
+        neo4j_driver: Any = None,
+        redis_client: Any = redis,
+        settings_update: dict[str, Any] | None = None,
+        **resources: Any,
     ) -> AsyncIterator[System]:
         built = await build_system(
-            settings,
+            settings.model_copy(update=settings_update or {}),
             neo4j if neo4j_driver is None else neo4j_driver,
             redis_client,
             pg_db,
