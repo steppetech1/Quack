@@ -23,6 +23,16 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-233. WP18.1/18.2: `T-AU1`–`T-AU3` проверены на реальных адаптерах через подмену транспорта; `nonce` и PKCE в потоке Google не добавлены
+- Класс: C (тесты и подмена `tests/support/google_idp.py`; код `quack/**` не менялся)
+- WP / место: WP18.1, WP18.2, `Т-§19.1`; `backend/tests/auth/test_auth_wire_wp18.py`, `backend/tests/auth/test_auth_adapters.py`, `backend/tests/support/google_idp.py`
+- Контекст: `test_auth_routes.py` и `test_auth_wp18.py` идут на `FakeEmailSender` и `FakeOIDC`; после замены заглушек на `ResendEmailSender` и `AuthlibGoogleOIDC` (#283) ни один маршрут не проходил через реальные классы. В документах нет требования `nonce` и PKCE; `state` лежит в cookie (D-C-115).
+- Решение: (1) приложение собирается с `ResendEmailSender` на `httpx.MockTransport` и `AuthlibGoogleOIDC` на `httpx2.MockTransport` (сети и настоящих секретов нет); проверяются форма запроса к Resend (метод, URL, `Authorization`, `from`, `to` в нижнем регистре, ссылка в тексте входит один раз), хеш токена в базе, отказ Resend (401/422/429/500, обрыв связи) = 503 без ключа и токена в ответе, лимиты на адрес (в любом регистре) и IP режут запрос до Resend и до записи токена; (2) Google: `state` равен значению cookie, чужой/пустой `state` и отсутствие cookie дают 401 до обращения к Google, после входа cookie state снимается и повтор даёт 401, отказ кода, подмена подписи, `alg: none`, чужие `aud`/`iss`, истёкший токен, непроверенный адрес дают 401 без сессии и без нового ученика; запрос к token endpoint несёт `code`, `redirect_uri`, `grant_type` и секрет клиента; (3) сценарный Google вынесен из `test_auth_adapters.py` в `tests/support/google_idp.py`; (4) `nonce` и PKCE не добавляю: обмен кода идёт с секретом клиента на сервере, `state` связан с браузером, документы их не требуют.
+- Почему: ТЗ Ф4 §8.1, §8.11 (`T-AU1`–`T-AU3`); `CLAUDE.md` backend: ничего сверх документов.
+- Обратимость: полная; тесты можно удалить, `nonce`/PKCE добавляются в `AuthlibGoogleOIDC` и `google_start` без миграций.
+- Тесты: `tests/auth/test_auth_wire_wp18.py` (18 случаев), `tests/auth/test_auth_adapters.py` (+ форма запроса к token endpoint, `alg: none`)
+- Требует подтверждения владельцем: нет (решение (4) — если владелец хочет `nonce`/PKCE, это новое требование)
+
 ### D-C-232. WP26.2: `meta-mock` отвечает ролям Фазы 4 по их схемам; ответы, пригодные коду, для `teacher@2`, `task_generator`, `task_checker`/`task_arbiter`, вердиктов
 - Класс: C (подмена нагрузочного стенда и тесты; код `quack/**` не менялся)
 - WP / место: WP26.2, `Т-§11.1`, `PROMPT_CONTRACTS.md`; `backend/loadtest/meta_mock.py`, `backend/tests/test_meta_mock.py`, `tests/e2e/test_laws_end_to_end.py` (T-E14)
