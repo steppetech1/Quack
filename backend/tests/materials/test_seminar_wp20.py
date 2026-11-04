@@ -8,8 +8,7 @@ reconciliation and the task writer are test doubles."""
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -105,7 +104,7 @@ async def test_parse_step_carries_the_problems_of_the_chunks(world: _World) -> N
 
 async def test_the_number_of_problems_is_capped_by_the_setting(world: _World) -> None:
     world.settings = world.settings.model_copy(update={"material_seminar_tasks_max": 1})
-    world.ctx = replace(world.ctx, settings=world.settings)
+    cast(Any, world.ctx).settings = world.settings  # the context of the tests is a namespace
     learner, _, material = await _parsed(world)
     job = await _structure_job(world, learner, material)
     assert [t["statement"] for t in job.payload["seminar_tasks"]] == ["Differentiate sin(x^2)."]
