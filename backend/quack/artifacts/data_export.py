@@ -39,7 +39,6 @@ log = get_logger(__name__)
 
 KIND = "data_export"
 ACTOR = "code"
-EVENTS_PAGE = 1000
 # Tables with `learner_id`, in the order of the archive; the secrets of the login (`core.auth_*`)
 # and the exports themselves are not the learner's data.
 DOCUMENT_TABLES: tuple[LiteralString, ...] = (
@@ -84,15 +83,21 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
 
 
-async def _events_jsonl(db: Db, learner_id: UUID) -> bytes:
+_DOCUMENT_ROWS: dict[LiteralString, LiteralString] = {
+    table: f"SELECT * FROM {table} WHERE learner_id = %(learner_id)s ORDER BY 1"
+    for table in DOCUMENT_TABLES
+}
+
+
+async def _events_jsonl(db: Db, learner_id: UUID, page_size: int) -> bytes:
     lines: list[str] = []
     after = 0
     while True:
         page = await db.fetch_all(
-            _EVENTS_PAGE, {"learner_id": learner_id, "after": after, "limit": EVENTS_PAGE}
+            _EVENTS_PAGE, {"learner_id": learner_id, "after": after, "limit": page_size}
         )
         lines.extend(_json(row) for row in page)
-        if len(page) < EVENTS_PAGE:
+        if len(page) < page_size:
             break
         after = page[-1]["seq"]
     return ("\n".join(lines) + "\n" if lines else "").encode()
@@ -109,17 +114,16 @@ def _readable(kind: str, content: dict[str, Any] | None) -> str:
     return "\n\n".join(parts) + "\n"
 
 
-async def build_archive(db: Db, store: ObjectStore, learner_id: UUID) -> bytes:
+async def build_archive(
+    db: Db, store: ObjectStore, learner_id: UUID, *, events_page: int
+) -> bytes:
     """The zip of `learner_id`; every query is scoped to the learner (T-ST isolation)."""
     prefix = learner_prefix(learner_id)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("events.jsonl", await _events_jsonl(db, learner_id))
+        archive.writestr("events.jsonl", await _events_jsonl(db, learner_id, events_page))
         for table in DOCUMENT_TABLES:
-            rows = await db.fetch_all(
-                f"SELECT * FROM {table} WHERE learner_id = %(learner_id)s ORDER BY 1",
-                {"learner_id": learner_id},
-            )
+            rows = await db.fetch_all(_DOCUMENT_ROWS[table], {"learner_id": learner_id})
             archive.writestr(f"documents/{table}.json", _json(rows))
         for row in await db.fetch_all(_ARTIFACTS, {"learner_id": learner_id}):
             owner = row["topic_id"] or row["hub_id"] or row["artifact_id"]
@@ -141,7 +145,9 @@ async def export_learner_data(
     if row is not None and row["status"] in ("ready", "expired"):
         return
     moment = now or datetime.now(UTC)
-    data = await build_archive(ctx.db, ctx.storage, learner_id)
+    data = await build_archive(
+        ctx.db, ctx.storage, learner_id, events_page=ctx.settings.export_events_page
+    )
     key = export_key(learner_id, export_id)
     await ctx.storage.put(key, data, "application/zip")
     try:

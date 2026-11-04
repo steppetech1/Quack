@@ -625,6 +625,8 @@ class Settings(BaseSettings):
     upload_max_mb: int = 50
     object_url_ttl_s: int = 300
     export_link_ttl_hours: int = 24
+    # WP23.7 (D-C-231): the events of the archive of a learner are read this many rows at a time.
+    export_events_page: int = Field(default=1000, ge=1)
     s3_bucket_learners: str = "quack-learners"
     s3_endpoint: SecretStr = SecretStr("")
     s3_access_key: SecretStr = SecretStr("")
