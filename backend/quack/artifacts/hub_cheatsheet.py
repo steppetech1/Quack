@@ -38,6 +38,7 @@ from quack.artifacts.documents import (
     get_artifact,
     write_system_blocks,
 )
+from quack.artifacts.learner_skills import bound_skill, writer_text
 from quack.artifacts.topic_refresh import (
     WriterInput,
     chunks_text,
@@ -83,7 +84,6 @@ REVIEW_TYPE = (
     "block whose `updates` is the number of the learner's block it concerns; a gap that no block "
     "covers is a new block. Leave the blocks of the system as they are."
 )
-NO_LEARNER_SKILL = "None."
 
 type Prefetch = Callable[[Sequence[UUID]], Awaitable[list[ChunkHit]]]
 
@@ -157,9 +157,10 @@ async def hub_writer_input(
     )
     phrasings = await worked_phrasings(db, reader, learner_id=learner_id, skill_ids=skill_ids)
     hinted = [s for s in skill_ids if await needed_hints(reader, s)]
+    skill = await bound_skill(db, learner_id=learner_id, artifact_type="cheatsheet")
     variables = {
         "artifact_type": REVIEW_TYPE if review else CHEATSHEET_TYPE,
-        "learner_skill": NO_LEARNER_SKILL,
+        "learner_skill": writer_text(skill),
         "topic_graph": _hub_graph(goal.name, goal.control_type, topics, labels),
         "material_chunks": chunks_text(hits, labels),
         "worked_phrasings": phrasings_text(phrasings, labels),
@@ -172,6 +173,7 @@ async def hub_writer_input(
         chunks={h.chunk_id: h for h in hits},
         current=sheet.blocks,
         title=goal.name,
+        skill_version=None if skill is None else skill.version,
     )
 
 
@@ -252,6 +254,7 @@ async def generate_hub_cheatsheet(
             owner_id=hub_id,
             blocks=blocks,
             created_by=created_by,
+            skill_version=context.skill_version,
             redis=redis,
         )
         version = sheet.version
@@ -320,6 +323,7 @@ async def review_hub_cheatsheet(
         owner_id=hub_id,
         blocks=[*kept, *written],
         created_by=created_by,
+        skill_version=context.skill_version,
         redis=redis,
     )
     before = {b.block_id for b in sheet.blocks}

@@ -773,3 +773,42 @@ def test_context_budget_trim() -> None:
     assert variables["conversation"].endswith(tight["conversation"])
     assert estimate_tokens(prompt.render(tight)) <= fixed + 40
     assert TRIM_ORDER == ("materials", "memory_picture", "labels")
+
+
+def test_lasso_refs_in_the_conversation() -> None:
+    """`Т-§15.6`: the lasso «ask about this» — the message names the lines by their numbers in
+    the session and the block by its id (WP14.3, D-B-219)."""
+    from quack.events.event_types import CanvasRef
+
+    log = _Log()
+    action = log.add(
+        "canvas.line_committed",
+        CanvasLineCommitted(
+            canvas_id=SESSION,
+            line_id="l-a",
+            text="a_n = n!/n^n",
+            kind="text",
+            bbox=(0.0, 0.0, 1.0, 1.0),
+            stroke_ids=[],
+            started_at_ms=0,
+            ended_at_ms=1,
+            source="pen",
+            recognition_confidence=0.9,
+            crossed_out=False,
+        ),
+    )
+    log.add("turn.committed", _committed(action, "answer 1", None), causation_seq=action)
+    log.add(
+        "message.sent",
+        MessageSent(
+            text="why is this wrong?",
+            canvas_refs=[
+                CanvasRef(canvas_id=SESSION, line_id="l-a"),
+                CanvasRef(canvas_id=SESSION, line_id="l-zzz"),
+                CanvasRef(canvas_id=SESSION, block_id="b-1"),
+            ],
+        ),
+    )
+    text = render_conversation(log.events, LabelMap.build(SETTINGS), SETTINGS)
+    assert "Learner: why is this wrong?" in text
+    assert "Learner points at: canvas line L1, a canvas line, block b-1" in text

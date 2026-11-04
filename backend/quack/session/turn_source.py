@@ -32,6 +32,7 @@ from quack.config import Settings
 from quack.db.db import Db
 from quack.events.event_types import MessageSent, SessionStarted, TaskClosed, TaskCreated
 from quack.events.log import StoredEvent
+from quack.events.records import PlanUpdateRecord
 from quack.events.values import AnswerSpec, Level, Verdict
 from quack.graph.overlay import SessionOverlay
 from quack.graph.overlay_build import build_session_overlay, empty_overlay
@@ -40,6 +41,7 @@ from quack.graph.read import (
     GraphReader,
     HubGoal,
     MemorySlice,
+    PrepContext,
     ReviewCandidate,
     SliceFocus,
     TopicMemory,
@@ -60,6 +62,7 @@ from quack.session.memory_picture import (
     RevisedCheck,
     render_memory_picture,
 )
+from quack.session.prep_mode import prep_for_turn, render_prep
 from quack.session.review_turn import bank_for_review, review_for_turn
 from quack.session.spoiler_guard import answer_in_text, remove_answer_sentences
 from quack.session.teacher_context import (
@@ -339,6 +342,19 @@ def _goal_topics(goal: SessionGoal, hubs: Sequence[HubGoal]) -> list[UUID]:
     return []
 
 
+def _session_plan(
+    goal: SessionGoal,
+    plan: PlanUpdateRecord | None,
+    labels: LabelMap,
+    prep: PrepContext | None,
+    names: dict[UUID, str],
+    settings: Settings,
+) -> str:
+    """Slot 6: the goal and the plan, and in the preparation mode what the hub needs (WP17.4)."""
+    text = render_session_plan(goal, plan, labels)
+    return text if prep is None else f"{text}\n{render_prep(prep, labels, names, settings)}"
+
+
 class MemoryTurnContextSource:
     """`TurnContextSource` over the journal (Postgres) and memory (S4). `reader` binds the
     reader of memory to the learner of the turn; `neo4j` — the driver of the material prefetch
@@ -409,6 +425,21 @@ class MemoryTurnContextSource:
             )
         except NEO4J_UNAVAILABLE:
             return []
+
+    async def _prep(
+        self, reader: GraphReader, request: TurnRequest, journal: SessionJournal
+    ) -> PrepContext | None:
+        """Data of slot 6 in the preparation mode (WP17.4); unreadable memory — none."""
+        try:
+            return await prep_for_turn(
+                reader,
+                self._db,
+                learner_id=request.learner_id,
+                hub_id=journal.goal.hub_id,
+                now_ms=self._clock(),
+            )
+        except NEO4J_UNAVAILABLE:
+            return None
 
     async def _bank(
         self,
@@ -497,9 +528,13 @@ class MemoryTurnContextSource:
             domain_id=request.domain_id,
         )
         review = await self._review(reader, request, journal, topic_skills)
+        prep = await self._prep(reader, request, journal)
+        prep_skills = [c.skill_id for c in prep.candidates] if prep else []
         read_focus = focus.model_copy(
             update={
-                "skill_ids": list(dict.fromkeys([*focus.skill_ids, *(c.skill_id for c in review)]))
+                "skill_ids": list(
+                    dict.fromkeys([*focus.skill_ids, *(c.skill_id for c in review), *prep_skills])
+                )
             }
         )
         (memory_slice, unavailable), chunks, answers, digest, completed = await asyncio.gather(
@@ -520,7 +555,9 @@ class MemoryTurnContextSource:
         labels = LabelMap.build(
             settings,
             skills=skill_ids,
-            topics=list(dict.fromkeys([*topics, *hub_topics])),
+            topics=list(
+                dict.fromkeys([*topics, *hub_topics, *(prep.coverage_topic_ids if prep else [])])
+            ),
             tasks=[*journal.open_tasks, *(t.task_id for ts in bank.values() for t in ts)],
             misconceptions=[m.misconception_id for m in memory_slice.misconceptions],
             hubs=[hub.hub_id for hub in hubs],
@@ -559,7 +596,7 @@ class MemoryTurnContextSource:
             TeacherSlots(
                 frozen=frozen,
                 conversation=render_conversation(events, labels, settings),
-                session_plan=render_session_plan(journal.goal, plan, labels),
+                session_plan=_session_plan(journal.goal, plan, labels, prep, names, settings),
                 memory_picture=picture,
                 materials=render_materials(chunks, labels),
                 labels=render_labels(labels, names),

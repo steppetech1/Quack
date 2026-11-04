@@ -76,14 +76,14 @@
 | WP7.2 | Эпизоды | влит | `jobs/episodes.py` (#182) | — | issue #193 | T-D2 |
 | WP7.3 | Покрытие | влит | `jobs/coverage.py`, `mark_covered` (#133, #182) | — | — | T-D3, T-X4 |
 | WP7.4 | Очередь по `Т-§13.1` | частично | `queue_p4`, `executor_p4`, `visible_jobs`, `jobs_changed` (#182, #186); `GET /v1/sessions/{id}/jobs` (B, issue #212, D-B-207) | подключена: процесс `workers` на `JobWorker` и `DispatcherP4` (WP1.3, D-A-200) | — | T-D4–D8, T-D10 |
-| WP7.5 | Периодические задачи | влит | `periodic_p4.py`; `manifests.cleanup` (D-A-204), `deletions.reconcile` (D-A-201), `session.sweep_inactive` (D-A-211), `exports.cleanup` (D-A-215), `calibration.weekly` — предложение `p_*` в лог (D-A-219…221) | предложение весов видов свидетельств — нет правила в документах (D-A-221) | — | T-D9 |
+| WP7.5 | Периодические задачи | влит | `periodic_p4.py`; `manifests.cleanup` (D-A-204), `deletions.reconcile` (D-A-201), `session.sweep_inactive` (D-A-211), `exports.cleanup` (D-A-215), `calibration.weekly` — предложение `p_*` и базовых весов ярусов Т1–Т4 в лог (D-A-219, D-A-220, D-A-245; D-A-221 заменено) | — | — | T-D9 |
 | WP8.1 | Оспаривания, «описка» | влит | `POST /v1/disputes`, `POST /v1/verdicts/{seq}/typo` (#185, D-A-192) | — | — | T-ED1, T-ED2 |
 | WP8.2 | Правки тем, «я это знаю» | влит | Пять маршрутов правок (#185, D-A-193), `episode.reassigned`, `check.known_claim` (B), обработчик `topic.split`; перечни и вид `agent.topic_split` (D-A-226) | — (намерение учителя `split_topic` и обработчик `agent.topic_split` — B, #245, D-B-213) | B | T-ED3, T-ED4 |
 | WP8.3 | Состояние на момент N | влит | `state_at` на rules@3 (D-A-191); `GET /v1/sessions/{id}/summary` «до и после» в кодах (D-A-213, D-A-217, T-ED5) | e2e T-E13 целиком — с T-E1 (C, WP26.1) | — | T-ED5, T-E13 |
 | WP17.1 | Кандидаты на повторение | влит | `review_candidates` в `graph.read` (#179, D-A-151) | — | — | T-RV1 |
 | WP17.2 | «Сегодня» | влит | `GET /v1/domains/{id}/today`: лимиты, оценка времени, `today.shown` (D-A-195) | — | — | T-RV2 |
 | WP17.3 | Готовность и темп | влит | `topic_readiness`; прогноз темпа и предупреждение `pace_*` в «Сегодня» (D-A-203) | — | — | T-RV3 |
-| WP17.4 | Режим подготовки | частично | `prep_context`; `POST /v1/hubs/{id}/prep-mode` (D-A-195) | подача в слот 6 (B) | D-A-152 | T-RV4 |
+| WP17.4 | Режим подготовки | частично | `prep_context`; `POST /v1/hubs/{id}/prep-mode` (D-A-195); слот 6 в режиме подготовки и раздел 7 промпта учителя про пробник (B, D-B-216) | материалы контроля в графе (A, D-A-152) | D-A-152 | T-RV4 |
 | WP17.5 | После дедлайна | влит | `POST /v1/hubs/{id}/grade`, предложение оценки (D-A-195) | — | — | T-RV4 |
 | WP17.6 | Повторение в ходе учителя (реализует B) | влит | `session/review_turn.py`: кандидаты `review_candidates` в картине памяти, намерение `review`, «давай 5 минут», подбор `select_tasks` (#208, D-B-189, D-B-190) | явное поле лимита времени во входе хода (сейчас — из текста, D-B-189) | — | — |
 | WP25 | Удаление и журнал удалений | влит | Домен, тема, аккаунт (`DELETE /v1/learner` на `delete_account`, трассы), сверка и повтор, `deletions.reconcile` (D-A-197, D-A-201, D-A-202, D-A-205…207) | снять `account.purge_deleted` Фазы 3 — шаг 5 WP1.3 | — | T-DL1, T-DL2, T-DL3, T-E12 |
@@ -145,11 +145,11 @@
 | WP0 | Вход и аудит (зоны A, B выполнены) | влит | `main` зелёный, чистый старт подтверждён владельцем 2026-11-02, п.3а–3е закрыты (#71, #72) | — | — | T-A9b |
 | WP9.1 | compose | частично | `compose.yaml`: Caddy, сети, лимиты, секреты ролей (#102, #174); `LLM_PRICES`, `LANGSMITH_API_KEY` у `api`/`workers`, пустая `LLM_PRICES` допустима вне prod (D-B-198, D-C-149, ветка phase-4-c-b209) | сервис `alerts` и таймер; сверить состав с `Д-§3` | — | T-OPS1, T-OPS6 |
 | WP9.2 | Caddy и образы | влит | `deploy/Caddyfile`, Dockerfile с `pg_dump 16`, `age`, CORS (#120, #177); `dbmate` и `db/migrations` в образе - D-C-160 | — | — | — |
-| WP9.3 | CI | в PR (ветка phase-4-c-wp9-3-ci) | Jobs: fast (+`modal/`: ruff, pyright), backend (+ шаги «изоляция», «один писатель»), squawk, compute, images, publish в GHCR, реестр событий (#237), `frontend-types` (только PR, ожидаемо красный до перевода фронтенда, не гейт публикации; R4-2); job выкатки с `production`, `concurrency: deploy`, `DEPLOY_FREEZE` (WP9.4); `$ref` 422 в `openapi.json` исправлены (D-C-210) | сделать `frontend-types` обязательным — владелец после перевода фронтенда | D-C-210 | T-DB7 |
-| WP9.4 | Выкатка и откат | в PR (ветка phase-4-c-wp9-3-ci) | `deploy/deploy.sh` (#120), job выкатки в окружении `production`, `DEPLOY_FREEZE` (#217), `tests/test_deploy_order.py` (порядок шагов Д-§6.1, нет автоотката при новых событиях) | живой прогон на сервере — владелец | D-C-210 | T-OPS8 |
-| WP9.5 | Бэкапы и тревоги | в PR (ветка phase-4-c-wp9-3-ci) | `ops backup`, сервис и таймер `backup`, вебхук тревог (#122, #126), `ops alerts`, сервис `alerts`, таймеры (#204, D-C-182), `GET /internal/status` (D-C-212) | — | D-C-212 | T-OPS5, T-OPS7 |
-| WP9.6 | Команды восстановления | в PR (ветка phase-4-c-wp9-3-ci) | `ops db-roles` (#127), `ops rebuild --concurrency`, `can-rollback`, `restore-check`, `resume`, `replay-deletions`, `orphan-objects` (функции A из S15 влиты; `orphan_objects` — в зоне C, D-C-211) | подтверждение владельцем определения «ссылка в Postgres» для `orphan-objects` | D-C-211 | T-OPS2, T-OPS3, T-OPS4 |
-| WP9.7 | Сервер | в PR (ветка phase-4-c-wp9-3-ci) | `deploy/setup-server.sh` с таймерами `quack-alerts` и `quack-host-state`, `deploy/README.md` с разделом восстановления Д-§8.3 (#120, #169, #204) | — | — | — |
+| WP9.3 | CI | влит (#253) | Jobs: fast (+`modal/`: ruff, pyright), backend (+ шаги «изоляция», «один писатель»), squawk, compute, images, publish в GHCR, реестр событий (#237), `frontend-types` (только PR, ожидаемо красный до перевода фронтенда, не гейт публикации; R4-2); job выкатки с `production`, `concurrency: deploy`, `DEPLOY_FREEZE` (WP9.4); `$ref` 422 в `openapi.json` исправлены (D-C-210) | сделать `frontend-types` обязательным — владелец после перевода фронтенда | D-C-210 | T-DB7 |
+| WP9.4 | Выкатка и откат | влит (#253) | `deploy/deploy.sh` (#120), job выкатки в окружении `production`, `DEPLOY_FREEZE` (#217), `tests/test_deploy_order.py` (порядок шагов Д-§6.1, нет автоотката при новых событиях) | живой прогон на сервере — владелец | D-C-210 | T-OPS8 |
+| WP9.5 | Бэкапы и тревоги | влит (#253) | `ops backup`, сервис и таймер `backup`, вебхук тревог (#122, #126), `ops alerts`, сервис `alerts`, таймеры (#204, D-C-182), `GET /internal/status` (D-C-212) | — | D-C-212 | T-OPS5, T-OPS7 |
+| WP9.6 | Команды восстановления | влит (#253); D-C-215 в ветке phase-4-c-wp9-fix (PR) | `ops db-roles` (#127), `ops rebuild --concurrency`, `can-rollback`, `restore-check`, `resume`, `replay-deletions`, `orphan-objects` (по умолчанию только отчёт, удаление с `--apply`, D-C-215) (функции A из S15 влиты; `orphan_objects` — в зоне C, D-C-211) | подтверждение владельцем определения «ссылка в Postgres» для `orphan-objects` | D-C-211, D-C-215 | T-OPS2, T-OPS3, T-OPS4 |
+| WP9.7 | Сервер | влит (#253) | `deploy/setup-server.sh` с таймерами `quack-alerts` и `quack-host-state`, `deploy/README.md` с разделом восстановления Д-§8.3 (#120, #169, #204) | — | — | — |
 | WP18.1 | Вход по ссылке на почту | влит | `auth/links.py`, `ResendEmailSender`, лимиты (#97, #106) | — | D-C-133 | T-AU1, T-AU2 |
 | WP18.2 | Google OIDC | влит | `AuthlibGoogleOIDC` (#106) | клиент Google OIDC создаёт владелец | действие владельца | T-AU3 |
 | WP18.3 | Сессии и cookie | влит | Весь API на сессиях, JWT и пароль удалены (#123) | — | — | T-AU4, T-AU5 |
@@ -165,7 +165,7 @@
 | WP21.3 | Распознавание строк | влит | `recognizer@1`, строки, стёртые, исправление (#134, #159, #167) | слой 1 `recognizer@1` — черновик (D-C-132) | — | T-CV3 |
 | WP21.4 | Проверка шагов | сделан в phase-4-c | `canvas_diagnoser@1` (#164); каскад в сокете: символьный переход → диагност → второе мнение `second_opinion@1`, `observation.diagnosed`/`second_opinion` (D-C-158) | шов B: обработчик задачи `second_opinion.diagnosis` под ключом `observation.second_opinion:{target_seq}`; промпт `second_opinion@1` для строки холста | — | T-CV4 |
 | WP21.5 | Пометки и вмешательства | сделан в phase-4-c | Шлюз вмешательств: пометки `error`/`question`, `error_grace_ms`, лимиты, тихий режим (`preference.set canvas_quiet`), «проверь», «застрял» с подсказкой первой ступени; сообщения `mark`, `hint` (D-C-159) | запись в ленте «задача закончена» (`task.closed` + `hint.shown`); клиент пишет `preference.set canvas_quiet` (WP13.1, B) | WP21.4 | T-CV5 |
-| WP21.6 | Чат, голос, проигрывание | частично | Проигрывание канваса, ссылки на куски (#162); голос отрезками `POST /v1/sessions/{id}/voice` без хранения аудио, WAV кодом (D-C-152) | лассо в `message` (WP14.3) | — | T-CV7 |
+| WP21.6 | Чат, голос, проигрывание | частично | Проигрывание канваса, ссылки на куски (#162); голос отрезками `POST /v1/sessions/{id}/voice` без хранения аудио, WAV кодом (D-C-152) | — (лассо в разговоре учителя сделано B, D-B-219) | — | T-CV7 |
 | WP22.1 | Привязка | влит | Токен, область `companion` (#142, #146) | — | — | T-CP1 |
 | WP22.2 | Снимок | влит | Фото листа: объект, затем `photo.uploaded` (#150) | — | — | T-CP2 |
 | WP22.3 | Конвейер по `Т-§22.6` | готов в ветке | `photo.pipeline`, режим листа, сравнение с листом (#161); рисунки на фото: `segmenter`, `clean-drawing`, слой ученика (D-C-153) | формат маски `sam-3.1` — ручной прогон DoD п.6a | — | T-CP3 |
@@ -175,7 +175,7 @@
 | WP23.3 | Точность | готов в ветке | Проверка меток и номеров блоков, одна перегенерация (#172); общий код `quack/artifacts/accuracy.py` для конспекта и cheat sheet: определение и утверждение без куска при наличии кусков — нарушение (T-AR2), страница из куска, формулы блока (`formulas`) через `/v1/math/check` с перегенерацией, отметки `unverified` («не проверено») и `basis: system` («без опоры») (D-C-155–D-C-157, ветка phase-4-c) | — | — | T-AR2 |
 | WP23.4 | Карточки | готов в ветке | Хранение, `GET/PATCH/DELETE`, карточка как задача банка (#184); генерация в `artifact.topic_refresh` (второй вызов `artifact_writer@1`, `markup_record`, `create_task`, потолок `cards_per_topic_max`, D-C-154); `answer.submitted {source: card}` — действие `answer` B и строка проектора A (D-A-125 п.1), нового события нет | — | — | T-AR3 |
 | WP23.5 | Cheat sheet хаба | частично | Состояние предложения `cheatsheet_offer` при чтении (D-C-144); подгонка под A4 через `/v1/render/pdf` до `cheatsheet_fit_rounds`; «собери сам» (`POST …/cheatsheet/review`); `GET/POST /v1/hubs/{id}/cheatsheet`; задача `artifact.cheatsheet` (D-C-148, ветка phase-4-c) | запись согласия `agent.requested {artifact, hub_id}` ждёт D-A-196 (три теста `xfail(strict)`); A: поля в схеме, маршрутизация `agent.requested{artifact: cheatsheet}` → `artifact.cheatsheet` `{hub_id, request_id}`, снять строку `hub.deadline_set`; KaTeX для формул в PDF (WP9.2) | D-A-196 (класс C) | T-AR4 |
-| WP23.6 | Скиллы ученика (P2) | не начат | — | `content.learner_skills`, `/имя` в чате, `GET /v1/system-templates` | — | T-CX6 |
+| WP23.6 | Скиллы ученика (P2) | в PR (ветка phase-4-c-wp9-fix) | `quack/artifacts/learner_skills.py`, `GET/POST/PATCH/DELETE /v1/learner-skills`, `GET /v1/system-templates`, слот `learner_skill` писателя и `skill_version` версий артефактов (notes, cards, cheatsheet); вызов `/имя` в чате - уже у B | подтверждение владельцем набора шаблонов и правила «один скилл на тип» | D-C-216 | T-CX6 (хвост хода - у B) |
 | WP23.7 | Экспорт (P2) | не начат | экспорт Фазы 3 `GET /v1/domains/{id}/export` снят (D-C-170: `pMastery` и `core.domains` в Фазе 4 нет) | Obsidian, Anki (`genanki`), `POST /v1/learner/export` (`export.data`) | — | T-AR5 |
 | WP24 | Сервис compute | влит | Пул `pebble`, PDF, фото, рендер, Chromium по требованию (#82, #92) | почасовая чистка `/srv/quack/tmp` (D-C-110) | — | T-CM1, T-CM2, T-CM3 |
 | WP26 | Сквозные тесты и нагрузка | частично | `meta-mock` со стримингом и инструментами (#87), подмены `tests/support/` | стенд `tests/e2e/` на процессах Фазы 4 (`projector_process`, `workers_process`, D-C-190); осталось: T-E1 (текстовый ход на новом стенде), красные T-E2–E14, Locust на 100 учеников | WP1.3 (A) | T-E1–T-E14 |
@@ -188,7 +188,7 @@
 
 1. **WP1.3, шаг 5 ч.2** — сделан (PR #258, D-A-234…238). Остаток — устаревшие комментарии про `session_factory` в `quack/api/resources.py` и `tests/storage/test_s1_resources.py` (C); `graph/projector_rows.py`, `events/payloads.py`, `jobs/kinds.py` остаются, пока на них опираются тесты и пакеты.
 2. **WP2.3 / WP3.4, режим «наложение сессии»** — сделан на `rules@3` (PR #259, D-A-239): `graph/overlay_build.build_session_overlay`, `read_session_tail`, `load_batch_inputs`/`run_batch` общие с проектором. Подключение в `session/turn_source.py` — сделано B (D-B-215, #260).
-3. **Владелец:** `D-A-196` (класс C); `D-A-221` (правило весов свидетельств).
+3. **Владелец:** `D-A-196` (класс C).
 
 ### Поток B
 
@@ -201,6 +201,7 @@
 6. **WP16.7, хвост** — регистрация команды оценки извлечения `agents/extraction_eval.py` (C, S15); выгрузка наборов LangSmith — оператор.
 7. **WP8.3 со стороны B** — `db=ctx.db` в читатель при первом отчёте «до и после» (issue #190); Q-A-4.
 8. **WP2.3 / WP3.4, наложение сессии** — подключено в `session/turn_source.py` (D-B-215, #260).
+9. **WP12.5 / WP20.2, задачи семинара** — функция B: принять `seminar_tasks` из разбора материала, разметить, записать `task.created {source: material}` (D-B-217, #271); обработчик `second_opinion.diagnosis` — C.
 
 ### Поток C
 
@@ -229,7 +230,6 @@
 | D-A-196 | Поля `hub_id` и `artifact` в `agent.requested` v1 (класс C, issue #191) |
 | Слой 1: 7 пунктов | Текст заготовок `verdict_proof`, `second_opinion`, `verdict_free`, `extractor`, `analyst`, `builder` и общий блок диагностики — раздел «Промпты» заметок |
 | Q-C-1 | Два теста `compute` падали при параллельном прогоне с backend (таймаут `pebble`) |
-| D-A-221 | Правило пересчёта весов видов свидетельств (`Т-§7.4`, `Т-§18.5`) в `calibration.weekly`: в документах нет; сейчас предлагаются только вероятности `p_*` |
 | Q-A-4 | A → B: на что указывает `confidence.reported.target_seq`; порог `calibrated` |
 
 Класс C подтверждает владелец на G4. Действия владельца вне кода: сервер, DNS, секреты окружения `production`, клиент Google OIDC, ключи Modal и Resend, ручной прогон на живой модели (DoD п.6a) — `deploy/README.md`.

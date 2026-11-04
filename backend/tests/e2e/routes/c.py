@@ -171,6 +171,8 @@ STREAM = Stream(
         "card_id": NO_ID,
         # WP23.5: a hub of the walk (the cheat sheet routes); stream A's `hub_id` is a graph hub.
         "cheatsheet_hub_id": NO_ID,
+        # WP23.6: a skill of the learner (the routes that change or delete it).
+        "skill_id": NO_ID,
         # WP21.3: a recognized line of the canvas the walk opens for the correction route.
         "line_id": "none",
     },
@@ -237,6 +239,17 @@ STREAM = Stream(
             requires=("canvas_id", "line_id"),
             body=lambda ids, v: {"text": ["x=2", "x=3"][v], "sympy": None},
         ),
+        # ТЗ Ф4 §6.4, WP23.6: the id of the skill comes from the key, so a repeat is the same skill.
+        Route(
+            "POST",
+            "/v1/learner-skills",
+            stage=275,
+            body=lambda ids, v: {
+                "name": "brief",
+                "instruction": ["Answer in two sentences.", "Answer in one."][v],
+                "bindings": {"artifact_types": ["notes"]},
+            },
+        ),
         # ТЗ Ф4 §6.4, WP23.5: the review of the learner's cheat sheet and the consent to a
         # generated one. Last in the walk: the consent writes `agent.requested` with `artifact` and
         # `hub_id`, which the schema takes with D-A-196 (issue #191);.
@@ -279,6 +292,22 @@ STREAM = Stream(
             "POST",
             "/v1/sessions/{session_id}/canvases",
             no_key="each call opens a new canvas",
+            body=lambda ids, v: {},
+        ),
+        # ТЗ Ф4 WP23.6 (D-C-216): `content.learner_skills` has no key column and no event; the
+        # request sets absolute values, so a repeat changes nothing (no new version).
+        Route(
+            "PATCH",
+            "/v1/learner-skills/{skill_id}",
+            no_key="no event; sets absolute values, a repeat writes no new version (D-C-216)",
+            body_key="none",
+            body=lambda ids, v: {"instruction": ["Be brief.", "Be long."][v]},
+        ),
+        Route(
+            "DELETE",
+            "/v1/learner-skills/{skill_id}",
+            no_key="no event; deletes the skill with its versions, a repeat finds none (D-C-216)",
+            body_key="none",
             body=lambda ids, v: {},
         ),
         # ТЗ Ф4 WP22.1: every call issues a new one-time token (Т-§16.1); no event to replay.
@@ -332,6 +361,9 @@ STREAM = Stream(
             ("GET", "/v1/topics/{topic_id}/cards"),
             # ТЗ Ф4 §6.4, WP23.5
             ("GET", "/v1/hubs/{hub_id}/cheatsheet"),
+            # ТЗ Ф4 §6.4, WP23.6
+            ("GET", "/v1/learner-skills"),
+            ("GET", "/v1/system-templates"),
             # §6.4: new endpoints of Phase 3
             ("GET", "/v1/learner/stream"),
         }
@@ -342,5 +374,6 @@ STREAM = Stream(
         "quack.artifacts.notes_routes:router",
         "quack.artifacts.cards_routes:router",
         "quack.artifacts.hub_cheatsheet_routes:router",
+        "quack.artifacts.skills_routes:router",
     ),
 )
