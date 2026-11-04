@@ -25,13 +25,13 @@ async def count(system: System, sql: str, **params: Any) -> int:
 
 async def delete_when_free(system: System, learner: Learner, url: str) -> dict[str, Any]:
     """The deletion takes the lock of the learner's projection; while the projector or a job
-    holds it the API answers `503 repeat later` (WP25): wait for the stand and repeat."""
-    for _ in range(5):
-        await system.settle()
-        response = await system.client.delete(url, headers=learner.headers)
+    holds it the API answers `503 repeat later` (WP25): repeat."""
+    response = await system.client.delete(url, headers=learner.headers)
+    for _ in range(20):
         if response.status_code != 503:
-            return ok(response)
+            break
         await asyncio.sleep(0.5)
+        response = await system.client.delete(url, headers=learner.headers)
     return ok(response)
 
 
@@ -96,7 +96,11 @@ async def test_deletions_end_to_end(system: System) -> None:
 
     # The account: nothing of the learner is left but the log row of the deletion.
     await delete_when_free(system, learner, "/v1/learner")
-    assert [r.kind for r in journal.records] == ["topic", "domain", "account"]
+    # A repeat after `503` writes the record again (the journal comes first); the one that
+    # stands is the last, and the reconciliation removes the others (T-DL3).
+    assert [r.kind for r in journal.records][:2] == ["topic", "domain"]
+    accounts = [r for r in journal.records if r.kind == "account"]
+    assert accounts and {r.kind for r in journal.records} == {"topic", "domain", "account"}
     assert (
         await count(
             system, "SELECT count(*) AS n FROM core.learners WHERE learner_id = %(l)s", l=learner_id
@@ -114,6 +118,11 @@ async def test_deletions_end_to_end(system: System) -> None:
         {"l": learner_id},
     )
     assert [r["kind"] for r in logged] == ["topic", "domain", "account"]
+    last = await system.resources.db.fetch_one(
+        "SELECT deletion_id FROM ops.deletion_log WHERE learner_id = %(l)s AND kind = 'account'",
+        {"l": learner_id},
+    )
+    assert last is not None and last["deletion_id"] == accounts[-1].deletion_id
     assert await nodes_of(system, learner_id) == 0
     after = await system.client.get("/v1/domains", headers=learner.headers)
     assert after.status_code == 401

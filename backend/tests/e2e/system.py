@@ -72,6 +72,20 @@ _READY_JOBS_SQL = (
     "AND (status = 'running' OR (status = 'queued' AND run_at <= now()))"
 )
 
+QUIET_ANALYST = {
+    "frontier": [],
+    "gap_hypotheses": [],
+    "uncertainty": None,
+    "plan_divergence": False,
+    "moves": [
+        {"move": "continue", "reason": "nothing to change"},
+        {"move": "check", "reason": "nothing to change"},
+    ],
+    "forecast": [],
+    "manner": "calm",
+    "text": "Nothing new.",
+}
+
 # The loops poll the log and the queue this often (production: `consumer_poll_ms` = 500).
 STAND_POLL_MS = 100
 
@@ -283,6 +297,9 @@ async def build_system(
     # A task of the bank gets its solution space ahead in the background (`task.solution_space`,
     # WP12.4): the walk creates such tasks, and the job must succeed, not retry.
     llm.respond("SolutionSpace", lambda _request: SPACE.model_dump(mode="json"))
+    # The jobs after a session (the analyst, the notes of the topic) must succeed, not retry.
+    llm.respond("AnalystOutput", lambda _request: QUIET_ANALYST)
+    llm.respond("ArtifactWriterOutput", lambda _request: {"blocks": [], "cards": []})
     compute = ComputeScenario()
     resources = build_app_resources(
         settings,
