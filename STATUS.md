@@ -232,7 +232,7 @@
 | D-A-196 | Поля `hub_id` и `artifact` в `agent.requested` v1 (класс C, issue #191) |
 | Слой 1: 7 пунктов | Текст заготовок `verdict_proof`, `second_opinion`, `verdict_free`, `extractor`, `analyst`, `builder` и общий блок диагностики — раздел «Промпты» заметок |
 | Q-C-1 | Два теста `compute` падали при параллельном прогоне с backend (таймаут `pebble`) |
-| Q-A-4 | A → B: на что указывает `confidence.reported.target_seq`; порог `calibrated` |
+| ~~Q-A-4~~ | A → B: решено, D-B-222 (`target_seq` — `seq` ответа; порог `calibrated` — точный ноль) |
 
 Класс C подтверждает владелец на G4. Действия владельца вне кода: сервер, DNS, секреты окружения `production`, клиент Google OIDC, ключи Modal и Resend, ручной прогон на живой модели (DoD п.6a) — `deploy/README.md`.
 
