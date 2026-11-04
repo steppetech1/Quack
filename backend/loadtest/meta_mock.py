@@ -15,7 +15,8 @@ A separate ASGI process that answers `POST /responses` as the Responses API does
 - `response_format`, `temperature` or no `store: false` → 400, as Meta does (Т-§11.1);
 - Phase 4 (ТЗ Ф4 WP26.2, seam S13, D-B-125 п.3): `stream: true` gives SSE `data: {json}` lines
   with sorted keys — per item `response.output_item.added`, `response.output_text.delta` for a
-  message, `response.output_item.done`, then `response.completed` / `response.incomplete`;
+  message, `response.output_item.done`, then `response.completed` / `response.incomplete`, then
+  `data: [DONE]` (the real API ends the stream with it, D-B-214);
   with `tools`, once the input has a `function_call_output` for every `function_call`, the
   step is the answer.
 
@@ -483,6 +484,7 @@ def _stream_events(response: dict[str, Any]) -> list[bytes]:
         events.append(_sse({"item": item, "type": "response.output_item.done"}))
     final = f"response.{response['status']}"
     events.append(_sse({"response": response, "type": final}))
+    events.append(b"data: [DONE]\n\n")  # the real API ends the stream with it (D-B-214, #251)
     return events
 
 
