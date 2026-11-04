@@ -359,7 +359,7 @@ _DIAGNOSED = (
 )
 
 
-def _diagnosed_key(env: StepEnv, line: CanvasLineCommitted) -> str:
+def diagnosed_key(env: StepEnv, line: CanvasLineCommitted) -> str:
     return f"observation.diagnosed:{env.canvas_id}:{line.line_id}:{line_digest(line)}"
 
 
@@ -375,7 +375,7 @@ async def _written(env: StepEnv, line: CanvasLineCommitted, learner_id: UUID) ->
     request "проверь", a reconnect) does not ask compute or the model again and cannot write a
     second diagnosis (law 5)."""
     row = await env.db.fetch_one(
-        _DIAGNOSED, {"learner_id": learner_id, "key": _diagnosed_key(env, line)}
+        _DIAGNOSED, {"learner_id": learner_id, "key": diagnosed_key(env, line)}
     )
     if row is None:
         return None
@@ -407,7 +407,7 @@ async def _write_diagnosis(
                     "method": method,
                 },
                 actor="code" if method == "symbolic" else f"{DIAGNOSER_ROLE}@1",
-                idempotency_key=_diagnosed_key(env, line),
+                idempotency_key=diagnosed_key(env, line),
                 session_id=env.session_id,
             )
         ],
