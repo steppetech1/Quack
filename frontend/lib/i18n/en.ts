@@ -762,12 +762,9 @@ export const en = {
   },
   allGraphs: {
     title: "All graphs",
-    lead: "Every subject at a glance. Pick one to open its graph.",
+    lead: "Every subject on one canvas. Click a graph to open it.",
     open: (name: string) => `Open ${name}`,
-    topics: (n: number) => `${n} ${n === 1 ? "topic" : "topics"}`,
-    hubs: (n: number) => `${n} ${n === 1 ? "chapter" : "chapters"}`,
-    ready: "ready",
-    empty: "No graph yet",
-    graphSr: (name: string) => `Graph of ${name}`,
+    empty: "No graphs yet",
+    aria: "Graphs of all subjects. Arrow keys pan, plus and minus zoom, zero shows everything. Tab moves between subjects.",
   },
 };

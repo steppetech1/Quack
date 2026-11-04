@@ -20,7 +20,7 @@ export type GraphHandle = { focusTopic: (id: string) => void };
 
 type View = { k: number; tx: number; ty: number };
 type Pt = { x: number; y: number };
-type Colors = Record<"paper" | "dim" | "ribbon" | "cloth" | TopicState, string> & { label: string; body: string; ribbonRgb: string; ind: Record<IndicatorId, string> };
+export type Colors = Record<"paper" | "dim" | "ribbon" | "cloth" | TopicState, string> & { label: string; body: string; ribbonRgb: string; ind: Record<IndicatorId, string> };
 type Arrow = { id: string; dir: "up" | "down" | "left" | "right"; ind: IndicatorId; n: number; x: number; y: number; key: string };
 const IND_VAR: Record<IndicatorId, string> = { new: "var(--ind-new)", relevant: "var(--ind-relevant)", deadline: "var(--ind-deadline)", weak: "var(--ind-weak)", review: "var(--ind-review)" };
 
@@ -55,7 +55,7 @@ const smooth = (a: number, b: number, v: number) => {
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Canvas cannot use CSS classes, so colours and fonts are read once from probe elements */
-function readColors(host: HTMLElement): Colors {
+export function readColors(host: HTMLElement): Colors {
   const probe = (cls: string, prop: "color" | "fontFamily") => {
     const el = document.createElement("span");
     el.className = cls;
@@ -572,14 +572,14 @@ export const LayeredGraph = forwardRef<
     const fadeHub = smooth(8, 26, unit);
     type Label = { key: string; text: string; x: number; y: number; above: boolean; prio: number; fade: number; deg: number; fill: string; font: string };
     const labels: Label[] = [];
-    const hubFont = `500 12px ${col.label}`;
+    const hubFont = `500 14px ${col.body}`;
     const topicFont = `400 11px ${col.body}`;
     for (const n of L.hubs) {
       const p = pos(n.key);
       if (!p) continue;
       const x = sx(p.x), y = sy(p.y);
       if (!near(x, y, 120)) continue;
-      labels.push({ key: n.key, text: (hubs.get(n.id)?.name ?? "").toUpperCase(), x, y: y - rH - 5, above: true, prio: 3, fade: marks.current.has(n.key) ? 1 : fadeHub, deg: 0, fill: col.paper, font: hubFont });
+      labels.push({ key: n.key, text: hubs.get(n.id)?.name ?? "", x, y: y - rH - 5, above: true, prio: 3, fade: marks.current.has(n.key) ? 1 : fadeHub, deg: 0, fill: col.paper, font: hubFont });
     }
     for (const n of L.topics) {
       const p = pos(n.key);
