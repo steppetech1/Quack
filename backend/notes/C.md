@@ -23,6 +23,24 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-191. WP26.1: сквозные тесты T-E1…T-E14 на стенде Фазы 4; красные места и что нужно от A и B
+- Класс: C (только тесты и подмены; код `quack/**` не менялся)
+- WP / место: WP26.1, WP26.2 (тесты); `tests/e2e/{text_journey,test_learner_journey,test_laws_end_to_end,test_classify_and_summary,test_deletions,test_failure_modes,test_photo_and_materials,test_canvas_journey,test_hub_deadline_today}.py`, `tests/e2e/{system,conftest}.py`, `tests/support/graph_dump.py`
+- Контекст: стенд D-C-190 работает на процессах Фазы 4. Тесты T-E1…T-E14 (§8.14) пишутся по сценариям таблицы. Где код других потоков не даёт описанного поведения, тест остаётся красным как `xfail(strict=True)` с причиной в `reason`: когда поток исправит код, строгий `xfail` упадёт и маркер снимают.
+- Решение: зелёные: T-E2, T-E3 (были), T-E4 (дамп подграфа ученика после `rebuild_learner` равен дампу проектора), T-E5 (два невалидных ответа извлекателя, повтор задачи вручную через `run_at`), T-E6 (канвас по задаче, `mark` после `error_grace_ms`, исправление строки, подсказка, вердикт с `help_step = 1`), T-E7 первая половина (PDF, `material.parse`, куски, эмбеддинги), T-E8 (привязка, два снимка, только новая строка), T-E9 первая половина (дедлайн из разметки, хаб, `today` с причиной `deadline` и `pace_warnings`, подготовленный план), T-E10 (`pause_background`, три хода со `projector_lag`, догоняние), T-E11 (строки redis, modal, storage, compute, r2, resend), T-E12, T-E13, T-E14 (нет UUID в запросах к моделям, нет полей силы в схемах извлекателя и проверок). Красные (`xfail`, причина и нужное от потока):
+  1. T-E1: B, `quack/session/turn_source.py::assemble` читает журнал сессии до `seq` ответа (`to_seq=request.action_seq`), а мгновенный вердикт записан сразу после ответа; `answered.solved` всегда ложно, ход после верного ответа не пишет `task.closed`, эпизод остаётся открытым. Нужно читать до конца пачки действия (вердикты с `answer_seq` = действию). Проверено локальной правкой `to_seq + 5`: цепочка `verdict.recorded → task.closed → episode.closed → extract.episode → observation.extracted` и фолд проходят.
+  2. T-E11 `meta`: B, `turn_source` ставит `llm_unavailable=False`; недоступный провайдер даёт `error` LLM_DEGRADED, а не ход с `degraded_mode = llm_unavailable` (ТЗ §4.4).
+  3. T-E11 `neo4j`: A/B, `ServiceUnavailable` Neo4j выходит из сборки хода (`turn_failed`), а не даёт `memory_unavailable`.
+  4. T-E7 вторая половина: B, `source_of` создаёт `MemoryTurnContextSource` без клиента эмбеддингов, у `ToolContext` нет `search`, `search_materials` в боевом процессе всегда отвечает «search temporarily unavailable» (WP14.4).
+  5. T-E9 вторая половина: B, ничто не подхватывает подготовленный план (`prepared_session_id`) при старте сессии из пункта «Сегодня» (WP16.8, WP13.6).
+  Не покрыто: T-E14 «вход аналитика без прошлой сводки» (в сценарии аналитик не запускается), T-E4 не включает T-E7 в сравниваемый журнал. Заметка для A: после `observation.extracted` с верным элементом уровня 1 узел `Skill` не обновился (`asOfSeq` остался на последнем событии до наблюдения, `l1SuccessW = 0`), Evidence в графе есть; если свёртка должна учитывать доказательство модели, это красный T-E1 после п.1.
+  Обработчика `canvas.rediagnose` нет (зона A): задача ставится диспетчером и остаётся в очереди; `System.settle` ждёт только виды задач с обработчиком (`handled_kinds`), это не прячет сбой, другой вид останется виден по тайм-ауту.
+  WP26.2: `meta-mock` под новые роли не менялся (остаток: схемы ролей `Т-§11.1`, подмена эмбеддингов в профиле `loadtest`); WP26.3 (Locust) вне задачи.
+- Почему: ТЗ Ф4 §8.14, WP26; красная линия 5 (утверждения не ослаблены, красное помечено, а не удалено).
+- Обратимость: тесты.
+- Тесты: перечислены выше; `tests/e2e/` целиком.
+- Требует подтверждения владельцем: нет
+
 ### D-C-216. WP23.6: скиллы ученика (`/v1/learner-skills`), системные шаблоны (`/v1/system-templates`), привязка к артефактам
 - Класс: C (в документах не заданы: форма `bindings`, правила имён, какие промпты считаются «системными шаблонами», идемпотентность без события)
 - WP / место: WP23.6, Т-§17.8, П-11.6; `quack/artifacts/learner_skills.py`, `skills_routes.py`, `topic_refresh.py`, `hub_cheatsheet.py`, `config.py`

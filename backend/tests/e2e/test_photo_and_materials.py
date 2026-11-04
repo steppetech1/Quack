@@ -1,8 +1,8 @@
 """E2E: the companion photo journey and the materials journey (ТЗ Ф4 §8.14: T-E8, T-E7).
 
 T-E8: pairing → two photos of one sheet → the second photo writes only its new line → the lines
-are in the canvas. T-E7: upload of a PDF → parse → chunks → embeddings (red: the handler
-`material.parse` is not written yet, WP20.2)."""
+are in the canvas. T-E7: upload of a PDF → parse → chunks → embeddings → a turn with
+`search_materials`."""
 
 from __future__ import annotations
 
@@ -14,11 +14,12 @@ from uuid import UUID, uuid4
 import pytest
 
 from quack.api.auth import SESSION_COOKIE
-from quack.compute_client.contracts import AlignResponse
-from tests.e2e.journey import ok, onboard
+from quack.compute_client.contracts import AlignResponse, PdfPage, PdfPagesResponse
+from tests.e2e.journey import ok, onboard, sse_events
 from tests.e2e.system import Learner, System
-from tests.e2e.text_journey import start_session
+from tests.e2e.text_journey import SCHEMA, act, script_teacher, start_session
 from tests.support.images import webp_vp8x
+from tests.support.llm import ScriptedToolCall, ScriptedToolStep
 
 ALIGN = "/v1/image/align"
 SHEET = webp_vp8x(200, 100)
@@ -98,17 +99,79 @@ async def test_companion_photo_journey(system: System) -> None:
     assert (await system.client.get("/v1/me", headers=phone)).status_code == 403
 
 
-MATERIALS_NOT_PARSED = (
-    "A: the handler `material.parse` (WP20.2) is not written: an uploaded material stays "
-    "`uploaded`, no pages, no chunks, no embeddings (D-C-191)"
+PAGES = "/v1/pdf/pages"
+PAGE_ONE = (
+    "Chain rule\n\nIf f and g are differentiable, then (f(g(x)))' = f'(g(x)) g'(x). "
+    "It needs the derivative of a power first."
 )
+PAGE_TWO = "Integration by parts\n\nWe use the product rule backwards: int u dv = uv - int v du."
+TOPICS = ("Derivatives", "Integrals")
+SKILLS = {
+    "Chain rule": "Derivatives",
+    "Power rule": "Derivatives",
+    "Integration by parts": "Integrals",
+    "Product rule": "Derivatives",
+}
 
 
-@pytest.mark.xfail(strict=True, reason=MATERIALS_NOT_PARSED)
-async def test_materials_and_search_journey(system: System) -> None:
-    """T-E7: upload → parse → pages and chunks → embeddings."""
+def parser_answer(request: Any) -> dict[str, Any]:
+    """One mark per chunk of the input; the numbers are read from the prompt."""
+    numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", request.prompt, flags=re.M)]
+    chunks = []
+    for n in numbers:
+        first = "Chain rule" in request.prompt.split(f"[{n}]", 1)[1].split("[", 1)[0]
+        chunks.append(
+            {
+                "n": n,
+                "topic": "Derivatives" if first else "Integrals",
+                "notation": ["f'(g(x))"] if first else ["int u dv"],
+                "teaches": ["Chain rule"] if first else ["Integration by parts"],
+                "uses": ["Power rule"] if first else ["Product rule"],
+            }
+        )
+    return {"title": "Calculus lectures", "chunks": chunks, "deadlines": []}
+
+
+def builder_answer(_request: Any) -> dict[str, Any]:
+    """The reconciliation creates every subject of the material (`BuilderOutput`)."""
+    items = [
+        {
+            "name": name,
+            "kind": "topic",
+            "decision": "create",
+            "target": None,
+            "topic_hint": None,
+            "same_idea": None,
+            "same_idea_confidence": None,
+        }
+        for name in TOPICS
+    ] + [
+        {
+            "name": name,
+            "kind": "skill",
+            "decision": "create",
+            "target": None,
+            "topic_hint": topic,
+            "same_idea": None,
+            "same_idea_confidence": None,
+        }
+        for name, topic in SKILLS.items()
+    ]
+    return {"items": items}
+
+
+async def parsed_material(system: System) -> tuple[Learner, UUID, UUID]:
+    """Upload a PDF and wait until it is parsed: the learner, the domain and the topic."""
+    pages = [
+        PdfPage(page=i, text=t, image_webp_b64=base64.b64encode(ALIGNED).decode())
+        for i, t in enumerate((PAGE_ONE, PAGE_TWO), 1)
+    ]
+    system.compute.push_for(PAGES, PdfPagesResponse(pages=pages))
+    system.llm.respond("MaterialParserOutput", parser_answer)
+    system.llm.respond("BuilderOutput", builder_answer)
+
     learner = await system.sign_in_by_link()
-    domain_id, _ = await onboard(system, learner, "te7")
+    domain_id, topic_id = await onboard(system, learner, "te7")
     uploaded = ok(
         await system.client.post(
             f"/v1/domains/{domain_id}/materials",
@@ -118,17 +181,60 @@ async def test_materials_and_search_journey(system: System) -> None:
         201,
     )
     material_id = uploaded["material_id"]
-    await system.settle()
-    material = ok(await system.client.get(f"/v1/materials/{material_id}", headers=learner.headers))
-    assert material["status"] == "parsed", material
-    pages = await system.resources.db.fetch_one(
-        "SELECT count(*) AS n FROM content.material_pages WHERE material_id = %(m)s",
+    await system.settle(timeout_s=60)
+    db = system.resources.db
+    detail = ok(await system.client.get(f"/v1/materials/{material_id}", headers=learner.headers))
+    material = detail["material"]
+    assert material["status"] == "parsed" and material["pages_count"] == 2, material
+    stored = await db.fetch_all(
+        "SELECT page, text FROM content.material_pages WHERE material_id = %(m)s ORDER BY page",
         {"m": UUID(material_id)},
     )
-    assert pages is not None and pages["n"] > 0
-    chunks = await system.resources.db.fetch_one(
-        "SELECT count(*) AS n FROM core.events WHERE learner_id = %(l)s AND type = 'chunk.indexed'",
+    assert [(r["page"], r["text"]) for r in stored] == [(1, PAGE_ONE), (2, PAGE_TWO)]
+    chunks = await db.fetch_all(
+        "SELECT payload FROM core.events WHERE learner_id = %(l)s AND type = 'chunk.indexed' "
+        "ORDER BY seq",
         {"l": learner.learner_id},
     )
-    assert chunks is not None and chunks["n"] > 0
-    assert system.resources.embeddings.calls > 0  # type: ignore[attr-defined]
+    assert [c["payload"]["page"] for c in chunks] == [1, 2]
+    assert system.resources.embeddings.calls >= 2  # type: ignore[attr-defined]
+    return learner, domain_id, topic_id
+
+
+async def test_materials_journey(system: System) -> None:
+    """T-E7, the first half: upload → parse (pages, then the structure under the lock of the
+    domain) → chunks → embeddings."""
+    await parsed_material(system)
+
+
+MODAL_NOT_WIRED = (
+    "B: `source_of` builds `MemoryTurnContextSource` without the embeddings client, so the "
+    "`ToolContext` has no `search`: `search_materials` always answers «search temporarily "
+    "unavailable» in the real process (WP14.4, D-C-191)"
+)
+
+
+@pytest.mark.xfail(strict=True, reason=MODAL_NOT_WIRED)
+async def test_search_materials_tool_finds_the_chunk(system: System) -> None:
+    """T-E7, the second half: a teacher turn calls `search_materials` and gets the chunk."""
+    learner, domain_id, topic_id = await parsed_material(system)
+    script_teacher(system, ())
+    system.llm.script_tools(
+        SCHEMA,
+        ScriptedToolStep(
+            (ScriptedToolCall("search_materials", {"query": "chain rule", "skills": []}),)
+        ),
+    )
+    session_id = await start_session(system, learner, domain_id, topic_id)
+    said = await act(
+        system, learner, session_id, {"kind": "message", "text": "What is the chain rule?"}
+    )
+    frames = sse_events(said)
+    assert "error" not in [n for n, _ in frames], frames
+    outputs = [
+        item
+        for call in system.llm.stream_calls
+        for item in call.input_items
+        if item.get("type") == "function_call_output"
+    ]
+    assert outputs and "chain" in repr(outputs).lower(), outputs

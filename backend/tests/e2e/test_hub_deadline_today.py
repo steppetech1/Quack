@@ -93,10 +93,11 @@ async def test_hub_deadline_today(stand: StandFactory) -> None:
 
         await system.settle()  # `today.shown` → the dispatcher → `today.prepare`
         plans = await system.resources.db.fetch_all(
-            "SELECT plan, status FROM content.session_plans WHERE learner_id = %(l)s",
+            "SELECT plan, status FROM content.session_plans WHERE learner_id = %(l)s "
+            "AND status = 'prepared'",
             {"l": learner.learner_id},
         )
-        assert [p["status"] for p in plans].count("prepared") == len(today["items"]), plans
+        assert len(plans) == len(today["items"]), plans
         assert plans[0]["plan"]["current_step"] == "Recall the ratio", plans
 
 
