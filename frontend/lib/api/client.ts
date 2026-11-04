@@ -148,11 +148,15 @@ export async function sse(
         else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
       }
       if (!data.length) continue;
+      // Only the parse is guarded: an exception from the handler (for example the `error` frame turned into an ApiError)
+      // must reach the caller as it is, not be caught here and replayed as a frame with raw data and no error code
+      let parsed: Record<string, unknown>;
       try {
-        onEvent({ event, data: JSON.parse(data.join("\n")) });
+        parsed = JSON.parse(data.join("\n"));
       } catch {
-        onEvent({ event, data: { raw: data.join("\n") } });
+        parsed = { raw: data.join("\n") };
       }
+      onEvent({ event, data: parsed });
     }
   }
 }
