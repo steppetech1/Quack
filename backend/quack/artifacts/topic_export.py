@@ -19,6 +19,7 @@ import zipfile
 from collections.abc import Sequence
 from datetime import date
 from html import escape
+from typing import Any
 from uuid import UUID, uuid5
 
 import genanki  # pyright: ignore[reportMissingTypeStubs]
@@ -97,8 +98,8 @@ def _yaml(value: object) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _cited(blocks: Sequence[Block]) -> list[dict[str, object]]:
-    found: list[dict[str, object]] = []
+def _cited(blocks: Sequence[Block]) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
     for block in blocks:
         for source in block.sources:
             item = {"material_id": source.get("material_id"), "page": source.get("page")}

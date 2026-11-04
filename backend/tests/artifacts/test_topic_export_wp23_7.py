@@ -13,6 +13,7 @@ import zipfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -166,7 +167,7 @@ def test_anki_deck_is_the_same_for_the_same_cards() -> None:
     duplicates, what the learner has imported."""
     cards = [AnkiCard(card_id=uuid4(), kind="definition", prompt="p", answer="a")]
 
-    def ids(deck: bytes) -> tuple[list[object], list[object]]:
+    def ids(deck: bytes) -> tuple[list[Any], list[Any]]:
         with tempfile.TemporaryDirectory() as tmp:
             zipfile.ZipFile(io.BytesIO(deck)).extract("collection.anki2", tmp)
             connection = sqlite3.connect(Path(tmp) / "collection.anki2")
