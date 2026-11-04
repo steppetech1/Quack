@@ -758,6 +758,11 @@ Output fields:
 - `deadlines.date`: string
 - `deadlines.control_type`: "tasks" | "colloquium_proofs" | "oral_theory"
 - `deadlines.covers`: list[string]
+- `seminar_tasks`: list[object]
+- `seminar_tasks.statement`: string
+- `seminar_tasks.answer`: string | null
+- `seminar_tasks.chunk`: string
+- `seminar_tasks.page`: integer | null
 
 Input blocks: `chunks`
 

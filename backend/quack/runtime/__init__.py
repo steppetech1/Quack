@@ -44,6 +44,7 @@ HANDLER_MODULES: tuple[str, ...] = (
     "quack.jobs.embedding_p4",
     "quack.artifacts.agent_artifact",
     "quack.artifacts.data_export",
+    "quack.canvas.jobs",
 )
 
 
