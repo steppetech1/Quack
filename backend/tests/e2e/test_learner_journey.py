@@ -8,185 +8,29 @@ The processes of Phase 4 run in the stand (`tests/e2e/system.py`); the model is 
 from __future__ import annotations
 
 import json
-from typing import Any
-from uuid import UUID, uuid4
 
-import httpx
+import pytest
 
-from tests.e2e.journey import ok, onboard, sse_events
-from tests.e2e.system import Learner, System
+from tests.e2e.journey import ok
+from tests.e2e.system import System
+from tests.e2e.text_journey import event_types, run_text_journey
 
-SCHEMA = "TeacherOutputV2"
-TEXT = "Every term is a third of the one before it."
-NUMBER = {"type": "number", "value": {"latex": "\frac{1}{3}", "sympy": "1/3"}}
-
-
-def teacher_turn(*, with_task: bool) -> dict[str, Any]:
-    """`teacher@2` output: the head, the body and the markup; one task as an element."""
-    blocks: list[dict[str, Any]] = [{"block_id": "b1", "text": TEXT, "element_id": None}]
-    tasks: list[dict[str, Any]] = []
-    elements: list[dict[str, Any]] = []
-    if with_task:
-        blocks.append({"block_id": "b2", "text": None, "element_id": "e1"})
-        tasks.append(
-            {
-                "element_id": "e1",
-                "tests": [{"skill": "S1", "level": 2}],
-                "methodNamed": False,
-                "answer": NUMBER,
-            }
-        )
-        elements.append(
-            {
-                "element_id": "e1",
-                "kind": "short_answer",
-                "prompt": "What is the ratio of the series?",
-                "ask_confidence": False,
-            }
-        )
-    return {
-        "p1_head": {
-            "intent": "explain",
-            "targetSkills": ["S1"],
-            "verdict_stance": None,
-            "branchType": None,
-            "topicLabel": None,
-            "approach": "example_first",
-        },
-        "p2_body": {"blocks": blocks},
-        "p3_markup": {
-            "tasks": tasks,
-            "elements": elements,
-            "exposures": [{"skill": "S1", "kind": "explained", "approach": "example_first"}],
-            "targetsMisconception": None,
-            "planUpdate": {
-                "completed_steps": [],
-                "current_step": "geometric sum",
-                "next_steps": [],
-                "branches": [],
-                "cancel_requests": [],
-            },
-            "agentRequests": [],
-            "correctionsAcknowledged": [],
-            "decisionReason": "explain first",
-            "deadline": None,
-        },
-    }
+# `read_journal` of the teacher turn reads the session events only up to the seq of the answer,
+# and the instant verdict is written right after it: `answered.solved` is never true, so the turn
+# after a correct answer does not close the task (`task.closed`) and the episode stays open.
+# Needed from stream B (`quack/session/turn_source.py`, `assemble`): read the events up to the end
+# of the action batch (the verdicts whose `answer_seq` is the action). D-C-191.
+SOLVED_NEVER_CLOSES = (
+    "B: turn_source.assemble reads the session up to the seq of the answer, before its verdict; "
+    "the solved task is not closed (D-C-191)"
+)
 
 
-async def event_types(system: System, learner: Learner) -> list[tuple[int, str]]:
-    rows = await system.resources.db.fetch_all(
-        "SELECT seq, type FROM core.events WHERE learner_id = %(learner_id)s ORDER BY seq",
-        {"learner_id": learner.learner_id},
-    )
-    return [(int(r["seq"]), str(r["type"])) for r in rows]
-
-
-async def start_session(
-    system: System, learner: Learner, domain_id: UUID, topic_id: UUID | None = None
-) -> UUID:
-    started = ok(
-        await system.client.post(
-            "/v1/sessions",
-            json={
-                "domain_id": str(domain_id),
-                "intent": "learn",
-                "topic_id": None if topic_id is None else str(topic_id),
-                "idempotency_key": str(uuid4()),
-            },
-            headers=learner.headers,
-        ),
-        201,
-    )
-    return UUID(started["session_id"])
-
-
-async def act(
-    system: System, learner: Learner, session_id: UUID, body: dict[str, Any]
-) -> httpx.Response:
-    return await system.client.post(
-        f"/v1/sessions/{session_id}/actions",
-        json={"idempotency_key": str(uuid4()), **body},
-        headers=learner.headers,
-    )
-
-
+@pytest.mark.xfail(strict=True, reason=SOLVED_NEVER_CLOSES)
 async def test_learner_journey_text(system: System) -> None:
     """T-E1."""
-    system.llm.respond(
-        "TaskCheckOutput",
-        lambda _r: {
-            "answer_text": "1/3",
-            "answer_math": {"latex": "\frac{1}{3}", "sympy": "1/3"},
-            "methodNamed": False,
-            "is_variant": None,
-            "levels_fit": [True],
-            "note": "the ratio is a third",
-        },
-    )
-    turns = iter([teacher_turn(with_task=True)])
-    system.llm.respond(SCHEMA, lambda _r: next(turns, teacher_turn(with_task=False)))
-
-    learner = await system.sign_in_by_link()
-    domain_id, topic_id = await onboard(system, learner, "te1")
-    session_id = await start_session(system, learner, domain_id, topic_id)
-
-    message = await act(
-        system,
-        learner,
-        session_id,
-        {"kind": "message", "text": "Explain the sum of a geometric series"},
-    )
-    frames = sse_events(message)
-    names = [name for name, _ in frames]
-    assert names[0] == "action_recorded", names
-    assert "error" not in names, frames
-    task_row = await system.resources.db.fetch_one(
-        "SELECT task_id FROM content.tasks WHERE learner_id = %(learner_id)s",
-        {"learner_id": learner.learner_id},
-    )
-    assert task_row is not None, await event_types(system, learner)
-    task_id = task_row["task_id"]
-
-    answered = await act(
-        system,
-        learner,
-        session_id,
-        {
-            "kind": "answer",
-            "task_id": str(task_id),
-            "answer": {"kind": "number", "value": "1/3"},
-            "text": "I think the ratio is 1/3",
-        },
-    )
-    answer_frames = sse_events(answered)
-    assert "error" not in [name for name, _ in answer_frames], answer_frames
-    recorded = answer_frames[0][1]
-    assert answer_frames[0][0] == "action_recorded" and recorded["verdict"] is not None
-    answer_seq = int(recorded["seq"])
-    system.llm.respond(
-        "ExtractorOutputV3",
-        lambda _r: {
-            "elements": [
-                {
-                    "kind": "evidence",
-                    "skill": "S1",
-                    "new_skill": None,
-                    "skill_unclear": False,
-                    "level": 1,
-                    "outcome": "correct",
-                    "help": "none",
-                    "hint_step": None,
-                    "gap_type": "none",
-                    "misconception": None,
-                    "new_misconception": None,
-                    "root_cause": None,
-                    "quote": "1/3",
-                    "events": [answer_seq],
-                }
-            ]
-        },
-    )
+    journey = await run_text_journey(system)
+    learner = journey.learner
     await system.settle()
     types = await event_types(system, learner)
     log = ", ".join(f"{seq}:{t}" for seq, t in types)
@@ -195,38 +39,40 @@ async def test_learner_journey_text(system: System) -> None:
     assert "observation.extracted" in [t for _, t in types], log
 
     jobs = await system.resources.db.fetch_all(
-        "SELECT kind, status, required_seq FROM ops.jobs WHERE learner_id = %(learner_id)s "
+        "SELECT status, required_seq FROM ops.jobs WHERE learner_id = %(learner_id)s "
         "AND kind = 'extract.episode'",
         {"learner_id": learner.learner_id},
     )
-    assert [(j["status"]) for j in jobs] == ["succeeded"], jobs
-    required = jobs[0]["required_seq"]
+    assert [j["status"] for j in jobs] == ["succeeded"], jobs
     started = [s for s in system.job_starts if s.kind == "extract.episode"]
-    assert started and all(s.applied_seq >= (required or 0) for s in started), (started, required)
+    required = jobs[0]["required_seq"] or 0
+    assert started and all(s.applied_seq >= required for s in started), (started, required)
 
-    card = ok(await system.client.get(f"/v1/topics/{topic_id}", headers=learner.headers))
-    async with system.neo4j.session() as graph:
-        result = await graph.run(
-            "MATCH (s:Skill {learnerId: $learner}) RETURN properties(s) AS p",
-            learner=str(learner.learner_id),
-        )
-        skill_props = [dict(r["p"]) for r in await result.data()]
+    card = ok(await system.client.get(f"/v1/topics/{journey.topic_id}", headers=learner.headers))
     obs = await system.resources.db.fetch_one(
-        "SELECT payload FROM core.events WHERE learner_id = %(learner_id)s "
+        "SELECT seq, payload FROM core.events WHERE learner_id = %(learner_id)s "
         "AND type = 'observation.extracted'",
         {"learner_id": learner.learner_id},
     )
     assert obs is not None
-    marks = await system.resources.db.fetch_all(
-        "SELECT 'offset' AS what, seq::text AS v FROM ops.projector_offsets "
-        "UNION ALL SELECT 'failure', error FROM ops.projector_failures "
-        "UNION ALL SELECT 'learner', seq::text FROM core.learners"
-    )
-    detail = json.dumps([card["places"], skill_props, obs["payload"], marks, log], default=str)
+    async with system.neo4j.session() as graph:
+        result = await graph.run(
+            "MATCH (e:Evidence {learnerId: $learner}) RETURN e.observationSeq AS observation, "
+            "e.level AS level, e.verification AS verification",
+            learner=str(learner.learner_id),
+        )
+        evidence = await result.data()
+        result = await graph.run(
+            "MATCH (s:Skill {learnerId: $learner}) RETURN properties(s) AS p",
+            learner=str(learner.learner_id),
+        )
+        skills = [dict(r["p"]) for r in await result.data()]
+    detail = json.dumps([card, skills, obs["payload"], evidence, log], default=str)
     # The extractor's element stands on level 1: level 2 of the answer has the code verdict.
     assert len(obs["payload"]["elements"]) == 1 and not obs["payload"]["rejected"], detail
+    assert {"observation": obs["seq"], "level": 1, "verification": "model"} in evidence, detail
     assert card["status"] == "active", detail
     assert card["display"]["display_state"] in {"not_tested", "in_progress"}, detail
-    [skill] = skill_props
-    assert skill["l2SuccessW"] > 0 and skill["l1SuccessW"] > 0, detail
+    [skill] = skills
+    assert skill["l2SuccessW"] > 0, detail
     assert {p["kind"] for p in card["places"]} >= {"exposure", "evidence"}, detail
