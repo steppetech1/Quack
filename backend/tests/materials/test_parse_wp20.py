@@ -94,7 +94,7 @@ def _parser_answer(request: Any) -> dict[str, Any]:
                     "uses": ["Product rule", "chain rule"],
                 }
             )
-    return {"title": title, "chunks": chunks, "deadlines": []}
+    return {"title": title, "chunks": chunks, "deadlines": [], "seminar_tasks": []}
 
 
 class _World:
@@ -316,7 +316,7 @@ async def test_parser_gets_batches_and_loses_nothing_on_bad_numbers(world: _Worl
         ]
         marks.append({"n": 999, "topic": "T", "notation": [], "teaches": ["Ghost"], "uses": []})
         marks.append({**marks[0]})  # a repeated number
-        return {"title": "", "chunks": marks, "deadlines": []}
+        return {"title": "", "chunks": marks, "deadlines": [], "seminar_tasks": []}
 
     world.provider.respond("MaterialParserOutput", answer)
     await parse_step(world.ctx, _job(learner, material))
@@ -431,8 +431,13 @@ def test_the_kind_is_registered_by_the_procedure_of_issue_173() -> None:
 def test_the_prompt_material_parser_v1_has_its_contract() -> None:
     template = PromptRegistry().load("material_parser", 1)
     assert set(re.findall(r"\{\{\s*(\w+)\s*\}\}", template.text)) == {"chunks"}
-    assert MaterialParserOutput.model_json_schema()["required"] == ["title", "chunks", "deadlines"]
-    assert "deadlines" in template.text
+    assert MaterialParserOutput.model_json_schema()["required"] == [
+        "title",
+        "chunks",
+        "deadlines",
+        "seminar_tasks",
+    ]
+    assert "deadlines" in template.text and "seminar_tasks" in template.text
 
 
 # --- the rest of WP20.2: deadlines of a syllabus (D-C-213), a scan without text (D-C-214) ------
@@ -474,6 +479,7 @@ def _syllabus_answer(request: Any) -> dict[str, Any]:
             },
             {"label": "No year", "date": "15 June", "control_type": "tasks", "covers": []},
         ],
+        "seminar_tasks": [],
     }
 
 
@@ -558,7 +564,7 @@ async def test_deadlines_are_capped_by_the_setting(world: _World) -> None:
             {"label": f"Test {i}", "date": "2099-06-15", "control_type": "tasks", "covers": []}
             for i in range(cap + 3)
         ]
-        return {"title": "", "chunks": [], "deadlines": found}
+        return {"title": "", "chunks": [], "deadlines": found, "seminar_tasks": []}
 
     world.provider.respond("MaterialParserOutput", many)
     world.pdf_pages(SYLLABUS)

@@ -28,6 +28,7 @@ from quack.db.redis import create_redis
 from quack.embeddings.client import EmbeddingClient, create_embedding_client
 from quack.llm.gateway import LLMGateway
 from quack.llm.responses_client import ResponsesClient
+from quack.llm.tracing import create_tracer
 from quack.storage.deletions import DeletionJournal, create_deletion_journal
 from quack.storage.objects import ObjectStore, create_object_store
 
@@ -82,7 +83,7 @@ async def create_app_resources(settings: Settings) -> AppResources:
         db=db,
         neo4j=neo4j,
         redis=redis,
-        llm=LLMGateway(provider, settings, db=db),
+        llm=LLMGateway(provider, settings, db=db, tracer=create_tracer(settings)),
         compute=create_compute_client(settings),
         storage=create_object_store(settings),
         embeddings=create_embedding_client(settings),

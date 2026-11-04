@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -69,6 +71,20 @@ _READY_JOBS_SQL = (
     "WHERE kind = ANY(%(kinds)s) "
     "AND (status = 'running' OR (status = 'queued' AND run_at <= now()))"
 )
+
+QUIET_ANALYST = {
+    "frontier": [],
+    "gap_hypotheses": [],
+    "uncertainty": None,
+    "plan_divergence": False,
+    "moves": [
+        {"move": "continue", "reason": "nothing to change"},
+        {"move": "check", "reason": "nothing to change"},
+    ],
+    "forecast": [],
+    "manner": "calm",
+    "text": "Nothing new.",
+}
 
 # The loops poll the log and the queue this often (production: `consumer_poll_ms` = 500).
 STAND_POLL_MS = 100
@@ -210,7 +226,28 @@ class System:
         cookie = await open_session(
             self.resources.db, self.settings, learner_id=learner_id, now=datetime.now(UTC)
         )
-        headers = {"Cookie": f"{SESSION_COOKIE}={cookie}"}
+        return await self._accept_terms(learner_id, email, {"Cookie": f"{SESSION_COOKIE}={cookie}"})
+
+    async def sign_in_by_link(self, email: str | None = None) -> Learner:
+        """The way in of T-E1: `POST /auth/link`, the link of the mail, `GET /auth/link/verify`
+        (the session cookie comes back in `set-cookie`), then the terms. `email` signs in an
+        address again (T-E12: the same address after the account was deleted)."""
+        email = email or f"e2e-{uuid4().hex[:12]}@example.com"
+        sent = await self.client.post("/auth/link", json={"email": email})
+        assert sent.status_code == 200, sent.text
+        token = parse_qs(urlsplit(self.resources.email.last_link(email)).query)["token"][0]  # type: ignore[attr-defined]
+        verified = await self.client.get("/auth/link/verify", params={"token": token})
+        # Without `auth_success_redirect_url` the verification answers 200 with the learner.
+        assert verified.status_code == 200, verified.text
+        found = re.search(rf"{SESSION_COOKIE}=([^;]+)", verified.headers["set-cookie"])
+        assert found is not None
+        return await self._accept_terms(
+            UUID(verified.json()["learner_id"]),
+            email,
+            {"Cookie": f"{SESSION_COOKIE}={found.group(1)}"},
+        )
+
+    async def _accept_terms(self, learner_id: UUID, email: str, headers: dict[str, str]) -> Learner:
         # WP18.4: a session starts only after `consent.given {kind: terms}` of the current
         # `terms_version`; the learner of the stand accepts it as the client would.
         consent = await self.client.post(
@@ -243,6 +280,7 @@ async def build_system(
     redis: Redis | Any | None,
     db: Db,
     p4_dsn: str,
+    **resources: Any,
 ) -> System:
     """The stand over `db` (`pg_db`); `p4_dsn` is its address, which the processes of Phase 4 open
     for themselves."""
@@ -259,11 +297,20 @@ async def build_system(
     # A task of the bank gets its solution space ahead in the background (`task.solution_space`,
     # WP12.4): the walk creates such tasks, and the job must succeed, not retry.
     llm.respond("SolutionSpace", lambda _request: SPACE.model_dump(mode="json"))
+    # The jobs after a session (the analyst, the notes of the topic) must succeed, not retry.
+    llm.respond("AnalystOutput", lambda _request: QUIET_ANALYST)
+    llm.respond("ArtifactWriterOutput", lambda _request: {"blocks": [], "cards": []})
     compute = ComputeScenario()
-    resources = build_app_resources(
-        settings, neo4j, redis, db=db, provider=llm, compute=scripted_compute(compute)
+    built = build_app_resources(
+        settings,
+        neo4j,
+        redis,
+        db=db,
+        provider=llm,
+        compute=scripted_compute(compute),
+        **resources,
     )
-    app = create_app(settings, resources=resources)
+    app = create_app(settings, resources=built)
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
     return System(
         settings=settings,
@@ -271,7 +318,7 @@ async def build_system(
         redis=redis,
         llm=llm,
         compute=compute,
-        resources=resources,
+        resources=built,
         app=app,
         client=client,
     )

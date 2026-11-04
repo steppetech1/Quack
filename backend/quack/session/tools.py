@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from quack.config import Settings
+from quack.embeddings.client import EmbeddingsUnavailable
 from quack.graph.read import GraphReader
 from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.llm.strict_schema import to_strict_json_schema
@@ -365,7 +366,10 @@ async def _search_materials(ctx: ToolContext, args: SearchMaterialsArgs) -> str:
         return SEARCH_UNAVAILABLE
     skill_ids = [_skill(ctx, label) for label in args.skills]
     limit = _limit(ctx, "search_materials")
-    chunks = (await ctx.search(args.query, skill_ids, limit))[:limit]
+    try:
+        chunks = (await ctx.search(args.query, skill_ids, limit))[:limit]
+    except EmbeddingsUnavailable:
+        return SEARCH_UNAVAILABLE  # Modal is down: the tool says so, the turn goes on (ТЗ Ф4 §4.4)
     return render_chunks(chunks, ctx.chunk_label) or "nothing found"
 
 

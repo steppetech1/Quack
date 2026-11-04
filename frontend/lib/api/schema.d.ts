@@ -3004,6 +3004,8 @@ export interface components {
              */
             idempotency_key: string;
             intent: components["schemas"]["SessionIntent"];
+            /** Today Item */
+            today_item?: string | null;
             /** Topic Id */
             topic_id?: string | null;
         };

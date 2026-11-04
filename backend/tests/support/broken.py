@@ -26,10 +26,13 @@ class BrokenRedis:
 
 
 class BrokenNeo4jDriver:
-    """Neo4j driver stand-in: opening a session or checking connectivity raises
+    """Neo4j driver stand-in: opening a session, running a query or checking connectivity raises
     `neo4j.exceptions.ServiceUnavailable`."""
 
     def session(self, *args: Any, **kwargs: Any) -> NoReturn:
+        raise ServiceUnavailable("broken neo4j")
+
+    async def execute_query(self, *args: Any, **kwargs: Any) -> NoReturn:
         raise ServiceUnavailable("broken neo4j")
 
     async def verify_connectivity(self, *args: Any, **kwargs: Any) -> NoReturn:

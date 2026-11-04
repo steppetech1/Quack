@@ -4321,6 +4321,18 @@
           "intent": {
             "$ref": "#/components/schemas/SessionIntent"
           },
+          "today_item": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Today Item"
+          },
           "topic_id": {
             "anyOf": [
               {

@@ -30,6 +30,7 @@ from neo4j.exceptions import ConnectionAcquisitionTimeoutError, ServiceUnavailab
 from quack.api.resources import AppResources
 from quack.config import Settings
 from quack.db.db import Db
+from quack.embeddings.client import EmbeddingClient, EmbeddingsUnavailable
 from quack.events.event_types import MessageSent, SessionStarted, TaskClosed, TaskCreated
 from quack.events.log import StoredEvent
 from quack.events.records import PlanUpdateRecord
@@ -46,12 +47,12 @@ from quack.graph.read import (
     SliceFocus,
     TopicMemory,
 )
-from quack.graph.read.materials import materials_prefetch
+from quack.graph.read.materials import materials_prefetch, materials_search
 from quack.graph.read.neo4j_reader import Neo4jGraphReader
 from quack.llm.gateway import LLMGateway
 from quack.llm.labels import LabelMap
 from quack.logging import get_logger
-from quack.practice.repo import session_events_up_to
+from quack.practice.repo import session_events_of_action
 from quack.practice.task_store import get_task
 from quack.session.action_turn import TurnRequest, TurnSetup
 from quack.session.conversation import render_conversation
@@ -66,6 +67,8 @@ from quack.session.prep_mode import prep_for_turn, render_prep
 from quack.session.review_turn import bank_for_review, review_for_turn
 from quack.session.spoiler_guard import answer_in_text, remove_answer_sentences
 from quack.session.teacher_context import (
+    LearnerState,
+    Profile,
     SessionGoal,
     TeacherSlots,
     fit_budget,
@@ -81,6 +84,7 @@ from quack.session.tools import (
     TOOLS,
     CanvasLine,
     MaterialChunk,
+    SearchMaterials,
     ToolContext,
     VoiceSegment,
     run_tool,
@@ -368,6 +372,7 @@ class MemoryTurnContextSource:
         settings: Settings,
         reader: Callable[[UUID], GraphReader],
         neo4j: AsyncDriver | None = None,
+        embeddings: EmbeddingClient | None = None,
         clock: Callable[[], int] | None = None,
     ) -> None:
         self._db = db
@@ -375,6 +380,7 @@ class MemoryTurnContextSource:
         self._settings = settings
         self._reader = reader
         self._neo4j = neo4j
+        self._embeddings = embeddings
         self._clock = clock or (lambda: int(time.time() * 1000))
 
     async def _overlay(self, request: TurnRequest, end: int) -> SessionOverlay:
@@ -425,6 +431,33 @@ class MemoryTurnContextSource:
             )
         except NEO4J_UNAVAILABLE:
             return []
+
+    def _search(self, learner_id: UUID, domain_id: UUID | None) -> SearchMaterials | None:
+        """`search_materials` of the teacher (T-E7, #279): the query is embedded by Modal, the
+        nearest chunks of the learner's domain come from the graph. Bound to the learner of
+        the turn (isolation, §4.3); without the client or the driver — no search."""
+        neo4j, embeddings = self._neo4j, self._embeddings
+        if neo4j is None or embeddings is None or domain_id is None:
+            return None
+        settings = self._settings
+
+        async def search(query: str, skill_ids: Sequence[UUID], limit: int) -> list[MaterialChunk]:
+            try:
+                vector = await embeddings.embed_query(query)
+                hits = await materials_search(
+                    neo4j,
+                    learner_id=learner_id,
+                    domain_id=domain_id,
+                    vector=vector,
+                    skill_ids=skill_ids,
+                    k=limit,
+                    reserve=settings.vector_search_reserve,
+                )
+            except NEO4J_UNAVAILABLE as exc:
+                raise EmbeddingsUnavailable("the graph is down") from exc
+            return [MaterialChunk(h.chunk_id, None, h.page, h.text) for h in hits]
+
+        return search
 
     async def _prep(
         self, reader: GraphReader, request: TurnRequest, journal: SessionJournal
@@ -504,12 +537,11 @@ class MemoryTurnContextSource:
         settings, db = self._settings, self._db
         learner_id, session_id = request.learner_id, request.session_id
         reader = self._reader(learner_id)
-        events = await session_events_up_to(
-            db, learner_id=learner_id, session_id=session_id, to_seq=request.action_seq
+        events = await session_events_of_action(
+            db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
         )
         journal = read_journal(events, request.action_seq)
-        now, plan, timezone, snapshot, skill = await asyncio.gather(
-            learner_state(reader, learner_id=learner_id, domain_id=request.domain_id),
+        plan, timezone, snapshot, skill = await asyncio.gather(
             load_plan(db, learner_id=learner_id, session_id=session_id),
             learner_timezone(db, learner_id=learner_id),
             load_snapshot(db, learner_id=learner_id, session_id=session_id),
@@ -517,9 +549,17 @@ class MemoryTurnContextSource:
             if journal.skill_invocation
             else _none(),
         )
-        hubs = await reader.domain_goals(request.domain_id)
-        topics = _goal_topics(journal.goal, hubs)
-        memory: list[TopicMemory] = await reader.topic_memory(topics) if topics else []
+        # Neo4j down: slots 3, 4 and 7 are empty and the turn says so (`memory_unavailable`,
+        # Т-§20.7, D-B-221); the session overlay and the journal still work.
+        memory_down = False
+        try:
+            now = await learner_state(reader, learner_id=learner_id, domain_id=request.domain_id)
+            hubs = await reader.domain_goals(request.domain_id)
+            topics = _goal_topics(journal.goal, hubs)
+            memory: list[TopicMemory] = await reader.topic_memory(topics) if topics else []
+        except NEO4J_UNAVAILABLE:
+            memory_down = True
+            now, hubs, topics, memory = LearnerState(profile=Profile()), [], [], []
         topic_skills = [s.skill_id for m in memory for s in m.skills]
         targets = target_levels(hubs, memory)
         focus = SliceFocus(
@@ -545,6 +585,7 @@ class MemoryTurnContextSource:
             self._completed(learner_id, journal.requests),
         )
 
+        unavailable = unavailable or memory_down
         freeze = snapshot is None
         frozen = frozen_slots(snapshot or snapshot_slots(now, timezone), now, timezone)
         skill_ids = list(
@@ -628,6 +669,7 @@ class MemoryTurnContextSource:
             skill_names=names,
             canvas_lines=journal.canvas_lines,
             voice=journal.voice,
+            search=self._search(learner_id, request.domain_id),
         )
 
         async def execute_tool(name: str, arguments: str) -> str:
@@ -719,4 +761,5 @@ def source_of(resources: AppResources) -> MemoryTurnContextSource:
         settings=resources.settings,
         reader=reader,
         neo4j=resources.neo4j,
+        embeddings=resources.embeddings,
     )

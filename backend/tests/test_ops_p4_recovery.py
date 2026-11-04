@@ -21,6 +21,7 @@ from quack.storage.keys import (
     export_key,
     material_original_key,
     material_page_key,
+    photo_drawing_key,
     photo_original_key,
     viz_key,
 )
@@ -92,6 +93,14 @@ async def _insert_reference(db: Db, learner: UUID, source: str) -> str:
             "'learner')",
             {"a": material, "l": learner, "k": key},
         )
+    elif source == "canvas_drawings":
+        key = photo_drawing_key(learner, material, 1)
+        await db.execute(
+            "INSERT INTO content.canvas_boards (canvas_id, learner_id, session_id, doc) "
+            "VALUES (%(c)s, %(l)s, %(s)s, jsonb_build_object('learner', jsonb_build_object("
+            "'drawings', jsonb_build_array(jsonb_build_object('object_key', %(k)s::text)))))",
+            {"c": canvas, "l": learner, "s": session, "k": key},
+        )
     elif source == "canvas_boards":
         key = canvas_chunk_key(learner, session, canvas, 0)
         await db.execute(
@@ -113,6 +122,7 @@ def test_every_reference_source_has_a_test_case() -> None:
         "exports",
         "events",
         "artifact_versions",
+        "canvas_drawings",
         "canvas_boards",
     } == SOURCE_NAMES
     assert len(SOURCE_NAMES) == len(REFERENCE_SOURCES) + 1
