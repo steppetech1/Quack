@@ -100,6 +100,11 @@ class FoldParams:
             delay_threshold_ms=s.delay_threshold_h * _MS_PER_H,
             target_retention=s.target_retention,
             gap_window=s.gap_window,
+            derived_factor={
+                "direct": 1.0,
+                "indirect": s.derived_indirect_factor,
+                "transfer": s.derived_transfer_factor,
+            },
         )
 
 

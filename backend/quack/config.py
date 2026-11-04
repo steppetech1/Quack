@@ -302,6 +302,10 @@ class Settings(BaseSettings):
     # Т-§7.9: derived evidence.
     requires_min_confidence: float = 0.6
     same_idea_min_confidence: float = 0.7
+    # Т-§7.9: the weight factor of an evidence derived through REQUIRES (indirect) or SAME_IDEA
+    # (transfer); part of rules@3, so a change needs a new rules version and a rebuild.
+    derived_indirect_factor: float = 0.5
+    derived_transfer_factor: float = 0.6
     # Т-§7.5: episodes.
     episode_max_turns: int = 12
     episode_idle_min: int = 10
