@@ -650,6 +650,8 @@ export const en = {
   },
   live: {
     serverDown: "Can't reach the server. Is the backend running?",
+    serverError: "Something broke on our side. Try again in a moment.",
+    turnFailed: "The teacher couldn't finish the answer. Send your message again.",
     retry: "Try again",
     allTopics: "All topics",
     reviewToday: "Time to review: due today",
@@ -715,6 +717,7 @@ export const en = {
     sessionClosed: "finished",
     sessionEmpty: "Ask the teacher something to start.",
     degraded: "Short answer: the language model is unavailable.",
+    interrupted: "The answer was cut off and isn't saved. Send your message again.",
     taskFromTeacher: "Task",
     answerBelow: "Answer in the box below.",
     answerPlaceholder: "Your answer to the task…",
