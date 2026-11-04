@@ -23,6 +23,16 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-A-239. WP2.3 / WP3.4: наложение сессии на `rules@3`
+- Класс: A
+- WP / место: WP2.3, WP3.4; `quack/graph/overlay_build.py` (новый), `quack/graph/overlay.py` (только докстринг), `quack/graph/projection/runner.py`, `quack/events/log.py`, `tests/test_session_overlay.py`
+- Контекст: `overlay.py` Фазы 4 держал только форму `SessionOverlay`; `turn_source` строил пустое наложение (STATUS, «Следующие шаги», A п.2). Ждать ответа B не нужно: ТЗ WP3.4 и `Т-§2.6` требуют режим «наложение сессии» на тех же обработчиках.
+- Решение: (1) `read_session_tail(db, learner_id, session_id, after_seq)` в `events/log.py` — события одной сессии с `seq > after_seq` по порядку. (2) Из `project_learner` вынесены `load_batch_inputs` (needs → срез Neo4j и ранние события, только чтение) и `run_batch` (фазы А–В–С в памяти над срезом, без записи); `_Neo4jFolds` стал `Neo4jFolds`. Пачка и наложение идут через один и тот же код: правил наложения нет. (3) `overlay_build.build_session_overlay(db, neo4j, settings, learner_id, session_id, applied_seq=None)`: `applied_seq` по умолчанию — `Learner.projectedSeq`; хвост пуст — пустое наложение с `overlay_seq = applied_seq`; иначе срез хвоста читается из Neo4j, фазы А–С — в памяти, `overlay.graph` — весь срез после фаз (`InMemoryGraph`, как читают `neo4j_reader`), `overlay_seq` — последний `seq` хвоста. `apply_overlay_events(...)` — чистая часть над готовым `SubGraph` (базовый срез не меняется). (4) Только события текущей сессии (`Т-§2.6`); события других сессий и без сессии в промежутке не применяются, хвост берётся по `session_id`, поэтому наложение не равно «всей отстающей части журнала». (5) Сводные поля: `assigned_task_ids` — `task.created` и задачи разметки `turn.committed`; `submitted_task_ids` — `answer.submitted`; `evaluations` — `verdict.recorded` (по задаче ответа; `score` 1/0,5/0 за correct/partial/иное, `evaluator` — verification, `feedback` пуст); `hints` — `hint.shown` (текст не хранится в событии, `hint_text` пуст); `last_turn_index` остаётся -1: в событиях Фазы 4 индекса хода нет. Поля нигде не читаются (grep), оставлены ради формы. (6) Построитель вынесен в отдельный модуль: `overlay.py` импортируют читатели, построитель импортирует проектор, проектор — читателей (цикл). (7) `EventFailed` не глотается: вызывающий решает, как деградировать (закон 9). Одна оговорка формы: `InMemoryGraph` ключует связь по концам и типу, поэтому параллельные `TESTS` одной задачи на одном навыке (разные level/part) схлопываются; читатели их из наложения не берут.
+- Почему: `Т-§2.5` (один набор на все режимы), `Т-§2.6` (наложение), ТЗ WP2.3 («типы наложения — все события сессии с обработчиком»), WP3.4.
+- Обратимость: полная.
+- Тесты: `tests/test_session_overlay.py` — эквивалентность наложения и применения проектором (узлы и связи наложения есть в Neo4j после применения с теми же свойствами), пустое наложение при догнавшем проекторе, ничего не записано (базовый срез, Neo4j, `ops.projector_offsets`), события другой сессии не попадают.
+- Требует подтверждения владельцем: нет (подключение в `turn_source` — задача B)
+
 ### D-A-238. WP1.3 шаг 5 ч.2: что оставлено из списка Фазы 3 и почему
 - Класс: A
 - WP / место: WP1.3; `quack/graph/projector_rows.py`, `quack/events/payloads.py`, `quack/jobs/kinds.py`, `quack/events/{actor,errors,hashing,keys}.py`

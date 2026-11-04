@@ -753,6 +753,11 @@ Output fields:
 - `chunks.notation`: list[string]
 - `chunks.teaches`: list[string]
 - `chunks.uses`: list[string]
+- `deadlines`: list[object]
+- `deadlines.label`: string
+- `deadlines.date`: string
+- `deadlines.control_type`: "tasks" | "colloquium_proofs" | "oral_theory"
+- `deadlines.covers`: list[string]
 
 Input blocks: `chunks`
 

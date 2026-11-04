@@ -104,6 +104,14 @@ _SELECT_BY_KEYS = (
     "WHERE learner_id = %(learner_id)s AND idempotency_key = ANY(%(keys)s)"
 )
 
+_SESSION_TAIL = (
+    "SELECT learner_id, seq, id, type, schema_version, actor, domain_id, session_id, "
+    "causation_seq, correlation_id, idempotency_key, payload_hash, occurred_at, payload, "
+    "source_refs FROM core.events "
+    "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s AND seq > %(after_seq)s "
+    "ORDER BY seq"
+)
+
 _INSERT_EVENT = (
     "INSERT INTO core.events (learner_id, seq, type, schema_version, actor, domain_id, "
     "session_id, causation_seq, correlation_id, idempotency_key, payload_hash, occurred_at, "
@@ -207,3 +215,15 @@ async def append_events(
                 last = seq
                 db.on_commit(lambda: _schedule_signal(redis, learner_id, last))
     return result
+
+
+async def read_session_tail(
+    db: Db, learner_id: UUID, session_id: UUID, after_seq: int
+) -> list[StoredEvent]:
+    """Events of one session of the learner with `seq > after_seq`, in `seq` order (Т-§2.6: the
+    tail the session overlay applies over a lagging projection)."""
+    return await db.fetch_all(
+        _SESSION_TAIL,
+        {"learner_id": learner_id, "session_id": session_id, "after_seq": after_seq},
+        row=StoredEvent,
+    )

@@ -6,9 +6,11 @@ from __future__ import annotations
 import base64
 import re
 from collections.abc import Sequence
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import BaseModel
@@ -92,7 +94,7 @@ def _parser_answer(request: Any) -> dict[str, Any]:
                     "uses": ["Product rule", "chain rule"],
                 }
             )
-    return {"title": title, "chunks": chunks}
+    return {"title": title, "chunks": chunks, "deadlines": []}
 
 
 class _World:
@@ -314,7 +316,7 @@ async def test_parser_gets_batches_and_loses_nothing_on_bad_numbers(world: _Worl
         ]
         marks.append({"n": 999, "topic": "T", "notation": [], "teaches": ["Ghost"], "uses": []})
         marks.append({**marks[0]})  # a repeated number
-        return {"title": "", "chunks": marks}
+        return {"title": "", "chunks": marks, "deadlines": []}
 
     world.provider.respond("MaterialParserOutput", answer)
     await parse_step(world.ctx, _job(learner, material))
@@ -429,4 +431,185 @@ def test_the_kind_is_registered_by_the_procedure_of_issue_173() -> None:
 def test_the_prompt_material_parser_v1_has_its_contract() -> None:
     template = PromptRegistry().load("material_parser", 1)
     assert set(re.findall(r"\{\{\s*(\w+)\s*\}\}", template.text)) == {"chunks"}
-    assert MaterialParserOutput.model_json_schema()["required"] == ["title", "chunks"]
+    assert MaterialParserOutput.model_json_schema()["required"] == ["title", "chunks", "deadlines"]
+    assert "deadlines" in template.text
+
+
+# --- the rest of WP20.2: deadlines of a syllabus (D-C-213), a scan without text (D-C-214) ------
+
+SYLLABUS = (
+    "Course syllabus\n\nColloquium on derivatives: 2099-06-15. Written test on integrals: "
+    "2099-07-01 10:30. The exam of 2020-01-10 is over."
+)
+
+
+def _syllabus_answer(request: Any) -> dict[str, Any]:
+    return {
+        "title": "Calculus syllabus",
+        "chunks": [{"n": 1, "topic": "Derivatives", "notation": [], "teaches": [], "uses": []}],
+        "deadlines": [
+            {
+                "label": "Colloquium",
+                "date": "2099-06-15",
+                "control_type": "colloquium_proofs",
+                "covers": ["Derivatives", "Limits"],
+            },
+            {
+                "label": "colloquium",  # the same one written in another case
+                "date": "2099-06-15",
+                "control_type": "colloquium_proofs",
+                "covers": [],
+            },
+            {
+                "label": "Test",
+                "date": "2099-07-01T10:30",
+                "control_type": "tasks",
+                "covers": ["Integrals"],
+            },
+            {
+                "label": "Old exam",
+                "date": "2020-01-10",
+                "control_type": "oral_theory",
+                "covers": [],
+            },
+            {"label": "No year", "date": "15 June", "control_type": "tasks", "covers": []},
+        ],
+    }
+
+
+async def _structure_job(world: _World, learner: UUID, material: UUID) -> ClaimedJob:
+    (queued,) = await world.db.fetch_all(
+        "SELECT payload FROM ops.jobs WHERE kind = 'material.parse'"
+    )
+    payload = {k: v for k, v in queued["payload"].items() if k != "material_id"}
+    return _job(learner, material, **payload)
+
+
+async def test_a_syllabus_gives_hubs_with_deadlines(world: _World) -> None:
+    """WP20.2 п.4: a syllabus gives the structure of the course and its deadlines: a hub with
+    the topics it covers and `hub.deadline_set {source: syllabus}`; a date in the past, a date
+    without a year and a repeat of the same one are not written (D-C-213)."""
+    learner, domain, material = await world.upload()
+    await world.db.execute(
+        "UPDATE core.learners SET settings = settings || "
+        '\'{"timezone": "Europe/Moscow"}\'::jsonb WHERE learner_id = %(l)s',
+        {"l": learner},
+    )
+    world.provider.respond("MaterialParserOutput", _syllabus_answer)
+    world.pdf_pages(SYLLABUS)
+    await parse_step(world.ctx, _job(learner, material))
+    job = await _structure_job(world, learner, material)
+    assert len(job.payload["deadlines"]) == 4  # a repeat of the same one is merged
+
+    resolver = _Resolver()
+    await structure_step(world.ctx, job, resolver)
+
+    topics = {s.name for call in resolver.calls for s in call if s.kind == "topic"}
+    assert {"Derivatives", "Limits", "Integrals"} <= topics  # the covers are topics of the course
+    hubs = {h["payload"]["name"]: h for h in await world.types(learner, "hub.created")}
+    assert set(hubs) == {"Calculus syllabus", "Colloquium", "Test"}
+    colloquium = hubs["Colloquium"]["payload"]
+    assert colloquium["control_type"] == "colloquium_proofs" and colloquium["kind"] == "material"
+    assert colloquium["origin"] == "material" and colloquium["domain_id"] == str(domain)
+    deadlines = {
+        d["payload"]["hub_id"]: d["payload"] for d in await world.types(learner, "hub.deadline_set")
+    }
+    assert len(deadlines) == 2
+    moscow = ZoneInfo("Europe/Moscow")
+    day_end = int(datetime(2099, 6, 15, 23, 59, tzinfo=moscow).timestamp() * 1000)
+    at_time = int(datetime(2099, 7, 1, 10, 30, tzinfo=moscow).timestamp() * 1000)
+    assert deadlines[colloquium["hub_id"]] == {
+        "hub_id": colloquium["hub_id"],
+        "deadline_at_ms": day_end,
+        "source": "syllabus",
+    }
+    assert deadlines[hubs["Test"]["payload"]["hub_id"]]["deadline_at_ms"] == at_time
+    covered = {
+        t["payload"]["hub_id"]: t["payload"]["topics"]
+        for t in await world.types(learner, "hub.topics_changed")
+    }
+    assert {x["topic_id"] for x in covered[colloquium["hub_id"]]} == {
+        str(resolver.ids[("topic", "Derivatives")]),
+        str(resolver.ids[("topic", "Limits")]),
+    }
+    levels = world.settings.control_type_levels["colloquium_proofs"]
+    assert all(x["required_levels"] == levels for x in covered[colloquium["hub_id"]])
+
+    # law 5: a repeat of the second step writes nothing twice
+    before = len(await world.types(learner, "hub.created", "hub.deadline_set"))
+    await structure_step(world.ctx, job, resolver)
+    assert len(await world.types(learner, "hub.created", "hub.deadline_set")) == before
+
+
+async def test_a_material_without_dates_writes_no_deadline(world: _World) -> None:
+    learner, _, material = await world.upload()
+    world.pdf_pages(PAGE_ONE)
+    await parse_step(world.ctx, _job(learner, material))
+    await structure_step(world.ctx, await _structure_job(world, learner, material), _Resolver())
+    assert await world.types(learner, "hub.deadline_set") == []
+
+
+async def test_deadlines_are_capped_by_the_setting(world: _World) -> None:
+    learner, _, material = await world.upload()
+    cap = world.settings.material_deadlines_max
+
+    def many(request: Any) -> dict[str, Any]:
+        found = [
+            {"label": f"Test {i}", "date": "2099-06-15", "control_type": "tasks", "covers": []}
+            for i in range(cap + 3)
+        ]
+        return {"title": "", "chunks": [], "deadlines": found}
+
+    world.provider.respond("MaterialParserOutput", many)
+    world.pdf_pages(SYLLABUS)
+    await parse_step(world.ctx, _job(learner, material))
+    await structure_step(world.ctx, await _structure_job(world, learner, material), _Resolver())
+    assert len(await world.types(learner, "hub.deadline_set")) == cap
+
+
+def _sheet_line(text: str) -> dict[str, Any]:
+    return {
+        "kind": "text",
+        "text": text,
+        "sympy": None,
+        "bbox": {"left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.2},
+        "confidence": 0.9,
+        "crossed_out": False,
+    }
+
+
+async def test_a_pdf_page_without_a_text_layer_is_read_by_the_recognizer(world: _World) -> None:
+    """D-C-214: a scanned page (no text from PyMuPDF) is read from its image by `recognizer` in
+    the sheet mode; a page with a text layer is not sent to it."""
+    learner, _, material = await world.upload()
+    world.pdf_pages("", PAGE_TWO, "  \n ")
+    world.provider.respond(
+        "SheetReading", lambda _r: {"lines": [_sheet_line("Scanned: chain rule"), _sheet_line("")]}
+    )
+    await parse_step(world.ctx, _job(learner, material))
+
+    rows = await world.db.fetch_all(
+        "SELECT page, text FROM content.material_pages WHERE material_id = %(m)s ORDER BY page",
+        {"m": material},
+    )
+    assert [(r["page"], r["text"]) for r in rows] == [
+        (1, "Scanned: chain rule"),
+        (2, PAGE_TWO),
+        (3, "Scanned: chain rule"),
+    ]
+    calls = world.provider.calls_for(schema_name="SheetReading")
+    assert len(calls) == 2 and all(c.images for c in calls)
+    assert len(world.scenario.requests) == 1  # only the PDF went to compute: no alignment
+
+
+async def test_a_scan_is_read_up_to_the_cap_of_pages(world: _World) -> None:
+    learner, _, material = await world.upload()
+    cap = world.settings.material_scan_max_pages
+    world.pdf_pages(*[""] * (cap + 2))
+    world.provider.respond("SheetReading", lambda _r: {"lines": [_sheet_line("Text")]})
+    await parse_step(world.ctx, _job(learner, material))
+    assert len(world.provider.calls_for(schema_name="SheetReading")) == cap
+    rows = await world.db.fetch_all(
+        "SELECT text FROM content.material_pages WHERE material_id = %(m)s", {"m": material}
+    )
+    assert len(rows) == cap + 2 and sum(1 for r in rows if r["text"] == "") == 2

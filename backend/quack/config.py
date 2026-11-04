@@ -637,6 +637,12 @@ class Settings(BaseSettings):
     material_parser_batch: int = Field(default=8, ge=1)
     material_parser_concurrency: int = Field(default=4, ge=1)
     material_marks_per_chunk: int = Field(default=6, ge=1)
+    # WP20.2 tail (D-C-213, D-C-214): deadlines of a syllabus kept per material; a PDF page with
+    # fewer characters of text than `material_scan_min_chars` is read from its image, at most
+    # `material_scan_max_pages` pages of one file.
+    material_deadlines_max: int = Field(default=20, ge=1)
+    material_scan_min_chars: int = Field(default=20, ge=0)
+    material_scan_max_pages: int = Field(default=50, ge=1)
     # Т-§3.4.6, Т-§10.5: the reserve taken inside SEARCH before post-filters and the final k.
     vector_search_reserve: int = 30
     embedding_dim: int = 768

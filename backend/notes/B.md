@@ -23,6 +23,17 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-B-215. Наложение сессии в `turn_source` (WP2.3, #260); слой 1 `artifact_writer@1` — принят
+- Класс: B
+- WP / место: WP2.3, WP3.4, `Т-§2.6`, закон 9; `quack/session/turn_source.py::MemoryTurnContextSource._overlay`; построитель — `quack.graph.overlay_build.build_session_overlay` (A, D-A-239)
+- Контекст: `_slice` строил пустое наложение, так что при отстающем проекторе защитные правила не видели свежих событий сессии. A выложила построитель и просила подключить (#260)
+- Решение: (а) `_overlay` вызывает `build_session_overlay(db, neo4j, settings, learner_id, session_id)` внутри того же `try` с `NEO4J_UNAVAILABLE`. (б) Нет драйвера — пустое наложение. (в) `EventFailed` — предупреждение в лог `session_overlay_failed` и `empty_overlay(0)`: учитель отвечает (закон 9). (г) Ожидание проектора остаётся до конца журнала: `overlay_seq = max(overlay_seq, end)`, иначе читатель не дождался бы
+- Почему: §0.4.3 п.2, `Т-§2.6`, закон 9
+- Обратимость: один метод
+- Тесты: `tests/session/test_turn_source.py::test_session_overlay_wiring` (1): отставание, `EventFailed`, нет драйвера; `tests/session` и `tests/test_contracts.py` — 227 passed
+- Требует подтверждения владельцем: нет
+- Слой 1 `artifact_writer@1` (блок «Accuracy», #206/#221, D-C-132): владелец поручил свериться по документам; формулировки совпадают с `Т-§17.4` (формула не прошла — перегенерация, снова не прошла — блок «не проверен»; определение и утверждение называют кусок). Принято без правок как черновик; версия остаётся `v1` до G4
+
 ### D-B-178. Отдача страницы визуализации: `GET /v1/viz/{id}` с CSP (WP16.5, #201)
 - Класс: B
 - WP / место: WP16.5, `Т-§13.6`, `T-AG6`, §7.3 п.3; тело `quack/practice/viz_page.py` (`load_viz_page`, `content_security_policy`), объявление `quack/artifacts/viz_routes.py` (в `quack/api/app.py` одна строка `include_router`), строка в `tests/e2e/routes/b.py`

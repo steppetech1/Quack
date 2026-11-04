@@ -27,7 +27,7 @@ from quack.db.redis import projector_applied_channel
 from quack.events.log import StoredEvent
 from quack.graph.profile_fold import PROFILE_EVENT_TYPES
 from quack.graph.projection.phase_a import EventFailed, apply_events, batch_need
-from quack.graph.projection.phase_b import run_folds
+from quack.graph.projection.phase_b import FoldLoader, run_folds
 from quack.graph.projection.store import (
     load_fold_inputs,
     load_profile_evidence,
@@ -106,7 +106,9 @@ async def _profile_events(db: Db, learner_id: UUID) -> list[StoredEvent]:
     )
 
 
-class _Neo4jFolds:
+class Neo4jFolds:
+    """Phases B–C read what the first slice did not hold from Neo4j and the journal."""
+
     def __init__(self, neo4j: AsyncDriver, db: Db, learner_id: UUID) -> None:
         self._neo4j, self._db, self._learner_id = neo4j, db, learner_id
         self._learner = str(learner_id)
@@ -132,6 +134,42 @@ async def _publish(redis: Redis, learner_id: UUID, applied: int, topics: list[st
         await redis.publish(projector_applied_channel(learner_id), message)
     except Exception:
         log.warning("projector_applied_publish_failed", learner_id=str(learner_id))
+
+
+async def load_batch_inputs(
+    db: Db, neo4j: AsyncDriver, learner_id: UUID, events: Sequence[StoredEvent]
+) -> tuple[SubGraph, list[StoredEvent]]:
+    """What the handlers of `events` declared (`needs`): the slice from Neo4j and the earlier
+    journal events they read. Reads only; the batch loop and the session overlay share it."""
+    need = batch_need(events)
+    in_batch = {e.seq for e in events}
+    wanted = sorted(need.events - in_batch)
+    earlier = await db.fetch_all(
+        _EVENTS_BY_SEQ, {"learner_id": learner_id, "seqs": wanted}, row=StoredEvent
+    )
+    known = {e.seq: e for e in [*earlier, *events]}
+    loaded = await load_slice(neo4j, str(learner_id), need, _event_refs(need, known))
+    return loaded, earlier
+
+
+async def run_batch(
+    learner_id: UUID,
+    events: Sequence[StoredEvent],
+    loaded: SubGraph,
+    earlier: Sequence[StoredEvent],
+    settings: Settings,
+    loader: FoldLoader,
+) -> BatchSlice:
+    """Phases A–C of `events` over `loaded` in memory (Т-§2.4); nothing is written. The same
+    handlers and folds serve the batch loop and the session overlay (Т-§2.5). An event or a fold
+    the rules cannot apply raises `EventFailed`."""
+    batch = BatchSlice(str(learner_id), loaded, earlier, RulesParams.from_settings(settings))
+    apply_events(events, batch)
+    try:
+        await run_folds(batch, settings, loader, events)
+    except Exception as exc:  # a fold error is a program error, like a handler's
+        raise EventFailed(events[-1].seq, exc) from exc
+    return batch
 
 
 async def project_learner(
@@ -163,21 +201,10 @@ async def project_learner(
             await db.execute(_OFFSET, params | {"seq": after})
             return BatchOutcome("empty", after)
         try:
-            need = batch_need(events)
-            in_batch = {e.seq for e in events}
-            wanted = sorted(need.events - in_batch)
-            earlier = await db.fetch_all(_EVENTS_BY_SEQ, params | {"seqs": wanted}, row=StoredEvent)
-            known = {e.seq: e for e in [*earlier, *events]}
-            loaded = await load_slice(neo4j, str(learner_id), need, _event_refs(need, known))
-            batch = BatchSlice(
-                str(learner_id), loaded, earlier, RulesParams.from_settings(settings)
+            loaded, earlier = await load_batch_inputs(db, neo4j, learner_id, events)
+            batch = await run_batch(
+                learner_id, events, loaded, earlier, settings, Neo4jFolds(neo4j, db, learner_id)
             )
-            apply_events(events, batch)
-            try:
-                loader = _Neo4jFolds(neo4j, db, learner_id)
-                await run_folds(batch, settings, loader, events)
-            except Exception as exc:  # a fold error is a program error, like a handler's
-                raise EventFailed(events[-1].seq, exc) from exc
         except EventFailed as failed:
             await db.execute(
                 _RECORD_FAILURE, params | {"seq": failed.seq, "error": repr(failed.cause)[:2000]}

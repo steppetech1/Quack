@@ -8,6 +8,8 @@ import json
 from typing import Any, cast
 from uuid import UUID, uuid4, uuid5
 
+import pytest
+
 from quack.config import Settings
 from quack.db import Db
 from quack.events.event_types import (
@@ -26,6 +28,7 @@ from quack.events.records import (
     TestedLevelRecord,
 )
 from quack.events.values import AnswerSpec, MathValue, Verdict
+from quack.graph.memory import InMemoryGraph
 from quack.llm.gateway import LLMGateway
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.task_store import create_task
@@ -456,3 +459,44 @@ def test_route_builds_the_source_from_the_resources() -> None:
         get_turn_context_source(
             cast(Any, SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace())))
         )
+
+
+async def test_session_overlay_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WP2.3 (D-B-215): the turn waits for the end of the journal, the overlay brings the session
+    tail of a lagging projector; no driver or a failed event — an empty overlay."""
+    from neo4j import AsyncDriver
+
+    from quack.graph import overlay_build
+    from quack.graph.overlay import SessionOverlay
+    from quack.graph.projection.phase_a import EventFailed
+    from quack.session import turn_source
+
+    request = _request(fx.LEARNER, SESSION, 5)
+    built = SessionOverlay(applied_seq=3, overlay_seq=5, events=[], graph=InMemoryGraph())
+    outcome: list[SessionOverlay | Exception] = [built]
+
+    async def fake(*_args: Any, **_kwargs: Any) -> SessionOverlay:
+        result = outcome[0]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(turn_source, "build_session_overlay", fake)
+
+    def source(neo4j: object | None) -> MemoryTurnContextSource:
+        return MemoryTurnContextSource(
+            db=cast(Db, None),
+            gateway=cast(LLMGateway, None),
+            settings=SETTINGS,
+            reader=lambda _learner: fx.FixedGraphReader(),
+            neo4j=cast(AsyncDriver | None, neo4j),
+        )
+
+    lagging = await source(object())._overlay(request, 9)
+    assert (lagging.applied_seq, lagging.overlay_seq) == (3, 9)
+    outcome[0] = EventFailed(4, ValueError("bad"))
+    failed = await source(object())._overlay(request, 9)
+    assert (failed.applied_seq, failed.overlay_seq, failed.events) == (0, 9, [])
+    assert overlay_build.empty_overlay(0).applied_seq == 0
+    none = await source(None)._overlay(request, 9)
+    assert (none.applied_seq, none.overlay_seq) == (0, 0)

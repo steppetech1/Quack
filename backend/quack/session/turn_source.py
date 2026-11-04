@@ -33,8 +33,9 @@ from quack.db.db import Db
 from quack.events.event_types import MessageSent, SessionStarted, TaskClosed, TaskCreated
 from quack.events.log import StoredEvent
 from quack.events.values import AnswerSpec, Level, Verdict
-from quack.graph.memory import InMemoryGraph
 from quack.graph.overlay import SessionOverlay
+from quack.graph.overlay_build import build_session_overlay, empty_overlay
+from quack.graph.projection.phase_a import EventFailed
 from quack.graph.read import (
     GraphReader,
     HubGoal,
@@ -47,6 +48,7 @@ from quack.graph.read.materials import materials_prefetch
 from quack.graph.read.neo4j_reader import Neo4jGraphReader
 from quack.llm.gateway import LLMGateway
 from quack.llm.labels import LabelMap
+from quack.logging import get_logger
 from quack.practice.repo import session_events_up_to
 from quack.practice.task_store import get_task
 from quack.session.action_turn import TurnRequest, TurnSetup
@@ -85,6 +87,8 @@ from quack.session.turn_commit import AnsweredAction, LearnerText, TurnManifestR
 from quack.session.turn_graph import AssembledTurn, Effort, GuardInputs, Role
 from quack.session.turn_inputs import learner_state, load_learner_skill, load_plan, load_snapshot
 from quack.session.turn_policy import resolve_degraded_mode
+
+log = get_logger(__name__)
 
 RENDERER_VERSION = "renderer@1"
 NEO4J_UNAVAILABLE: tuple[type[BaseException], ...] = (
@@ -357,14 +361,29 @@ class MemoryTurnContextSource:
         self._neo4j = neo4j
         self._clock = clock or (lambda: int(time.time() * 1000))
 
+    async def _overlay(self, request: TurnRequest, end: int) -> SessionOverlay:
+        """The session overlay of Т-§2.6 (WP2.3, D-B-215): what the session wrote after the
+        projector, over the slice it declared. The wait target stays the end of the journal.
+        An event the handlers cannot apply — an empty overlay, the teacher answers (law 9)."""
+        if self._neo4j is None:
+            return empty_overlay(0)
+        try:
+            built = await build_session_overlay(
+                self._db, self._neo4j, self._settings, request.learner_id, request.session_id
+            )
+        except EventFailed as exc:
+            log.warning("session_overlay_failed", seq=exc.seq, session_id=str(request.session_id))
+            built = empty_overlay(0)
+        return replace(built, overlay_seq=max(built.overlay_seq, end))
+
     async def _slice(
         self, reader: GraphReader, request: TurnRequest, focus: SliceFocus
     ) -> tuple[MemorySlice, bool]:
         # The wait target is the end of the learner's journal (Т-§2.6): the reader waits for
         # the projector up to it and reports `lag_degraded` (`projector_lag`, §4.4).
         end = await journal_end(self._db, learner_id=request.learner_id)
-        tail = SessionOverlay(applied_seq=0, overlay_seq=end, events=[], graph=InMemoryGraph())
         try:
+            tail = await self._overlay(request, end)
             found = await reader.slice_for_turn(request.learner_id, request.session_id, focus, tail)
         except NEO4J_UNAVAILABLE:
             return MemorySlice(learner_id=request.learner_id, projected_seq=0), True

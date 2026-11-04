@@ -28,8 +28,11 @@ import base64
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from datetime import UTC, datetime, time
+from datetime import date as calendar_date
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,6 +42,7 @@ from quack.db import Db
 from quack.events.event_types import (
     ChunkIndexed,
     HubCreated,
+    HubDeadlineSet,
     HubTopic,
     HubTopicsChanged,
     MaterialParsed,
@@ -105,14 +109,32 @@ class ParsedChunk(BaseModel):
     uses: list[str]
 
 
+ControlType = Literal["tasks", "colloquium_proofs", "oral_theory"]
+
+
+class ParsedDeadline(BaseModel):
+    """A control of a course the material names with its date (a syllabus). `date` is ISO 8601
+    with the year, `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`; a date the text gives without a year is
+    not a deadline. `covers` are topics in the words of the material (D-C-213)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    date: str
+    control_type: ControlType
+    covers: list[str]
+
+
 class MaterialParserOutput(BaseModel):
     """`material_parser@1`: the title of the material as its pages call it (empty when they
-    give none; the first non-empty one of the batches is kept) and the marks of the chunks."""
+    give none; the first non-empty one of the batches is kept), the marks of the chunks and the
+    dated controls of the course (empty unless the chunks are a syllabus)."""
 
     model_config = ConfigDict(extra="forbid")
 
     title: str
     chunks: list[ParsedChunk]
+    deadlines: list[ParsedDeadline]
 
 
 class SheetBox(BaseModel):
@@ -268,6 +290,69 @@ async def _set_parsed(db: Db, learner_id: UUID, material_id: UUID, pages: int) -
 # --- step 1: pages, chunks, marks -------------------------------------------------------------
 
 
+async def _read_sheet(
+    ctx: JobContext, job: ClaimedJob, material: _Material, image: bytes, key: str
+) -> str:
+    """The text of a picture of a page by `recognizer` in the sheet mode: the lines that are not
+    drawings and not crossed out, one per line."""
+    reading = await ctx.llm.generate_structured(
+        RECOGNIZER_ROLE,
+        RECOGNIZER_VERSION,
+        SheetReading,
+        {"mode": SHEET_MODE},
+        _learner(job),
+        material.session_id,
+        None,
+        key,
+        images=[ImageInput(PAGE_MIME, image)],
+    )
+    lines = [
+        line.text.strip()
+        for line in reading.value.lines
+        if line.kind != "drawing" and not line.crossed_out and line.text.strip()
+    ]
+    return _clean_text("\n".join(lines))
+
+
+async def _read_scans(
+    ctx: JobContext,
+    job: ClaimedJob,
+    material: _Material,
+    pages: list[tuple[int, str, bytes]],
+) -> list[tuple[int, str, bytes]]:
+    """PDF pages without a text layer (fewer than `material_scan_min_chars` characters) are read
+    from their images, the first `material_scan_max_pages` of them; the rest stay empty
+    (D-C-214). Parallel, `material_parser_concurrency` calls at a time."""
+    settings = ctx.settings
+    scans = [
+        i
+        for i, (_, text, _) in enumerate(pages)
+        if len(text.strip()) < settings.material_scan_min_chars
+    ]
+    if len(scans) > settings.material_scan_max_pages:
+        log.warning(
+            "material_scan_truncated",
+            material_id=str(material.material_id),
+            scans=len(scans),
+            read=settings.material_scan_max_pages,
+        )
+        scans = scans[: settings.material_scan_max_pages]
+    gate = asyncio.Semaphore(settings.material_parser_concurrency)
+
+    async def read(i: int) -> str:
+        page, _, image = pages[i]
+        async with gate:
+            return await _read_sheet(
+                ctx, job, material, image, f"recognizer:material:{material.material_id}:{page}"
+            )
+
+    texts = await asyncio.gather(*(read(i) for i in scans))
+    out = list(pages)
+    for i, text in zip(scans, texts, strict=True):
+        out[i] = (out[i][0], text, out[i][2])
+    return out
+
+
 async def _extract_pages(
     ctx: JobContext, job: ClaimedJob, material: _Material
 ) -> list[tuple[int, str, bytes]]:
@@ -277,32 +362,20 @@ async def _extract_pages(
     encoded = base64.b64encode(data).decode()
     if material.mime == PDF_MIME:
         found = await ctx.compute.pdf_pages(PdfPagesRequest(pdf_b64=encoded))
-        return [
+        pages = [
             (p.page, _clean_text(p.text), base64.b64decode(p.image_webp_b64)) for p in found.pages
         ]
+        return await _read_scans(ctx, job, material, pages)
     if not material.mime.startswith("image/"):
         raise JobFailedPermanently(
             f"material {material.material_id}: unreadable type {material.mime}"
         )
     aligned = await ctx.compute.image_align(ImageRequest(image_b64=encoded))
     image = base64.b64decode(aligned.image_webp_b64)
-    reading = await ctx.llm.generate_structured(
-        RECOGNIZER_ROLE,
-        RECOGNIZER_VERSION,
-        SheetReading,
-        {"mode": SHEET_MODE},
-        _learner(job),
-        material.session_id,
-        None,
-        f"recognizer:material:{material.material_id}",
-        images=[ImageInput(PAGE_MIME, image)],
+    text = await _read_sheet(
+        ctx, job, material, image, f"recognizer:material:{material.material_id}"
     )
-    lines = [
-        line.text.strip()
-        for line in reading.value.lines
-        if line.kind != "drawing" and not line.crossed_out and line.text.strip()
-    ]
-    return [(1, _clean_text("\n".join(lines)), image)]
+    return [(1, text, image)]
 
 
 async def _store_pages(
@@ -346,7 +419,7 @@ async def _mark_batch(
     index: int,
     batch: Sequence[Chunk],
     gate: asyncio.Semaphore,
-) -> tuple[str, dict[UUID, ParsedChunk]]:
+) -> tuple[str, dict[UUID, ParsedChunk], list[ParsedDeadline]]:
     prompt = ctx.settings.llm_roles[PARSER_ROLE].prompt
     if prompt is None:
         raise ValueError("role 'material_parser' has no prompt")
@@ -365,7 +438,27 @@ async def _mark_batch(
     for mark in answer.value.chunks:  # a number out of range or repeated is dropped
         if 1 <= mark.n <= len(batch):
             marks.setdefault(batch[mark.n - 1].chunk_id, mark)
-    return answer.value.title.strip(), marks
+    return answer.value.title.strip(), marks, answer.value.deadlines
+
+
+def _deadline_payload(found: Sequence[ParsedDeadline], limit: int) -> list[dict[str, Any]]:
+    """The dated controls of all batches for the second step: one per label and date (the
+    first writing is kept), at most `limit`. Dates are judged in the second step."""
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
+    for d in found:
+        label = " ".join(d.label.split())
+        date = d.date.strip()
+        if label and date:
+            seen.setdefault(
+                (label.casefold(), date),
+                {
+                    "label": label,
+                    "date": date,
+                    "control_type": d.control_type,
+                    "covers": _names(d.covers, 50),
+                },
+            )
+    return list(seen.values())[:limit]
 
 
 async def parse_step(ctx: JobContext, job: ClaimedJob) -> None:
@@ -388,14 +481,18 @@ async def parse_step(ctx: JobContext, job: ClaimedJob) -> None:
     answers = await asyncio.gather(
         *(_mark_batch(ctx, job, material, i, b, gate) for i, b in enumerate(batches))
     )
-    title = next((t for t, _ in answers if t), "")
-    marks = {chunk_id: mark for _, found in answers for chunk_id, mark in found.items()}
+    title = next((t for t, _, _ in answers if t), "")
+    marks = {chunk_id: mark for _, found, _ in answers for chunk_id, mark in found.items()}
+    deadlines = _deadline_payload(
+        [d for _, _, found in answers for d in found], settings.material_deadlines_max
+    )
     limit = settings.material_marks_per_chunk
     payload: dict[str, Any] = {
         "material_id": str(material.material_id),
         "step": STEP_STRUCTURE,
         "trigger_seq": job.payload.get("trigger_seq"),
         "title": title,
+        "deadlines": deadlines,
         "chunks": [
             {
                 "chunk_id": str(c.chunk_id),
@@ -471,9 +568,13 @@ def _canonical(names: Sequence[str], seen: dict[str, str]) -> list[str]:
 
 
 def _subjects(
-    chunks: Sequence[Chunk], marks: dict[str, dict[str, Any]], title: str
+    chunks: Sequence[Chunk],
+    marks: dict[str, dict[str, Any]],
+    title: str,
+    covers: Sequence[str] = (),
 ) -> tuple[list[SubjectSpec], list[SubjectSpec]]:
-    """Topic subjects and skill subjects in the order of the material."""
+    """Topic subjects and skill subjects in the order of the material; the topics a syllabus
+    says its controls cover come after those of the chunks."""
     skill_names: dict[str, str] = {}
     topic_names: dict[str, str] = {}
     skills: dict[str, _Skill] = {}
@@ -490,12 +591,122 @@ def _subjects(
         for name in teaches:
             needs = skills[name].requires or []
             skills[name].requires = needs + [u for u in uses if u != name and u not in needs]
+    _canonical([" ".join(c.split()) for c in covers if c.strip()], topic_names)
     topics = [SubjectSpec(name, "topic") for name in topic_names.values()]
     specs = [
         SubjectSpec(s.name, "skill", s.text, s.topic or title or None, tuple(s.requires or ()))
         for s in skills.values()
     ]
     return topics, specs
+
+
+_LEARNER_ZONE = (
+    "SELECT settings->>'timezone' AS tz FROM core.learners WHERE learner_id = %(learner_id)s"
+)
+
+
+async def _learner_zone(db: Db, learner_id: UUID) -> ZoneInfo | None:
+    row = await db.fetch_one(_LEARNER_ZONE, {"learner_id": learner_id})
+    try:
+        return ZoneInfo(row["tz"]) if row and row["tz"] else None
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _deadline_ms(value: str, zone: ZoneInfo | None, now: datetime) -> int | None:
+    """The time of a deadline in ms, or None when the date cannot be read or is not in the
+    future. A date alone is the end of that day, 23:59; a time without a zone is the time of
+    the learner (UTC when the learner has no zone)."""
+    value = value.strip()
+    try:
+        at = datetime.combine(calendar_date.fromisoformat(value), time(23, 59))
+    except ValueError:
+        try:
+            at = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=zone or UTC)
+    return int(at.timestamp() * 1000) if at > now else None
+
+
+def _syllabus_events(
+    material: _Material,
+    deadlines: Sequence[dict[str, Any]],
+    topic_ids: dict[str, UUID],
+    zone: ZoneInfo | None,
+    settings: Settings,
+    refs: list[dict[str, Any]],
+    now: datetime,
+) -> list[NewEvent]:
+    """A hub for every dated control of a syllabus with the topics it covers and its deadline
+    (`hub.deadline_set {source: syllabus}`, Т-§4.8, D-C-213). A date in the past or not readable
+    is skipped; the hub id depends on the material, the label and the date (law 5)."""
+    events: list[NewEvent] = []
+    done: set[UUID] = set()
+    for item in deadlines:
+        label, date = str(item["label"]), str(item["date"])
+        at_ms = _deadline_ms(date, zone, now)
+        hub_id = uuid5(
+            QUACK_UUID_NS, f"syllabus-hub:{material.material_id}:{label.casefold()}:{date}"
+        )
+        if at_ms is None or hub_id in done:
+            if at_ms is None:
+                log.info("syllabus_deadline_skipped", material_id=str(material.material_id))
+            continue
+        done.add(hub_id)
+        control = cast(ControlType, item["control_type"])
+        key = f"{{}}:syllabus:{material.material_id}:{hub_id}"
+        common: dict[str, Any] = {
+            "domain_id": material.domain_id,
+            "session_id": material.session_id,
+            "source_refs": refs,
+            "actor": ACTOR,
+        }
+        events.append(
+            NewEvent(
+                type="hub.created",
+                payload=HubCreated(
+                    hub_id=hub_id,
+                    domain_id=material.domain_id,
+                    name=label,
+                    kind="material",
+                    origin="material",
+                    control_type=control,
+                ),
+                idempotency_key=key.format("hub.created"),
+                **common,
+            )
+        )
+        covered = list(
+            dict.fromkeys(
+                topic_ids[" ".join(c.split()).casefold()]
+                for c in item.get("covers", [])
+                if " ".join(c.split()).casefold() in topic_ids
+            )
+        )
+        if covered:
+            levels = settings.control_type_levels[control]
+            events.append(
+                NewEvent(
+                    type="hub.topics_changed",
+                    payload=HubTopicsChanged(
+                        hub_id=hub_id,
+                        topics=[HubTopic(topic_id=t, required_levels=levels) for t in covered],
+                    ),
+                    idempotency_key=key.format("hub.topics_changed"),
+                    **common,
+                )
+            )
+        events.append(
+            NewEvent(
+                type="hub.deadline_set",
+                payload=HubDeadlineSet(hub_id=hub_id, deadline_at_ms=at_ms, source="syllabus"),
+                idempotency_key=key.format("hub.deadline_set"),
+                **common,
+            )
+        )
+    return events
 
 
 async def structure_step(ctx: JobContext, job: ClaimedJob, resolve: StructureResolver) -> None:
@@ -509,7 +720,9 @@ async def structure_step(ctx: JobContext, job: ClaimedJob, resolve: StructureRes
     chunks = split_chunks(ctx.settings, material.material_id, pages)
     marks = {str(m["chunk_id"]): m for m in job.payload.get("chunks", [])}
     title = str(job.payload.get("title") or "")
-    topics, skills = _subjects(chunks, marks, title)
+    deadlines: list[dict[str, Any]] = list(job.payload.get("deadlines", []))
+    covers = [c for d in deadlines for c in d.get("covers", [])]
+    topics, skills = _subjects(chunks, marks, title, covers)
 
     size = max(ctx.settings.candidate_k, 1)
     found: dict[tuple[str, str], UUID] = {}
@@ -591,6 +804,20 @@ async def structure_step(ctx: JobContext, job: ClaimedJob, resolve: StructureRes
                 **common,
             )
         )
+    topic_by_name = {
+        t.name.casefold(): found[("topic", t.name)] for t in topics if ("topic", t.name) in found
+    }
+    events.extend(
+        _syllabus_events(
+            material,
+            deadlines,
+            topic_by_name,
+            await _learner_zone(ctx.db, learner_id) if deadlines else None,
+            ctx.settings,
+            refs,
+            datetime.now(UTC),
+        )
+    )
     events.append(
         NewEvent(
             type="material.parsed",

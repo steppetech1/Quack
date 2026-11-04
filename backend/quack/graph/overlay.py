@@ -1,9 +1,9 @@
 """Session overlay: unapplied events of the current session over a projected slice (Т-§5.5,
 Т-§2.6). Nothing is written to Neo4j.
 
-Only the result shape lives here: the readers take a `SessionOverlay`. Building it on `rules@3`
-(handlers over the in-memory slice) is a task of WP2.3 / WP3.4; until then `turn_source` passes
-an empty one."""
+Only the result shape lives here: the readers take a `SessionOverlay`. It is built on `rules@3`
+(handlers over the in-memory slice) in `quack.graph.overlay_build` (WP2.3 / WP3.4, D-A-239); the
+builder imports the projector, which imports the readers, so it cannot live in this module."""
 
 from __future__ import annotations
 

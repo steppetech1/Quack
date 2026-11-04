@@ -46,18 +46,18 @@
 | :-- | :-- | :-: | :-- | :-- | :-- | :-- |
 | WP1.1 | dbmate и базовая схема | влит | `db/migrations/…baseline.sql` + 3 расширяющие миграции (#78, #142) | — | — | T-DB1 |
 | WP1.2 | `Db` и репозитории | влит | `quack.db.Db`, `append_events`, блокировки на psycopg (#78, #107) | — | — | T-DB2, T-DB4, T-DB5 |
-| WP1.3 | Перенос кода, снятие SQLAlchemy | частично | Шаг 1 — процессы Фазы 4 (D-A-200, #224); шаг 2 — стенд на dbmate (C, #239); шаг 3 A — `graph/read`, `domains/**` на `Db` (D-A-207…212, #225, #226); шаг 3 B — #222; шаг 5 ч.1 — флаг `phase4_processes` снят, `graph.curate` и `account.purge_deleted` Фазы 3, `ops/registry.py`, `jobs/periodic.py`, `graph/rebuild.py` удалены (D-A-223…225) | шаг 3 C — `artifacts/*`, `api/*` на `Db` сделан (D-C-170, PR шага 3); ops и CLI сделаны: `ops status`, `restore-check`, `seed-learners`, `alerts`, `db-roles`, `cli.py` без движка, `replay-dlq` и `purge-deleted` сняты (C, D-C-180, D-C-181, ветка phase-4-c-step3-ops); шаг 3 C, тесты - `tests/**` зоны C без SQLAlchemy и Фазы 3, Фаза 3 для тестов A/B собрана в `tests/support/phase3_pg.py` и `phase3_events.py` (C, D-C-190); шаг 4 B — шлюз без `session_factory`; шаг 5 ч.2 — сделан в PR #258: `graph/worker.py`, `jobs/dispatcher*.py`, `jobs/queue.py`, `JobRunner`, `events/append|reader|catalog|projections|models`, `db/postgres.py`, `db/locks.py`, `graph/projector.py`, `graph/phase_a.py`, `migrations/`, зависимости `sqlalchemy`/`asyncpg`/`alembic` сняты, `supervise` в `runtime/phase4.py`, фикстуры Фазы 3 сняты (D-A-234…238) | шаг 3 C, шаг 4 B | T-DB3 (G4) |
+| WP1.3 | Перенос кода, снятие SQLAlchemy | частично | Шаг 1 — процессы Фазы 4 (D-A-200, #224); шаг 2 — стенд на dbmate (C, #239); шаг 3 A — `graph/read`, `domains/**` на `Db` (D-A-207…212, #225, #226); шаг 3 B — #222; шаг 5 ч.1 — флаг `phase4_processes` снят, `graph.curate` и `account.purge_deleted` Фазы 3, `ops/registry.py`, `jobs/periodic.py`, `graph/rebuild.py` удалены (D-A-223…225) | шаг 3 C — `artifacts/*`, `api/*` на `Db` сделан (D-C-170, PR шага 3); ops и CLI сделаны: `ops status`, `restore-check`, `seed-learners`, `alerts`, `db-roles`, `cli.py` без движка, `replay-dlq` и `purge-deleted` сняты (C, D-C-180, D-C-181, ветка phase-4-c-step3-ops); шаг 3 C, тесты - `tests/**` зоны C без SQLAlchemy и Фазы 3, Фаза 3 для тестов A/B собрана в `tests/support/phase3_pg.py` и `phase3_events.py` (C, D-C-190), снята в шаге 5 ч.2; шаг 4 B — шлюз без `session_factory`; шаг 5 ч.2 — сделан в PR #258: `graph/worker.py`, `jobs/dispatcher*.py`, `jobs/queue.py`, `JobRunner`, `events/append|reader|catalog|projections|models`, `db/postgres.py`, `db/locks.py`, `graph/projector.py`, `graph/phase_a.py`, `migrations/`, зависимости `sqlalchemy`/`asyncpg`/`alembic` сняты, `supervise` в `runtime/phase4.py`, фикстуры Фазы 3 сняты (D-A-234…238) | шаг 3 C, шаг 4 B | T-DB3 (G4): `tests/db/test_no_sqlalchemy_left.py` написан |
 | WP1.4 | squawk | влит | `backend/.squawk.toml` (#185), job `squawk` в CI (#189) | — | — | T-DB7 |
 | WP2.1 | Модели payload и реестр | влит | 65 типов, S3 заморожен (#80, #94, #119, #130) | — | D-A-121 (класс C) | T-EV1, T-EV2, T-EV3 |
 | WP2.2 | Ход и последствия вместе | влит | Пачка хода одним `append_events` (#109, `session/turn_commit.py`) | — | — | T-EV4 |
 | WP2.3 | Тексты для поиска | влит | Поля `text` типов каталога, сверка с индексом (`tests/events/test_catalog.py`) | — | — | — |
-| WP2.4 | Реестр в образе, полнота | частично | `test_registry_completeness` (#185); реестр Фазы 4, откат и пробелы — `quack/runtime/event_registry.py` (D-A-218, T-EV5) | `ops event-registry`, `can-rollback` в `cli.py` на реестре Фазы 4, шаг CI «реестр событий» в `fast` (C, #232, D-C-165, D-C-166); `ops/registry.py` удаляется в шаге 5 WP1.3 | — | T-EV5 |
+| WP2.4 | Реестр в образе, полнота | частично | `test_registry_completeness` (#185); реестр Фазы 4, откат и пробелы — `quack/runtime/event_registry.py` (D-A-218, T-EV5) | `ops event-registry`, `can-rollback` в `cli.py` на реестре Фазы 4, шаг CI «реестр событий» в `fast` (C, #232, D-C-165, D-C-166); `ops/registry.py` удалён (D-A-225) | — | T-EV5 |
 | WP3.1 | Схема графа | влит | Ограничения и индексы Neo4j Фазы 4 (#114) | — | — | T-P7 |
 | WP3.2 | Обработчики фазы А | влит | Обработчики 38 строк S5 (#135, #185) | — | — | T-P2, T-P3, T-P4, T-P5 |
-| WP3.3 | Фазы А–В, срез | влит | Фазы А–В, запись разницей, остановка потока (#185) | в процесс `projector` не подключён (WP1.3) | — | T-P6 |
+| WP3.3 | Фазы А–В, срез | влит | Фазы А–В, запись разницей, остановка потока (#185) | подключён: процесс `projector` на `ProjectorP4` (WP1.3, D-A-200) | — | T-P6 |
 | WP3.4 | Режимы | влит | Пачки = пересборка (#185) | — | — | T-P1 |
 | WP3.5 | Пересборка | влит | Пересборка на rules@3, `--stale-rules` в `graph/projection` (#185) | `ops rebuild` в `cli.py` на `graph/projection` (C, #232, D-C-165, D-C-180) | — | T-P8 |
-| WP3.6 | Версия правил | влит | `RULES_VERSION = rules@3` в `projection/runner.py` | старая константа rules@2 в `graph/ids.py` уходит с WP1.3 | — | — |
+| WP3.6 | Версия правил | влит | `RULES_VERSION = rules@3` в `projection/runner.py` | старая константа rules@2 снята (WP1.3) | — | — |
 | WP4.1 | Свидетельство и ярус | влит | `projection/skill_fold.py` (#185, D-A-182) | — | — | T-F2 |
 | WP4.2 | Вычисляемые свойства | влит | Веса, окно «горит», новизна, delayed (#185) | — | — | T-F3, T-F9 |
 | WP4.3 | Понимание: статус уровня | влит | Ворота, пять шагов, следствия (#185) | — | — | T-F1, T-F4 |
@@ -75,7 +75,7 @@
 | WP7.1 | Правила диспетчера | влит | Таблица `plan_jobs`, виды задач (#101, #117, #154, #182) | виды без обработчика пока не в `JOB_KINDS` (процедура #173) | — | T-D1 |
 | WP7.2 | Эпизоды | влит | `jobs/episodes.py` (#182) | — | issue #193 | T-D2 |
 | WP7.3 | Покрытие | влит | `jobs/coverage.py`, `mark_covered` (#133, #182) | — | — | T-D3, T-X4 |
-| WP7.4 | Очередь по `Т-§13.1` | частично | `queue_p4`, `executor_p4`, `visible_jobs`, `jobs_changed` (#182, #186); `GET /v1/sessions/{id}/jobs` (B, issue #212, D-B-207) | подключение к `workers` (WP1.3) | WP1.3 | T-D4–D8, T-D10 |
+| WP7.4 | Очередь по `Т-§13.1` | частично | `queue_p4`, `executor_p4`, `visible_jobs`, `jobs_changed` (#182, #186); `GET /v1/sessions/{id}/jobs` (B, issue #212, D-B-207) | подключена: процесс `workers` на `JobWorker` и `DispatcherP4` (WP1.3, D-A-200) | — | T-D4–D8, T-D10 |
 | WP7.5 | Периодические задачи | влит | `periodic_p4.py`; `manifests.cleanup` (D-A-204), `deletions.reconcile` (D-A-201), `session.sweep_inactive` (D-A-211), `exports.cleanup` (D-A-215), `calibration.weekly` — предложение `p_*` в лог (D-A-219…221) | предложение весов видов свидетельств — нет правила в документах (D-A-221) | — | T-D9 |
 | WP8.1 | Оспаривания, «описка» | влит | `POST /v1/disputes`, `POST /v1/verdicts/{seq}/typo` (#185, D-A-192) | — | — | T-ED1, T-ED2 |
 | WP8.2 | Правки тем, «я это знаю» | влит | Пять маршрутов правок (#185, D-A-193), `episode.reassigned`, `check.known_claim` (B), обработчик `topic.split`; перечни и вид `agent.topic_split` (D-A-226) | — (намерение учителя `split_topic` и обработчик `agent.topic_split` — B, #245, D-B-213) | B | T-ED3, T-ED4 |
@@ -156,7 +156,7 @@
 | WP18.4 | Согласия | влит | `POST /v1/consents`, `require_terms` (#97, #106, #111) | — | — | T-AU6 |
 | WP19 | Объектное хранилище и загрузки | влит | `S3ObjectStore`, ключи с ULID, тип по содержимому (#90) | проверка региона Contabo и path-style на стенде (D-C-109) | — | T-ST1, T-ST2, T-ST3 |
 | WP20.1 | Загрузка | влит | `POST /v1/domains/{id}/materials`, `GET /v1/materials/{id}` (#98, #113) | — | — | T-MT1 (часть) |
-| WP20.2 | Разбор | частично | Роль `material_parser` в `Settings`, события `material.*`; `material.parse` в два шага (страницы, куски, разметка; структура под `domain:{id}` через `reconcile_domain`, хаб «из материала»), слой 2 и черновик слоя 1 `material_parser@1` (D-C-200…D-C-203) | силлабус (дедлайны), задачи семинара, скан без текстового слоя (D-C-202 п.4) | задачи семинара — разметка WP12.5 (B) | T-MT1 |
+| WP20.2 | Разбор | частично | Роль `material_parser` в `Settings`, события `material.*`; `material.parse` в два шага (страницы, куски, разметка; структура под `domain:{id}` через `reconcile_domain`, хаб «из материала»), слой 2 и черновик слоя 1 `material_parser@1` (D-C-200…D-C-203); дедлайны силлабуса - `hub.deadline_set {source: syllabus}` (D-C-213); PDF без текстового слоя читает `recognizer` (D-C-214) | задачи семинара (`task.created`) | задачи семинара — разметка WP12.5 (B) | T-MT1 |
 | WP20.3 | Эмбеддинги на Modal | влит | `modal/embeddings.py`, клиент (#115) | инструкция запроса и окно простоя — подтвердить владельцем | D-C-117 | T-MT2, T-MT4 |
 | WP20.4 | Векторный поиск, предвыборка | влит | `materials_prefetch`, `materials_search` (#140) | — | — | T-MT3 |
 | WP20.5 | Полнотекстовый поиск | влит | `GET /v1/search`, `materials/search.py` (#98, #113) | теста `T-DB6` (EXPLAIN GIN) в `tests/db` не нашёл | — | T-MT5, T-DB6 |
@@ -187,7 +187,7 @@
 ### Поток A
 
 1. **WP1.3, шаг 5 ч.2** — сделан (PR #258, D-A-234…238). Остаток — устаревшие комментарии про `session_factory` в `quack/api/resources.py` и `tests/storage/test_s1_resources.py` (C); `graph/projector_rows.py`, `events/payloads.py`, `jobs/kinds.py` остаются, пока на них опираются тесты и пакеты.
-2. **WP2.3 / WP3.4, режим «наложение сессии»** (ТЗ §4.2, `Т-§2.6`) — не перенесён на `rules@3`: `graph/overlay.build_session_overlay` Фазы 3 нигде не вызывается, `turn_source` строит пустое наложение и держится на ожидании проектора до конца журнала. Перенос: обработчики `rules@3` поверх среза в памяти (`BatchSlice`), тесты — свежие события сессии поверх отстающей проекции, пустое наложение при догнавшем проекторе, ничего не пишется в базовый срез. Решение — после ответа B, нужно ли оно при `lag_degraded`.
+2. **WP2.3 / WP3.4, режим «наложение сессии»** — сделан на `rules@3` (PR #259, D-A-239): `graph/overlay_build.build_session_overlay`, `read_session_tail`, `load_batch_inputs`/`run_batch` общие с проектором. Подключение в `session/turn_source.py` — сделано B (D-B-215, #260).
 3. **Владелец:** `D-A-196` (класс C); `D-A-221` (правило весов свидетельств).
 
 ### Поток B
@@ -200,6 +200,7 @@
 5. **WP10.4, хвост** — `db=` в `LLMGateway` при WP1.3 (A/C), снятие `ops.llm_ledger` и outbox на SQLAlchemy.
 6. **WP16.7, хвост** — регистрация команды оценки извлечения `agents/extraction_eval.py` (C, S15); выгрузка наборов LangSmith — оператор.
 7. **WP8.3 со стороны B** — `db=ctx.db` в читатель при первом отчёте «до и после» (issue #190); Q-A-4.
+8. **WP2.3 / WP3.4, наложение сессии** — подключено в `session/turn_source.py` (D-B-215, #260).
 
 ### Поток C
 

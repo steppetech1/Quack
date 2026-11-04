@@ -23,6 +23,26 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-214. WP20.2: PDF без текстового слоя читается распознавателем
+- Класс: C (закрывает п.4 D-C-202; пороги — параметры)
+- WP / место: WP20.2 п.1, Т-§16.5; `quack/materials/parse.py::_read_scans`, `quack/config.py`
+- Контекст: ТЗ: «PDF — `/v1/pdf/pages`; изображение — распознавание `recognizer`». Скан PDF даёт страницы без текста (D-C-202 п.4), и разбор оставался пустым.
+- Решение: (1) Страница PDF, чей текст короче `material_scan_min_chars = 20` знаков, читается по своему изображению `recognizer` в режиме листа (тот же `_read_sheet`, что у фото: строки не-рисунки и не зачёркнутые). Выравнивание compute не вызывается: страница уже отрисована. (2) Читаются первые `material_scan_max_pages = 50` таких страниц файла, параллельно (`material_parser_concurrency`); остальные остаются пустыми, в журнал идёт `material_scan_truncated`. (3) Ключ идемпотентности вызова — `recognizer:material:{id}:{page}`; повтор после сбоя находит прежний ответ. Ошибки шлюза не глотаются: задача повторяется.
+- Почему: WP20.2 п.1, Т-§16.5, D-C-202 п.4, §0.4.3 (числа в `Settings`).
+- Обратимость: параметры и код.
+- Тесты: `test_a_pdf_page_without_a_text_layer_is_read_by_the_recognizer`, `test_a_scan_is_read_up_to_the_cap_of_pages`.
+- Требует подтверждения владельцем: нет (50 страниц - стартовое значение; цена скана в вызовах `recognizer`)
+
+### D-C-213. WP20.2: дедлайны силлабуса — `hub.deadline_set {source: syllabus}`
+- Класс: B (ТЗ: «из силлабуса — структура курса и дедлайны (`hub.deadline_set`, Т-§4.8)»; как парсер отдаёт даты и как они превращаются в хабы - не сказано)
+- WP / место: WP20.2 п.4, Т-§4.8; `quack/materials/parse.py` (`ParsedDeadline`, `_syllabus_events`), `quack/prompts/material_parser/v1.md`, `PROMPT_CONTRACTS.md`, `manifest.json`
+- Контекст: `material_parser@1` размечал только куски; отдельного вида материала «силлабус» в `content.materials` нет, и он не нужен: даты видны в тексте.
+- Решение: (1) Схема ответа получила поле `deadlines [{label, date, control_type, covers}]` (пустое почти всегда). `date` - ISO 8601 с годом (`YYYY-MM-DD` или `YYYY-MM-DDTHH:MM`); дату без года, историческую дату и выдуманную парсер не отдаёт (слой 2). `control_type` - один из `tasks`, `colloquium_proofs`, `oral_theory` (`no_goal` для контроля не имеет смысла). `covers` - темы словами материала. (2) Шаг 1 склеивает ответы пачек (одно имя в разных регистрах и дата - один контроль; не больше `material_deadlines_max = 20`) и кладёт в полезную нагрузку шага 2. (3) Шаг 2: темы из `covers` идут в сверку вместе с темами кусков (структура курса). На каждый контроль: `hub.created {kind: material, origin: material, control_type, name = label}`, `hub.topics_changed` (темы из `covers`, уровни по `control_type_levels`; без распознанных тем события нет) и `hub.deadline_set {source: syllabus}`. Всё в той же транзакции, что `material.parsed`; ключи `…:syllabus:{material}:{hub_id}`, `hub_id` = `uuid5` от материала, названия и даты. (4) Время: дата без времени - конец этого дня, 23:59; время без пояса - в поясе ученика (`core.learners.settings.timezone`, иначе UTC). Дата в прошлом и нечитаемая дата пропускаются (запись `syllabus_deadline_skipped`). (5) Плашка «добавлено» с отменой - `PATCH /v1/hubs/{id}` (WP6.3), своих окон нет.
+- Почему: WP20.2 п.4, Т-§4.8, П-8.1 (дедлайн пишется сразу), Т-§19.8 (текст - данные: парсер размечает, код проверяет дату и тип).
+- Обратимость: код и слой 2 `material_parser@1` (черновик, владелец может заменить пакетом; поле `deadlines` остаётся в контракте). Задачи семинара (`task.created`) по-прежнему ждут разметку WP12.5 (B).
+- Тесты: `test_a_syllabus_gives_hubs_with_deadlines`, `test_a_material_without_dates_writes_no_deadline`, `test_deadlines_are_capped_by_the_setting`, `test_the_prompt_material_parser_v1_has_its_contract`, `tests/llm` (T-M5).
+- Требует подтверждения владельцем: нет
+
 ### D-C-212. WP9.5: `GET /internal/status` в приложении `api`
 - Класс: C
 - WP / место: WP9.5, Д-§9.1; `quack/api/app.py` (`_internal_router`), `tests/e2e/routes/c.py`, `tests/test_ops_p4_status.py`
