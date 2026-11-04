@@ -77,6 +77,7 @@ export const ru: Dict = {
     heading: "С чего начнём?",
     min: (n: number) => `${n} мин`,
     num: (n: number) => `№ ${n}`,
+    paceWarning: (hubName: string, ready: number, notReady: number) => `«${hubName}» не успеешь: готово ${ready}, осталось ${notReady}`,
   },
   empty: {
     title: "Тут пока пусто — и это нормально",

@@ -82,6 +82,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const [consentBusy, setConsentBusy] = useState(false);
   const [graphs, setGraphs] = useState<Record<string, S["DomainGraphResponse"]>>({});
   const [hubs, setHubs] = useState<Record<string, ApiHub[]>>({});
+  const [todays, setTodays] = useState<Record<string, S["TodayView"]>>({});
   const [me, setMe] = useState<S["Me"] | null>(null);
   const [active, setActiveState] = useState<S["SessionView"] | null>(null);
   const [history, setHistory] = useState<S["SessionView"][]>([]);
@@ -105,14 +106,16 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   const loadGraph = useCallback(async (domainId: string) => {
     try {
-      // chapters ride along with the graph; no hubs (or a failed call) means one chapter with every topic
-      const [g, h] = await Promise.all([
+      // chapters and "today" ride along with the graph; a failed "today" just leaves the strip empty
+      const [g, h, today] = await Promise.all([
         get<S["DomainGraphResponse"]>(`/v1/domains/${domainId}/graph`),
         get<ApiHub[]>(`/v1/domains/${domainId}/hubs`).catch(() => [] as ApiHub[]),
+        get<S["TodayView"]>(`/v1/domains/${domainId}/today`).catch(() => undefined),
       ]);
       loaded.current.add(domainId);
       setGraphs((m) => ({ ...m, [domainId]: g }));
       setHubs((m) => ({ ...m, [domainId]: h }));
+      if (today) setTodays((m) => ({ ...m, [domainId]: today }));
     } catch (e) {
       // a subject without sessions or materials has no graph yet
       if (!(e instanceof ApiError && e.status === 404)) throw e;
@@ -218,6 +221,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
       modes: t.live.modes,
       reviewToday: t.live.reviewToday,
       reviewOverdue: t.live.reviewOverdue,
+      paceWarning: t.today.paceWarning,
     }),
     [t],
   );
@@ -225,9 +229,9 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   const models = useMemo(() => {
     const out: Record<string, GraphModel> = {};
-    for (const s of summaries) if (graphs[s.domain_id]) out[s.domain_id] = graphModelFromApi(s, graphs[s.domain_id], hubs[s.domain_id] ?? [], history);
+    for (const s of summaries) if (graphs[s.domain_id]) out[s.domain_id] = graphModelFromApi(s, graphs[s.domain_id], hubs[s.domain_id] ?? [], history, todays[s.domain_id], labels);
     return out;
-  }, [summaries, graphs, hubs, history]);
+  }, [summaries, graphs, hubs, history, todays, labels]);
 
   const savePreferences = useCallback(async (prefs: Record<string, unknown>) => {
     // one key per request: `preference.set {key, value}`; only plain values go through
