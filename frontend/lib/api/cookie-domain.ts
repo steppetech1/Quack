@@ -14,3 +14,14 @@ export function hostScopedSetCookie(setCookie: string, requestHost: string): str
   if (host === domain || host.endsWith(`.${domain}`)) return setCookie;
   return setCookie.replace(/;\s*domain=[^;]+/i, "");
 }
+
+/**
+ * Copies every `Set-Cookie` from an upstream fetch Response onto an outgoing one, fixed up by
+ * `hostScopedSetCookie`. `google_callback` sets two (the session, and clearing the OIDC state
+ * cookie it set in `google_start`) — `Headers.get("set-cookie")` returns only one of them
+ * (the Fetch spec excludes `Set-Cookie` from header combining), so this must use
+ * `getSetCookie()` and `response.headers.append`, not `.set`, or the second cookie is dropped.
+ */
+export function forwardSetCookies(upstream: Headers, response: Response, requestHost: string): void {
+  for (const setCookie of upstream.getSetCookie()) response.headers.append("set-cookie", hostScopedSetCookie(setCookie, requestHost));
+}

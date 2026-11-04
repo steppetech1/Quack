@@ -301,6 +301,22 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const name = String(body.text).trim().split(/\s+/).slice(0, 3).join(" ");
     return json(res, 200, { decision: "new", name: name.charAt(0).toUpperCase() + name.slice(1), domain_id: null, confidence: 0.8 });
   }
+  if ((g = p.match(/^\/v1\/domains\/([^/]+)\/today$/))) {
+    const d = domainById(g[1]);
+    if (!d) return err(res, "NOT_FOUND", 404, "no such subject");
+    const endOfDay = new Date().setHours(24, 0, 0, 0);
+    // t.state here is already STATE[...] (e.g. "inconsistent" for the mock's "review"), not the mock's own word
+    const items = allTopics(d)
+      .filter((t) => t.state === STATE.review && dueMs(t) > 0 && dueMs(t) < endOfDay)
+      .sort((a, b) => dueMs(a) - dueMs(b))
+      .map((t, i, arr) => ({ skill_id: id(`s-${t.key}-0`), topic_id: id("t-" + t.key), score: arr.length - i, reasons: ["due"] }));
+    // one hub past its deadline with unfinished topics gets a pace warning, so the stub exercises that card too
+    const overdue = d.hubs.find((h) => h.deadlineMs && h.deadlineMs < Date.now() && h.topics.some((t) => t.state !== STATE.solid));
+    const pace_warnings = overdue
+      ? [{ hub_id: id("h-" + overdue.key), ready: overdue.topics.filter((t) => t.state === STATE.solid).length, not_ready: overdue.topics.filter((t) => t.state !== STATE.solid).length, forecast: 3 }]
+      : [];
+    return json(res, 200, { items, minutes: items.length * 10, grade_hub_ids: [], pace_warnings });
+  }
   if ((g = p.match(/^\/v1\/domains\/([^/]+)\/(graph|hubs)$/))) {
     const d = domainById(g[1]);
     if (!d) return err(res, "NOT_FOUND", 404, "no such subject");

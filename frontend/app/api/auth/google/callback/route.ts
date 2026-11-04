@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { hostScopedSetCookie } from "@/lib/api/cookie-domain";
+import { forwardSetCookies } from "@/lib/api/cookie-domain";
 
 const API_URL = process.env.QUACK_API_URL ?? "http://localhost:8000";
 
@@ -14,7 +14,6 @@ export async function GET(request: Request): Promise<Response> {
     const location = upstream.headers.get("location");
     if (location) response.headers.set("location", location);
   }
-  const setCookie = upstream.headers.get("set-cookie");
-  if (setCookie) response.headers.set("set-cookie", hostScopedSetCookie(setCookie, url.host));
+  forwardSetCookies(upstream.headers, response, url.host);
   return response;
 }

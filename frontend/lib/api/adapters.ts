@@ -171,13 +171,17 @@ export function todayFromApi(view: S["TodayView"] | undefined, hubNameOf: (hubId
     .filter((it) => it.topic_id)
     .sort((a, b) => b.score - a.score)
     .map((it) => ({ id: it.skill_id, kind: "item" as const, topicId: it.topic_id as string, action: ACTION[it.reasons[0] ?? "due"] ?? "review" }));
-  const warnings = (view.pace_warnings ?? []).map((w) => ({
-    id: `pace-${w.hub_id}`,
-    kind: "pace_warning" as const,
-    hubId: w.hub_id,
-    text: labels.paceWarning(hubNameOf(w.hub_id) ?? "", w.ready, w.not_ready),
-  }));
-  return [...items, ...warnings].slice(0, TODAY_MAX);
+  // Pace warnings earn their slot first: "you won't make the deadline" outranks a review pick,
+  // and a flood of due items must not push it out of the TODAY_MAX cards the strip shows.
+  const warnings = (view.pace_warnings ?? [])
+    .slice(0, TODAY_MAX)
+    .map((w) => ({
+      id: `pace-${w.hub_id}`,
+      kind: "pace_warning" as const,
+      hubId: w.hub_id,
+      text: labels.paceWarning(hubNameOf(w.hub_id) ?? "", w.ready, w.not_ready),
+    }));
+  return [...warnings, ...items].slice(0, TODAY_MAX);
 }
 
 /**
