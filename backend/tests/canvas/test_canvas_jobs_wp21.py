@@ -97,7 +97,7 @@ def test_the_kinds_are_registered_by_the_procedure_of_issue_173() -> None:
     importlib.import_module("quack.canvas.jobs")
     for kind in KINDS:
         assert kind in JOB_KINDS and kind in JOB_HANDLERS
-        assert KIND_LLM_ROLES[kind] == JOB_KIND_SPECS[kind].roles
+        assert KIND_LLM_ROLES[kind] == {spec.kind: spec for spec in JOB_KIND_SPECS}[kind].roles
     assert KIND_LLM_ROLES["second_opinion.diagnosis"] == ("second_opinion",)
     assert KIND_LLM_ROLES["canvas.rediagnose"] == ("canvas_diagnoser",)
 
@@ -124,7 +124,11 @@ async def test_second_opinion_job_repeats_the_call_and_writes_once(
         "WHERE learner_id = %(l)s AND type = 'observation.second_opinion'",
         {"l": learner},
     )
-    assert opinion["payload"] == {"target_seq": outcome.diagnosed_seq, "agreed": True}
+    assert opinion["payload"] == {
+        "target_seq": outcome.diagnosed_seq,
+        "agreed": True,
+        "diagnosis": None,
+    }
     assert opinion["idempotency_key"] == f"observation.second_opinion:{outcome.diagnosed_seq}"
     asked = len(w.provider.calls_for(schema_name=SECOND))
     assert asked == 1
