@@ -11,7 +11,7 @@ from typing import Any
 
 from quack.graph.projection.rebuild import rebuild_learner
 from tests.e2e.journey import onboard
-from tests.e2e.system import System
+from tests.e2e.system import QUIET_ANALYST, System
 from tests.e2e.text_journey import (
     Journey,
     act,
@@ -172,7 +172,9 @@ def _strength_fields(schema: Any) -> set[str]:
 
 async def test_law_4_and_10_end_to_end(system: System) -> None:
     """T-E14: no request to a model carries a UUID (T-M3); the output schemas of the extractor
-    and of the checks have no field of strength; the extractor's input is the episode."""
+    and of the checks have no field of strength; the extractor's input is the episode; the
+    analyst's input has no past digest (law 10, T-AG1): the session end queues `analyst.run`
+    and then `analyst.deep`, the second one runs after the first wrote its digest to the log."""
     journey = await run_text_journey(system)
     await end_session(system, journey)
     await system.settle()
@@ -194,3 +196,17 @@ async def test_law_4_and_10_end_to_end(system: System) -> None:
     for request in requests:
         if request.schema_name in {"ModelVerdictOutput", "TaskCheckOutput"}:
             assert not _strength_fields(request.json_schema), request.schema_name
+
+    digests = await system.resources.db.fetch_all(
+        "SELECT payload->>'text' AS text, payload->>'manner' AS manner FROM core.events "
+        "WHERE learner_id = %(learner_id)s AND type = 'digest.written' ORDER BY seq",
+        {"learner_id": journey.learner.learner_id},
+    )
+    analyst = provider.calls_for(schema_name="AnalystOutput")
+    assert len(analyst) >= 2, [r.schema_name for r in requests]
+    assert digests, "the analyst wrote no digest, so the check below would prove nothing"
+    written = {str(d[key]) for d in digests for key in ("text", "manner")}
+    assert QUIET_ANALYST["text"] in written and QUIET_ANALYST["manner"] in written
+    for request in analyst:
+        for text in written:
+            assert text not in request.prompt, (request.model, text)
