@@ -29,17 +29,16 @@ python -m quack.cli projector    # projector + log dispatcher (Neo4j schema chec
 python -m quack.cli workers      # job executors, reaper, periodic scheduler
 python -m quack.cli worker       # projector + workers in one process, development only
 
-python -m quack.cli ops migrate | verify-schema | status | purge-deleted
+python -m quack.cli ops migrate | verify-schema | status | restore-check | alerts | db-roles
 python -m quack.cli ops rebuild --learner ID | --stale-rules | --all
-python -m quack.cli ops replay-dlq [--id ID ...]
 python -m quack.cli ops event-registry --out PATH
 python -m quack.cli ops can-rollback --to-registry PATH    # exit 0 — safe, 1 — not safe
 python -m quack.cli ops seed-learners --count N --out PATH [--fixture NAME] [--confirm]
 python -m quack.cli ops openapi --out openapi.json
 ```
 
-`ops status` prints one JSON object (dependencies, projector and dispatcher lag, queue, DLQ,
-LLM tokens, pressure and open circuits); exit 2 when Postgres does not answer. SIGTERM: `api`
+`ops status` prints one JSON object (dependencies, projector and dispatcher lag, queue,
+LLM tokens and spend, pressure and open circuits); exit 2 when Postgres does not answer. SIGTERM: `api`
 waits `API_GRACEFUL_SHUTDOWN_S`; `workers` takes no new jobs and returns unfinished ones to
 `queued` after `WORKER_SHUTDOWN_GRACE_S` without raising `attempt`; `projector` finishes the
 current batch.
@@ -92,7 +91,7 @@ docker run -d --name quack-test-redis -p 56379:6379 redis:7
 
 Override with `QUACK_TEST_POSTGRES_DSN`, `QUACK_TEST_NEO4J_URI`, `QUACK_TEST_NEO4J_USER`,
 `QUACK_TEST_NEO4J_PASSWORD`, `QUACK_TEST_REDIS_URL`. The test session drops and re-creates
-the `auth`, `core`, `ops` schemas through the Alembic migration. One `pytest` per set of
+the `core`, `content`, `ops` schemas of the `_p4` database through the dbmate migrations. One `pytest` per set of
 containers at a time. `tests/e2e/` is the end-to-end stand (`T-E1`…`T-E10`): one application,
 projector, dispatcher, executors and scheduler in the test process.
 
@@ -111,7 +110,7 @@ projector, dispatcher, executors and scheduler in the test process.
 | `quack/domains/` | domains, structure, diagnostic, curation, graph view |
 | `quack/session/` | sessions, teacher turn (SSE), degradation, spoiler guard, session summary by code, `turn.extract` |
 | `quack/artifacts/` | notes, cheatsheets, practice API, search and export |
-| `quack/ops/` | `migrate`, `replay-dlq`, `purge-deleted`, `status`, event registry and rollback check, `seed-learners` |
+| `quack/ops/` | `migrate`, `status`, `restore-check`, `alerts`, `db-roles`, event registry and rollback check, `seed-learners` |
 | `quack/db/` | Postgres, Neo4j (`read_session`), Redis keys |
 | `loadtest/` | `meta-mock`, Locust scenario, seed fixture |
 

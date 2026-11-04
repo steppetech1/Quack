@@ -1,21 +1,67 @@
 # CI (ТЗ Фазы 3 WP9.3, Д-§5.2, Д-§5.3). No pull_request_target, no workflow_run; read-only
-# token; third-party actions pinned by commit SHA (release tag in the comment).
+# token; third-party actions pinned by commit SHA (release tag in the comment). `publish` is the
+# only job with `packages: write`; it runs on pushes only, never on a pull request (Д-§5.3).
+# `deploy` (deploy.yml) follows it on main.
 name: ci
 
+# Layers (backend/TESTS.md, D-C-146): `fast` runs on every event and needs no services; the
+# full `backend` job (Postgres, Neo4j, Redis) runs on pull requests and on pushes to main and
+# phase-4, not on pushes to the stream branches.
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, phase-4, phase-4-a, phase-4-b, phase-4-c]
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a branch must not cancel the publishing of an older commit: its images are
+  # what deploy.sh <sha> pulls. Only pull request runs are superseded.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Fast layer: no services. Infrastructure tests skip (QUACK_TEST_REQUIRE_INFRA is not set and
+  # nothing listens on the test ports), everything else runs. Every event, every branch.
+  fast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          working-directory: backend
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      # Д-§5.2 п.6, WP9.3 (D-C-166): every type the catalog gives a projector or a dispatcher has one.
+      - name: Event registry (реестр событий)
+        run: >-
+          uv run python -c "from quack.runtime.event_registry import registry_gaps as g;
+          import sys; gaps = g(); print(*gaps, sep='\n'); sys.exit(1 if gaps else 0)"
+      # WP9.3: modal/ (the embeddings app, WP20.3) is checked with the backend's settings and
+      # environment (`modal` is a backend dependency, §4.6): ruff and pyright (D-C-210).
+      - name: modal/ (ruff, pyright)
+        run: |
+          uv run ruff check --config pyproject.toml ../modal
+          uv run ruff format --check --config pyproject.toml ../modal
+          uv run pyright ../modal
+      - run: uv run pytest -q
+
+  # Full layer: the same tests with real Postgres 16, Neo4j and Redis; nothing is skipped.
+  # Pull requests and pushes to main and phase-4 only (not pushes to stream branches).
   backend:
+    if: >-
+      github.event_name == 'pull_request'
+      || github.ref == 'refs/heads/main'
+      || github.ref == 'refs/heads/phase-4'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -57,49 +103,256 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           working-directory: backend
+      # ТЗ Ф4 §4.6, D-A-103: dbmate binary for the Phase 4 baseline (tests/db), pinned by checksum.
+      - name: Install dbmate
+        env:
+          DBMATE_VERSION: v2.36.0
+          DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/dbmate"             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/dbmate" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/dbmate" /usr/local/bin/dbmate
+          dbmate --version
       - run: uv sync --frozen
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
+      # Д-§5.2 п.5, WP9.3 (D-C-210): isolation and the single Neo4j writer as steps of their own,
+      # so a break is named in the check list. The full run below repeats them.
+      - name: Isolation of learners (T-DB4, T-E3)
+        run: >-
+          uv run pytest -q
+          tests/db/test_sql_static.py::test_repository_functions_take_learner_id
+          tests/e2e/test_isolation_and_idempotency.py::test_cross_learner_isolation
+      - name: One writer in Neo4j (T-A9a, T-A9b)
+        run: >-
+          uv run pytest -q
+          tests/test_contracts.py::test_neo4j_writes_only_from_projector_static
+          tests/test_neo4j_read_session.py::test_read_session_rejects_writes
       - run: uv run pytest -q
 
-  compute:
+  # Д-§5.2 п.2, ТЗ Ф4 WP1.4/WP9.3 (D-C-142): squawk over the migrations a pull request adds or
+  # changes; blocking ALTERs and indexes without CONCURRENTLY fail the check. The version is
+  # pinned (>= 2.51.0: the comment for files without a transaction). Rules outside that scope are
+  # excluded: lock/statement timeouts, re-runnable statements, dropping columns or schemas.
+  squawk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: compute
+    timeout-minutes: 10
+    env:
+      SQUAWK_VERSION: "2.71.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: squawk on new migrations
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "no base commit to compare with; nothing to check"
+            exit 0
+          fi
+          files=$(git diff --name-only --diff-filter=AM "$BASE" HEAD -- 'backend/db/migrations/*.sql')
+          if [ -z "$files" ]; then
+            echo "no new migrations"
+            exit 0
+          fi
+          excluded=require-lock-timeout,require-statement-timeout,prefer-robust-stmts,ban-drop-column,ban-drop-schema
+          # shellcheck disable=SC2086
+          uvx --from "squawk-cli==${SQUAWK_VERSION}" squawk \
+            --config backend/.squawk.toml --exclude="$excluded" $files
+
+  # Д-§5.2 п.7, WP9.3 (D-C-210): the types the frontend generates from the OpenAPI snapshot of
+  # the backend equal the committed ones. Pull requests only. Expectedly red until the frontend
+  # moves to the API of Phase 4 (R4-2): the owner makes it required after that, so it is not in
+  # `needs` of `publish`. The generator is the frontend's own, at the version of its lock file;
+  # no frontend file is changed. Node of the runner image, no extra action.
+  frontend-types:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the generator of the lock file
+        working-directory: frontend
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate types from backend/openapi.json and compare
+        run: |
+          script=$(node -p "require('./frontend/package.json').scripts['api:types']")
+          flags=${script#openapi-typescript lib/api/openapi.json -o lib/api/schema.d.ts}
+          if [ "$flags" = "$script" ]; then
+            echo "the api:types script changed shape; update this step"
+            exit 1
+          fi
+          # shellcheck disable=SC2086
+          frontend/node_modules/.bin/openapi-typescript backend/openapi.json -o "$RUNNER_TEMP/schema.d.ts" $flags
+          diff -u frontend/lib/api/schema.d.ts "$RUNNER_TEMP/schema.d.ts" | head -n 200
+          cmp frontend/lib/api/schema.d.ts "$RUNNER_TEMP/schema.d.ts"
+
+  # Always reports (a required check), but the heavy steps run only when compute/ or the
+  # workflow itself changed.
+  compute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Changed paths
+        id: changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # compute/ or the workflow changed?
+          # No base commit (a new branch, a forced push): run everything.
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "no base commit; running everything"
+            echo "compute=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -Eq '^(compute/|\.github/workflows/)'; then
+            echo "compute=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "nothing relevant changed; the heavy steps are skipped"
+            echo "compute=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.compute == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           working-directory: compute
-      - run: uv sync --frozen
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
-      - run: uv run pytest -q
+      - if: steps.changes.outputs.compute == 'true'
+        working-directory: compute
+        run: uv sync --frozen
+      - if: steps.changes.outputs.compute == 'true'
+        working-directory: compute
+        run: uv run ruff check .
+      - if: steps.changes.outputs.compute == 'true'
+        working-directory: compute
+        run: uv run ruff format --check .
+      - if: steps.changes.outputs.compute == 'true'
+        working-directory: compute
+        run: uv run pyright
+      # WP24: render tests need Chromium of Playwright (Д-§5.1).
+      - if: steps.changes.outputs.compute == 'true'
+        working-directory: compute
+        run: uv run playwright install --with-deps chromium
+      - if: steps.changes.outputs.compute == 'true'
+        working-directory: compute
+        run: uv run pytest -q
 
   images:
     # Build both images for linux/amd64 without publishing (publishing is the DevOps track).
+    # Pull requests and pushes to main and phase-4; on a pull request only when backend/ or
+    # compute/ (or the workflow) changed. The job always reports.
+    if: >-
+      github.event_name == 'pull_request'
+      || github.ref == 'refs/heads/main'
+      || github.ref == 'refs/heads/phase-4'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+          fetch-depth: 0
+      - name: Changed paths
+        id: changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # backend/, compute/ or the workflow changed?
+          # No base commit (a new branch, a forced push): run everything.
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "no base commit; running everything"
+            echo "images=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -Eq '^(backend/|compute/|\.github/workflows/)'; then
+            echo "images=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "nothing relevant changed; the heavy steps are skipped"
+            echo "images=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.images == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: steps.changes.outputs.images == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: backend
           platforms: linux/amd64
           push: false
           tags: quack-backend:ci
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - if: steps.changes.outputs.images == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: compute
           platforms: linux/amd64
           push: false
           tags: quack-compute:ci
+
+  publish:
+    # ТЗ Фазы 4 WP9.3, Д-§5.1: both images to GHCR with the tags <short sha> and <branch>, only
+    # after the other jobs passed. The server pulls by <short sha> (deploy.sh <sha>).
+    if: >-
+      github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/phase-4')
+    needs: [backend, fast, squawk, compute, images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # Owner and commit reach the shell only through env (Д-§5.3).
+      OWNER: ${{ github.repository_owner }}
+      COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Image names and tags
+        id: names
+        run: |
+          registry="ghcr.io/${OWNER,,}"
+          {
+            echo "backend=$registry/quack-backend"
+            echo "compute=$registry/quack-compute"
+            echo "sha=${COMMIT::7}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.names.outputs.backend }}:${{ steps.names.outputs.sha }}
+            ${{ steps.names.outputs.backend }}:${{ github.ref_name }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: compute
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.names.outputs.compute }}:${{ steps.names.outputs.sha }}
+            ${{ steps.names.outputs.compute }}:${{ github.ref_name }}
+
+  deploy:
+    # ТЗ Фазы 4 WP9.4, Д-§6.1: a merge to main rolls out to the server, in the environment
+    # `production`. Only where the repository variable DEPLOY_ENABLED is true (the production
+    # repository); a development repository has no environment, no secrets and no server.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && vars.DEPLOY_ENABLED == 'true'
+    needs: [publish]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

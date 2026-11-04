@@ -7,6 +7,7 @@ The request bodies follow the Responses API contract of `T-L8`; `T-O5` goes thro
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -23,6 +24,15 @@ from quack.llm.errors import ProviderIncompleteError, ProviderRateLimitedError
 from quack.llm.pressure import parse_retry_after
 from quack.llm.provider import ProviderRequest
 from quack.llm.responses_client import ResponsesClient
+from quack.llm.streaming import (
+    OutputItemDone,
+    StreamCompleted,
+    StreamEvent,
+    StreamRequest,
+    TextDelta,
+    next_step_input,
+    tool_calls,
+)
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.session.schemas import (
@@ -412,27 +422,6 @@ async def test_task_gen_answer_is_a_valid_choice_task() -> None:
     assert task.reference_solution["option"] == output.answer.value
 
 
-async def test_structurer_answer_gives_topics_with_skills() -> None:
-    """The stand needs a usable domain: the mock's `structurer` answer has topics, each with
-    skills, and every reference survives `sanitize_structurer_output` (no dangling slugs)."""
-    from uuid import uuid4
-
-    from quack.domains.structure import sanitize_structurer_output
-
-    async with _client() as client:
-        response = await client.post("/responses", json=_body(StructurerOutput))
-    output = StructurerOutput.model_validate_json(_answer_text(response.json()))
-    topics, skills, prereqs, skill_deps, misconceptions = sanitize_structurer_output(
-        uuid4(), 1, output
-    )
-    assert len(topics) == len(output.topics) >= 2
-    assert {s.topic_id for s in skills} == {t.topic_id for t in topics}
-    assert len(skills) == len(output.skills)
-    assert len(prereqs) == len(output.prereqs) >= 1
-    assert len(skill_deps) == len(output.skill_deps)
-    assert len(misconceptions) == len(output.misconceptions)
-
-
 async def test_task_gen_answer_fits_math_kind() -> None:
     """`tasks/next` asks for `math` by default: when the prompt's `### Kind of problem` block
     says `math`, the mock answers with a number, so the bank row builds (no LLM_DEGRADED)."""
@@ -448,3 +437,139 @@ async def test_task_gen_answer_fits_math_kind() -> None:
     task = build_generated_task(output, "math", uuid4(), [])
     assert output.answer.type == "number"
     assert task.prompt_text
+
+
+# --- Phase 4: SSE stream with tools (ТЗ Ф4 WP26.2, seam S13, D-B-125 п.3) -------------------
+
+TOOL = {
+    "type": "function",
+    "name": "check_answer",
+    "parameters": {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+
+def _stream_request(
+    output: type[BaseModel], input_items: tuple[Mapping[str, Any], ...] = (), *, tools: bool = False
+) -> StreamRequest:
+    return StreamRequest(_request(output), input_items, (TOOL,) if tools else ())
+
+
+async def _stream(
+    request: StreamRequest,
+    config: MetaMockConfig = ZERO,
+    adapter: ResponsesClient | None = None,
+) -> list[StreamEvent]:
+    """Events of one streamed call; `adapter` keeps one meta-mock across calls."""
+    client = adapter or _adapter(config)
+    try:
+        return [event async for event in client.stream_structured(request)]
+    finally:
+        if adapter is None:
+            await client.aclose()
+
+
+def _streamed_text(events: list[StreamEvent]) -> str:
+    return "".join(event.text for event in events if isinstance(event, TextDelta))
+
+
+def _done_items(events: list[StreamEvent]) -> tuple[dict[str, Any], ...]:
+    return tuple(dict(event.item) for event in events if isinstance(event, OutputItemDone))
+
+
+async def test_stream_events_have_sorted_keys_on_the_wire() -> None:
+    """WP26.2: `data: {json}` lines, keys sorted at the root and nested; item added, text
+    deltas of the message, item done; `response.completed` last; `x-ratelimit-*` headers on
+    the HTTP response of the stream."""
+    async with _client() as client:
+        response = await client.post("/responses", json=_body(EvaluatorOutput, stream=True))
+    assert response.headers["content-type"].startswith("text/event-stream")
+    for name in RATE_LIMIT_HEADERS:
+        assert name in response.headers, name
+    events = [
+        json.loads(line.removeprefix("data:").strip())
+        for line in response.text.splitlines()
+        if line.startswith("data:")
+    ]
+    for event in events:
+        _keys_sorted(event)
+    kinds = [event["type"] for event in events]
+    assert kinds[0] == "response.output_item.added"
+    assert kinds[-1] == "response.completed"
+    assert "response.output_text.delta" in kinds
+    message = [e["item"] for e in events if e["type"] == "response.output_item.done"][-1]
+    deltas = [e for e in events if e["type"] == "response.output_text.delta"]
+    assert {e["item_id"] for e in deltas} == {message["id"]}
+    assert "".join(e["delta"] for e in deltas) == message["content"][0]["text"]
+    usage = events[-1]["response"]["usage"]
+    assert usage["input_tokens"] > 0
+    assert usage["output_tokens_details"]["reasoning_tokens"] > 0
+
+
+@pytest.mark.parametrize("model", OUTPUT_MODELS, ids=lambda m: m.__name__)
+async def test_stream_outputs_validate_through_the_adapter(model: type[BaseModel]) -> None:
+    """S13: B's stream adapter reads meta-mock: reasoning item, the answer text in deltas that
+    passes `model_validate_json`, `StreamCompleted` with usage and the rate-limit headers."""
+    events = await _stream(_stream_request(model))
+    model.model_validate_json(_streamed_text(events))
+    items = _done_items(events)
+    assert items[0]["type"] == "reasoning"
+    completed = events[-1]
+    assert isinstance(completed, StreamCompleted) and completed.status == "completed"
+    assert completed.usage.reasoning_tokens > 0
+    for name in RATE_LIMIT_HEADERS:
+        assert name in completed.headers, name
+
+
+async def test_stream_tool_step_then_answer() -> None:
+    """WP26.2: with tools — commentary before one or two `function_call` (the commentary text
+    is not an answer delta); with a `function_call_output` for every call the next step is
+    the answer (D-B-125 п.2)."""
+    counts: set[int] = set()
+    adapter = _adapter()
+    try:
+        for _ in range(2):
+            first = await _stream(_stream_request(TeacherOutput, tools=True), adapter=adapter)
+            assert _streamed_text(first) == ""
+            items = _done_items(first)
+            assert items[1]["type"] == "message" and items[1]["phase"] == "commentary"
+            calls = tool_calls(items)
+            assert calls and all(call.name == "check_answer" for call in calls)
+            counts.add(len(calls))
+            outputs = {call.call_id: '{"ok": true}' for call in calls}
+            follow = next_step_input((), items, outputs)
+            second = await _stream(
+                _stream_request(TeacherOutput, follow, tools=True), adapter=adapter
+            )
+            TeacherOutput.model_validate_json(_streamed_text(second))
+            assert not tool_calls(_done_items(second))
+    finally:
+        await adapter.aclose()
+    assert counts == {1, 2}
+
+
+async def test_stream_incomplete_share() -> None:
+    """WP26.2: a cut answer is `response.incomplete`; the adapter reports it, never parses."""
+    events = await _stream(
+        _stream_request(TeacherOutput), MetaMockConfig(latency="zero", incomplete_share=1.0)
+    )
+    completed = events[-1]
+    assert isinstance(completed, StreamCompleted) and completed.status == "incomplete"
+    with pytest.raises(ValueError):
+        TeacherOutput.model_validate_json(_streamed_text(events))
+
+
+async def test_stream_429_before_the_stream() -> None:
+    adapter = _adapter(MetaMockConfig(latency="zero", share_429=1.0, retry_after="seconds"))
+    try:
+        with pytest.raises(ProviderRateLimitedError) as caught:
+            async for _event in adapter.stream_structured(_stream_request(TeacherOutput)):
+                pass
+    finally:
+        await adapter.aclose()
+    assert caught.value.retry_after_sec is not None

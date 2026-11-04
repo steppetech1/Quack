@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from uuid import UUID
-
 from fastapi import Request
 from redis.asyncio import Redis
 
 from quack.api.auth import get_current_learner_id
-from quack.api.ratelimit import check_turn_rate_limit
 from quack.api.resources import AppResources, get_compute, get_llm
 from quack.config import Settings, get_settings
 
@@ -29,11 +26,3 @@ def get_redis(request: Request) -> Redis | None:
 current_learner_id = get_current_learner_id
 get_llm_gateway = get_llm
 get_compute_client = get_compute
-
-
-async def enforce_turn_rate_limit(
-    resources: AppResources, settings: Settings, learner_id: UUID
-) -> None:
-    """`turns_per_min` turns per learner (WP1.5): the single limiter of `quack.api.ratelimit`,
-    a local counter when Redis is down. `settings` is kept for the callers' signature."""
-    await check_turn_rate_limit(resources, learner_id)

@@ -39,7 +39,8 @@ class Learner:
 
     @property
     def headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.token}"}
+        """The session cookie of the learner (ТЗ Ф4 WP18.3, cookie `quack_session`)."""
+        return {"Cookie": f"quack_session={self.token}"}
 
 
 def load_learners(path: Path) -> list[Learner]:

@@ -9,8 +9,7 @@ from uuid import uuid4
 import pytest
 
 from quack.config import Settings
-from quack.events.catalog import validate_payload
-from quack.events.models import StoredEvent
+from quack.events.log import StoredEvent
 from quack.events.payloads import TurnExtractedV2
 from quack.llm.labels import LabelMap
 from quack.llm.strict_schema import to_strict_json_schema
@@ -121,19 +120,19 @@ def _stored(seq: int, event_type: str, payload: dict[str, Any]) -> StoredEvent:
     return StoredEvent(
         learner_id=uuid4(),
         seq=seq,
-        event_id=uuid4(),
+        id=seq,
         type=event_type,
         schema_version=1,
         actor="learner",
         session_id=None,
-        turn_id=None,
         domain_id=None,
         correlation_id=None,
-        causation_id=None,
+        causation_seq=None,
         idempotency_key=f"k{seq}",
         payload_hash="h",
         payload=payload,
         occurred_at=datetime(2026, 10, 31, 12, seq, tzinfo=UTC),
+        source_refs=[],
     )
 
 
@@ -187,6 +186,5 @@ def test_turn_extracted_v2_elements_checked_by_code() -> None:
     assert hypothesis.rejected_reason is None and hypothesis.misconception_id == misc
 
     payload = turn_extracted_v2(uuid4(), uuid4(), elements)
-    stored = validate_payload("turn.extracted", payload.model_dump(mode="json"), 2)
-    assert isinstance(stored, TurnExtractedV2)
+    stored = TurnExtractedV2.model_validate(payload.model_dump(mode="json"))
     assert len(stored.elements) == 4

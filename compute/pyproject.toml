@@ -8,6 +8,12 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic>=2.7",
     "sympy>=1.13",
+    "pebble>=5.2.3",
+    "pint>=0.26.2",
+    "antlr4-python3-runtime==4.11.1",
+    "pymupdf>=2.0",
+    "opencv-python-headless>=5.0.0.93",
+    "playwright>=1.64.1",
 ]
 
 [dependency-groups]

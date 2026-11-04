@@ -12,7 +12,12 @@ A separate ASGI process that answers `POST /responses` as the Responses API does
   429; one bucket for both models when `META_MOCK_SHARED_LIMIT=1`;
 - a given share of 429 with `retry-after` as seconds, an HTTP date, none or all three in turn;
   a given share of cut answers (`status: incomplete`, partial JSON);
-- `response_format`, `temperature` or no `store: false` → 400, as Meta does (Т-§11.1).
+- `response_format`, `temperature` or no `store: false` → 400, as Meta does (Т-§11.1);
+- Phase 4 (ТЗ Ф4 WP26.2, seam S13, D-B-125 п.3): `stream: true` gives SSE `data: {json}` lines
+  with sorted keys — per item `response.output_item.added`, `response.output_text.delta` for a
+  message, `response.output_item.done`, then `response.completed` / `response.incomplete`;
+  with `tools`, once the input has a `function_call_output` for every `function_call`, the
+  step is the answer.
 
 Run: `uvicorn --factory loadtest.meta_mock:app_from_env` (service `meta-mock`, profile
 `loadtest`). Values the documents do not give are recorded in PHASE3_NOTES D-C-023.
@@ -36,7 +41,7 @@ from uuid import uuid4
 import orjson
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
 type Latency = Literal["measured", "zero"]
@@ -61,6 +66,8 @@ FIXED_DATE = "2026-01-01"
 TEACHER_SCHEMA = "TeacherOutput"
 TASK_GEN_SCHEMA = "TaskGenOutput"
 STRUCTURER_SCHEMA = "StructurerOutput"
+# D-C-108: characters of the answer text per `response.output_text.delta`.
+STREAM_DELTA_CHARS = 16
 
 
 @dataclass(frozen=True)
@@ -442,6 +449,43 @@ def _function_calls(tools: list[dict[str, Any]], count: int) -> list[dict[str, A
     ]
 
 
+def _tools_answered(body: dict[str, Any]) -> bool:
+    """The input carries a `function_call_output` for every `function_call` (D-B-125 п.2)."""
+    items = [i for i in body.get("input") or [] if isinstance(i, dict)]
+    called = {i.get("call_id") for i in items if i.get("type") == "function_call"}
+    answered = {i.get("call_id") for i in items if i.get("type") == "function_call_output"}
+    return bool(answered) and called <= answered
+
+
+def _sse(event: dict[str, Any]) -> bytes:
+    return b"data: " + orjson.dumps(event, option=orjson.OPT_SORT_KEYS) + b"\n\n"
+
+
+def _stream_events(response: dict[str, Any]) -> list[bytes]:
+    """SSE of `/responses` with `stream: true` (D-B-125 п.3)."""
+    events: list[bytes] = []
+    for item in response["output"]:
+        added = {**item, "content": []} if item["type"] == "message" else item
+        events.append(_sse({"item": added, "type": "response.output_item.added"}))
+        if item["type"] == "message":
+            text = item["content"][0]["text"]
+            for start in range(0, len(text), STREAM_DELTA_CHARS):
+                delta = text[start : start + STREAM_DELTA_CHARS]
+                events.append(
+                    _sse(
+                        {
+                            "delta": delta,
+                            "item_id": item["id"],
+                            "type": "response.output_text.delta",
+                        }
+                    )
+                )
+        events.append(_sse({"item": item, "type": "response.output_item.done"}))
+    final = f"response.{response['status']}"
+    events.append(_sse({"response": response, "type": final}))
+    return events
+
+
 async def _responses(request: Request) -> Response:
     state: _State = request.app.state.meta_mock
     config = state.config
@@ -495,7 +539,7 @@ async def _responses(request: Request) -> Response:
 
     status = "completed"
     output: list[dict[str, Any]] = [_reasoning_item()]
-    if tools:
+    if tools and not _tools_answered(body):
         output.append(_message("Checking the step.", phase="commentary"))
         output.extend(_function_calls(tools, 1 + state.tool_turn % 2))
         state.tool_turn += 1
@@ -520,6 +564,12 @@ async def _responses(request: Request) -> Response:
             "total_tokens": input_tokens + output_tokens,
         },
     }
+    if body.get("stream") is True:
+        return StreamingResponse(
+            iter(_stream_events(response)),
+            media_type="text/event-stream",
+            headers=limits.headers(),
+        )
     return _json(response, 200, limits.headers())
 
 

@@ -15,6 +15,11 @@ def create_redis(settings: Settings) -> Redis:
     return Redis.from_url(settings.redis_url, decode_responses=True)
 
 
+def learner_signal_channel(learner_id: UUID) -> str:
+    """Т-§2.3: published by append_events after commit; consumers also poll Postgres."""
+    return f"learner:{learner_id}"
+
+
 def projector_applied_channel(learner_id: UUID) -> str:
     return f"projector:applied:{learner_id}"
 

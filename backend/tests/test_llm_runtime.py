@@ -1,15 +1,17 @@
-"""LLM layer of Phase 3 (ТЗ Фазы 3 §8.4)."""
+"""LLM layer: strict schema, gateway reliability, Responses client (ТЗ Фазы 3 §8.4; on `Db` since
+D-B-212)."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import time
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx2
 import jsonschema
@@ -17,24 +19,22 @@ import orjson
 import pytest
 from pydantic import BaseModel
 from redis.asyncio import Redis
-from sqlalchemy import text
 from structlog.testing import capture_logs
 
 from loadtest.meta_mock import minimal_instance
 from quack.artifacts.schemas import ArtifactGenOutput
 from quack.config import Settings
-from quack.db.postgres import SessionFactory
+from quack.db import Db
 from quack.db.redis import llm_circuit_key, llm_pressure_key
 from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOutput
 from quack.llm.errors import (
-    LLMBudgetExceededError,
     LLMRateLimitedError,
     LLMSchemaError,
     LLMUnavailableError,
 )
 from quack.llm.gateway import LLMGateway
 from quack.llm.pressure import pressured_models, set_pressure_flag
-from quack.llm.provider import ProviderRequest, ProviderResponse
+from quack.llm.provider import ImageInput, ProviderRequest, ProviderResponse
 from quack.llm.responses_client import ResponsesClient
 from quack.llm.strict_schema import StrictSchemaError, to_strict_json_schema
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
@@ -172,7 +172,13 @@ def _settings(**over: Any) -> Settings:
     base: dict[str, Any] = {
         "env": "test",
         "llm_default_model": SPARK,
-        "llm_role_models": {"teacher": WONDER, "teacher_fallback": SPARK},
+        # D-B-188: a role of `llm_roles` takes its row's model unless named here.
+        "llm_role_models": {
+            "teacher": WONDER,
+            "teacher_fallback": SPARK,
+            "extractor": SPARK,
+            "solution_space": SPARK,
+        },
         "llm_retry_base_ms": 1,
         "llm_rate_limit_base_ms": 1,
         "llm_rate_limit_max_wait_s": 0.5,
@@ -181,13 +187,13 @@ def _settings(**over: Any) -> Settings:
 
 
 def _gw(
-    db: SessionFactory,
+    pg_db: Db,
     provider: Any,
     prompts: PromptRegistry,
     redis: Redis | None = None,
     **over: Any,
 ) -> LLMGateway:
-    return LLMGateway(db, provider, _settings(**over), prompts, redis=redis)
+    return LLMGateway(provider, _settings(**over), prompts, db=pg_db, redis=redis)
 
 
 async def _ask(
@@ -216,77 +222,93 @@ def _scripted() -> ScriptedLLMProvider:
     return provider
 
 
-async def _rows(db: SessionFactory, sql: str, **params: Any) -> list[Any]:
-    async with db() as session:
-        return list((await session.execute(text(sql), params)).all())
+async def _usage(pg_db: Db, learner: UUID) -> list[dict[str, Any]]:
+    """The `ops.llm_usage` rows of a learner, in the order written."""
+    return await pg_db.fetch_all(
+        "SELECT role, model, prompt_version, effort, status, cached_input_tokens, "
+        "reasoning_tokens, retried FROM ops.llm_usage WHERE learner_id = %(l)s ORDER BY id",
+        {"l": learner},
+    )
 
 
-class TimedProvider:
-    """Provider with a delay that records `(model, start, end)` of every call (T-L1)."""
+class CountingProvider:
+    """Provider that counts the calls running at once, per model and in all (T-L1). A call
+    holds until `together` calls run at once or `hold` seconds pass: overlap is waited for,
+    not hoped for from the scheduler, and a semaphore that keeps calls apart only costs `hold`."""
 
-    def __init__(self, delay: float) -> None:
-        self.delay = delay
-        self.spans: list[tuple[str, float, float]] = []
+    def __init__(self, together: int, hold: float = 2.0) -> None:
+        self.together = together
+        self.hold = hold
+        self.running: dict[str, int] = {}
+        self.peak: dict[str, int] = {}
+        self.peak_all = 0
+        self._all_in = asyncio.Event()
 
     async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
-        start = time.monotonic()
-        await asyncio.sleep(self.delay)
-        self.spans.append((request.model, start, time.monotonic()))
-        return ProviderResponse('{"label": "ok"}', 10, 5, 0, request.model)
+        model = request.model
+        self.running[model] = self.running.get(model, 0) + 1
+        self.peak[model] = max(self.peak.get(model, 0), self.running[model])
+        running_all = sum(self.running.values())
+        self.peak_all = max(self.peak_all, running_all)
+        if running_all >= self.together:
+            self._all_in.set()
+        try:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._all_in.wait(), self.hold)
+        finally:
+            self.running[model] -= 1
+        return ProviderResponse('{"label": "ok"}', 10, 5, 0, model)
 
 
-async def test_semaphores_are_per_model_and_role(
-    db: SessionFactory, role_prompts: PromptRegistry
-) -> None:
-    """T-L1."""
+async def test_semaphores_are_per_model_and_role(pg_db: Db, role_prompts: PromptRegistry) -> None:
+    """T-L1: limits per model and process role — counted, not timed."""
     limits = {"workers": {SPARK: 1, WONDER: 1}, "api": {SPARK: 3, WONDER: 1}}
-    provider = TimedProvider(0.1)
-    gw = _gw(db, provider, role_prompts, process_role="workers", llm_concurrency=limits)
+    provider = CountingProvider(together=3, hold=1.0)  # 3 only if a limit is broken
+    gw = _gw(pg_db, provider, role_prompts, process_role="workers", llm_concurrency=limits)
     await asyncio.gather(_ask(gw), _ask(gw), _ask(gw, "teacher"))
-    spark = sorted((s, e) for m, s, e in provider.spans if m == SPARK)
-    [(w_start, w_end)] = [(s, e) for m, s, e in provider.spans if m == WONDER]
-    assert spark[1][0] >= spark[0][1]  # the two spark calls ran one after the other
-    assert w_start < spark[0][1] and spark[0][0] < w_end  # wonder ran next to them
+    assert provider.peak == {SPARK: 1, WONDER: 1}  # the two spark calls one after the other
+    assert provider.peak_all == 2  # wonder ran next to a spark call
 
-    api = TimedProvider(0.1)
-    gw_api = _gw(db, api, role_prompts, process_role="api", llm_concurrency=limits)
+    api = CountingProvider(together=3)
+    gw_api = _gw(pg_db, api, role_prompts, process_role="api", llm_concurrency=limits)
     await asyncio.gather(*(_ask(gw_api) for _ in range(3)))
-    starts = sorted(s for _, s, _ in api.spans)
-    ends = sorted(e for _, _, e in api.spans)
-    assert starts[-1] < ends[0]  # api: three spark calls at once
+    assert api.peak == {SPARK: 3}  # api: three spark calls at once
 
 
-async def test_retry_on_unavailable_then_success(
-    db: SessionFactory, role_prompts: PromptRegistry
-) -> None:
+async def test_hard_call_takes_the_hard_model(pg_db: Db, role_prompts: PromptRegistry) -> None:
+    """Т-§11.1 «Spark, для сложных — Wonder» (WP12.4, WP12.6, D-B-166): `hard=True` calls the
+    role's `hard_model`; without it — the role's model; a role without one ignores `hard`."""
+    provider = _scripted()
+    gw = _gw(pg_db, provider, role_prompts)
+    hard_model = gw.settings.llm_roles["solution_space"].hard_model
+    assert hard_model is not None and hard_model != SPARK
+    await _ask(gw, "solution_space", prompt_role="extractor", hard=True)
+    await _ask(gw, "solution_space", prompt_role="extractor")
+    await _ask(gw, "extractor", hard=True)
+    assert [c.model for c in provider.calls] == [hard_model, SPARK, SPARK]
+
+
+async def test_retry_on_unavailable_then_success(pg_db: Db, role_prompts: PromptRegistry) -> None:
     """T-L2."""
     provider = _scripted()
     provider.fail(ScriptedFailure("unavailable", times=2))
-    learner, key = uuid4(), f"k:{uuid4()}"
-    result = await _ask(_gw(db, provider, role_prompts), key=key, learner_id=learner)
+    learner = uuid4()
+    result = await _ask(_gw(pg_db, provider, role_prompts), learner_id=learner)
     assert result.value.label == "ok"
-    ledger = await _rows(
-        db, "SELECT status FROM ops.llm_ledger WHERE learner_id = :l ORDER BY created_at", l=learner
-    )
-    assert sorted(r.status for r in ledger) == ["error", "error", "ok"]
-    [outbox] = await _rows(
-        db, "SELECT status FROM core.llm_outbox WHERE idempotency_key = :k", k=key
-    )
-    assert outbox.status == "completed"
+    rows = await _usage(pg_db, learner)
+    assert sorted(r["status"] for r in rows) == ["error", "error", "ok"]
+    assert [r["retried"] for r in rows] == [False, True, True]
 
 
-async def test_retries_exhausted(db: SessionFactory, role_prompts: PromptRegistry) -> None:
+async def test_retries_exhausted(pg_db: Db, role_prompts: PromptRegistry) -> None:
     """T-L3."""
     provider = _scripted()
     provider.fail(ScriptedFailure("unavailable", times=3))
-    key = f"k:{uuid4()}"
+    learner = uuid4()
     with pytest.raises(LLMUnavailableError):
-        await _ask(_gw(db, provider, role_prompts), key=key)
+        await _ask(_gw(pg_db, provider, role_prompts), learner_id=learner)
     assert len(provider.calls) == 3
-    [outbox] = await _rows(
-        db, "SELECT status FROM core.llm_outbox WHERE idempotency_key = :k", k=key
-    )
-    assert outbox.status == "failed"
+    assert [r["status"] for r in await _usage(pg_db, learner)] == ["error"] * 3
 
 
 async def _ttl(redis: Redis, model: str) -> float:
@@ -294,18 +316,18 @@ async def _ttl(redis: Redis, model: str) -> float:
 
 
 async def test_429_sets_pressure_flag_and_retries(
-    db: SessionFactory, redis: Redis, role_prompts: PromptRegistry
+    pg_db: Db, redis: Redis, role_prompts: PromptRegistry
 ) -> None:
     """T-L4 (а)–(д)."""
     model = f"m-{uuid4().hex}"
-    over: dict[str, Any] = {"llm_default_model": model, "pressure_default_ttl_s": 3}
+    over: dict[str, Any] = {"llm_role_models": {"extractor": model}, "pressure_default_ttl_s": 3}
 
     async def flagged(retry_after: str | None) -> float:
         await redis.delete(llm_pressure_key(model))
         provider = _scripted()
         provider.fail(ScriptedFailure("rate_limited", retry_after=retry_after))
         with contextlib.suppress(LLMRateLimitedError):
-            await _ask(_gw(db, provider, role_prompts, redis, **over))
+            await _ask(_gw(pg_db, provider, role_prompts, redis, **over))
         return await _ttl(redis, model)
 
     # (а) seconds, HTTP date in 5 s, no header.
@@ -317,7 +339,7 @@ async def test_429_sets_pressure_flag_and_retries(
     # (б) 429 ×3 then success: 4 calls, pauses inside growing windows; 429 ×4 → error.
     provider = _scripted()
     provider.fail(ScriptedFailure("rate_limited", times=3))
-    gw = _gw(db, provider, role_prompts, redis, **over, llm_rate_limit_base_ms=20)
+    gw = _gw(pg_db, provider, role_prompts, redis, **over, llm_rate_limit_base_ms=20)
     pauses: list[float] = []
     gw.sleep = _recording_sleep(pauses)
     assert (await _ask(gw)).value.label == "ok"
@@ -327,7 +349,7 @@ async def test_429_sets_pressure_flag_and_retries(
     provider = _scripted()
     provider.fail(ScriptedFailure("rate_limited", times=4))
     with pytest.raises(LLMRateLimitedError):
-        await _ask(_gw(db, provider, role_prompts, redis, **over))
+        await _ask(_gw(pg_db, provider, role_prompts, redis, **over))
     assert len(provider.calls) == 4
 
     # (в) retry-after above llm_rate_limit_max_wait_s: no wait, 1 call, flag set.
@@ -336,7 +358,7 @@ async def test_429_sets_pressure_flag_and_retries(
     provider.fail(ScriptedFailure("rate_limited", retry_after="60"))
     started = time.monotonic()
     with pytest.raises(LLMRateLimitedError):
-        await _ask(_gw(db, provider, role_prompts, redis, **over))
+        await _ask(_gw(pg_db, provider, role_prompts, redis, **over))
     assert time.monotonic() - started < 0.5
     assert len(provider.calls) == 1
     assert await _ttl(redis, model) > 0
@@ -347,7 +369,7 @@ async def test_429_sets_pressure_flag_and_retries(
         provider.fail(ScriptedFailure("rate_limited", times=3))
         with pytest.raises(LLMRateLimitedError), capture_logs() as logs:
             await _ask(
-                _gw(db, provider, role_prompts, redis, **over),
+                _gw(pg_db, provider, role_prompts, redis, **over),
                 role,
                 prompt_role="teacher" if role == "teacher_fallback" else None,
             )
@@ -368,18 +390,18 @@ def _recording_sleep(pauses: list[float]) -> Any:
 
 
 async def test_circuit_breaker_opens_short_circuits_and_probes(
-    db: SessionFactory, redis: Redis, role_prompts: PromptRegistry
+    pg_db: Db, redis: Redis, role_prompts: PromptRegistry
 ) -> None:
     """T-L5."""
     model = f"m-{uuid4().hex}"
     over: dict[str, Any] = {
-        "llm_default_model": model,
+        "llm_role_models": {"extractor": model},
         "circuit_failures": 5,
         "circuit_open_s": 0.5,
         "llm_retry_attempts": 0,
     }
     provider = _scripted()
-    gw = _gw(db, provider, role_prompts, redis, **over)
+    gw = _gw(pg_db, provider, role_prompts, redis, **over)
     provider.fail(ScriptedFailure("unavailable", times=5))
     for _ in range(5):
         with pytest.raises(LLMUnavailableError):
@@ -404,7 +426,7 @@ async def test_circuit_breaker_opens_short_circuits_and_probes(
     assert len(provider.calls) == 7
 
     other = _scripted()
-    gw2 = _gw(db, other, role_prompts, redis, **over | {"llm_default_model": f"m-{uuid4().hex}"})
+    gw2 = _gw(pg_db, other, role_prompts, redis, **over | {"llm_default_model": f"m-{uuid4().hex}"})
     for failures in (4, 0, 4):
         other.fail(ScriptedFailure("unavailable", times=failures or 1))
         for _ in range(failures):
@@ -416,65 +438,36 @@ async def test_circuit_breaker_opens_short_circuits_and_probes(
     assert (await _ask(gw2)).value.label == "ok"
 
 
-async def test_prompt_role_uses_other_template(
-    db: SessionFactory, role_prompts: PromptRegistry
-) -> None:
+async def test_prompt_role_uses_other_template(pg_db: Db, role_prompts: PromptRegistry) -> None:
     """T-L6."""
     provider = _scripted()
     learner = uuid4()
-    gw = _gw(db, provider, role_prompts)
+    gw = _gw(pg_db, provider, role_prompts)
     await _ask(gw, "teacher_fallback", prompt_role="teacher", learner_id=learner)
-    [row] = await _rows(
-        db, "SELECT role, prompt_hash, model FROM ops.llm_ledger WHERE learner_id = :l", l=learner
-    )
-    assert row.role == "teacher_fallback"
-    assert row.prompt_hash == role_prompts.load("teacher", 1).sha256
-    assert row.model == gw.settings.model_for_role("teacher_fallback")
+    [row] = await _usage(pg_db, learner)
+    assert row["role"] == "teacher_fallback" and row["prompt_version"] == "teacher@1"
+    assert row["model"] == gw.settings.model_for_role("teacher_fallback")
     assert provider.calls[0].prompt == "teacher: x"
 
 
-async def test_session_budget_exempt_roles(
-    db: SessionFactory, role_prompts: PromptRegistry
-) -> None:
-    """T-L7."""
-    learner, sid = uuid4(), uuid4()
-    async with db() as session, session.begin():
-        await session.execute(
-            text(
-                "INSERT INTO core.sessions (id, learner_id, domain_id, mode, status, started_at, "
-                "last_activity_at, start_seq, tokens_used) VALUES (:id, :l, :d, 'learn', "
-                "'active', now(), now(), 1, 1000)"
-            ),
-            {"id": sid, "l": learner, "d": uuid4()},
-        )
-    provider = _scripted()
-    gw = _gw(db, provider, role_prompts, session_token_limit=1000)
-    await _ask(gw, "extractor", learner_id=learner, session_id=sid)
-    rows = await _rows(db, "SELECT role FROM ops.llm_ledger WHERE learner_id = :l", l=learner)
-    assert [r.role for r in rows] == ["extractor"]
-    with pytest.raises(LLMBudgetExceededError) as exc:
-        await _ask(gw, "artifacts", learner_id=learner, session_id=sid)
-    assert exc.value.scope == "session"
-
-
 async def test_incomplete_response_retried_once_with_doubled_limit(
-    db: SessionFactory, role_prompts: PromptRegistry
+    pg_db: Db, role_prompts: PromptRegistry
 ) -> None:
     """T-L11 (gateway part; parsing of `output` items is WP5.7)."""
     limits = {"extractor": 4096}
     provider = _scripted()
     provider.fail(ScriptedFailure("incomplete"))
     learner = uuid4()
-    gw = _gw(db, provider, role_prompts, llm_role_max_output_tokens=limits)
+    gw = _gw(pg_db, provider, role_prompts, llm_role_max_output_tokens=limits)
     assert (await _ask(gw, learner_id=learner)).value.label == "ok"
     assert [c.max_output_tokens for c in provider.calls] == [4096, 8192]
-    rows = await _rows(db, "SELECT status FROM ops.llm_ledger WHERE learner_id = :l", l=learner)
-    assert sorted(r.status for r in rows) == ["incomplete", "ok"]
+    rows = await _usage(pg_db, learner)
+    assert sorted(r["status"] for r in rows) == ["incomplete", "ok"]
 
     twice = _scripted()
     twice.fail(ScriptedFailure("incomplete", times=2))
     with pytest.raises(LLMSchemaError) as exc:
-        await _ask(_gw(db, twice, role_prompts, llm_role_max_output_tokens=limits))
+        await _ask(_gw(pg_db, twice, role_prompts, llm_role_max_output_tokens=limits))
     assert exc.value.reason == "incomplete"
     assert len(twice.calls) == 2
 
@@ -483,7 +476,7 @@ async def test_incomplete_response_retried_once_with_doubled_limit(
     with pytest.raises(LLMSchemaError):
         await _ask(
             _gw(
-                db,
+                pg_db,
                 capped,
                 role_prompts,
                 llm_role_max_output_tokens={"extractor": 16384},
@@ -494,18 +487,18 @@ async def test_incomplete_response_retried_once_with_doubled_limit(
 
     breaker = _scripted()
     breaker.fail(ScriptedFailure("incomplete", times=100))
-    gw_b = _gw(db, breaker, role_prompts, llm_role_max_output_tokens=limits, circuit_failures=5)
+    gw_b = _gw(pg_db, breaker, role_prompts, llm_role_max_output_tokens=limits, circuit_failures=5)
     for _ in range(7):
         with pytest.raises(LLMSchemaError):
             await _ask(gw_b)
     assert len(breaker.calls) == 14  # every call reached the provider: the circuit stayed closed
 
 
-async def test_bad_request_not_retried(db: SessionFactory, role_prompts: PromptRegistry) -> None:
+async def test_bad_request_not_retried(pg_db: Db, role_prompts: PromptRegistry) -> None:
     """T-L12."""
     provider = _scripted()
     provider.fail(ScriptedFailure("bad_request", times=5))
-    gw = _gw(db, provider, role_prompts, circuit_failures=5)
+    gw = _gw(pg_db, provider, role_prompts, circuit_failures=5)
     for _ in range(5):
         with pytest.raises(LLMUnavailableError) as exc, capture_logs() as logs:
             await _ask(gw)
@@ -516,13 +509,12 @@ async def test_bad_request_not_retried(db: SessionFactory, role_prompts: PromptR
 
 
 async def test_pressure_flag_from_ratelimit_headers(
-    db: SessionFactory, redis: Redis, role_prompts: PromptRegistry
+    pg_db: Db, redis: Redis, role_prompts: PromptRegistry
 ) -> None:
     """T-L13."""
     model, other = f"m-{uuid4().hex}", f"m-{uuid4().hex}"
     over: dict[str, Any] = {
-        "llm_default_model": model,
-        "llm_role_models": {"teacher": other},
+        "llm_role_models": {"extractor": model, "teacher": other},
         "pressure_remaining_share": 0.2,
         "pressure_header_ttl_s": 1,
     }
@@ -531,7 +523,7 @@ async def test_pressure_flag_from_ratelimit_headers(
         provider = _scripted()
         if share is not None:
             provider.fail(ScriptedFailure("ratelimit_headers", remaining_share=share))
-        await _ask(_gw(db, provider, role_prompts, redis, **over))
+        await _ask(_gw(pg_db, provider, role_prompts, redis, **over))
 
     await answer(0.15)
     assert 0 < await _ttl(redis, model) <= 1
@@ -656,7 +648,7 @@ ROLE_CALLS: tuple[tuple[str, type[BaseModel], str | None], ...] = (
     ("role", "model", "prompt_role"), ROLE_CALLS, ids=[c[0] for c in ROLE_CALLS]
 )
 async def test_responses_request_contract(
-    db: SessionFactory,
+    pg_db: Db,
     settings: Settings,
     role: str,
     model: type[BaseModel],
@@ -667,7 +659,7 @@ async def test_responses_request_contract(
     `max_output_tokens` of the role, `prompt_cache_key` = `{role}@{version}` (`teacher@N` for
     `teacher_fallback`); none of the forbidden keys. A 500 → exactly one HTTP request."""
     handler = _MockResponses(httpx2.Response(200, json=_responses_body(_minimal_answer(model))))
-    gateway = LLMGateway(db, _client(handler), settings, _OneTemplateRegistry())
+    gateway = LLMGateway(_client(handler), settings, _OneTemplateRegistry(), db=pg_db)
     await gateway.generate_structured(
         role=role,
         prompt_version=1,
@@ -691,8 +683,8 @@ async def test_responses_request_contract(
         "strict": True,
         "schema": to_strict_json_schema(model),
     }
-    assert body["reasoning"] == {"effort": settings.llm_role_reasoning[role]}
-    assert body["max_output_tokens"] == settings.llm_role_max_output_tokens[role]
+    assert body["reasoning"] == {"effort": settings.effort_for_role(role)}
+    assert body["max_output_tokens"] == settings.max_output_tokens_for_role(role)
     assert body["prompt_cache_key"] == f"{prompt_role or role}@1"
     forbidden = {
         "temperature",
@@ -705,7 +697,7 @@ async def test_responses_request_contract(
     assert forbidden.isdisjoint(body)
 
     failing = _MockResponses(httpx2.Response(500, json={"error": {"message": "boom"}}))
-    gateway = LLMGateway(db, _client(failing), settings, _OneTemplateRegistry())
+    gateway = LLMGateway(_client(failing), settings, _OneTemplateRegistry(), db=pg_db)
     with pytest.raises(LLMUnavailableError):
         await gateway.generate_structured(
             role=role,
@@ -721,11 +713,11 @@ async def test_responses_request_contract(
     assert len(failing.requests) == 1  # settings.llm_retry_attempts = 0; SDK max_retries = 0
 
 
-async def test_output_items_parsing(db: SessionFactory, settings: Settings) -> None:
+async def test_output_items_parsing(pg_db: Db, settings: Settings) -> None:
     """T-L10: `output` = [reasoning, commentary «Let me check…», message with JSON] → parsed
     from the last item, the commentary in the log, not in the parse; only a commentary → a
     schema error and one repair; JSON keys not in schema order → parsed; usage cached 120 and
-    reasoning 300 → ledger `cached_input_tokens`, `reasoning_tokens`, `reasoning_effort`."""
+    reasoning 300 → usage row `cached_input_tokens`, `reasoning_tokens`, `effort`."""
     learner = uuid4()
     reordered = '{"reply_text": "Hi.", "pedagogical_move": "explain"}'
     handler = _MockResponses(
@@ -734,7 +726,7 @@ async def test_output_items_parsing(db: SessionFactory, settings: Settings) -> N
             json=_responses_body(reordered, commentary="Let me check…", cached=120, reasoning=300),
         )
     )
-    gateway = LLMGateway(db, _client(handler), settings, _OneTemplateRegistry())
+    gateway = LLMGateway(_client(handler), settings, _OneTemplateRegistry(), db=pg_db)
     with capture_logs() as logs:
         result = await gateway.generate_structured(
             role="teacher",
@@ -748,24 +740,15 @@ async def test_output_items_parsing(db: SessionFactory, settings: Settings) -> N
         )
     assert result.value.reply_text == "Hi."
     assert any("Let me check" in repr(entry) for entry in logs)
-    async with db() as session:
-        row = (
-            await session.execute(
-                text(
-                    "SELECT cached_input_tokens, reasoning_tokens, reasoning_effort "
-                    "FROM ops.llm_ledger WHERE learner_id = :l"
-                ),
-                {"l": learner},
-            )
-        ).one()
-    assert (row.cached_input_tokens, row.reasoning_tokens) == (120, 300)
-    assert row.reasoning_effort == settings.llm_role_reasoning["teacher"]
+    [row] = await _usage(pg_db, learner)
+    assert (row["cached_input_tokens"], row["reasoning_tokens"]) == (120, 300)
+    assert row["effort"] == settings.effort_for_role("teacher")
 
     only_commentary = _MockResponses(
         httpx2.Response(200, json=_responses_body("", commentary="Thinking it over.")),
         httpx2.Response(200, json=_responses_body(reordered)),
     )
-    gateway = LLMGateway(db, _client(only_commentary), settings, _OneTemplateRegistry())
+    gateway = LLMGateway(_client(only_commentary), settings, _OneTemplateRegistry(), db=pg_db)
     result = await gateway.generate_structured(
         role="teacher",
         prompt_version=1,
@@ -778,3 +761,39 @@ async def test_output_items_parsing(db: SessionFactory, settings: Settings) -> N
     )
     assert result.value.reply_text == "Hi."
     assert len(only_commentary.requests) == 2  # the answer and one repair
+
+
+async def test_role_call_with_an_image(pg_db: Db, settings: Settings) -> None:
+    """Т-§11.1 «Spark с изображением» (WP21.3 `recognizer`, WP11.6 `verdict_free`; D-B-170): the
+    images go after the prompt as `input_image` parts with a data URL; text-only calls keep a
+    plain string content."""
+    handler = _MockResponses(
+        httpx2.Response(200, json=_responses_body(_minimal_answer(GatewayAnswer))),
+        httpx2.Response(200, json=_responses_body(_minimal_answer(GatewayAnswer))),
+    )
+    gateway = LLMGateway(_client(handler), settings, _OneTemplateRegistry(), db=pg_db)
+    png = ImageInput("image/png", b"\x89PNG-line")
+
+    async def call(*images: ImageInput) -> None:
+        await gateway.generate_structured(
+            role="extractor",
+            prompt_version=1,
+            response_model=GatewayAnswer,
+            variables={"role": "extractor"},
+            learner_id=uuid4(),
+            session_id=None,
+            turn_id=None,
+            idempotency_key=f"img:{uuid4()}",
+            images=images,
+        )
+
+    await call(png)
+    await call()
+    with_image, text_only = handler.bodies()
+    content = with_image["input"][0]["content"]
+    assert content[0]["type"] == "input_text" and isinstance(content[0]["text"], str)
+    assert content[1] == {
+        "type": "input_image",
+        "image_url": "data:image/png;base64," + base64.b64encode(b"\x89PNG-line").decode(),
+    }
+    assert isinstance(text_only["input"][0]["content"], str)

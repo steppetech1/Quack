@@ -1,251 +1,41 @@
-"""Session overlay (Т-§5.5, Т-§2.6, spec §8.2) and read_consistent_slice (spec §8.2)."""
+"""`read_consistent_slice` (spec §8.2, Т-§2.6): reads with a watermark and the fallback when
+the projector lags (D-A-228); the session overlay on `rules@3` (WP2.3, WP3.4, D-A-239).
+
+The overlay of Phase 3 (`build_session_overlay` on `AsyncSession`) went with Phase 3 (D-A-228).
+The waiting for the tail of the journal on `Db` is checked in
+`graph/test_projection_runner.py::test_slice_waits_for_the_journal_of_phase_4`. The overlay of
+Phase 4 reads the tail of the session and applies the handlers of `rules@3` in memory: the tests
+at the end of this file."""
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 from typing import Any
 from uuid import UUID, uuid4
 
+from neo4j import AsyncDriver
 from redis.asyncio import Redis
 
-from quack.config import FoldParams
-from quack.db.postgres import SessionFactory
-from quack.events import append_events
-from quack.events.models import NewEvent, StoredEvent
-from quack.graph.memory import InMemoryGraph
-from quack.graph.overlay import build_session_overlay
-from quack.graph.projector import run_projector_batch
+from quack.config import Settings
+from quack.db import Db
+from quack.events.log import NewEvent, append_events, read_session_tail
+from quack.graph.overlay_build import apply_overlay_events, build_session_overlay
+from quack.graph.projection.runner import load_batch_inputs, project_learner
 from quack.graph.slice import SliceDeps, read_consistent_slice
-from tests.factories import new_event
-
-P = FoldParams()
+from tests.db.fixtures import create_learner
 
 
-def _structure(domain: UUID, topic: UUID, skill: UUID) -> list[NewEvent]:
-    d = str(domain)
-    return [
-        new_event("domain.created", {"domain_id": d, "name": "Calc", "slug": "calc"}),
-        new_event(
-            "structure.proposed",
-            {
-                "domain_id": d,
-                "structure_version": 1,
-                "topics": [{"topic_id": str(topic), "name": "Derivatives"}],
-                "skills": [{"skill_id": str(skill), "topic_id": str(topic), "name": "Power rule"}],
-                "prereqs": [],
-                "skill_deps": [],
-            },
-        ),
-        new_event("structure.confirmed", {"domain_id": d, "structure_version": 1}),
-    ]
-
-
-def _task(task: UUID, domain: UUID, topic: UUID, skill: UUID, family: str) -> NewEvent:
-    return new_event(
-        "task.generated",
-        {
-            "task_id": str(task),
-            "domain_id": str(domain),
-            "topic_id": str(topic),
-            "family_id": family,
-            "difficulty": 0.5,
-            "kind": "math",
-            "prompt_text": "d/dx x^3",
-            "reference_solution": {"sympy": "3*x**2"},
-            "target_skills": [{"skill": {"skill_id": str(skill)}, "weight": 1.0}],
-        },
-    )
-
-
-async def _append(db: SessionFactory, learner: UUID, events: list[NewEvent]) -> list[StoredEvent]:
-    async with db() as session, session.begin():
-        return await append_events(session, learner, events, publish_wakeup=False)
-
-
-async def test_overlay_shows_fresh_session_events_over_lagging_projection(
-    db: SessionFactory,
-) -> None:
-    learner, domain, topic, skill, task, task2 = (uuid4() for _ in range(6))
-    sid, other_sid = uuid4(), uuid4()
-    s, turn = str(sid), str(uuid4())
-
-    head = await _append(
-        db,
-        learner,
-        [
-            *_structure(domain, topic, skill),
-            _task(task, domain, topic, skill, "fa"),
-            _task(task2, domain, topic, skill, "fb"),
-            new_event(
-                "session.started",
-                {
-                    "session_id": s,
-                    "domain_id": str(domain),
-                    "topic_id": str(topic),
-                    "mode": "practice",
-                    "goal": None,
-                    "plan": [],
-                },
-            ),
-        ],
-    )
-    # The projector has applied everything up to session.started only.
-    base = InMemoryGraph()
-    outcome = await run_projector_batch(learner, head, base, P)
-    applied_seq = outcome.applied_seq
-    assert applied_seq == head[-1].seq
-    base_before = base.snapshot()
-
-    tail = await _append(
-        db,
-        learner,
-        [
-            new_event(
-                "turn.student_replied",
-                {"session_id": s, "turn_id": turn, "turn_index": 0, "text": "ready"},
-            ),
-            new_event(
-                "task.assigned",
-                {"session_id": s, "turn_id": turn, "task_id": str(task), "topic_id": str(topic)},
-            ),
-            new_event(
-                "turn.teacher_replied",
-                {
-                    "session_id": s,
-                    "turn_id": turn,
-                    "turn_index": 1,
-                    "text": "Solve d/dx x^3",
-                    "pedagogical_move": "assign_task",
-                },
-            ),
-            new_event(
-                "task.hint_given",
-                {
-                    "session_id": s,
-                    "turn_id": turn,
-                    "task_id": str(task),
-                    "hint_level": 2,
-                    "hint_text": "power rule",
-                    "independence_penalty": 0.5,
-                },
-            ),
-            new_event(
-                "task.submitted",
-                {
-                    "session_id": s,
-                    "turn_id": turn,
-                    "task_id": str(task),
-                    "answer": "3x^2",
-                    "hints_used": 1,
-                },
-            ),
-            new_event(
-                "task.evaluated",
-                {
-                    "session_id": s,
-                    "turn_id": turn,
-                    "task_id": str(task),
-                    "evaluator": "compute",
-                    "is_correct": True,
-                    "score": 1.0,
-                    "independence": 0.5,
-                    "feedback": "correct",
-                    "skill_scores": [{"skill_id": str(skill), "score": 1.0, "tested_depth": 0.5}],
-                },
-            ),
-            new_event(
-                "task.assigned",
-                {
-                    "session_id": s,
-                    "turn_id": str(uuid4()),
-                    "task_id": str(task2),
-                    "topic_id": str(topic),
-                },
-            ),
-        ],
-    )
-    # An event of another session must not leak into this overlay.
-    await _append(
-        db,
-        learner,
-        [
-            new_event(
-                "turn.student_replied",
-                {"session_id": str(other_sid), "turn_id": turn, "turn_index": 9, "text": "x"},
-            )
-        ],
-    )
-
-    async with db() as session:
-        overlay = await build_session_overlay(session, learner, sid, applied_seq, base, P)
-
-    assert overlay.applied_seq == applied_seq
-    assert overlay.overlay_seq == tail[-1].seq
-    assert [e.seq for e in overlay.events] == [e.seq for e in tail]
-    assert overlay.assigned_task_ids == [task, task2]
-    assert overlay.submitted_task_ids == [task]
-    assert overlay.evaluations[task].is_correct is True
-    assert overlay.evaluations[task].score == 1.0
-    assert [h.hint_level for h in overlay.hints[task]] == [2]
-    assert overlay.last_turn_index == 1
-
-    task_node = overlay.graph.get("Task", str(task))
-    assert task_node is not None and task_node["status"] == "evaluated"
-    assigned = overlay.graph.get("Task", str(task2))
-    assert assigned is not None and assigned["status"] == "assigned"
-    skill_node = overlay.graph.get("Skill", str(skill))
-    base_skill = base.get("Skill", str(skill))
-    assert skill_node is not None and base_skill is not None
-    assert skill_node["evidenceCount"] == 1
-    assert float(skill_node["pMastery"]) > float(base_skill["pMastery"])  # type: ignore[arg-type]
-    # The overlay never writes into the projected slice.
-    assert base.snapshot() == base_before
-
-
-async def test_overlay_is_empty_when_projection_caught_up(db: SessionFactory) -> None:
-    learner, domain, topic, skill = (uuid4() for _ in range(4))
-    sid = uuid4()
-    events = await _append(
-        db,
-        learner,
-        [
-            *_structure(domain, topic, skill),
-            new_event(
-                "session.started",
-                {
-                    "session_id": str(sid),
-                    "domain_id": str(domain),
-                    "topic_id": None,
-                    "mode": "learn",
-                    "goal": None,
-                    "plan": [],
-                },
-            ),
-        ],
-    )
-    base = InMemoryGraph()
-    await run_projector_batch(learner, events, base, P)
-    async with db() as session:
-        overlay = await build_session_overlay(session, learner, sid, events[-1].seq, base, P)
-    assert overlay.events == []
-    assert overlay.assigned_task_ids == []
-    assert overlay.overlay_seq == events[-1].seq
-    assert overlay.graph.snapshot() == base.snapshot()
-
-
-# --- read_consistent_slice -------------------------------------------------------------
-
-
-def _deps(db: SessionFactory, redis: Redis | None, applied: dict[str, int]) -> SliceDeps:
+def _deps(redis: Redis | None, applied: dict[str, int]) -> SliceDeps:
     async def reader(learner_id: UUID) -> int:
         return applied.get(str(learner_id), 0)
 
-    return SliceDeps(session_factory=db, redis=redis, applied_seq_reader=reader)
+    return SliceDeps(redis=redis, applied_seq_reader=reader)
 
 
-async def test_slice_returns_immediately_when_caught_up(db: SessionFactory, redis: Redis) -> None:
+async def test_slice_returns_immediately_when_caught_up(redis: Redis) -> None:
     learner = uuid4()
     applied = {str(learner): 5}
     calls: list[int] = []
@@ -254,30 +44,13 @@ async def test_slice_returns_immediately_when_caught_up(db: SessionFactory, redi
         calls.append(1)
         return {"ok": True}
 
-    result = await read_consistent_slice(learner, 5, loader, 2000, deps=_deps(db, redis, applied))
+    result = await read_consistent_slice(learner, 5, loader, 2000, deps=_deps(redis, applied))
     assert result.data == {"ok": True}
     assert result.lag_degraded is False and result.stable is True
     assert result.applied_seq == 5 and len(calls) == 1
 
 
-async def test_slice_uses_last_seq_when_min_seq_is_none(db: SessionFactory, redis: Redis) -> None:
-    learner = uuid4()
-    await _append(
-        db,
-        learner,
-        [new_event("domain.created", {"domain_id": str(uuid4()), "name": "a", "slug": "a"})],
-    )
-
-    async def loader() -> str:
-        return "slice"
-
-    result = await read_consistent_slice(
-        learner, None, loader, 200, deps=_deps(db, redis, {str(learner): 1})
-    )
-    assert result.min_seq == 1 and result.lag_degraded is False
-
-
-async def test_slice_waits_for_projector_applied_signal(db: SessionFactory, redis: Redis) -> None:
+async def test_slice_waits_for_projector_applied_signal(redis: Redis) -> None:
     learner = uuid4()
     applied = {str(learner): 3}
 
@@ -291,14 +64,14 @@ async def test_slice_waits_for_projector_applied_signal(db: SessionFactory, redi
 
     started = time.monotonic()
     task = asyncio.create_task(projector_catches_up())
-    result = await read_consistent_slice(learner, 7, loader, 3000, deps=_deps(db, redis, applied))
+    result = await read_consistent_slice(learner, 7, loader, 3000, deps=_deps(redis, applied))
     await task
     assert result.lag_degraded is False
     assert result.data == 7 and result.applied_seq == 7
     assert time.monotonic() - started < 2.5
 
 
-async def test_slice_degrades_after_timeout(db: SessionFactory, redis: Redis) -> None:
+async def test_slice_degrades_after_timeout(redis: Redis) -> None:
     learner = uuid4()
 
     async def loader() -> str:
@@ -306,7 +79,7 @@ async def test_slice_degrades_after_timeout(db: SessionFactory, redis: Redis) ->
 
     started = time.monotonic()
     result = await read_consistent_slice(
-        learner, 10, loader, 300, deps=_deps(db, redis, {str(learner): 2})
+        learner, 10, loader, 300, deps=_deps(redis, {str(learner): 2})
     )
     elapsed = time.monotonic() - started
     assert result.lag_degraded is True
@@ -314,19 +87,19 @@ async def test_slice_degrades_after_timeout(db: SessionFactory, redis: Redis) ->
     assert 0.25 <= elapsed < 2.0
 
 
-async def test_slice_degrades_without_redis(db: SessionFactory) -> None:
+async def test_slice_degrades_without_redis() -> None:
     learner = uuid4()
 
     async def loader() -> str:
         return "stale"
 
     result = await read_consistent_slice(
-        learner, 10, loader, 200, deps=_deps(db, None, {str(learner): 2})
+        learner, 10, loader, 200, deps=_deps(None, {str(learner): 2})
     )
     assert result.lag_degraded is True
 
 
-async def test_slice_retries_until_watermark_is_stable(db: SessionFactory, redis: Redis) -> None:
+async def test_slice_retries_until_watermark_is_stable(redis: Redis) -> None:
     learner = uuid4()
     applied = {str(learner): 5}
 
@@ -336,6 +109,179 @@ async def test_slice_retries_until_watermark_is_stable(db: SessionFactory, redis
             applied[str(learner)] = 6
         return f"slice@{applied[str(learner)]}"
 
-    result = await read_consistent_slice(learner, 5, loader, 2000, deps=_deps(db, redis, applied))
+    result = await read_consistent_slice(learner, 5, loader, 2000, deps=_deps(redis, applied))
     assert result.stable is True
     assert result.data == "slice@6" and result.applied_seq == 6
+
+
+# --- the session overlay on rules@3 (WP2.3, WP3.4; Т-§2.5, Т-§2.6) ---------------------------
+
+
+def _ev(event_type: str, payload: dict[str, Any], key: str, session: UUID | None) -> NewEvent:
+    return NewEvent(
+        type=event_type, payload=payload, actor="code", idempotency_key=key, session_id=session
+    )
+
+
+class _Scene:
+    """A learner with a domain, a topic, a skill and a task (all projected), and two sessions."""
+
+    def __init__(self, learner: UUID) -> None:
+        self.learner = learner
+        self.domain, self.topic, self.skill = uuid4(), uuid4(), uuid4()
+        self.task, self.family = uuid4(), uuid4()
+        self.mine, self.other = uuid4(), uuid4()
+
+    def base(self) -> list[NewEvent]:
+        d = str(self.domain)
+        skill = {"domain_id": d, "summary": "s", "status": "active", "origin": "session"}
+        return [
+            _ev("domain.created", {"domain_id": d, "name": "Algebra"}, "d", None),
+            _ev(
+                "topic.created",
+                {"topic_id": str(self.topic), "domain_id": d, "name": "F", "origin": "session"},
+                "t",
+                None,
+            ),
+            _ev(
+                "skill.created",
+                skill | {"skill_id": str(self.skill), "topic_id": str(self.topic), "name": "add"},
+                "s",
+                None,
+            ),
+            _ev(
+                "task.created",
+                {
+                    "task_id": str(self.task),
+                    "family_id": str(self.family),
+                    "source": "teacher",
+                    "verification": "unchecked",
+                    "markup": {
+                        "tests": [{"skill_id": str(self.skill), "level": 3}],
+                        "method_named": False,
+                        "answer": {"type": "number", "value": {"latex": "2", "sympy": "2"}},
+                    },
+                },
+                "task",
+                self.mine,
+            ),
+        ]
+
+    async def answer(self, db: Db, session: UUID, tag: str, outcome: str) -> list[int]:
+        """An answer and its verdict in `session`; returns their `seq`s."""
+        answer = {"task_id": str(self.task), "answer": {"kind": "number", "value": "2"}}
+        [stored] = await append_events(
+            db,
+            self.learner,
+            [_ev("answer.submitted", answer | {"source": "chat"}, f"a{tag}", session)],
+        )
+        verdict = {
+            "answer_seq": stored.seq,
+            "part": "main",
+            "outcome": outcome,
+            "method": "exact",
+            "verification": "code",
+        }
+        [found] = await append_events(
+            db, self.learner, [_ev("verdict.recorded", verdict, f"v{tag}", session)]
+        )
+        return [stored.seq, found.seq]
+
+
+async def _scene(db: Db, neo4j: AsyncDriver, settings: Settings) -> _Scene:
+    scene = _Scene(await create_learner(db))
+    await append_events(db, scene.learner, scene.base())
+    assert (await project_learner(db, neo4j, settings, scene.learner)).applied_seq == 4
+    return scene
+
+
+async def _neo4j_graph(neo4j: AsyncDriver, learner: UUID) -> tuple[dict[Any, Any], set[Any]]:
+    async with neo4j.session() as session:
+        nodes = await session.run(
+            "MATCH (n {learnerId: $l}) RETURN labels(n)[0] AS label, n.id AS id, "
+            "properties(n) AS props",
+            l=str(learner),
+        )
+        found = {(r["label"], r["id"]): dict(r["props"]) async for r in nodes}
+        rels = await session.run(
+            "MATCH (a {learnerId: $l})-[r]->(b) RETURN labels(a)[0] AS fl, a.id AS a, "
+            "type(r) AS t, labels(b)[0] AS tl, b.id AS b",
+            l=str(learner),
+        )
+        links = {(r["fl"], r["a"], r["t"], r["tl"], r["b"]) async for r in rels}
+    return found, links
+
+
+async def test_overlay_of_fresh_events_equals_applying_them(
+    pg_db: Db, neo4j: AsyncDriver, settings: Settings
+) -> None:
+    """Т-§2.5, T-P1: the session events past a lagging projection give, in memory, the graph the
+    projector writes when it applies them: every node and relationship of the overlay is in
+    Neo4j afterwards with the same properties."""
+    scene = await _scene(pg_db, neo4j, settings)
+    answered = await scene.answer(pg_db, scene.mine, "1", "correct")
+    before, _ = await _neo4j_graph(neo4j, scene.learner)
+
+    overlay = await build_session_overlay(pg_db, neo4j, settings, scene.learner, scene.mine)
+    assert (overlay.applied_seq, overlay.overlay_seq) == (4, answered[-1])
+    assert [e.seq for e in overlay.events] == answered
+    assert overlay.submitted_task_ids == [scene.task] and overlay.evaluations[scene.task].is_correct
+    evidence = [k for k in overlay.graph.nodes if k[0] == "Evidence"]
+    assert len(evidence) == 1 and not any(k[0] == "Evidence" for k in before)
+
+    assert (await project_learner(pg_db, neo4j, settings, scene.learner)).applied_seq == answered[
+        -1
+    ]
+    after, rels = await _neo4j_graph(neo4j, scene.learner)
+    watermark = {"projectedSeq", "projectorVersion"}  # the projector's own, not the overlay's
+    written = {
+        k: {p: v for p, v in after[k].items() if p not in watermark} for k in overlay.graph.nodes
+    }
+    assert overlay.graph.nodes == written
+    assert set(overlay.graph.rels) <= rels
+
+
+async def test_overlay_is_empty_when_the_projector_is_level(
+    pg_db: Db, neo4j: AsyncDriver, settings: Settings
+) -> None:
+    scene = await _scene(pg_db, neo4j, settings)
+    answered = await scene.answer(pg_db, scene.mine, "1", "correct")
+    await project_learner(pg_db, neo4j, settings, scene.learner)
+
+    overlay = await build_session_overlay(pg_db, neo4j, settings, scene.learner, scene.mine)
+    assert (overlay.applied_seq, overlay.overlay_seq) == (answered[-1], answered[-1])
+    assert overlay.events == [] and overlay.graph.nodes == {} and overlay.graph.rels == {}
+
+
+async def test_overlay_writes_nothing(pg_db: Db, neo4j: AsyncDriver, settings: Settings) -> None:
+    """Neither the base slice nor Neo4j nor the watermark copy in Postgres is changed."""
+    scene = await _scene(pg_db, neo4j, settings)
+    await scene.answer(pg_db, scene.mine, "1", "correct")
+    tail = await read_session_tail(pg_db, scene.learner, scene.mine, 4)
+    base, earlier = await load_batch_inputs(pg_db, neo4j, scene.learner, tail)
+    frozen = copy.deepcopy(base)
+    graph_before = await _neo4j_graph(neo4j, scene.learner)
+    offset = "SELECT seq FROM ops.projector_offsets WHERE learner_id = %(learner_id)s"
+    offset_before = await pg_db.fetch_one(offset, {"learner_id": scene.learner})
+
+    overlay = await apply_overlay_events(scene.learner, 4, tail, base, settings, earlier=earlier)
+    await build_session_overlay(pg_db, neo4j, settings, scene.learner, scene.mine)
+
+    assert overlay.graph.nodes != {} and base == frozen
+    assert await _neo4j_graph(neo4j, scene.learner) == graph_before
+    assert await pg_db.fetch_one(offset, {"learner_id": scene.learner}) == offset_before
+
+
+async def test_overlay_takes_only_the_events_of_its_session(
+    pg_db: Db, neo4j: AsyncDriver, settings: Settings
+) -> None:
+    scene = await _scene(pg_db, neo4j, settings)
+    mine = await scene.answer(pg_db, scene.mine, "1", "correct")
+    await scene.answer(pg_db, scene.other, "2", "incorrect")
+
+    overlay = await build_session_overlay(pg_db, neo4j, settings, scene.learner, scene.mine)
+    assert [e.seq for e in overlay.events] == mine and overlay.overlay_seq == mine[-1]
+    sessions = {
+        str(n["sourceSessionId"]) for k, n in overlay.graph.nodes.items() if k[0] == "Evidence"
+    }
+    assert sessions == {str(scene.mine)}

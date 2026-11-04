@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from quack.config import Settings
 
+PRICES = {"muse-wonder-1.0": {"input": 1.0, "cached_input": 0.1, "output": 4.0}}
 ENV_NAMES = ("META_API_KEY", "META_API_BASE_URL", "LLM_API_KEY", "LLM_API_BASE_URL")
 
 
@@ -20,11 +21,26 @@ def _settings(**values: object) -> Settings:
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]
 
 
+def test_prod_requires_the_price_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ТЗ Ф4 §2.3 row 9 (WP10.4, D-B-198): `api` and `workers` do not start in prod without
+    prices; `projector`, `ops` and `dev`/`test` do."""
+    monkeypatch.setenv("META_API_KEY", "meta-key-1")
+    for role in ("api", "workers"):
+        with pytest.raises(ValidationError, match="LLM_PRICES"):
+            _settings(env="prod", process_role=role, neo4j_password="pw")
+    _settings(env="prod", process_role="projector", neo4j_password="pw")
+    _settings(env="dev")
+
+
 def test_default_models_are_the_live_ids() -> None:
     """§2.3 п.8: `muse-wonder-1.0` and `muse-spark-1.3` (Т-§1.3); the role split is kept."""
     s = _settings()
     assert s.model_for_role("teacher") == "muse-wonder-1.0"
     assert s.model_for_role("teacher_fallback") == "muse-spark-1.3"
+    # D-B-188: the row of `llm_roles` (Т-§11.1) wins over the default text model.
+    for role in ("verdict_proof", "second_opinion", "analyst_deep", "task_arbiter"):
+        assert s.model_for_role(role) == "muse-wonder-1.0"
+    assert s.model_for_role("segmenter") == "sam-3.1"
     for role in ("extractor", "evaluator", "diagnostic", "task_gen", "structurer", "curator"):
         assert s.model_for_role(role) == "muse-spark-1.3"
     # The model limits of WP5 are keyed by the same IDs.
@@ -54,16 +70,16 @@ def test_old_llm_api_names_are_fallbacks(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_prod_requires_meta_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ValidationError, match="META_API_KEY"):
-        _settings(env="prod", jwt_secret="j" * 32, neo4j_password="pw")
+        _settings(env="prod", neo4j_password="pw", llm_prices=PRICES)
     monkeypatch.setenv("META_API_KEY", "meta-key-1")
-    s = _settings(env="prod", jwt_secret="j" * 32, neo4j_password="pw")
+    s = _settings(env="prod", neo4j_password="pw", llm_prices=PRICES)
     assert "meta-key-1" in s.secret_values()
 
 
 @pytest.mark.parametrize(
     ("role", "required"),
     [
-        ("api", {"JWT_SECRET", "META_API_KEY", "NEO4J_PASSWORD"}),
+        ("api", {"META_API_KEY", "NEO4J_PASSWORD"}),
         ("workers", {"META_API_KEY", "NEO4J_PASSWORD"}),
         ("projector", {"NEO4J_PASSWORD"}),
         ("ops", set()),
@@ -73,25 +89,16 @@ def test_prod_secrets_follow_the_process_role(
     monkeypatch: pytest.MonkeyPatch, role: str, required: set[str]
 ) -> None:
     """ТЗ WP9.2, Д-§7: each compose service gets only its own secrets (`projector` and
-    `migrate` have no `META_API_KEY` or `JWT_SECRET`); prod requires exactly those of the role."""
-    for missing in ("JWT_SECRET", "META_API_KEY", "NEO4J_PASSWORD"):
+    `migrate` have no `META_API_KEY`); prod requires exactly those of the role. JWT_SECRET is
+    gone with JWT (ТЗ Ф4 §2.3 row 3, WP18.3)."""
+    for missing in ("META_API_KEY", "NEO4J_PASSWORD"):
         monkeypatch.setenv("META_API_KEY", "" if missing == "META_API_KEY" else "meta-key-1")
         values = {
-            "jwt_secret": "" if missing == "JWT_SECRET" else "j" * 32,
             "neo4j_password": "" if missing == "NEO4J_PASSWORD" else "pw",
+            "llm_prices": PRICES,
         }
         if missing in required:
             with pytest.raises(ValidationError, match=missing):
                 _settings(env="prod", process_role=role, **values)
         else:
             assert _settings(env="prod", process_role=role, **values).process_role == role
-
-
-def test_prod_jwt_secret_is_at_least_32_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Q6 (PHASE3_NOTES): tokens are HS256, and RFC 7518 §3.2 wants a key at least as long as
-    the hash output (256 bits); prod `api` refuses a shorter `JWT_SECRET`, dev keeps its own."""
-    monkeypatch.setenv("META_API_KEY", "meta-key-1")
-    with pytest.raises(ValidationError, match="JWT_SECRET"):
-        _settings(env="prod", process_role="api", jwt_secret="j" * 31, neo4j_password="pw")
-    assert _settings(env="prod", process_role="api", jwt_secret="j" * 32, neo4j_password="pw")
-    assert _settings(env="dev", jwt_secret="short-dev-secret")

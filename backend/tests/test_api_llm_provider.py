@@ -11,7 +11,7 @@ async def test_api_resources_use_responses_client(settings: Settings) -> None:
     configured = settings.model_copy(
         update={"meta_api_base_url": "http://meta-mock:8080", "redis_url": settings.redis_url}
     )
-    resources = create_app_resources(configured)
+    resources = await create_app_resources(configured)
     try:
         provider = resources.llm.provider
         assert isinstance(provider, ResponsesClient)

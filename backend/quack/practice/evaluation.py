@@ -16,8 +16,6 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from quack.compute_client.client import (
     ComputeClient,
@@ -45,16 +43,10 @@ EVALUATOR_ACTOR = "evaluator@1"
 NEW_LABEL_PREFIX = "new:"
 CODE_ACTOR = "code"
 
-TASK_COLUMNS = (
-    "id, topic_id, family_id, difficulty, kind, prompt_text, reference_solution, "
-    "target_skills, target_misconceptions"
-)
-_TASK_COLUMNS = TASK_COLUMNS
-
 
 @dataclass(frozen=True)
 class TaskToCheck:
-    """A `core.task_bank` row: input of the cascade and result of the pick."""
+    """A task for the cascade: the input of `evaluate_answer`."""
 
     task_id: UUID
     kind: str
@@ -86,7 +78,7 @@ class AnswerVerdict:
 
 
 def task_from_row(row: Any) -> TaskToCheck:
-    """`TaskToCheck` from a `core.task_bank` row (mapping or row with attributes)."""
+    """`TaskToCheck` from a row of the task (mapping or row with attributes)."""
     get = row.__getitem__ if isinstance(row, dict) else lambda name: getattr(row, name)
     return TaskToCheck(
         task_id=get("id"),
@@ -99,34 +91,6 @@ def task_from_row(row: Any) -> TaskToCheck:
         topic_id=get("topic_id"),
         family_id=str(get("family_id")),
     )
-
-
-async def load_task(session: AsyncSession, learner_id: UUID, task_id: UUID) -> TaskToCheck | None:
-    """The bank task of the learner, or `None`."""
-    row = (
-        await session.execute(
-            text(f"SELECT {_TASK_COLUMNS} FROM core.task_bank WHERE learner_id = :l AND id = :t"),
-            {"l": learner_id, "t": task_id},
-        )
-    ).first()
-    return None if row is None else task_from_row(row)
-
-
-async def hint_penalties(
-    session: AsyncSession, learner_id: UUID, session_id: UUID, task_id: UUID
-) -> list[tuple[int, float]]:
-    """`(hint_level, independence_penalty)` of every `task.hint_given` for the task in the
-    session, from the log (projected or not), in `seq` order."""
-    rows = (
-        await session.execute(
-            text(
-                "SELECT payload FROM core.events WHERE learner_id = :l AND session_id = :s "
-                "AND type = 'task.hint_given' AND payload->>'task_id' = :t ORDER BY seq"
-            ),
-            {"l": learner_id, "s": session_id, "t": str(task_id)},
-        )
-    ).all()
-    return [(int(r.payload["hint_level"]), float(r.payload["independence_penalty"])) for r in rows]
 
 
 def independence_from_hints(penalties: Sequence[float]) -> float:

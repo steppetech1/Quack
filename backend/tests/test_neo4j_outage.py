@@ -1,5 +1,6 @@
-"""Shared Neo4j error handler of the API (ТЗ Фазы 3 WP6.1, §4.5, seam S7): an endpoint that
-needs Neo4j for its answer returns `503 SERVICE_UNAVAILABLE`, never an unhandled 500."""
+"""Shared Neo4j error handler of the API (ТЗ Фазы 3 WP6.1, §4.5, seam S7; on the `Db` of Phase 4,
+D-A-230): an endpoint that needs Neo4j for its answer returns `503 SERVICE_UNAVAILABLE`, never an
+unhandled 500."""
 
 from __future__ import annotations
 
@@ -9,36 +10,31 @@ from uuid import uuid4
 import httpx
 import pytest
 from neo4j.exceptions import ServiceUnavailable
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.api.app import create_app
 from quack.api.errors import ErrorResponse
 from quack.config import Settings
-from quack.db.postgres import SessionFactory
+from quack.db import Db
+from tests.db.fixtures import create_learner
+from tests.support.auth import learner_headers, login_hook
 from tests.support.broken import BrokenNeo4jDriver
 from tests.support.resources import build_app_resources
 
 
 @pytest.fixture
-async def api(
-    settings: Settings, pg_engine: AsyncEngine, db: SessionFactory, redis: object
-) -> AsyncIterator[httpx.AsyncClient]:
-    resources = build_app_resources(
-        settings, pg_engine, BrokenNeo4jDriver(), redis, session_factory=db
-    )
+async def api(settings: Settings, pg_db: Db, redis: object) -> AsyncIterator[httpx.AsyncClient]:
+    resources = build_app_resources(settings, BrokenNeo4jDriver(), redis, db=pg_db)
     app = create_app(settings, resources=resources)
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    hooks = {"request": [login_hook(pg_db, settings)]}
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test", event_hooks=hooks
+    ) as client:
         yield client
 
 
-async def _learner_with_domain(api: httpx.AsyncClient) -> tuple[dict[str, str], str]:
-    reg = await api.post(
-        "/v1/auth/register",
-        json={"email": f"{uuid4().hex}@example.com", "password": "correct horse battery"},
-    )
-    assert reg.status_code == 201, reg.text
-    headers = {"Authorization": f"Bearer {reg.json()['token']}"}
+async def _learner_with_domain(api: httpx.AsyncClient, db: Db) -> tuple[dict[str, str], str]:
+    headers = learner_headers(await create_learner(db))
     created = await api.post(
         "/v1/domains", json={"name": "Algebra", "idempotency_key": uuid4().hex}, headers=headers
     )
@@ -52,12 +48,12 @@ def _assert_service_unavailable(response: httpx.Response, what: str) -> None:
     assert body.error.code == "SERVICE_UNAVAILABLE", what
 
 
-async def test_neo4j_outage_is_service_unavailable(api: httpx.AsyncClient) -> None:
+async def test_neo4j_outage_is_service_unavailable(api: httpx.AsyncClient, pg_db: Db) -> None:
     """Graph and topic card with Neo4j down → 503 (T-H1, the part of stream C)."""
-    headers, domain_id = await _learner_with_domain(api)
+    headers, domain_id = await _learner_with_domain(api, pg_db)
     graph = await api.get(f"/v1/domains/{domain_id}/graph", headers=headers)
     _assert_service_unavailable(graph, "graph")
-    topic = await api.get(f"/v1/domains/{domain_id}/topics/{uuid4()}", headers=headers)
+    topic = await api.get(f"/v1/topics/{uuid4()}", headers=headers)
     _assert_service_unavailable(topic, "topic")
 
 
