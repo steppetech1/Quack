@@ -22,6 +22,7 @@ from quack.db.db import Db
 from quack.events.errors import IdempotencyConflictError
 from quack.events.event_types import SessionEnded, SessionStarted
 from quack.events.log import NewEvent, append_events
+from quack.practice.today_plan import prepared_session_for
 
 # Т-§12.7 buttons and the free request («ведёт так же, как при свободном запросе»), D-B-155.
 type SessionIntent = Literal["learn", "practice", "review", "free"]
@@ -95,6 +96,7 @@ class StartSession(BaseModel):
     intent: SessionIntent
     topic_id: UUID | None = None
     hub_id: UUID | None = None
+    today_item: UUID | None = None  # the skill of the pressed item of «Сегодня» (WP16.8)
     idempotency_key: UUID
 
     @model_validator(mode="after")
@@ -152,7 +154,16 @@ async def start_session(db: Db, *, learner_id: UUID, body: StartSession) -> Sess
         found = await _started_by_key(db, learner_id, key, body)
         if found is not None:
             return found
-        session_id = uuid4()
+        session_id = (
+            await prepared_session_for(
+                db,
+                learner_id=learner_id,
+                domain_id=body.domain_id,
+                topic_id=body.topic_id,
+                skill_id=body.today_item,
+            )
+            or uuid4()
+        )
         payload = SessionStarted(
             session_id=session_id,
             domain_id=body.domain_id,

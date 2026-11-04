@@ -20,7 +20,7 @@ from quack.api.auth import SESSION_COOKIE, CurrentSession, get_current_session
 from quack.api.errors import ApiError, error_response
 from quack.api.resources import AppResources, get_resources
 from quack.auth.consents import give_consent, has_current_terms, revoke_research
-from quack.auth.google import EmailNotVerified, GoogleOIDC, learner_for_google
+from quack.auth.google import EmailNotVerified, GoogleOIDC, OidcFailed, learner_for_google
 from quack.auth.links import (
     AuthRateLimited,
     LinkInvalid,
@@ -236,6 +236,8 @@ async def google_callback(
         learner_id = await learner_for_google(resources.db, identity)
     except EmailNotVerified:
         return _unauthenticated(request, "Google has not verified this address")
+    except OidcFailed:
+        return _unauthenticated(request, "sign-in with Google failed")
     session = await open_session(
         resources.db, resources.settings, learner_id=learner_id, now=_now()
     )

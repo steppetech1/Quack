@@ -329,6 +329,8 @@ class Settings(BaseSettings):
         }
     )
     why_recent_n: int = 3
+    # D-A-141, D-A-242: last exposures per skill in the slice of the teacher (no number in Т-§10.2).
+    slice_recent_exposures: int = 3
     # Т-§9.2, Т-§9.5: misconceptions and profile.
     fix_min_resists: int = 2
     watch_days: int = 3
@@ -616,6 +618,9 @@ class Settings(BaseSettings):
     email_api_key: SecretStr = SecretStr("")
     google_oidc_client_id: SecretStr = SecretStr("")
     google_oidc_client_secret: SecretStr = SecretStr("")
+    # Timeout of one HTTP call of sign-in (Resend, Google token and certificates). The documents
+    # name no value: the one of `compute_timeout_sec` (Phase 4 decision of stream C, to confirm).
+    auth_http_timeout_s: float = 5.0
     # WP19 (Т-§19.8, Д-§8.4)
     upload_max_mb: int = 50
     object_url_ttl_s: int = 300

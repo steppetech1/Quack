@@ -1166,7 +1166,7 @@ T-DB5 — тесты `append_events` Фазы 1 на psycopg: `tests/db/test_app
   5. **Место маршрутов.** Пакет `quack.review` — продуктовый (ТЗ §4.1), импорт между продуктовыми пакетами запрещён. Поэтому у него свой роутер `quack/review/router.py`, подключённый в сборке `quack.api.app` (T-A6). `review` и `deletion` добавлены в слой «Продукт» теста слоёв.
   6. **Не сделано:** предупреждения о темпе (WP17.3, `Т-§14.6`) — нужны дни активности ученика; прогноз и запас `pace_warning_margin` — следующим шагом.
 - Почему: §0.4.3 п.1–2.
-- Тесты: `tests/graph/test_projection_runner.py::test_today_prep_mode_and_grade`; маршруты в реестре `tests/e2e/routes/a.py` (D-C-147); снимок OpenAPI пересобран.
+- Тесты: `tests/graph/test_projection_runner.py::test_prep_mode_and_grade`; маршруты в реестре `tests/e2e/routes/a.py` (D-C-147); снимок OpenAPI пересобран.
 - Требует подтверждения владельцем: нет.
 
 ### D-A-196. S3 после G1: `AgentParamsRecord.hub_id` и `.artifact` — правка v1 (по #191 C)
@@ -1227,7 +1227,7 @@ T-DB5 — тесты `append_events` Фазы 1 на psycopg: `tests/db/test_app
   3. **`deletions.reconcile`** (периодическая WP7.5, ключ `deletions-reconcile:{дата}`, D-A-166) сверяет весь журнал: WP25 п.5 говорит «объекты R2 без строки», без окна. Вид добавлен в `JOB_KINDS`/`KIND_LLM_ROLES` (без ролей), модуль — в `HANDLER_MODULES` (процедура (б) #173).
   4. **Записи `topic` и `account`** пока пропускаются с предупреждением: их удаление Фазы 4 — следующий шаг WP25.
 - Почему: §0.4.3 п.1–2; закон 5 (повтор не дублирует).
-- Тесты: `tests/graph/test_projection_runner.py::test_reconcile_and_replay_deletions`.
+- Тесты: `tests/graph/test_projection_runner.py::test_reconcile_and_replay`.
 - Требует подтверждения владельцем: нет.
 
 ### D-A-202. WP25: физическое удаление темы — `DELETE /v1/topics/{id}`

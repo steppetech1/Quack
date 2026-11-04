@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from quack.auth.google import GoogleIdentity
+from quack.auth.google import GoogleIdentity, OidcFailed
 
 
 class FakeOIDC:
@@ -18,4 +18,6 @@ class FakeOIDC:
         return f"https://accounts.google.test/authorize?state={state}"
 
     async def identity(self, *, code: str) -> GoogleIdentity:
+        if code not in self.identities:
+            raise OidcFailed("Google refused the code")
         return self.identities[code]
