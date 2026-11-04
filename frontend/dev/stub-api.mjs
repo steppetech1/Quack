@@ -12,7 +12,9 @@
 // Shapes follow lib/api/openapi.json; when the backend contract changes, regenerate the types (npm run api:types)
 // and adjust the fixtures here: tsc on the frontend does not check this file.
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { zstdCompressSync } from "node:zlib";
+import { encode } from "@msgpack/msgpack";
 import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.STUB_PORT ?? 8001);
@@ -232,6 +234,77 @@ async function act(res, session, body) {
   res.end();
 }
 
+// ---- canvas socket (WP21.2) -----------------------------------------------------------------------------------------
+// The first point of a stroke absolute, the next ones deltas, as the journal writes them (quack/canvas/strokes.py)
+function toRawBatch(b) {
+  return {
+    batch_no: b.batch_no,
+    strokes: b.strokes.map((s) => ({ stroke_id: s.stroke_id, points: s.points.map((q, i, a) => (i ? [q[0] - a[i - 1][0], q[1] - a[i - 1][1], q[2] - a[i - 1][2], q[3]] : q)) })),
+    erasures: b.erasures,
+  };
+}
+
+/** One client frame out of the buffer, or null while it is incomplete (client frames are masked) */
+function readFrame(buf) {
+  if (buf.length < 2) return null;
+  const op = buf[0] & 0x0f;
+  let len = buf[1] & 0x7f;
+  let at = 2;
+  if (len === 126) {
+    if (buf.length < 4) return null;
+    len = buf.readUInt16BE(2);
+    at = 4;
+  } else if (len === 127) {
+    if (buf.length < 10) return null;
+    len = Number(buf.readBigUInt64BE(2));
+    at = 10;
+  }
+  const masked = (buf[1] & 0x80) !== 0;
+  if (buf.length < at + (masked ? 4 : 0) + len) return null;
+  const mask = masked ? buf.subarray(at, at + 4) : null;
+  const start = at + (masked ? 4 : 0);
+  const payload = Buffer.from(buf.subarray(start, start + len));
+  if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+  return { op, payload, used: start + len };
+}
+
+function frame(text) {
+  const p = Buffer.from(text);
+  const head = p.length < 126 ? Buffer.from([0x81, p.length]) : Buffer.from([0x81, 126, p.length >> 8, p.length & 255]);
+  return Buffer.concat([head, p]);
+}
+
+// `STUB_ACK_MS` delays the acknowledgement, to see the "Saving…" state
+const ACK_MS = Number(process.env.STUB_ACK_MS ?? 0);
+
+function onUpgrade(req, socket) {
+  const m = new URL(req.url ?? "/", "http://stub").pathname.match(/^\/v1\/canvases\/([^/]+)\/ws$/);
+  const canvas = m && (S.canvases ?? []).find((x) => x.canvas_id === m[1]);
+  if (!canvas || !req.headers["sec-websocket-key"]) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+  const accept = createHash("sha1").update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  console.log(`WS open ${canvas.canvas_id}`);
+  const seen = new Set();
+  let buf = Buffer.alloc(0);
+  socket.on("data", (d) => {
+    buf = Buffer.concat([buf, d]);
+    for (let f; (f = readFrame(buf)); ) {
+      buf = buf.subarray(f.used);
+      if (f.op === 8) return void socket.end();
+      if (f.op !== 1) continue;
+      const msg = JSON.parse(f.payload.toString());
+      if (msg.type !== "stroke_batch") continue;
+      console.log(`WS batch ${msg.batch_no}: ${msg.strokes.length} strokes, ${msg.erasures.reduce((n, e) => n + e.stroke_ids.length, 0)} erased`);
+      if (!seen.has(msg.batch_no)) {
+        seen.add(msg.batch_no);
+        ((S.journal ??= {})[canvas.canvas_id] ??= []).push(msg);
+      }
+      setTimeout(() => socket.writable && socket.write(frame(JSON.stringify({ type: "ack", batch_no: msg.batch_no }))), ACK_MS);
+    }
+  });
+  socket.on("error", () => {});
+}
+
 // ---- routes ---------------------------------------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://stub");
@@ -376,6 +449,28 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     return json(res, 200, { hits });
   }
 
+  // a stroke chunk of the replay (a real backend serves a signed link of the object store): zstd over MessagePack
+  if ((g = p.match(/^\/_chunks\/([^/]+)\/(\d+)\.bin$/))) {
+    const buf = (S.chunks ?? {})[`${g[1]}/${g[2]}`];
+    if (!buf) return err(res, "NOT_FOUND", 404, "no such chunk");
+    res.writeHead(200, { "Content-Type": "application/octet-stream", "Access-Control-Allow-Origin": "*" });
+    return res.end(buf);
+  }
+  if ((g = p.match(/^\/v1\/canvases\/([^/]+)\/replay$/)) && m === "GET") {
+    if (!(S.canvases ?? []).some((x) => x.canvas_id === g[1])) return err(res, "NOT_FOUND", 404, "no such canvas");
+    const journal = (S.journal ?? {})[g[1]] ?? [];
+    // two chunks when there are several batches, so a later chunk can erase a stroke of an earlier one
+    const cut = journal.length > 1 ? Math.ceil(journal.length / 2) : journal.length;
+    const parts = [journal.slice(0, cut), journal.slice(cut)].filter((x) => x.length);
+    S.chunks ??= {};
+    const chunks = parts.map((batches, n) => {
+      const buf = zstdCompressSync(Buffer.from(encode({ batches: batches.map(toRawBatch) })));
+      S.chunks[`${g[1]}/${n}`] = buf;
+      return { url: `http://localhost:${PORT}/_chunks/${g[1]}/${n}.bin`, size: buf.length };
+    });
+    return json(res, 200, { chunks, expires_in_s: 60 });
+  }
+
   // canvases (WP21): a canvas lives in a session; the doc has no strokes (they are in the journal), here it is empty
   if ((g = p.match(/^\/v1\/sessions\/([^/]+)\/canvases$/)) && m === "POST") {
     const s = S.sessions.find((x) => x.session_id === g[1]);
@@ -428,4 +523,5 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
   err(res, "NOT_FOUND", 404, `stub: no route ${m} ${p}`);
 });
 
+server.on("upgrade", onUpgrade);
 server.listen(PORT, () => console.log(`Quack stub API on http://localhost:${PORT}  scenario=${SCENARIO}`));

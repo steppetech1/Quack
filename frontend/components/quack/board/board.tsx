@@ -27,6 +27,7 @@ import { BoardChat } from "./chat";
 import { Frames } from "./frames";
 import { ItemView } from "./items";
 import { Toolbar, type Tool } from "./toolbar";
+import { useCanvasSync } from "./use-canvas-sync";
 
 type Cam = { x: number; y: number; k: number };
 type Gesture =
@@ -124,6 +125,20 @@ export function Board({
     setItems(next);
     syncHist();
   }, [syncHist, setItems]);
+
+  // a canvas of the backend: the strokes go to its journal and come back from it
+  const sync = useCanvasSync({
+    enabled: !!live,
+    canvasId,
+    items,
+    loaded,
+    restore: (add) =>
+      mutate((prev) => {
+        const have = new Set(prev.map((i) => i.id));
+        const fresh = add.filter((s) => !have.has(s.id));
+        return fresh.length ? [...prev, ...fresh] : prev;
+      }, false),
+  });
 
   const undo = () => {
     const s = stacks.current;
@@ -736,6 +751,12 @@ export function Board({
       {edit && !canvas && items.length === 0 && !editing && !draft && (
         <p className="pointer-events-none absolute inset-x-0 top-[38%] px-6 text-center text-body text-paper-dim">
           {tx.board.empty}
+        </p>
+      )}
+
+      {live && sync !== "saved" && (
+        <p role="status" className="caps pointer-events-none absolute top-[4.25rem] left-4 z-10 text-paper-dim [text-shadow:0_0_8px_#141311]">
+          {sync === "saving" ? tx.board.sync.saving : tx.board.sync.offline}
         </p>
       )}
 

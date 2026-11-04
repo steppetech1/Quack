@@ -13,10 +13,13 @@ const procs = [];
 if (mode === "stub") {
   env.NEXT_PUBLIC_QUACK_API = "1";
   env.QUACK_API_URL = `http://localhost:${stubPort}`;
+  // the canvas WebSocket goes straight to the API (the `/api` proxy of Next does not carry upgrades)
+  env.NEXT_PUBLIC_QUACK_WS ??= `ws://localhost:${stubPort}`;
   procs.push(spawn(process.execPath, ["dev/stub-api.mjs"], { stdio: "inherit", env }));
 } else if (mode === "real") {
   env.NEXT_PUBLIC_QUACK_API = "1";
   env.QUACK_API_URL ??= "http://localhost:8000";
+  env.NEXT_PUBLIC_QUACK_WS ??= env.QUACK_API_URL.replace(/^http/, "ws");
 } else if (mode === "mock") {
   delete env.NEXT_PUBLIC_QUACK_API;
 } else {

@@ -578,6 +578,7 @@ export const en = {
     untitled: "Untitled",
   },
   board: {
+    sync: { saving: "Saving…", offline: "Offline: will save when the connection is back" },
     desc: "Board: drag it with the Hand tool, with the space bar or with the middle mouse button. Zoom: Ctrl and the wheel, or the buttons at the bottom right. Tab moves through your items, arrow keys nudge the selected one by 8 pixels, Delete removes it.",
     label: "Canvas board",
     empty: "A clean sheet. Draw with the pen, add text or a formula, drop in pictures.",
