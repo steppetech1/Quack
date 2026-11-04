@@ -13,6 +13,7 @@ from tests.e2e.journey import ok
 from tests.e2e.system import System
 from tests.e2e.text_journey import event_types, run_text_journey
 
+
 async def test_learner_journey_text(system: System) -> None:
     """T-E1."""
     journey = await run_text_journey(system)
