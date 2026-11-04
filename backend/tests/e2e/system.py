@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -210,7 +212,27 @@ class System:
         cookie = await open_session(
             self.resources.db, self.settings, learner_id=learner_id, now=datetime.now(UTC)
         )
-        headers = {"Cookie": f"{SESSION_COOKIE}={cookie}"}
+        return await self._accept_terms(learner_id, email, {"Cookie": f"{SESSION_COOKIE}={cookie}"})
+
+    async def sign_in_by_link(self) -> Learner:
+        """The way in of T-E1: `POST /auth/link`, the link of the mail, `GET /auth/link/verify`
+        (the session cookie comes back in `set-cookie`), then the terms."""
+        email = f"e2e-{uuid4().hex[:12]}@example.com"
+        sent = await self.client.post("/auth/link", json={"email": email})
+        assert sent.status_code == 200, sent.text
+        token = parse_qs(urlsplit(self.resources.email.last_link(email)).query)["token"][0]  # type: ignore[attr-defined]
+        verified = await self.client.get("/auth/link/verify", params={"token": token})
+        # Without `auth_success_redirect_url` the verification answers 200 with the learner.
+        assert verified.status_code == 200, verified.text
+        found = re.search(rf"{SESSION_COOKIE}=([^;]+)", verified.headers["set-cookie"])
+        assert found is not None
+        return await self._accept_terms(
+            UUID(verified.json()["learner_id"]),
+            email,
+            {"Cookie": f"{SESSION_COOKIE}={found.group(1)}"},
+        )
+
+    async def _accept_terms(self, learner_id: UUID, email: str, headers: dict[str, str]) -> Learner:
         # WP18.4: a session starts only after `consent.given {kind: terms}` of the current
         # `terms_version`; the learner of the stand accepts it as the client would.
         consent = await self.client.post(
