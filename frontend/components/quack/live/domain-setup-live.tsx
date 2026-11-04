@@ -195,7 +195,7 @@ export function StructureLive({ domainId }: { domainId: string }) {
   if (domain.status === "active" && !proposal) {
     return (
       <PageShell>
-        <BackLink href="/">{domain.title}</BackLink>
+        <BackLink href="/domain">{domain.title}</BackLink>
         <StubHeader title={t.title(domain.title)} body={tx.live.alreadyActive} />
         <ErrorLine text={error} />
         {archiveBlock}
@@ -209,7 +209,7 @@ export function StructureLive({ domainId }: { domainId: string }) {
   if (!proposal) {
     return (
       <PageShell>
-        <BackLink href="/">{domain.title}</BackLink>
+        <BackLink href="/domain">{domain.title}</BackLink>
         <StubHeader title={tx.stubs.newDomain.title} body={tx.stubs.newDomain.body} />
         <ProposeForm domainId={domainId} onDone={setProposal} />
         {archiveBlock}
@@ -258,7 +258,7 @@ export function StructureLive({ domainId }: { domainId: string }) {
 
   return (
     <PageShell>
-      <BackLink href="/">{domain.title}</BackLink>
+      <BackLink href="/domain">{domain.title}</BackLink>
       <StubHeader title={t.title(domain.title)} body={proposal.degraded ? `${t.body} ${tx.live.proposalDegraded}` : t.body} />
 
       <PageSection id="structure-topics" title={t.topics} count={kept}>
@@ -423,7 +423,7 @@ export function DiagnosticLive({ domainId }: { domainId: string }) {
       {done ? (
         <div className="mt-8">
           <p className="text-body text-paper">{t.done}</p>
-          <Link href="/" className={cn(PRIMARY_BTN, "mt-4")}>
+          <Link href="/domain" className={cn(PRIMARY_BTN, "mt-4")}>
             {t.toGraph}
           </Link>
         </div>
@@ -488,7 +488,7 @@ export function DiagnosticLive({ domainId }: { domainId: string }) {
         <>
           <ErrorLine text={error} />
           {!busy && (
-            <Link href="/" className={cn(SECONDARY_BTN, "mt-6")}>
+            <Link href="/domain" className={cn(SECONDARY_BTN, "mt-6")}>
               {t.toGraph}
             </Link>
           )}

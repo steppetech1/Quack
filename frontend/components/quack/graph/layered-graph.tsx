@@ -102,7 +102,7 @@ function readColors(host: HTMLElement): Colors {
 const WEAK = new Set(["confused_with", "persistent_error", "struggling", "inconsistent"]);
 
 /** Topic state for colour and legend. Stage 6 gives indicators their own palette */
-function stateOf(t: GraphTopic, nowMs: number): TopicState {
+export function stateOf(t: GraphTopic, nowMs: number): TopicState {
   if (t.status === "proposed" || !t.displayState || t.displayState === "not_tested") return "new";
   if (WEAK.has(t.displayState)) return "confused";
   if (t.nearestDueAtMs !== undefined && t.nearestDueAtMs <= nowMs) return "review";
@@ -111,8 +111,17 @@ function stateOf(t: GraphTopic, nowMs: number): TopicState {
 
 export const LayeredGraph = forwardRef<
   GraphHandle,
-  { model: GraphModel; domain: Domain; highlight?: { topicIds: string[]; hubIds: string[] }; focusHubId?: string | null; onClearFocus?: () => void }
->(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus }, ref) {
+  {
+    model: GraphModel;
+    domain: Domain;
+    highlight?: { topicIds: string[]; hubIds: string[] };
+    focusHubId?: string | null;
+    onClearFocus?: () => void;
+    /** Put the whole graph in the middle of the area (a click on the subject name); `onCentered` says it is done */
+    center?: boolean;
+    onCentered?: () => void;
+  }
+>(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus, center = false, onCentered }, ref) {
   const tx = useT();
   const router = useRouter();
   const wrap = useRef<HTMLDivElement>(null);
@@ -742,6 +751,19 @@ export const LayeredGraph = forwardRef<
 
   const fitAll = useCallback(() => moveView(fitView(sizeRef.current.w, sizeRef.current.h), true), [fitView, moveView]);
 
+  // A click on the subject name: the whole graph goes to the middle. On a fresh mount the first view does it (see below)
+  const centerRef = useRef(center);
+  const centeredRef = useRef(onCentered);
+  useEffect(() => {
+    centerRef.current = center;
+    centeredRef.current = onCentered;
+  });
+  useEffect(() => {
+    if (!center || !fitted.current) return;
+    fitAll();
+    onCentered?.();
+  }, [center, fitAll, onCentered]);
+
   // Colours and size
   useEffect(() => {
     const el = wrap.current;
@@ -764,13 +786,16 @@ export const LayeredGraph = forwardRef<
       c.height = Math.round(size.h * dpr);
       if (!fitted.current) {
         fitted.current = true;
-        view.current = initialView(size.w, size.h);
+        if (centerRef.current) {
+          view.current = fitView(size.w, size.h);
+          centeredRef.current?.();
+        } else view.current = initialView(size.w, size.h);
       }
       // Resizing clears the canvas: paint at once so there is no blank frame
       draw();
     }
     schedule();
-  }, [size, initialView, schedule, draw]);
+  }, [size, initialView, fitView, schedule, draw]);
 
   // A new layout: known nodes stay, whatever moved glides to its place
   useEffect(() => {

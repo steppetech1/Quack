@@ -46,6 +46,7 @@ export const ru: Dict = {
   shell: {
     skip: "К содержимому",
     subjects: "Предметы",
+    allGraphs: "Все графы",
     sessions: "Сессии",
     close: "Закрыть",
     newSubject: "Новый предмет",
@@ -760,18 +761,14 @@ export const ru: Dict = {
     kindTop: "ИИ-РЕПЕТИТОР",
     kindBottom: "ДЛЯ ТОЧНЫХ НАУК",
   },
-  menu: {
-    open: "Меню",
-    close: "Закрыть",
-    title: "Навигация",
-    items: {
-      graph: "Карта предмета",
-      canvases: "Канвасы",
-      library: "Библиотека",
-      newSubject: "Новый предмет",
-      settings: "Настройки",
-    },
-    language: "Язык",
-    footerHint: "Qvack — объясни утке",
+  allGraphs: {
+    title: "Все графы",
+    lead: "Все предметы разом. Выбери предмет, чтобы открыть его граф.",
+    open: (name: string) => `Открыть: ${name}`,
+    topics: (n: number) => `${n} ${plural(n, "тема", "темы", "тем")}`,
+    hubs: (n: number) => `${n} ${plural(n, "глава", "главы", "глав")}`,
+    ready: "готово",
+    empty: "Графа пока нет",
+    graphSr: (name: string) => `Граф предмета «${name}»`,
   },
 };

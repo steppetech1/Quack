@@ -200,7 +200,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   // No subjects yet: the first screen is creating one
   useEffect(() => {
-    if (ready && !error && summaries.length === 0 && pathname === "/") router.replace("/domains/new");
+    if (ready && !error && summaries.length === 0 && (pathname === "/" || pathname === "/domain")) router.replace("/domains/new");
   }, [ready, error, summaries.length, pathname, router]);
 
   const labels = useMemo(

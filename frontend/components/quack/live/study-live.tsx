@@ -233,7 +233,7 @@ export function SessionSummaryLive({ id }: { id: string }) {
         <Link href={`/session/${id}`} className={SECONDARY_BTN}>
           {tx.live.openTranscript}
         </Link>
-        <Link href="/" className={PRIMARY_BTN}>
+        <Link href="/domain" className={PRIMARY_BTN}>
           {t.back}
         </Link>
       </div>
@@ -307,7 +307,7 @@ export function LibraryLive() {
 
   return (
     <PageShell>
-      <BackLink href="/">{domain.title || tx.shell.subjects}</BackLink>
+      <BackLink href="/domain">{domain.title || tx.shell.subjects}</BackLink>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <StubHeader title={t.title} body={domain.title} />
         <Link href={`/notes/new?domain=${domain.id}`} className={PRIMARY_BTN}>

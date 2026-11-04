@@ -80,7 +80,7 @@ export function DomainView() {
   const { fullDate, inDays } = useFmt();
   const { canvasesOf } = useMocks();
   const { locale } = useLocale();
-  const { domain, startSession, graphMode, setGraphMode } = useShell();
+  const { domain, startSession, graphMode, setGraphMode, centerPending, consumeCenter } = useShell();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -139,6 +139,11 @@ export function DomainView() {
   // Hovering a card lights its topic (or hub) on the graph
   const [hot, setHot] = useState<TodayRec | null>(null);
   const highlight = useMemo(() => (hot ? { topicIds: hot.topicId ? [hot.topicId] : [], hubIds: hot.hubId ? [hot.hubId] : [] } : undefined), [hot]);
+
+  // Nothing to centre (canvases, no graph, phone list): drop the request so it does not hit a later graph
+  useEffect(() => {
+    if (centerPending && (view !== "graph" || !hasGraph || !window.matchMedia("(min-width: 768px)").matches)) consumeCenter();
+  }, [centerPending, view, hasGraph, consumeCenter]);
 
   const [seenDomain, setSeenDomain] = useState(domain.id);
   if (seenDomain !== domain.id) {
@@ -214,9 +219,11 @@ export function DomainView() {
                     highlight={highlight}
                     focusHubId={graphMode.kind === "hub" ? graphMode.hubId : null}
                     onClearFocus={clearFocus}
+                    center={centerPending}
+                    onCentered={consumeCenter}
                   />
                 ) : (
-                  <DomainGraph key={domain.id} ref={graph} domain={domain} mode={graphMode} onModeChange={setGraphMode} />
+                  <DomainGraph key={domain.id} ref={graph} domain={domain} mode={graphMode} onModeChange={setGraphMode} center={centerPending} onCentered={consumeCenter} />
                 )}
               </div>
               <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} className="md:hidden" idPrefix="m" />

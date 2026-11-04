@@ -1,14 +1,12 @@
 "use client";
 
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, LayoutGrid, Plus } from "lucide-react";
 import Link from "next/link";
 import type { Domain } from "@/lib/mock/types";
 import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
-import { useRef } from "react";
-import { useShell } from "./app-shell";
-import { MenuToggle } from "./menu-toggle";
+import { DOMAIN_PATH, useShell } from "./app-shell";
 import { ProfileMenu } from "./profile-menu";
 import { useT } from "@/lib/i18n/provider";
 
@@ -19,19 +17,16 @@ export function DomainSidebar({
   domains,
   activeId,
   onSelect,
-  withMenu = true,
 }: {
   domains: Domain[];
   activeId: string;
   onSelect: (id: string) => void;
-  /** Кнопка полноэкранного меню в шапке; в мобильной шторке её нет (там она в верхней полосе) */
-  withMenu?: boolean;
 }) {
   const t = useT();
-  const { graphMode, openGraph, menuOpen, openMenu, closeMenu } = useShell();
-  const toggleRef = useRef<HTMLDivElement>(null);
+  const { graphMode, openGraph, closeDrawer } = useShell();
   const pathname = usePathname();
-  const onGraph = pathname === "/";
+  const onGraph = pathname === DOMAIN_PATH;
+  const onOverview = pathname === "/";
 
   // На телефоне вместо графа список: прокручиваем к главе
   const goHub = (hubId: string) => {
@@ -46,29 +41,29 @@ export function DomainSidebar({
 
   return (
     <nav aria-label={t.shell.subjects} className="flex h-full flex-col bg-cloth-deep px-3 pt-4 pb-3">
-      {/* шапка: кнопка меню слева, название антиквой капсом */}
-      <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1">
-        {withMenu ? (
-          <div ref={toggleRef} data-menu-anchor>
-            <MenuToggle
-              open={menuOpen}
-              onClick={() => (menuOpen ? closeMenu() : openMenu(toggleRef.current?.querySelector("button") ?? null))}
-              labelOpen={t.menu.open}
-              labelClose={t.menu.close}
-            />
-          </div>
-        ) : null}
+      <div className="flex min-h-10 items-center px-3 pb-1">
         <p className="display-caps text-[1.375rem] text-paper">Qvack!</p>
       </div>
 
-      <p className="caps flex items-center justify-between px-3 pt-5 pb-2 text-paper-dim">
+      {/* первый экран: графы всех предметов сразу */}
+      <Link
+        href="/"
+        onClick={closeDrawer}
+        aria-current={onOverview ? "page" : undefined}
+        className={cn(row, "mt-3", onOverview ? "bg-cloth-raised font-medium text-paper" : "text-paper-dim")}
+      >
+        <LayoutGrid aria-hidden className="size-3.5 shrink-0" />
+        <span className="truncate">{t.shell.allGraphs}</span>
+      </Link>
+
+      <p className="caps flex items-center justify-between px-3 pt-4 pb-2 text-paper-dim">
         <span>{t.shell.subjects}</span>
         <span className="num">{domains.length}</span>
       </p>
 
       <ul className="flex flex-col gap-0.5 overflow-y-auto">
         {domains.map((d) => {
-          const on = d.id === activeId;
+          const on = d.id === activeId && !onOverview;
           return (
             <li key={d.id}>
               <button

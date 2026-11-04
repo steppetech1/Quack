@@ -84,7 +84,7 @@ function StructureMock({ domainId }: { domainId: string }) {
 
   return (
     <PageShell>
-      <BackLink href={`/?domain=${domain.id}`}>{domain.title}</BackLink>
+      <BackLink href={`/domain?domain=${domain.id}`}>{domain.title}</BackLink>
       <StubHeader title={t.title(domain.title)} body={t.body} />
 
       <PageSection id="structure-topics" title={t.topics} count={domain.topics.length + added.length - skipped.size}>
@@ -174,13 +174,13 @@ function DiagnosticMock({ domainId }: { domainId: string }) {
 
   return (
     <PageShell>
-      <BackLink href={`/?domain=${domainId}`}>{tx.shell.subjects}</BackLink>
+      <BackLink href={`/domain?domain=${domainId}`}>{tx.shell.subjects}</BackLink>
       <StubHeader title={t.title} body={t.body} />
 
       {done ? (
         <div className="mt-8">
           <p className="text-body text-paper">{t.done}</p>
-          <Link href={`/?domain=${domainId}`} className={cn(PRIMARY_BTN, "mt-4")}>
+          <Link href={`/domain?domain=${domainId}`} className={cn(PRIMARY_BTN, "mt-4")}>
             {t.toGraph}
           </Link>
         </div>

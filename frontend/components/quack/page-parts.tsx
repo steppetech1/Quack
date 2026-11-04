@@ -86,7 +86,7 @@ export function Crumbs({ domainTitle, hub, noChapter }: { domainTitle: string; h
   const t = useT();
   return (
     <nav aria-label={t.page.path} className="caps -ml-3 flex flex-wrap items-center text-paper-dim">
-      <Link href="/" className={CRUMB_LINK}>
+      <Link href="/domain" className={CRUMB_LINK}>
         ← {domainTitle}
       </Link>
       {hub && (
