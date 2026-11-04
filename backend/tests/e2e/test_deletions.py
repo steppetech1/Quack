@@ -7,11 +7,12 @@ learner but the log row; a new account with the same address starts empty."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID
 
 from tests.e2e.journey import ok
-from tests.e2e.system import System
+from tests.e2e.system import Learner, System
 from tests.e2e.text_journey import event_types, run_text_journey
 from tests.support.deletions import FakeDeletionJournal
 
@@ -20,6 +21,18 @@ async def count(system: System, sql: str, **params: Any) -> int:
     row = await system.resources.db.fetch_one(sql, params)
     assert row is not None
     return int(row["n"])
+
+
+async def delete_when_free(system: System, learner: Learner, url: str) -> dict[str, Any]:
+    """The deletion takes the lock of the learner's projection; while the projector or a job
+    holds it the API answers `503 repeat later` (WP25): wait for the stand and repeat."""
+    for _ in range(5):
+        await system.settle()
+        response = await system.client.delete(url, headers=learner.headers)
+        if response.status_code != 503:
+            return ok(response)
+        await asyncio.sleep(0.5)
+    return ok(response)
 
 
 async def nodes_of(system: System, learner_id: UUID) -> int:
@@ -50,9 +63,7 @@ async def test_deletions_end_to_end(system: System) -> None:
     assert messages == 1
 
     # The topic: the node goes, the messages of the session stay.
-    deleted = ok(
-        await system.client.delete(f"/v1/topics/{journey.topic_id}", headers=learner.headers)
-    )
+    deleted = await delete_when_free(system, learner, f"/v1/topics/{journey.topic_id}")
     assert UUID(deleted["deletion_id"])
     assert [(r.kind, r.target_id) for r in journal.records] == [("topic", journey.topic_id)]
     gone = await system.client.get(f"/v1/topics/{journey.topic_id}", headers=learner.headers)
@@ -68,7 +79,7 @@ async def test_deletions_end_to_end(system: System) -> None:
     )
 
     # The domain: its content and its subgraph go.
-    ok(await system.client.delete(f"/v1/domains/{journey.domain_id}", headers=learner.headers))
+    await delete_when_free(system, learner, f"/v1/domains/{journey.domain_id}")
     assert [r.kind for r in journal.records] == ["topic", "domain"]
     domains = ok(await system.client.get("/v1/domains", headers=learner.headers))
     assert domains["domains"] == [], domains
@@ -84,7 +95,7 @@ async def test_deletions_end_to_end(system: System) -> None:
     )
 
     # The account: nothing of the learner is left but the log row of the deletion.
-    ok(await system.client.delete("/v1/learner", headers=learner.headers))
+    await delete_when_free(system, learner, "/v1/learner")
     assert [r.kind for r in journal.records] == ["topic", "domain", "account"]
     assert (
         await count(
