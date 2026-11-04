@@ -296,12 +296,13 @@ def test_formulas_are_marked_for_the_typesetter_not_left_as_tex() -> None:
     """D-C-250: `$…$` is an inline formula, `$$…$$` a display one (also over several lines); the
     TeX source sits escaped inside the element and no markdown form touches it."""
     html = _html_of(
-        "Slope $f'(x)=\frac{a}{b}$ and $a**b*c_1$.\n\n$$\int_0^1 x^2\,dx\n= \tfrac13$$"
+        "Slope $f'(x)=\\frac{a}{b}$ and $a**b*c_1$.\n\n$$\\int_0^1 x^2\\,dx\n= \\tfrac13$$"
     )
-    assert '<span class="quack-math" data-display="false">f'(x)=\frac{a}{b}</span>' in html
+    assert """<span class="quack-math" data-display="false">f'(x)=\\frac{a}{b}</span>""" in html
     assert '<span class="quack-math" data-display="false">a**b*c_1</span>' in html
     assert (
-        '<span class="quack-math" data-display="true">\int_0^1 x^2\,dx\n= \tfrac13</span>' in html
+        '<span class="quack-math" data-display="true">\\int_0^1 x^2\\,dx\n= \\tfrac13</span>'
+        in html
     )
     assert "$" not in html and "<strong>" not in html and "<em>" not in html
 

@@ -81,8 +81,8 @@ def test_a_broken_formula_does_not_fail_the_sheet(client: TestClient) -> None:
 def test_the_height_of_formulas_counts_in_the_page_count(client: TestClient) -> None:
     """Т-§17.6: the same text takes one page as TeX source and more once the display formulas
     are typeset — the page count the fit rounds read is the one of the typeset page."""
-    formulas = [r"\sum_{k=1}^{n}\frac{\frac{a_k}{b_k}}{\sqrt{1+k^2}}"] * 14
-    plain = "".join(f"<p>{tex}</p>" for tex in formulas)
+    formulas = [r"\sum_{k=1}^{n}\frac{\frac{a_k}{b_k}}{\sqrt{1+k^2}}"] * 40
+    plain = "".join(f"<div>{tex}</div>" for tex in formulas)
     typeset = "".join(_display(tex) for tex in formulas)
     plain_doc, plain_pages = _render(client, plain)
     typeset_doc, typeset_pages = _render(client, typeset)
