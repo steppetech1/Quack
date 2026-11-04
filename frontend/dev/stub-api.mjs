@@ -431,6 +431,43 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const blocks = S.cheats[hit.h.key];
     return blocks ? json(res, m === "POST" ? 201 : 200, { artifact_id: id("a-ch-" + hit.h.key), kind: "cheatsheet", topic_id: null, hub_id: g[1], version: 1, offer: false, blocks }) : err(res, "NOT_FOUND", 404, "no cheat sheet yet");
   }
+  // Skills of the learner: same rules as the backend (name `[\w-]{1,40}` unique, one skill per artifact type)
+  if ((g = p.match(/^\/v1\/learner-skills(?:\/([^/]+))?$/))) {
+    const list = (S.learnerSkills ??= []);
+    const view = (k) => ({ skill_id: k.skill_id, version: k.version, name: k.name, instruction: k.instruction, bindings: k.bindings });
+    const bad = (self, name, types) => {
+      if (!/^[\p{L}\p{N}_-]{1,40}$/u.test(name)) return [422, "VALIDATION_ERROR", "the name is 1-40 letters, digits, '_' or '-'"];
+      const other = list.find((k) => k.skill_id !== self && k.name === name);
+      if (other) return [409, "IDEMPOTENCY_CONFLICT", `the name /${name} is taken by another skill`];
+      const clash = list.find((k) => k.skill_id !== self && k.bindings.artifact_types.some((t) => types.includes(t)));
+      if (clash) return [409, "IDEMPOTENCY_CONFLICT", `${types.join(", ")} already has the skill /${clash.name}`];
+      return null;
+    };
+    if (m === "GET" && !g[1]) return json(res, 200, { skills: list.map(view) });
+    if (m === "POST" && !g[1]) {
+      const name = String(body.name ?? "").trim().toLowerCase().replace(/^\//, "");
+      const types = body.bindings?.artifact_types ?? [];
+      const e = bad(null, name, types);
+      if (e) return err(res, e[1], e[0], e[2]);
+      const k = { skill_id: id("sk-" + body.idempotency_key), version: 1, name, instruction: String(body.instruction ?? ""), bindings: { artifact_types: types } };
+      list.push(k);
+      return json(res, 201, view(k));
+    }
+    const k = list.find((x) => x.skill_id === g[1]);
+    if (!k) return err(res, "NOT_FOUND", 404, "skill not found");
+    if (m === "PATCH") {
+      const name = body.name == null ? k.name : String(body.name).trim().toLowerCase().replace(/^\//, "");
+      const types = body.bindings?.artifact_types ?? k.bindings.artifact_types;
+      const e = bad(k.skill_id, name, types);
+      if (e) return err(res, e[1], e[0], e[2]);
+      Object.assign(k, { name, instruction: body.instruction ?? k.instruction, bindings: { artifact_types: types }, version: k.version + 1 });
+      return json(res, 200, view(k));
+    }
+    if (m === "DELETE") {
+      S.learnerSkills = list.filter((x) => x !== k);
+      return json(res, 200, { skills: S.learnerSkills.map(view) });
+    }
+  }
   if ((g = p.match(/^\/v1\/artifacts\/([^/]+)\/blocks\/([^/]+)$/))) {
     for (const [key, blocks] of Object.entries(S.notes)) {
       if (id("a-notes-" + key) !== g[1]) continue;
