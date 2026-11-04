@@ -9,7 +9,7 @@
 ## 1. Сейчас главное
 
 1. Гейты G0 и G1 пройдены, G2 не пройден: все пакеты G2 влиты и подключены к процессам (WP1.3 сделан), не написан текстовый путь `T-E1` на новом стенде (WP26.1, поток C).
-2. Поток A: остаток — слот 6 режима подготовки (B, WP17.4); у видов `canvas.rediagnose`, `second_opinion.diagnosis`, `agent.artifact`, `export.data` нет обработчиков (C, #263).
+2. Поток A: остаток — у видов `canvas.rediagnose`, `second_opinion.diagnosis`, `agent.artifact`, `export.data` нет обработчиков (C, #263).
 3. `BLOCKED-C-204` снят: `LLMGateway.segment` подключён в WP22.3 шаг 5 (D-C-153); голос WP21.6 подключён к `LLMGateway.transcribe` (D-C-152).
 4. Открытые issues: #193 (ревью #182 от B и C), #188 (принят C, PR #194 влит — закрыть).
 
@@ -20,7 +20,7 @@
 | **G0 «Скелет»** | WP0; базовая миграция dbmate; `Db` и `append_events`; поля ресурсов и подмены; имена параметров §6.7; черновик каталога; каркас compute; красные тесты Этапа I | **пройден** |
 | **G1 «Контракты заморожены»** | Каталог событий окончательный (S3, #119); строки проектора (S5, #135); таблица диспетчера (S6, #101, #117); сигнатуры `graph.read` (S4); `TeacherOutput`, `Element`, `AnswerSpec`, `TaskMarkup`, схемы ролей, `PROMPT_CONTRACTS.md`; черновик `openapi.json` | **пройден** |
 | **G2 «Память, проверка, ход»** | WP2–WP6.4, WP7.1–7.4, WP10.2–10.3, WP11, WP12.1–12.3, WP13, WP15, WP18, WP19, WP24; зелёные тесты группы G2; `T-E1` (текстовый путь) | **не пройден.** Осталось: WP26.1 (`T-E1`); WP1.3 сделан; маршрут `/jobs` WP7.4 сделан (B) |
-| **G3 «Учитель и каналы»** | WP6.5, WP7.5, WP8, WP12.4–12.7, WP14, WP16, WP17, WP20–WP23, WP25; зелёные `T-CX*`, `T-AG*`, `T-RV*`, `T-ED*`, `T-MT*`, `T-CV*`, `T-CP*`, `T-AR*`, `T-DL*`; `T-E2`–`T-E14` | **не пройден.** Осталось — A: WP17.4 (слот 6 — B). B: WP16.3, WP16.6. C: WP20.2, WP21.6 (лассо), WP23.4–23.7. Тесты `T-E2`–`T-E14` (WP26) |
+| **G3 «Учитель и каналы»** | WP6.5, WP7.5, WP8, WP12.4–12.7, WP14, WP16, WP17, WP20–WP23, WP25; зелёные `T-CX*`, `T-AG*`, `T-RV*`, `T-ED*`, `T-MT*`, `T-CV*`, `T-CP*`, `T-AR*`, `T-DL*`; `T-E2`–`T-E14` | **не пройден.** Осталось — A: WP17.4 (материалы контроля в графе). B: WP16.3 (вызов из `material.parse` — C). C: WP20.2, WP23.4–23.7. Тесты `T-E2`–`T-E14` (WP26) |
 | **G4 «Выпуск»** | WP1.3, WP9, WP10.4–10.7, WP26; зелёные `T-DB3`, `T-OPS*`, `T-AI7`, `T-AI8`; DoD (§10) заполнен; решения класса C подтверждены; слияние в `main` решает владелец | **не пройден.** Осталось: WP9.1, WP9.3–9.7; WP10.1 (адаптеры), WP10.4, WP10.6, WP10.7; WP26. Таблица DoD пуста, подтверждения класса C — раздел 6 |
 
 ## 3. Прогресс
@@ -156,14 +156,14 @@
 | WP18.4 | Согласия | влит | `POST /v1/consents`, `require_terms` (#97, #106, #111) | — | — | T-AU6 |
 | WP19 | Объектное хранилище и загрузки | влит | `S3ObjectStore`, ключи с ULID, тип по содержимому (#90) | проверка региона Contabo и path-style на стенде (D-C-109) | — | T-ST1, T-ST2, T-ST3 |
 | WP20.1 | Загрузка | влит | `POST /v1/domains/{id}/materials`, `GET /v1/materials/{id}` (#98, #113) | — | — | T-MT1 (часть) |
-| WP20.2 | Разбор | частично | Роль `material_parser` в `Settings`, события `material.*`; `material.parse` в два шага (страницы, куски, разметка; структура под `domain:{id}` через `reconcile_domain`, хаб «из материала»), слой 2 и черновик слоя 1 `material_parser@1` (D-C-200…D-C-203); дедлайны силлабуса - `hub.deadline_set {source: syllabus}` (D-C-213); PDF без текстового слоя читает `recognizer` (D-C-214) | задачи семинара (`task.created`) | задачи семинара — разметка WP12.5 (B) | T-MT1 |
+| WP20.2 | Разбор | частично | Роль `material_parser` в `Settings`, события `material.*`; `material.parse` в два шага (страницы, куски, разметка; структура под `domain:{id}` через `reconcile_domain`, хаб «из материала»), слой 2 и черновик слоя 1 `material_parser@1` (D-C-200…D-C-203); дедлайны силлабуса - `hub.deadline_set {source: syllabus}` (D-C-213); PDF без текстового слоя читает `recognizer` (D-C-214) | — (задачи семинара: слой 2 `seminar_tasks`, `create_seminar_task` до `parsed`, D-C-217; `reconcile_domain` вызывается из шага структуры) | — | T-MT1 |
 | WP20.3 | Эмбеддинги на Modal | влит | `modal/embeddings.py`, клиент (#115) | инструкция запроса и окно простоя — подтвердить владельцем | D-C-117 | T-MT2, T-MT4 |
 | WP20.4 | Векторный поиск, предвыборка | влит | `materials_prefetch`, `materials_search` (#140) | — | — | T-MT3 |
 | WP20.5 | Полнотекстовый поиск | влит | `GET /v1/search`, `materials/search.py` (#98, #113) | теста `T-DB6` (EXPLAIN GIN) в `tests/db` не нашёл | — | T-MT5, T-DB6 |
 | WP21.1 | Доска | влит | `canvas/board*.py`, маршруты канвасов (#116) | — | — | T-CV6 |
 | WP21.2 | WebSocket и штрихи | влит | Журнал штрихов, сокет, ack после записи (#99, #128) | — | — | T-CV1, T-CV2 |
-| WP21.3 | Распознавание строк | влит | `recognizer@1`, строки, стёртые, исправление (#134, #159, #167) | слой 1 `recognizer@1` — черновик (D-C-132) | — | T-CV3 |
-| WP21.4 | Проверка шагов | сделан в phase-4-c | `canvas_diagnoser@1` (#164); каскад в сокете: символьный переход → диагност → второе мнение `second_opinion@1`, `observation.diagnosed`/`second_opinion` (D-C-158) | шов B: обработчик задачи `second_opinion.diagnosis` под ключом `observation.second_opinion:{target_seq}`; промпт `second_opinion@1` для строки холста | — | T-CV4 |
+| WP21.3 | Распознавание строк | влит | `recognizer@1`, строки, стёртые, исправление (#134, #159, #167); `canvas.rediagnose` от `handwriting.corrected` (D-C-218) | слой 1 `recognizer@1` — черновик (D-C-132) | — | T-CV3 |
+| WP21.4 | Проверка шагов | сделан в phase-4-c | `canvas_diagnoser@1` (#164); каскад в сокете: символьный переход → диагност → второе мнение `second_opinion@1`, `observation.diagnosed`/`second_opinion` (D-C-158) | — (обработчик `second_opinion.diagnosis` под ключом `observation.second_opinion:{target_seq}` в `quack/canvas/jobs.py`, D-C-218) | — | T-CV4 |
 | WP21.5 | Пометки и вмешательства | сделан в phase-4-c | Шлюз вмешательств: пометки `error`/`question`, `error_grace_ms`, лимиты, тихий режим (`preference.set canvas_quiet`), «проверь», «застрял» с подсказкой первой ступени; сообщения `mark`, `hint` (D-C-159) | запись в ленте «задача закончена» (`task.closed` + `hint.shown`); клиент пишет `preference.set canvas_quiet` (WP13.1, B) | WP21.4 | T-CV5 |
 | WP21.6 | Чат, голос, проигрывание | частично | Проигрывание канваса, ссылки на куски (#162); голос отрезками `POST /v1/sessions/{id}/voice` без хранения аудио, WAV кодом (D-C-152) | — (лассо в разговоре учителя сделано B, D-B-219) | — | T-CV7 |
 | WP22.1 | Привязка | влит | Токен, область `companion` (#142, #146) | — | — | T-CP1 |
@@ -204,6 +204,8 @@
 7. **WP8.3 со стороны B** — `db=ctx.db` в читатель при первом отчёте «до и после» (issue #190); Q-A-4.
 8. **WP2.3 / WP3.4, наложение сессии** — подключено в `session/turn_source.py` (D-B-215, #260).
 9. **WP12.5 / WP20.2, задачи семинара** — функция B готова: `quack.practice.seminar_tasks.create_seminar_task` (D-B-218, #271); вызов из `material.parse` — C; обработчик `second_opinion.diagnosis` — C.
+10. **WP14.3, лассо в разговоре учителя** — сделано (D-B-219); **WP17.4, слот 6 и промпт пробника** — сделано (D-B-216).
+11. **#279, красные места сквозных тестов** — T-E1, T-E7, T-E9, Neo4j исправлены (D-B-221, #281); строка Meta в T-E11 по `Т-§20.7` остаётся `error` LLM_DEGRADED — ожидание теста правит C.
 
 ### Поток C
 

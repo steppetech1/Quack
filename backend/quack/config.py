@@ -618,6 +618,9 @@ class Settings(BaseSettings):
     email_api_key: SecretStr = SecretStr("")
     google_oidc_client_id: SecretStr = SecretStr("")
     google_oidc_client_secret: SecretStr = SecretStr("")
+    # Timeout of one HTTP call of sign-in (Resend, Google token and certificates). The documents
+    # name no value: the one of `compute_timeout_sec` (Phase 4 decision of stream C, to confirm).
+    auth_http_timeout_s: float = 5.0
     # WP19 (Т-§19.8, Д-§8.4)
     upload_max_mb: int = 50
     object_url_ttl_s: int = 300
@@ -645,6 +648,8 @@ class Settings(BaseSettings):
     # fewer characters of text than `material_scan_min_chars` is read from its image, at most
     # `material_scan_max_pages` pages of one file.
     material_deadlines_max: int = Field(default=20, ge=1)
+    # WP20.2, #271 (D-C-217): problems of one material that become seminar tasks, at most.
+    material_seminar_tasks_max: int = Field(default=30, ge=1)
     material_scan_min_chars: int = Field(default=20, ge=0)
     material_scan_max_pages: int = Field(default=50, ge=1)
     # Т-§3.4.6, Т-§10.5: the reserve taken inside SEARCH before post-filters and the final k.
