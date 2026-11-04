@@ -23,6 +23,16 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-241. Q-C-1: `timeout_ms` в тестах compute; `illustrations/` не описывается в `keys.py`
+- Класс: C
+- WP / место: #300 (A → C); `compute/tests/test_compute_service.py`, `backend/tests/test_ops_p4_recovery.py`
+- Контекст: продуктовый `timeout_ms` 1500 делал тесты `compute` зависимыми от загрузки машины; префикс `illustrations/` нигде не описан в `Т-§3.3`, ключ строит `agents/illustration.py` (зона B).
+- Решение: (1) хелпер `check` передаёт `timeout_ms=10_000` (`symbolic_background_timeout_ms`, `Т-§6`), явное значение в тесте перекрывает его, тест на таймаут (50 мс) не тронут. (2) Префикс `illustrations/` в `storage/keys.py` не описывать: ключ принадлежит B, а источник `events` находит его по `agent.completed.result_ref`; добавлен тест именно с этим событием. (3) `thumbnail_key`, `photo_crop_key` — к сведению: писателя нет; когда появится, новый источник в `orphan_objects.py` + тест (D-C-215).
+- Почему: D-A-248, D-A-249 п.12; D-C-215.
+- Обратимость: полная.
+- Тесты: `test_an_illustration_named_only_by_agent_completed_is_kept`; `compute/tests/test_compute_service.py` с новым умолчанием.
+- Требует подтверждения владельцем: нет
+
 ### D-C-240. WP23.7: экспорт темы в Obsidian и Anki и статус архива данных (`GET`-маршруты); `POST /v1/learner/export` ждёт `data_export` у A
 - Класс: C (раскладка хранилища, привязка карточки к ответу, форма статуса в документах не заданы; поставка задачи - у A)
 - WP / место: WP23.7, `Т-§19.6`, `Т-§19.7`, §6.4; `quack/artifacts/topic_export.py`, `quack/artifacts/export_routes.py`, `tests/e2e/routes/c.py`, `openapi.json`, `genanki` в `pyproject.toml` (назван в ТЗ §4.6)
