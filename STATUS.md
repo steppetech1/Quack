@@ -1,6 +1,6 @@
 # STATUS — доска состояния Фазы 4
 
-- **Дата:** 2026-11-04. **Коммит `phase-4`:** `29be121` (слияние PR #259).
+- **Дата:** 2026-11-05. **Коммит `phase-4`:** `2640ce9` (слияние PR #293).
 - **Зачем:** вместо чтения длинных заметок. За 2 минуты видно: что влито, что следующее для потока, что заблокировано. Источники — `documentation/ТЗ Фаза 4 (единое).md` (пакеты, оценки, гейты, тесты §8), `documentation/Фаза 4 — решения (единое).md`, `backend/PHASE4_NOTES.md`, слитые PR в `phase-4`, код `backend/`, открытые issues.
 - **Как обновлять:** поток, который меняет строку, правит её в том же PR волны. Одна строка на подпакет WPn.m (на пакет WPn там, где подпакетов нет). Статус — только `влит`, `частично`, `не начат`, `заблокирован`. Ячейки короткие: номера PR, модули, id решений. Пересчитать прогресс (раздел 3) и обновить гейты (раздел 2). Подробности — в заметках и решениях, сюда не копировать.
 - **Что значит `влит`:** модуль и его тесты в `phase-4`. Подключение новых модулей к боевым процессам (`projector`, `workers`, `api`, `ops`) учтено только в WP1.3: пока оно не сделано, процессы работают на коде Фазы 3.
@@ -8,10 +8,10 @@
 
 ## 1. Сейчас главное
 
-1. Гейты G0 и G1 пройдены, G2 не пройден: все пакеты G2 влиты и подключены к процессам (WP1.3 сделан), не написан текстовый путь `T-E1` на новом стенде (WP26.1, поток C).
-2. Поток A: остаток — у видов `canvas.rediagnose`, `second_opinion.diagnosis`, `agent.artifact`, `export.data` нет обработчиков (C, #263).
-3. `BLOCKED-C-204` снят: `LLMGateway.segment` подключён в WP22.3 шаг 5 (D-C-153); голос WP21.6 подключён к `LLMGateway.transcribe` (D-C-152).
-4. Открытые issues: #193 (ревью #182 от B и C), #188 (принят C, PR #194 влит — закрыть).
+1. Гейты G0, G1 и G2 пройдены: текстовый путь `T-E1` и `T-E2`–`T-E14` на стенде Фазы 4 зелёные в CI (#278, #281). G3 и G4 не пройдены.
+2. Поток C: остаток — WP26.2 (подмены SAM, Voice и эмбеддингов в профиле `loadtest`), WP26.3 (Locust на 100 учеников), WP23.5 (KaTeX в PDF), WP23.7 (Obsidian, Anki, маршруты экспорта), подключение трассера `create_tracer` в сборке процессов (WP10.6, #209), DoD п.6a (ручной прогон), решения владельца в #270.
+3. Обработчики `canvas.rediagnose`, `second_opinion.diagnosis`, `agent.artifact`, `export.data` написаны (C, #285, #287); у `export.data` нет вида `data_export` в `AgentKind` и строки диспетчера (A, WP23.7).
+4. Открытые issues: #209 (B → C), #270 (вопросы владельцу к C), #193 и #188 закрыты.
 
 ## 2. Гейты G0–G4
 
@@ -19,9 +19,9 @@
 | :-- | :-- | :-- |
 | **G0 «Скелет»** | WP0; базовая миграция dbmate; `Db` и `append_events`; поля ресурсов и подмены; имена параметров §6.7; черновик каталога; каркас compute; красные тесты Этапа I | **пройден** |
 | **G1 «Контракты заморожены»** | Каталог событий окончательный (S3, #119); строки проектора (S5, #135); таблица диспетчера (S6, #101, #117); сигнатуры `graph.read` (S4); `TeacherOutput`, `Element`, `AnswerSpec`, `TaskMarkup`, схемы ролей, `PROMPT_CONTRACTS.md`; черновик `openapi.json` | **пройден** |
-| **G2 «Память, проверка, ход»** | WP2–WP6.4, WP7.1–7.4, WP10.2–10.3, WP11, WP12.1–12.3, WP13, WP15, WP18, WP19, WP24; зелёные тесты группы G2; `T-E1` (текстовый путь) | **не пройден.** Осталось: WP26.1 (`T-E1`); WP1.3 сделан; маршрут `/jobs` WP7.4 сделан (B) |
-| **G3 «Учитель и каналы»** | WP6.5, WP7.5, WP8, WP12.4–12.7, WP14, WP16, WP17, WP20–WP23, WP25; зелёные `T-CX*`, `T-AG*`, `T-RV*`, `T-ED*`, `T-MT*`, `T-CV*`, `T-CP*`, `T-AR*`, `T-DL*`; `T-E2`–`T-E14` | **не пройден.** Осталось — A: WP17.4 (материалы контроля в графе). B: WP16.3 (вызов из `material.parse` — C). C: WP20.2, WP23.4–23.7. Тесты `T-E2`–`T-E14` (WP26) |
-| **G4 «Выпуск»** | WP1.3, WP9, WP10.4–10.7, WP26; зелёные `T-DB3`, `T-OPS*`, `T-AI7`, `T-AI8`; DoD (§10) заполнен; решения класса C подтверждены; слияние в `main` решает владелец | **не пройден.** Осталось: WP9.1, WP9.3–9.7; WP10.1 (адаптеры), WP10.4, WP10.6, WP10.7; WP26. Таблица DoD пуста, подтверждения класса C — раздел 6 |
+| **G2 «Память, проверка, ход»** | WP2–WP6.4, WP7.1–7.4, WP10.2–10.3, WP11, WP12.1–12.3, WP13, WP15, WP18, WP19, WP24; зелёные тесты группы G2; `T-E1` (текстовый путь) | **пройден.** WP18, WP19, WP24 влиты (C); WP1.3 сделан; маршрут `/jobs` WP7.4 сделан (B); `T-E1` зелёный в CI (WP26.1, #278, #281) |
+| **G3 «Учитель и каналы»** | WP6.5, WP7.5, WP8, WP12.4–12.7, WP14, WP16, WP17, WP20–WP23, WP25; зелёные `T-CX*`, `T-AG*`, `T-RV*`, `T-ED*`, `T-MT*`, `T-CV*`, `T-CP*`, `T-AR*`, `T-DL*`; `T-E2`–`T-E14` | **не пройден.** Осталось — A: WP17.4 (материалы контроля в графе). B: WP16.3 (вызов из `material.parse` сделан, #285; строку закрывает B). C: WP23.5, WP23.7. Тесты `T-E2`–`T-E14` зелёные (#278, #281, #293) |
+| **G4 «Выпуск»** | WP1.3, WP9, WP10.4–10.7, WP26; зелёные `T-DB3`, `T-OPS*`, `T-AI7`, `T-AI8`; DoD (§10) заполнен; решения класса C подтверждены; слияние в `main` решает владелец | **не пройден.** Осталось: WP10.4, WP10.6 (B, трассер в сборке процессов — C); WP26 (WP26.2 подмены SAM, Voice, эмбеддингов в `loadtest`; WP26.3 Locust); WP9 влит, живая выкатка — владелец. Таблица DoD пуста, подтверждения класса C — раздел 6 |
 
 ## 3. Прогресс
 
@@ -30,9 +30,9 @@
 | Поток | Оценка, чел.-дни | Сделано, чел.-дни | Готово | `влит` | `частично` | `не начат` | `заблокирован` | Подпакетов |
 | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | A | 20,25 | 20,12 | **99 %** | 42 | 1 | 0 | 0 | 43 |
-| B | 18,75 | 17,56 | **94 %** | 39 | 6 | 0 | 0 | 45 |
-| C | 20 | 14,08 | **70 %** | 20 | 12 | 5 | 0 | 37 |
-| **Всего** | 59 | 51,76 | **88 %** | 101 | 19 | 5 | 0 | 125 |
+| B | 18,75 | 17,96 | **96 %** | 41 | 4 | 0 | 0 | 45 |
+| C | 20 | 18,57 | **93 %** | 34 | 3 | 0 | 0 | 37 |
+| **Всего** | 59 | 56,65 | **96 %** | 117 | 8 | 0 | 0 | 125 |
 
 Оценка в процентах считается по слиянию. WP1.3 сделан: боевые процессы (`projector`, `workers`, `api`, `ops`) работают только на коде Фазы 4.
 
@@ -143,42 +143,42 @@
 | WP | Название | Статус | Что есть | Что осталось | Блокер | Тесты §8 |
 | :-- | :-- | :-: | :-- | :-- | :-- | :-- |
 | WP0 | Вход и аудит (зоны A, B выполнены) | влит | `main` зелёный, чистый старт подтверждён владельцем 2026-11-02, п.3а–3е закрыты (#71, #72) | — | — | T-A9b |
-| WP9.1 | compose | частично | `compose.yaml`: Caddy, сети, лимиты, секреты ролей (#102, #174); `LLM_PRICES`, `LANGSMITH_API_KEY` у `api`/`workers`, пустая `LLM_PRICES` допустима вне prod (D-B-198, D-C-149, ветка phase-4-c-b209) | сервис `alerts` и таймер; сверить состав с `Д-§3` | — | T-OPS1, T-OPS6 |
-| WP9.2 | Caddy и образы | влит | `deploy/Caddyfile`, Dockerfile с `pg_dump 16`, `age`, CORS (#120, #177); `dbmate` и `db/migrations` в образе - D-C-160 | — | — | — |
-| WP9.3 | CI | влит (#253) | Jobs: fast (+`modal/`: ruff, pyright), backend (+ шаги «изоляция», «один писатель»), squawk, compute, images, publish в GHCR, реестр событий (#237), `frontend-types` (только PR, ожидаемо красный до перевода фронтенда, не гейт публикации; R4-2); job выкатки с `production`, `concurrency: deploy`, `DEPLOY_FREEZE` (WP9.4); `$ref` 422 в `openapi.json` исправлены (D-C-210) | сделать `frontend-types` обязательным — владелец после перевода фронтенда | D-C-210 | T-DB7 |
-| WP9.4 | Выкатка и откат | влит (#253) | `deploy/deploy.sh` (#120), job выкатки в окружении `production`, `DEPLOY_FREEZE` (#217), `tests/test_deploy_order.py` (порядок шагов Д-§6.1, нет автоотката при новых событиях) | живой прогон на сервере — владелец | D-C-210 | T-OPS8 |
-| WP9.5 | Бэкапы и тревоги | влит (#253) | `ops backup`, сервис и таймер `backup`, вебхук тревог (#122, #126), `ops alerts`, сервис `alerts`, таймеры (#204, D-C-182), `GET /internal/status` (D-C-212) | — | D-C-212 | T-OPS5, T-OPS7 |
-| WP9.6 | Команды восстановления | влит (#253); D-C-215 в ветке phase-4-c-wp9-fix (PR) | `ops db-roles` (#127), `ops rebuild --concurrency`, `can-rollback`, `restore-check`, `resume`, `replay-deletions`, `orphan-objects` (по умолчанию только отчёт, удаление с `--apply`, D-C-215) (функции A из S15 влиты; `orphan_objects` — в зоне C, D-C-211) | подтверждение владельцем определения «ссылка в Postgres» для `orphan-objects` | D-C-211, D-C-215 | T-OPS2, T-OPS3, T-OPS4 |
-| WP9.7 | Сервер | влит (#253) | `deploy/setup-server.sh` с таймерами `quack-alerts` и `quack-host-state`, `deploy/README.md` с разделом восстановления Д-§8.3 (#120, #169, #204) | — | — | — |
-| WP18.1 | Вход по ссылке на почту | влит | `auth/links.py`, `ResendEmailSender`, лимиты (#97, #106) | — | D-C-133 | T-AU1, T-AU2 |
-| WP18.2 | Google OIDC | влит | `AuthlibGoogleOIDC` (#106) | клиент Google OIDC создаёт владелец | действие владельца | T-AU3 |
+| WP9.1 | compose | влит | `compose.yaml`: Caddy, сети, лимиты, секреты ролей (#102, #174); `LLM_PRICES`, `LANGSMITH_API_KEY` у `api`/`workers` (D-B-198, D-C-149, #219); `LLM_POOL_BUDGET_USD` (#241); сервис `alerts` (профиль `alerts`) и таймеры (#204, #253); `VIZ_LIBRARIES` (#286); состав сверён тестом `test_compose_contract` | значения `LLM_PRICES` и размера пула — владелец (#270) | — | T-OPS1, T-OPS6 |
+| WP9.2 | Caddy и образы | влит | `deploy/Caddyfile`, Dockerfile с `pg_dump 16`, `age`, CORS (#120, #177); `dbmate` и `db/migrations` в образе (D-C-160); `deploy/static/viz/` с закреплёнными D3, Plotly, KaTeX (#286, #257) | — | — | — |
+| WP9.3 | CI | влит | #253. Jobs: fast (+`modal/`: ruff, pyright), backend (+ шаги «изоляция», «один писатель»), squawk, compute, images, publish в GHCR, реестр событий (#237), `frontend-types` (только PR, не гейт публикации; R4-2; `schema.d.ts` пересобран, #293); job выкатки с `production`, `concurrency: deploy`, `DEPLOY_FREEZE` (WP9.4); `$ref` 422 в `openapi.json` исправлены (D-C-210) | сделать `frontend-types` обязательным — владелец после перевода фронтенда | D-C-210 | T-DB7 |
+| WP9.4 | Выкатка и откат | влит | #253. `deploy/deploy.sh` (#120), job выкатки в окружении `production`, `DEPLOY_FREEZE` (#217), `tests/test_deploy_order.py` (порядок шагов Д-§6.1, нет автоотката при новых событиях) | живой прогон на сервере — владелец | D-C-210 | T-OPS8 |
+| WP9.5 | Бэкапы и тревоги | влит | #253. `ops backup`, сервис и таймер `backup`, вебхук тревог (#122, #126), `ops alerts`, сервис `alerts`, таймеры (#204, D-C-182), `GET /internal/status` (D-C-212) | — | D-C-212 | T-OPS5, T-OPS7 |
+| WP9.6 | Команды восстановления | влит | #253, #272. `ops db-roles` (#127), `ops rebuild --concurrency`, `can-rollback`, `restore-check`, `resume`, `replay-deletions`, `orphan-objects` (по умолчанию только отчёт, удаление с `--apply`, D-C-215) (функции A из S15 влиты; `orphan_objects` — в зоне C, D-C-211) | подтверждение владельцем определения «ссылка в Postgres» для `orphan-objects` (#270) | D-C-211, D-C-215 | T-OPS2, T-OPS3, T-OPS4 |
+| WP9.7 | Сервер | влит | #253. `deploy/setup-server.sh` с таймерами `quack-alerts` и `quack-host-state`, `deploy/README.md` с разделом восстановления Д-§8.3 (#120, #169, #204) | — | — | — |
+| WP18.1 | Вход по ссылке на почту | влит | `auth/links.py`, лимиты (#97, #106); `ResendEmailSender` — реальный адаптер, до #283 была заглушка (#283) | ключ Resend в секретах `production` — владелец | D-C-133 | T-AU1, T-AU2 |
+| WP18.2 | Google OIDC | влит | `AuthlibGoogleOIDC` — реальный адаптер, до #283 была заглушка (#283) | клиент Google OIDC в консоли Google и `GOOGLE_OIDC_CLIENT_ID`/`GOOGLE_OIDC_CLIENT_SECRET` в секретах `production` — владелец (#270) | действие владельца | T-AU3 |
 | WP18.3 | Сессии и cookie | влит | Весь API на сессиях, JWT и пароль удалены (#123) | — | — | T-AU4, T-AU5 |
 | WP18.4 | Согласия | влит | `POST /v1/consents`, `require_terms` (#97, #106, #111) | — | — | T-AU6 |
 | WP19 | Объектное хранилище и загрузки | влит | `S3ObjectStore`, ключи с ULID, тип по содержимому (#90) | проверка региона Contabo и path-style на стенде (D-C-109) | — | T-ST1, T-ST2, T-ST3 |
 | WP20.1 | Загрузка | влит | `POST /v1/domains/{id}/materials`, `GET /v1/materials/{id}` (#98, #113) | — | — | T-MT1 (часть) |
-| WP20.2 | Разбор | частично | Роль `material_parser` в `Settings`, события `material.*`; `material.parse` в два шага (страницы, куски, разметка; структура под `domain:{id}` через `reconcile_domain`, хаб «из материала»), слой 2 и черновик слоя 1 `material_parser@1` (D-C-200…D-C-203); дедлайны силлабуса - `hub.deadline_set {source: syllabus}` (D-C-213); PDF без текстового слоя читает `recognizer` (D-C-214) | — (задачи семинара: слой 2 `seminar_tasks`, `create_seminar_task` до `parsed`, D-C-217; `reconcile_domain` вызывается из шага структуры) | — | T-MT1 |
+| WP20.2 | Разбор | влит | #255, #266, #285. Роль `material_parser` в `Settings`, события `material.*`; `material.parse` в два шага (страницы, куски, разметка; структура под `domain:{id}` через `reconcile_domain`, хаб «из материала»), слой 2 и черновик слоя 1 `material_parser@1` (D-C-200…D-C-203); дедлайны силлабуса — `hub.deadline_set {source: syllabus}` (D-C-213); PDF без текстового слоя читает `recognizer` (D-C-214); задачи семинара: слой 2 `seminar_tasks`, `create_seminar_task` до `parsed` (D-C-217) | лимиты скана PDF — владелец (#270); слой 1 — черновик (D-C-132) | — | T-MT1 |
 | WP20.3 | Эмбеддинги на Modal | влит | `modal/embeddings.py`, клиент (#115) | инструкция запроса и окно простоя — подтвердить владельцем | D-C-117 | T-MT2, T-MT4 |
 | WP20.4 | Векторный поиск, предвыборка | влит | `materials_prefetch`, `materials_search` (#140) | — | — | T-MT3 |
-| WP20.5 | Полнотекстовый поиск | влит | `GET /v1/search`, `materials/search.py` (#98, #113) | теста `T-DB6` (EXPLAIN GIN) в `tests/db` не нашёл | — | T-MT5, T-DB6 |
+| WP20.5 | Полнотекстовый поиск | влит | `GET /v1/search`, `materials/search.py` (#98, #113); `T-DB6` (EXPLAIN GIN) в `tests/db/test_fts_index.py` (#262) | — | — | T-MT5, T-DB6 |
 | WP21.1 | Доска | влит | `canvas/board*.py`, маршруты канвасов (#116) | — | — | T-CV6 |
 | WP21.2 | WebSocket и штрихи | влит | Журнал штрихов, сокет, ack после записи (#99, #128) | — | — | T-CV1, T-CV2 |
-| WP21.3 | Распознавание строк | влит | `recognizer@1`, строки, стёртые, исправление (#134, #159, #167); `canvas.rediagnose` от `handwriting.corrected` (D-C-218) | слой 1 `recognizer@1` — черновик (D-C-132) | — | T-CV3 |
-| WP21.4 | Проверка шагов | сделан в phase-4-c | `canvas_diagnoser@1` (#164); каскад в сокете: символьный переход → диагност → второе мнение `second_opinion@1`, `observation.diagnosed`/`second_opinion` (D-C-158) | — (обработчик `second_opinion.diagnosis` под ключом `observation.second_opinion:{target_seq}` в `quack/canvas/jobs.py`, D-C-218) | — | T-CV4 |
-| WP21.5 | Пометки и вмешательства | сделан в phase-4-c | Шлюз вмешательств: пометки `error`/`question`, `error_grace_ms`, лимиты, тихий режим (`preference.set canvas_quiet`), «проверь», «застрял» с подсказкой первой ступени; сообщения `mark`, `hint` (D-C-159) | запись в ленте «задача закончена» (`task.closed` + `hint.shown`); клиент пишет `preference.set canvas_quiet` (WP13.1, B) | WP21.4 | T-CV5 |
-| WP21.6 | Чат, голос, проигрывание | частично | Проигрывание канваса, ссылки на куски (#162); голос отрезками `POST /v1/sessions/{id}/voice` без хранения аудио, WAV кодом (D-C-152) | — (лассо в разговоре учителя сделано B, D-B-219) | — | T-CV7 |
+| WP21.3 | Распознавание строк | влит | `recognizer@1`, строки, стёртые, исправление (#134, #159, #167); `canvas.rediagnose` от `handwriting.corrected` (#285, D-C-218) | слой 1 `recognizer@1` — черновик (D-C-132) | — | T-CV3 |
+| WP21.4 | Проверка шагов | влит | `canvas_diagnoser@1` (#164); каскад в сокете: символьный переход → диагност → второе мнение `second_opinion@1`, `observation.diagnosed`/`second_opinion` (#241, D-C-158); обработчик `second_opinion.diagnosis` под ключом `observation.second_opinion:{target_seq}` в `quack/canvas/jobs.py` (#285, D-C-218) | — | — | T-CV4 |
+| WP21.5 | Пометки и вмешательства | влит | #241. Шлюз вмешательств: пометки `error`/`question`, `error_grace_ms`, лимиты, тихий режим (`preference.set canvas_quiet`), «проверь», «застрял» с подсказкой первой ступени; сообщения `mark`, `hint` (D-C-159) | клиент пишет `preference.set canvas_quiet` (WP13.1, B); запись в ленте «задача закончена» — не канвас (D-C-159 п.8) | — | T-CV5 |
+| WP21.6 | Чат, голос, проигрывание | влит | Проигрывание канваса, ссылки на куски (#162); голос отрезками `POST /v1/sessions/{id}/voice` без хранения аудио, WAV кодом (#241, D-C-152); лассо в разговоре учителя — B (#277, D-B-219) | голос только PCM WAV, остальное 415 — подтвердить владельцем (#270) | — | T-CV7 |
 | WP22.1 | Привязка | влит | Токен, область `companion` (#142, #146) | — | — | T-CP1 |
 | WP22.2 | Снимок | влит | Фото листа: объект, затем `photo.uploaded` (#150) | — | — | T-CP2 |
-| WP22.3 | Конвейер по `Т-§22.6` | готов в ветке | `photo.pipeline`, режим листа, сравнение с листом (#161); рисунки на фото: `segmenter`, `clean-drawing`, слой ученика (D-C-153) | формат маски `sam-3.1` — ручной прогон DoD п.6a | — | T-CP3 |
+| WP22.3 | Конвейер по `Т-§22.6` | влит | #161, #241. `photo.pipeline`, режим листа, сравнение с листом; рисунки на фото: `segmenter`, `clean-drawing`, слой ученика (D-C-153) | формат маски `sam-3.1` — ручной прогон DoD п.6a | — | T-CP3 |
 | WP22.4 | Фото без компаньона | влит | Загрузка с ноутбука (#150) | — | — | T-CP2, T-E8 |
 | WP23.1 | Модель данных | влит | Артефакт как документ с версиями, защита блоков ученика (#138) | — | — | T-AR1 |
-| WP23.2 | Генерация | влит; `agent.artifact` в ветке phase-4-c-wp23-handlers | `artifact_writer@1`, `artifact.topic_refresh` (#139, #172); `agent.artifact` по `agent.requested {artifact}` (D-C-230, #263) | слой 1 — черновик (D-C-132) | — | T-AR2 |
-| WP23.3 | Точность | готов в ветке | Проверка меток и номеров блоков, одна перегенерация (#172); общий код `quack/artifacts/accuracy.py` для конспекта и cheat sheet: определение и утверждение без куска при наличии кусков — нарушение (T-AR2), страница из куска, формулы блока (`formulas`) через `/v1/math/check` с перегенерацией, отметки `unverified` («не проверено») и `basis: system` («без опоры») (D-C-155–D-C-157, ветка phase-4-c) | — | — | T-AR2 |
-| WP23.4 | Карточки | готов в ветке | Хранение, `GET/PATCH/DELETE`, карточка как задача банка (#184); генерация в `artifact.topic_refresh` (второй вызов `artifact_writer@1`, `markup_record`, `create_task`, потолок `cards_per_topic_max`, D-C-154); `answer.submitted {source: card}` — действие `answer` B и строка проектора A (D-A-125 п.1), нового события нет | — | — | T-AR3 |
-| WP23.5 | Cheat sheet хаба | частично | Состояние предложения `cheatsheet_offer` при чтении (D-C-144); подгонка под A4 через `/v1/render/pdf` до `cheatsheet_fit_rounds`; «собери сам» (`POST …/cheatsheet/review`); `GET/POST /v1/hubs/{id}/cheatsheet`; задача `artifact.cheatsheet` (D-C-148, ветка phase-4-c) | запись согласия `agent.requested {artifact, hub_id}` ждёт D-A-196 (три теста `xfail(strict)`); A: поля в схеме, маршрутизация `agent.requested{artifact: cheatsheet}` → `artifact.cheatsheet` `{hub_id, request_id}`, снять строку `hub.deadline_set`; KaTeX для формул в PDF (WP9.2) | D-A-196 (класс C) | T-AR4 |
-| WP23.6 | Скиллы ученика (P2) | в PR (ветка phase-4-c-wp9-fix) | `quack/artifacts/learner_skills.py`, `GET/POST/PATCH/DELETE /v1/learner-skills`, `GET /v1/system-templates`, слот `learner_skill` писателя и `skill_version` версий артефактов (notes, cards, cheatsheet); вызов `/имя` в чате - уже у B | подтверждение владельцем набора шаблонов и правила «один скилл на тип» | D-C-216 | T-CX6 (хвост хода - у B) |
-| WP23.7 | Экспорт (P2) | частично (ветка phase-4-c-wp23-handlers) | задача `export.data`: архив данных ученика в хранилище, `content.exports`, `agent.completed` (D-C-231, #263); экспорт Фазы 3 `GET /v1/domains/{id}/export` снят (D-C-170: `pMastery` и `core.domains` в Фазе 4 нет) | Obsidian, Anki (`genanki`), `POST /v1/learner/export` и `GET /v1/learner/exports/{id}` - A: `data_export` в `AgentKind` и строка диспетчера `agent.requested{data_export}` → `export.data` | D-C-231 (класс A) | T-AR5 |
-| WP24 | Сервис compute | влит | Пул `pebble`, PDF, фото, рендер, Chromium по требованию (#82, #92) | почасовая чистка `/srv/quack/tmp` (D-C-110) | — | T-CM1, T-CM2, T-CM3 |
-| WP26 | Сквозные тесты и нагрузка | частично | `meta-mock` со стримингом и инструментами (#87), подмены `tests/support/` | стенд `tests/e2e/` на процессах Фазы 4 (D-C-190); T-E1…T-E14 написаны (D-C-191): зелёные T-E2…T-E6, T-E8, T-E10, T-E12…T-E14 и половины T-E7, T-E9, T-E11; красные (`xfail`): T-E1 (B: `turn_source` не видит вердикт, `task.closed` не пишется), T-E11 `meta`/`neo4j`, T-E7 поиск (B: нет клиента эмбеддингов в `ToolContext`), T-E9 план «Сегодня» (B); осталось: `meta-mock` под новые роли (WP26.2), Locust на 100 учеников (WP26.3) | B (`turn_source`), A (`memory_unavailable`) | T-E1–T-E14 |
+| WP23.2 | Генерация | влит | `artifact_writer@1`, `artifact.topic_refresh` (#139, #172); `agent.artifact` по `agent.requested {artifact}` (#287, D-C-230) | слой 1 — черновик (D-C-132) | — | T-AR2 |
+| WP23.3 | Точность | влит | #241. Проверка меток и номеров блоков, одна перегенерация (#172); общий код `quack/artifacts/accuracy.py` для конспекта и cheat sheet: определение и утверждение без куска при наличии кусков — нарушение (T-AR2), страница из куска, формулы блока (`formulas`) через `/v1/math/check` с перегенерацией, отметки `unverified` («не проверено») и `basis: system` («без опоры») (D-C-155–D-C-157) | — | — | T-AR2 |
+| WP23.4 | Карточки | влит | Хранение, `GET/PATCH/DELETE`, карточка как задача банка (#184); генерация в `artifact.topic_refresh` (второй вызов `artifact_writer@1`, `markup_record`, `create_task`, потолок `cards_per_topic_max`, D-C-154; #241); `answer.submitted {source: card}` — действие `answer` B и строка проектора A (D-A-125 п.1), нового события нет | — | — | T-AR3 |
+| WP23.5 | Cheat sheet хаба | частично | #206. Состояние предложения `cheatsheet_offer` при чтении (D-C-144); подгонка под A4 через `/v1/render/pdf` до `cheatsheet_fit_rounds`; «собери сам» (`POST …/cheatsheet/review`); `GET/POST /v1/hubs/{id}/cheatsheet`; задача `artifact.cheatsheet` (D-C-148); запись согласия `agent.requested {artifact, hub_id}` и маршрутизация в `rules_p4.py` — D-A-196 влит, `xfail` сняты | формулы в PDF остаются TeX-текстом: KaTeX из `deploy/static/viz` в рендер не подключён (C); A: снять старую строку `hub.deadline_set` → `artifact.cheatsheet` без `request_id` | — | T-AR4 |
+| WP23.6 | Скиллы ученика (P2) | влит | #272. `quack/artifacts/learner_skills.py`, `GET/POST/PATCH/DELETE /v1/learner-skills`, `GET /v1/system-templates`, слот `learner_skill` писателя и `skill_version` версий артефактов (notes, cards, cheatsheet); вызов `/имя` в чате — уже у B | подтверждение владельцем набора шаблонов и правила «один скилл на тип» | D-C-216 | T-CX6 (хвост хода — у B) |
+| WP23.7 | Экспорт (P2) | частично | #287. Задача `export.data`: архив данных ученика в хранилище, `content.exports`, `agent.completed` (D-C-231); экспорт Фазы 3 `GET /v1/domains/{id}/export` снят (D-C-170: `pMastery` и `core.domains` в Фазе 4 нет) | Obsidian, Anki (`genanki`), `POST /v1/learner/export` и `GET /v1/learner/exports/{id}` — C; A: `data_export` в `AgentKind` (`records.py`) и строка диспетчера `agent.requested{data_export}` → `export.data` | D-C-231 (класс A) | T-AR5 |
+| WP24 | Сервис compute | влит | Пул `pebble`, PDF, фото, рендер, Chromium по требованию (#82, #92); почасовая чистка `/srv/quack/tmp` — `tmp_sweeper.py` (D-C-110 п.6) | — | — | T-CM1, T-CM2, T-CM3 |
+| WP26 | Сквозные тесты и нагрузка | частично | `meta-mock` со стримингом и инструментами (#87), подмены `tests/support/`; стенд `tests/e2e/` на процессах Фазы 4 (#254, D-C-190); T-E1…T-E14 написаны и зелёные в CI, `xfail` в `tests/e2e` нет (#278, #281, #293; D-C-191); WP26.2: `meta-mock` отвечает всем 31 парам (роль, схема) (#293, D-C-232) | WP26.2: подмены SAM, Voice и эмбеддингов в профиле `loadtest` ([ПРОВЕРИТЬ на стенде]); WP26.3: Locust на 100 учеников; ручной прогон на живой модели (DoD п.6a) | решения владельца в #270 | T-E1–T-E14 |
 
 ## 5. Следующие шаги
 
@@ -189,34 +189,32 @@
 1. **WP1.3, шаг 5 ч.2** — сделан (PR #258, D-A-234…238). Остаток — устаревшие комментарии про `session_factory` в `quack/api/resources.py` и `tests/storage/test_s1_resources.py` (C); `graph/projector_rows.py`, `events/payloads.py`, `jobs/kinds.py` остаются, пока на них опираются тесты и пакеты.
 2. **WP2.3 / WP3.4, режим «наложение сессии»** — сделан на `rules@3` (PR #259, D-A-239); подключение в `session/turn_source.py` сделано B (D-B-215, #260). **WP7.5, веса видов свидетельств** — D-A-245 (PR #275).
 3. **PR #262** — тесты §8 под именами ТЗ (T-ED1–ED4, T-RV1, T-RV4, T-TH4, T-DL1–DL3, T-DB6; D-A-240; T-DB3 — #265), обработчик `embedding.compute` (D-A-241), вопросы владельцу A класса B решены по документам (D-A-242; п.(2) про D-A-221 заменён D-A-245).
-4. **Обработчики видов без обработчика** — `canvas.rediagnose`, `second_opinion.diagnosis`, `agent.artifact`, `export.data`: C (#263).
+4. ~~Обработчики видов без обработчика~~ — сделано (C, #285, #287). Остаток A: `data_export` в `AgentKind` и строка диспетчера `agent.requested{data_export}` → `export.data` (WP23.7); снять старую строку `hub.deadline_set` → `artifact.cheatsheet` (WP23.5).
 5. **Владелец:** `D-A-121`, `D-A-196` (класс C) — подтвердить на G4; строка реестра §2.4 по D-A-242 (`Т-§14.7` — материал контроля).
 
 ### Поток B
 
 0. **WP1.3, шаг 4 B** — шлюз только на `Db` (D-B-212): PR фазы 4 B wave 6. Остаток C: `ops/status.py`, `ops/commands.py` читают `ops.llm_ledger`/`core.llm_outbox` — перевести на `ops.llm_usage`.
-1. **WP16.5** — сделано (D-B-178); осталась статика `deploy/static/viz/` — C.
+1. **WP16.5** — сделано (D-B-178); статика `deploy/static/viz/` влита (C, #286).
 2. **WP10.6, хвост** — подключение трассера в сборке процессов (C, #209), удаление трасс из WP25 (A).
 3. **WP10.7, хвост** — живой прогон владельцем: `META_API_KEY=… POSTGRES_DSN=… uv run python scripts/meta_smoke.py --out …` (DoD п.6a, D-B-187 [ПРОВЕРИТЬ]).
-4. **WP16.3, хвост** — вызов `reconcile_domain` из `material.parse` (C, WP20.2).
+4. ~~WP16.3, хвост~~ — вызов `reconcile_domain` из `material.parse` сделан (C, #285, D-C-217).
 5. **WP10.4, хвост** — `db=` в `LLMGateway` при WP1.3 (A/C), снятие `ops.llm_ledger` и outbox на SQLAlchemy.
 6. **WP16.7, хвост** — регистрация команды оценки извлечения `agents/extraction_eval.py` (C, S15); выгрузка наборов LangSmith — оператор.
 7. **WP8.3 со стороны B** — `db=ctx.db` в читатель при первом отчёте «до и после» (issue #190); Q-A-4.
 8. **WP2.3 / WP3.4, наложение сессии** — подключено в `session/turn_source.py` (D-B-215, #260).
-9. **WP12.5 / WP20.2, задачи семинара** — функция B готова: `quack.practice.seminar_tasks.create_seminar_task` (D-B-218, #271); вызов из `material.parse` — C; обработчик `second_opinion.diagnosis` — C.
+9. **WP12.5 / WP20.2, задачи семинара** — функция B готова: `quack.practice.seminar_tasks.create_seminar_task` (D-B-218, #271); вызов из `material.parse` и обработчик `second_opinion.diagnosis` сделаны (C, #285).
 10. **WP14.3, лассо в разговоре учителя** — сделано (D-B-219); **WP17.4, слот 6 и промпт пробника** — сделано (D-B-216).
 11. ~~#279, красные места сквозных тестов~~ — закрыто: T-E1, T-E7, T-E9, Neo4j исправлены (D-B-221, #281); Meta в T-E11 по `Т-§20.7` — кадр `error` LLM_DEGRADED, ожидание тестов поправил C (#278).
 
 ### Поток C
 
-1. **WP23.5** — хвост: после D-A-196 снять три `xfail(strict)` (запись согласия); остальное сделано (D-C-148).
-2. ~~WP23.3~~ — сделано в ветке phase-4-c (D-C-155–D-C-157).
-3. **WP20.2** — задача `material.parse` и слой 2 `material_parser@1` (рантайм — после WP1.3).
-4. ~~WP21.4 → WP21.5~~ — сделано в ветке phase-4-c (D-C-158, D-C-159): каскад проверки шагов, пометки и вмешательства (T-CV4, T-CV5).
-5. **WP26.1–26.2** — перевести `tests/e2e/` на новый путь (`T-E1` для G2), красные `T-E2`–`T-E14`; после WP1.3 потока A.
-6. ~~WP9.5, WP9.6, WP9.3~~ — сделано в ветке phase-4-c-wp9-3-ci (D-C-210–D-C-212); остаётся живая проверка на сервере.
-7. **WP9.1/9.7** (`alerts`). WP21.6 (голос) и WP22.3 шаг 5 сделаны (D-C-153, D-C-152).
-8. **WP23.6–23.7** (P2), Locust на 100 учеников (WP26.3, P2); issues #193 (ответ C), #188.
+1. **WP26.2** — подмены SAM, Voice и эмбеддингов в профиле `loadtest`; формы запросов помечены [ПРОВЕРИТЬ на стенде] (D-C-232).
+2. **WP26.3** (P2) — Locust на 100 учеников; ручной прогон на живой модели (DoD п.6a, формат маски `sam-3.1`).
+3. **WP10.6, хвост** — `tracer=create_tracer(settings)` в сборке `api/resources.py` (C) и `runtime` (A); `workers`/`cli` — шаг 5 (#209).
+4. **WP23.5** — KaTeX из `deploy/static/viz` в рендер PDF cheat sheet; старую строку `hub.deadline_set` снимает A.
+5. **WP23.7** (P2) — Obsidian, Anki (`genanki`), `POST /v1/learner/export`, `GET /v1/learner/exports/{id}`; вид `data_export` — A.
+6. **Владелец** (#270): определение «ссылки» для `orphan-objects` (D-C-211), голос WAV-only (D-C-152), `LLM_PRICES` и размер пула, `META_API_KEY` для `ops`, пересоздание тома `postgres-data`, слой 1 `artifact_writer@1`/`material_parser@1`, лимиты скана PDF (D-C-214), клиент Google OIDC и ключ Resend, живая выкатка (WP9.4).
 
 ## 6. Вопросы владельцу и блокеры
 
@@ -240,7 +238,7 @@
 | :-- | :-- | :-- |
 | BLOCKED-C-204 | снят 2026-11-04 | Рисунки на фото подключены к `LLMGateway.segment` (D-C-153) |
 | BLOCKED-B-101…108, C-201, C-202, C-203 | сняты | Слой 1 ролей — черновики (D-B-132, D-C-132); формат параметров визуализации (D-B-130) |
-| issue #193 | открыт | Ревью #182 (очередь, диспетчер) от B и C; #182 уже влит |
-| issue #188 | открыт | Принят C, решён в #194 (влит); закрыть |
+| issue #193 | закрыт | Ревью #182 (очередь, диспетчер) от B и C; #182 влит |
+| issue #188 | закрыт | Принят C, решён в #194 (влит) |
 
 Проверки на стенде, ещё не закрытые: принимает ли Spark `input_image` (WebP, лимиты), регион Contabo и path-style (`Д-§8.4`), числа обработки изображений на настоящих сканах, библиотеки `deploy/static/viz/`, порядок меток контекста, регистрация видов B в `JOB_KINDS` (D-B-170, D-C-109, D-C-110, D-B-177, D-B-158, D-B-172).
