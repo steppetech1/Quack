@@ -376,6 +376,30 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     return json(res, 200, { hits });
   }
 
+  // canvases (WP21): a canvas lives in a session; the doc has no strokes (they are in the journal), here it is empty
+  if ((g = p.match(/^\/v1\/sessions\/([^/]+)\/canvases$/)) && m === "POST") {
+    const s = S.sessions.find((x) => x.session_id === g[1]);
+    if (!s) return err(res, "NOT_FOUND", 404, "no such session");
+    const c = {
+      canvas_id: randomUUID(),
+      session_id: s.session_id,
+      task_id: body.task_id ?? null,
+      doc: { blocks: [], learner: { drawings: [], typed_formulas: [] }, teacher: { hints: [], marks: [], scaffolds: [], visualizations: [] } },
+      version: 1,
+      updated_at: now(),
+    };
+    (S.canvases ??= []).push(c);
+    return json(res, 201, c);
+  }
+  if ((g = p.match(/^\/v1\/canvases\/([^/]+)$/)) && m === "GET") {
+    const c = (S.canvases ?? []).find((x) => x.canvas_id === g[1]);
+    return c ? json(res, 200, c) : err(res, "NOT_FOUND", 404, "no such canvas");
+  }
+  if ((g = p.match(/^\/v1\/domains\/([^/]+)\/canvases$/)) && m === "GET") {
+    const ids = new Set(S.sessions.filter((s) => s.domain_id === g[1]).map((s) => s.session_id));
+    return json(res, 200, { canvases: (S.canvases ?? []).filter((c) => ids.has(c.session_id)).reverse() });
+  }
+
   // sessions
   if (p === "/v1/sessions" && m === "GET") return json(res, 200, { sessions: [...S.sessions].reverse().map(sessionView) });
   if (p === "/v1/sessions/active") return json(res, 200, S.sessions.findLast((s) => s.status === "active") ?? null);

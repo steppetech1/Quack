@@ -651,6 +651,9 @@ export const ru: Dict = {
   },
   live: {
     serverDown: "Не достучался до сервера. Бэкенд запущен?",
+    canvasOpening: "Открываю канвас…",
+    canvasLoading: "Загружаю канвас…",
+    canvasMissing: "Такого канваса здесь нет. Он может быть из другого аккаунта или удалён.",
     retry: "Ещё раз",
     allTopics: "Все темы",
     reviewToday: "Пора повторить: срок сегодня",

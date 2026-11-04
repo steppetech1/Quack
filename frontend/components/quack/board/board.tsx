@@ -47,6 +47,7 @@ const isTyping = (t: EventTarget | null) => !!(t as Element | null)?.closest?.("
 export function Board({
   canvas,
   canvasId,
+  live,
   mode,
   focusBlock = null,
   topLeft,
@@ -55,6 +56,8 @@ export function Board({
 }: {
   canvas?: Canvas;
   canvasId: string;
+  /** A canvas of the backend: the chat talks to this session's teacher */
+  live?: { sessionId: string };
   mode: "edit" | "view";
   focusBlock?: string | null;
   topLeft?: React.ReactNode;
@@ -814,7 +817,7 @@ export function Board({
               canUndo={hist.undo}
               canRedo={hist.redo}
             />
-            <BoardChat canvasId={canvasId} onJump={jump} />
+            <BoardChat canvasId={canvasId} sessionId={live?.sessionId} onJump={jump} />
           </div>
         </>
       )}
