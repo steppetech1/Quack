@@ -169,6 +169,8 @@ STREAM = Stream(
         "block_id": NO_ID,
         # WP23.4: a card of the topic (the task behind it).
         "card_id": NO_ID,
+        # WP23.7: an export of the learner's data (the status route).
+        "export_id": NO_ID,
         # WP23.5: a hub of the walk (the cheat sheet routes); stream A's `hub_id` is a graph hub.
         "cheatsheet_hub_id": NO_ID,
         # WP23.6: a skill of the learner (the routes that change or delete it).
@@ -359,6 +361,10 @@ STREAM = Stream(
             # ТЗ Ф4 §6.4 «Артефакты», WP23.1, WP23.4
             ("GET", "/v1/topics/{topic_id}/notes"),
             ("GET", "/v1/topics/{topic_id}/cards"),
+            # ТЗ Ф4 §6.4, WP23.7 (D-C-240): read only; the archive of the data is built by a job
+            ("GET", "/v1/topics/{topic_id}/export/obsidian"),
+            ("GET", "/v1/topics/{topic_id}/export/anki"),
+            ("GET", "/v1/learner/exports/{export_id}"),
             # ТЗ Ф4 §6.4, WP23.5
             ("GET", "/v1/hubs/{hub_id}/cheatsheet"),
             # ТЗ Ф4 §6.4, WP23.6
@@ -373,6 +379,7 @@ STREAM = Stream(
     routers=(
         "quack.artifacts.notes_routes:router",
         "quack.artifacts.cards_routes:router",
+        "quack.artifacts.export_routes:router",
         "quack.artifacts.hub_cheatsheet_routes:router",
         "quack.artifacts.skills_routes:router",
     ),

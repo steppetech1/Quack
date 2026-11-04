@@ -20,7 +20,8 @@ import pytest
 
 from quack.api.app import create_app
 from quack.api.ratelimit import enforce_action_rate_limit
-from quack.artifacts.documents import Artifact, Block, Card, SystemBlock, write_system_blocks
+from quack.artifacts.cards import write_system_cards
+from quack.artifacts.documents import Artifact, Block, SystemBlock, write_system_blocks
 from quack.artifacts.export_routes import get_export_reader
 from quack.artifacts.topic_export import (
     AnkiCard,
@@ -34,6 +35,7 @@ from quack.db import Db
 from quack.events.log import NewEvent, append_events
 from quack.events.values import AnswerOption, AnswerSpec, MathValue
 from quack.graph.read.models import SkillFact, TopicMemory, TopicRequires
+from tests.artifacts.test_cards_wp23 import _card  # pyright: ignore[reportPrivateUsage]
 from tests.db.fixtures import create_learner
 from tests.support.auth import session_cookie, session_token
 from tests.support.graph_read import FixedGraphReader
@@ -170,7 +172,9 @@ def test_anki_deck_is_the_same_for_the_same_cards() -> None:
             connection = sqlite3.connect(Path(tmp) / "collection.anki2")
             try:
                 guids = [r[0] for r in connection.execute("SELECT guid FROM notes")]
-                decks = [r[0] for r in connection.execute("SELECT decks FROM col")]
+                decks = [
+                    sorted(json.loads(r[0])) for r in connection.execute("SELECT decks FROM col")
+                ]
             finally:
                 connection.close()
         return guids, decks
@@ -307,8 +311,6 @@ async def test_obsidian_route_of_a_foreign_or_unknown_topic_is_404(
 async def test_anki_route_returns_the_deck_with_the_answers_of_the_tasks(
     pg_db: Db, client_for: ClientFor
 ) -> None:
-    from tests.artifacts.test_cards_wp23 import _card  # the card as the writer leaves it
-    from quack.artifacts.cards import write_system_cards
 
     learner = await create_learner(pg_db)
     await _topic(pg_db, learner)
