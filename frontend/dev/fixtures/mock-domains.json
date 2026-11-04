@@ -1,0 +1,790 @@
+{
+ "domains": [
+  {
+   "id": "matan",
+   "title": "Calculus",
+   "hubs": [
+    {
+     "id": "base",
+     "num": "0",
+     "title": "Foundations",
+     "about": "This is the language the whole course is written in: sets, functions, inequalities and induction. Without it, the other chapters are hard going.",
+     "deadline": null
+    },
+    {
+     "id": "limits",
+     "num": "I",
+     "title": "Limits",
+     "about": "A limit answers the question of what something is approaching, and it's the most important idea in the whole course. Here you learn to compute limits and to compare how fast quantities go to zero.",
+     "deadline": null
+    },
+    {
+     "id": "cont",
+     "num": "II",
+     "title": "Continuity",
+     "about": "A continuous function is one with no gaps or jumps, and it comes with useful guarantees like the existence of a root. This is also where you sort out what discontinuities look like.",
+     "deadline": null
+    },
+    {
+     "id": "deriv",
+     "num": "III",
+     "title": "Derivatives",
+     "about": "The derivative shows how fast a function changes, and it's what you use to analyze graphs and compute limits. Taylor's formula lives here too, approximating functions with polynomials.",
+     "deadline": null
+    },
+    {
+     "id": "series",
+     "num": "IV",
+     "title": "Series",
+     "about": "A series is an infinite sum, and the big question is whether it adds up to a finite number. Here you learn the convergence tests and how to work with power series.",
+     "deadline": {
+      "label": "Midterm on series",
+      "date": "2026-11-01"
+     }
+    },
+    {
+     "id": "integrals",
+     "num": "V",
+     "title": "Integrals",
+     "about": "The integral is the reverse of the derivative and a way to compute areas. Here are the main techniques: substitution, integration by parts and partial fractions.",
+     "deadline": null
+    }
+   ],
+   "topics": [
+    {
+     "id": "sets",
+     "hubId": "base",
+     "title": "Sets and logic",
+     "line": "Quantifiers, set operations, negating statements",
+     "simple": "You learn to say exactly what a collection of objects contains and how to build new collections out of old ones.",
+     "about": "A set is just a collection of objects, and the quantifiers \"for all\" and \"there exists\" let you make a claim about every object at once. You also learn to negate such statements correctly. All of calculus is written in this language, and without it the definitions look like a pile of squiggles.",
+     "state": "solid",
+     "requires": [],
+     "retention": 0.96055
+    },
+    {
+     "id": "functions",
+     "hubId": "base",
+     "title": "Functions and graphs",
+     "line": "Domain, composition, inverse function",
+     "simple": "A function is a rule that gives every input number exactly one output number.",
+     "about": "Here you work out which numbers a function can even be evaluated at, how to nest one function inside another, and how to run it backwards. Graphs let you see all of this with your own eyes. After this, every limit and every derivative is a conversation about functions.",
+     "state": "solid",
+     "requires": [
+      "sets"
+     ],
+     "retention": 0.92725
+    },
+    {
+     "id": "ineq",
+     "hubId": "base",
+     "title": "Inequalities and absolute value",
+     "line": "Estimates, the triangle inequality, working with |x|",
+     "simple": "You learn to estimate how much bigger one number is than another and to handle the absolute value, which is just distance from zero.",
+     "about": "The absolute value |x| tells you how far a number is from zero, and the triangle inequality says two sides of a triangle together are never shorter than the third. Together they give you analysis's main tool: \"this expression is at most that one\". The definition of a limit is basically a chain of such estimates.",
+     "state": "solid",
+     "requires": [
+      "sets"
+     ],
+     "retention": 0.8513499999999999
+    },
+    {
+     "id": "induction",
+     "hubId": "base",
+     "title": "Induction",
+     "line": "Proving statements for all natural n",
+     "simple": "You check a statement for the first number, then prove that \"true for n\" gives \"true for n + 1\", and suddenly it holds for all of them.",
+     "about": "It's a way to prove something for all natural numbers at once, like a row of falling dominoes. You need two steps: the base case and the inductive step. Induction shows up all the time in proofs about sequences and sums.",
+     "state": "review",
+     "requires": [
+      "sets"
+     ],
+     "retention": 0.3646
+    },
+    {
+     "id": "seq",
+     "hubId": "base",
+     "title": "Sequences",
+     "line": "Boundedness, monotonicity, subsequences",
+     "simple": "A sequence is an infinite list of numbers, and what you care about is how it behaves: does it grow, stay bounded, or bounce around?",
+     "about": "You look at the properties of a list of numbers: is it bounded, does it keep growing, can you pull out a sublist that behaves the way you want? These properties hint at whether the sequence will have a limit. Without them, neither limits nor series will work out.",
+     "state": "solid",
+     "requires": [
+      "functions",
+      "ineq"
+     ],
+     "retention": 0.96385
+    },
+    {
+     "id": "lim-seq",
+     "hubId": "limits",
+     "title": "Limit of a sequence",
+     "line": "The ε–N definition, uniqueness of the limit",
+     "simple": "A limit is the number the terms of a sequence get close to and then stay close to.",
+     "about": "The ε–N definition says exactly what \"get close\" means: however small an accuracy you demand, from some index on every term meets it. This is the first rigorous definition in the course, and all the others look like it. Later it carries over to functions and to series.",
+     "state": "solid",
+     "requires": [
+      "seq"
+     ],
+     "retention": 0.9319
+    },
+    {
+     "id": "lim-fn",
+     "hubId": "limits",
+     "title": "Limit of a function",
+     "line": "Cauchy and Heine definitions and why they're equivalent",
+     "simple": "The limit of a function tells you what value it approaches as x gets close to a given point.",
+     "about": "The definition is the same as for sequences, except the accuracy is checked for x near the point instead of for large indices. What matters is that the value at the point itself can be different, or not defined at all. Continuity and the derivative both rest on limits of functions.",
+     "state": "solid",
+     "requires": [
+      "lim-seq",
+      "functions"
+     ],
+     "retention": 0.9623499999999999
+    },
+    {
+     "id": "one-sided",
+     "hubId": "limits",
+     "title": "One-sided limits",
+     "line": "Limit from the left and right when the ordinary one doesn't exist",
+     "simple": "You look at what the function approaches when x goes to the point only from the left or only from the right.",
+     "about": "Sometimes the function behaves differently on the left and on the right: then the ordinary limit doesn't exist, but the one-sided ones do. The ordinary limit exists exactly when both one-sided limits exist and are equal. It comes in handy for finding discontinuities and for working with absolute values and piecewise functions.",
+     "state": "solid",
+     "requires": [
+      "lim-fn"
+     ],
+     "retention": 0.8557
+    },
+    {
+     "id": "remarkable",
+     "hubId": "limits",
+     "title": "Standard limits",
+     "line": "sin x / x and (1 + 1/n)ⁿ, and everything that follows from them",
+     "simple": "Two ready-made limits, sin x / x as x → 0 and (1 + 1/n)ⁿ as n → ∞, that a whole pile of other limits can be built from.",
+     "about": "The first limit equals 1, and the second leads to the number e. If you see a sine next to a small argument, or something like (1 + small)ⁿ, it usually comes down to one of them. Equivalents and the derivatives of sine and the exponential are derived from them later.",
+     "state": "review",
+     "requires": [
+      "lim-fn"
+     ],
+     "retention": 0.4512
+    },
+    {
+     "id": "infinitesimal",
+     "hubId": "limits",
+     "title": "Infinitesimals",
+     "line": "Comparing them, order of smallness, little-o notation",
+     "simple": "An infinitesimal is a quantity that tends to zero, and the interesting part is comparing which one gets there faster.",
+     "about": "Of two quantities that tend to zero, one can do it faster than the other, and that's measured by the order of smallness. The notation o(x) is a handy way to say \"something much smaller than x\". You need this language for equivalent infinitesimals and Taylor's formula.",
+     "state": "solid",
+     "requires": [
+      "lim-fn"
+     ],
+     "retention": 0.9577
+    },
+    {
+     "id": "equiv",
+     "hubId": "limits",
+     "title": "Equivalent infinitesimals",
+     "line": "Swapping in equivalents in products and quotients",
+     "simple": "Near zero sin x is almost x and ln(1 + x) is almost x too, so inside limits you can swap the complicated thing for the simple one.",
+     "about": "Two quantities are equivalent if their ratio tends to 1, and in a product or a quotient you can replace one with the other. This cuts down the work on limits a lot. In a sum, though, such a swap is dangerous, and that's a classic trap.",
+     "state": "review",
+     "requires": [
+      "remarkable",
+      "infinitesimal"
+     ],
+     "retention": 0.5127999999999999
+    },
+    {
+     "id": "indet",
+     "hubId": "limits",
+     "title": "Indeterminate forms",
+     "line": "0/0, ∞/∞, 1^∞ and how to resolve them",
+     "simple": "An indeterminate form is an expression like 0/0 where you can't tell what the limit is just by looking, so you have to rewrite it first.",
+     "about": "When the numerator and denominator both tend to zero, the answer can be anything, and the form \"0/0\" decides nothing by itself. You have to rewrite the expression: factor, multiply by a conjugate, use equivalents. ∞/∞, ∞ − ∞ and 1^∞ work the same way.",
+     "state": "confused",
+     "requires": [
+      "equiv"
+     ],
+     "retention": 0.2124
+    },
+    {
+     "id": "continuity",
+     "hubId": "cont",
+     "title": "Continuity",
+     "line": "Three equivalent definitions and the arithmetic of continuous functions",
+     "simple": "A function is continuous if you can draw its graph without lifting your pencil: a small change in x gives a small change in the value.",
+     "about": "Strictly, it means the limit at a point equals the value of the function there. Sums, products and compositions of continuous functions are continuous again. The theorems about intermediate values and extrema stand on continuity, and so does the existence of the derivative.",
+     "state": "solid",
+     "requires": [
+      "lim-fn"
+     ],
+     "retention": 0.988
+    },
+    {
+     "id": "discont",
+     "hubId": "cont",
+     "title": "Discontinuities",
+     "line": "Removable, jump, and discontinuities of the second kind",
+     "simple": "A discontinuity is a spot where the graph \"breaks\": there's a hole, a jump, or the function shoots off to infinity.",
+     "about": "Discontinuities come as removable (a hole you can patch), jumps, and discontinuities of the second kind, where at least one one-sided limit doesn't exist or is infinite. To find the type, you compute the one-sided limits. It matters for sketching graphs and for integrals.",
+     "state": "review",
+     "requires": [
+      "continuity",
+      "one-sided"
+     ],
+     "retention": 0.42519999999999997
+    },
+    {
+     "id": "weierstrass",
+     "hubId": "cont",
+     "title": "Weierstrass theorems",
+     "line": "A function continuous on a closed interval is bounded and attains its extrema",
+     "simple": "If a function is continuous on a closed interval, it doesn't run off to infinity there and it definitely hits a largest and a smallest value somewhere.",
+     "about": "The key point is that the interval is closed: on (0, 1) the function 1/x is continuous but unbounded. The theorems guarantee that the largest and smallest values exist, and you then find where they are using the derivative. They're also needed for many proofs about integrals.",
+     "state": "solid",
+     "requires": [
+      "continuity"
+     ],
+     "retention": 0.8668
+    },
+    {
+     "id": "bolzano",
+     "hubId": "cont",
+     "title": "Intermediate value theorem",
+     "line": "Intermediate values and finding roots",
+     "simple": "A continuous function that is negative at one point and positive at another has to hit zero somewhere in between.",
+     "about": "If a graph doesn't break, it can't jump over the axis without crossing it. It follows that a continuous function takes every intermediate value. This theorem is how you prove an equation has a root, and then you can find it by repeatedly halving the interval.",
+     "state": "new",
+     "requires": [
+      "continuity"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "uniform",
+     "hubId": "cont",
+     "title": "Uniform continuity",
+     "line": "When δ doesn't depend on the point; the Heine–Cantor theorem",
+     "simple": "Uniform continuity means one and the same accuracy works on the whole interval at once, not separately for each point.",
+     "about": "In ordinary continuity the size of δ can depend on the point, but here one δ works for everyone. For example, x² can't do that on the whole line, but it can on a closed interval: that's the Heine–Cantor theorem. The property comes in handy in the theory of the integral.",
+     "state": "new",
+     "requires": [
+      "weierstrass"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "deriv-def",
+     "hubId": "deriv",
+     "title": "Definition of the derivative",
+     "line": "Limit of the difference quotient and the tangent line",
+     "simple": "The derivative shows how fast a function changes at a point: it's the slope of the tangent line to the graph.",
+     "about": "You take the ratio of the change in the function to the change in x and see what it approaches as the change goes to zero. Physically, it's instantaneous speed. Almost everything else in calculus, such as optimization, graphs and Taylor series, is built on the derivative.",
+     "state": "solid",
+     "requires": [
+      "continuity"
+     ],
+     "retention": 0.8809
+    },
+    {
+     "id": "rules",
+     "hubId": "deriv",
+     "title": "Differentiation rules",
+     "line": "Sum, product, quotient and the table of derivatives",
+     "simple": "A set of ready-made rules for quickly finding the derivative of a sum, product, quotient and standard functions without computing a limit every time.",
+     "about": "The table of derivatives together with the sum, product and quotient rules lets you differentiate almost any formula mechanically. It's worth learning once and for good. Without it, every derivative problem turns into a long slog of limits.",
+     "state": "solid",
+     "requires": [
+      "deriv-def"
+     ],
+     "retention": 0.99625
+    },
+    {
+     "id": "chain",
+     "hubId": "deriv",
+     "title": "Chain rule",
+     "line": "Derivative of a composition and of an inverse function",
+     "simple": "If one function is nested inside another, the derivative is the derivative of the outer one times the derivative of the inner one.",
+     "about": "This is the chain rule: first you differentiate the \"outside\" without touching the inside, then you multiply by the derivative of what's inside. It also gives the derivative of an inverse function. You use it constantly, both in derivatives and in substitutions in integrals.",
+     "state": "solid",
+     "requires": [
+      "rules"
+     ],
+     "retention": 0.91375
+    },
+    {
+     "id": "extrema",
+     "hubId": "deriv",
+     "title": "Monotonicity and extrema",
+     "line": "Sign of the derivative and the necessary condition for an extremum",
+     "simple": "The sign of the derivative tells you whether the function is rising or falling, and the zeros of the derivative are the suspicious spots where a max or min might be.",
+     "about": "If the derivative is positive, the function is increasing, and if it's negative, decreasing. An extremum can only occur where the derivative is zero or doesn't exist. This is how you find the largest and smallest values in optimization problems.",
+     "state": "solid",
+     "requires": [
+      "chain"
+     ],
+     "retention": 0.8572
+    },
+    {
+     "id": "lhopital",
+     "hubId": "deriv",
+     "title": "L'Hôpital's rule",
+     "line": "Limit of a ratio via the ratio of derivatives",
+     "simple": "If a limit of a ratio gives 0/0 or ∞/∞, you can try taking the derivatives of the numerator and denominator separately.",
+     "about": "The rule works only for indeterminate forms of these two types, and only if the limit of the new ratio exists. Other indeterminate forms are first reduced to these. It's very handy for limits with logarithms and powers, but you have to check the conditions every time.",
+     "state": "confused",
+     "requires": [
+      "chain",
+      "indet"
+     ],
+     "retention": 0.31420000000000003
+    },
+    {
+     "id": "taylor",
+     "hubId": "deriv",
+     "title": "Taylor's formula",
+     "line": "Approximation by a polynomial and the Peano remainder",
+     "simple": "Near a point, you can replace a complicated function with a polynomial that has the same derivatives there.",
+     "about": "The more terms you take, the closer the polynomial follows the function, and the remainder shows how much error you have. This is how sin, exp and ln are computed without a calculator. Taylor's formula leads straight to Taylor series and power series.",
+     "state": "review",
+     "requires": [
+      "chain"
+     ],
+     "retention": 0.37139999999999995
+    },
+    {
+     "id": "convex",
+     "hubId": "deriv",
+     "title": "Convexity and inflection points",
+     "line": "The second derivative and the shape of the graph",
+     "simple": "The second derivative shows which way the graph bends, like a bowl or like a dome, and where the bend switches.",
+     "about": "If the second derivative is positive, the function is convex (curves upward) like a bowl, and if it's negative, concave like a dome. The points where the bend switches are called inflection points. You need this to sketch a function's graph properly.",
+     "state": "new",
+     "requires": [
+      "extrema"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "asymptotes",
+     "hubId": "deriv",
+     "title": "Asymptotes",
+     "line": "Vertical, horizontal and slant",
+     "simple": "An asymptote is a line the graph gets closer and closer to as it heads off to infinity or toward a point of discontinuity.",
+     "about": "There are vertical, horizontal and slant asymptotes, and all of them are found with limits. Together with extrema and convexity, asymptotes give the full picture of how a graph behaves. This is the last step before you draw the whole graph.",
+     "state": "new",
+     "requires": [
+      "convex"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "num-series",
+     "hubId": "series",
+     "title": "Numerical series",
+     "line": "Partial sums and convergence of a series",
+     "simple": "A series is an infinite sum of numbers, and the question is whether it ends up as a finite number.",
+     "about": "You add the terms one at a time and watch the partial sums: if they approach a number, the series converges and that number is its sum. Otherwise it diverges. Every convergence test starts from this definition.",
+     "state": "solid",
+     "requires": [
+      "lim-seq"
+     ],
+     "retention": 0.9193
+    },
+    {
+     "id": "necessary",
+     "hubId": "series",
+     "title": "Divergence test",
+     "line": "If a series converges, its terms tend to zero",
+     "simple": "If the terms of a series don't tend to zero, the series definitely diverges: you can't add up infinitely many things that aren't tiny.",
+     "about": "It's a quick check: if the limit of the terms isn't zero, you can stop thinking. But the converse is false: for the harmonic series 1/n the terms tend to zero and it diverges anyway. That's why you need other tests.",
+     "state": "solid",
+     "requires": [
+      "num-series"
+     ],
+     "retention": 0.87145
+    },
+    {
+     "id": "comparison",
+     "hubId": "series",
+     "title": "Comparison tests",
+     "line": "Bounding a series by a known one: geometric, harmonic",
+     "simple": "You compare your series with one you already know converges or diverges, and draw a conclusion.",
+     "about": "If the terms of your series are no bigger than those of a convergent series, it converges too, and if they're no smaller than those of a divergent one, it diverges. The benchmarks are the geometric series and the series 1/nᵖ. This trick saves you when the ratio and root tests give nothing.",
+     "state": "review",
+     "requires": [
+      "necessary",
+      "equiv"
+     ],
+     "retention": 0.5326
+    },
+    {
+     "id": "dalembert",
+     "hubId": "series",
+     "title": "Ratio test",
+     "line": "Convergence from the limit of the ratio of consecutive terms",
+     "simple": "You look at how many times bigger each term is than the previous one, and that tells you whether the series converges.",
+     "about": "You take the limit of the ratio of consecutive terms: below 1 the series converges, above 1 it diverges, and at exactly 1 the test says nothing. It's especially good when the terms have factorials or exponential factors. For series with powers like 1/n² it's useless.",
+     "state": "confused",
+     "requires": [
+      "comparison"
+     ],
+     "retention": 0.3368
+    },
+    {
+     "id": "cauchy-root",
+     "hubId": "series",
+     "title": "Root test",
+     "line": "Convergence from the limit of the n-th root of the term",
+     "simple": "You take the n-th root of the n-th term and see what it tends to: if it's a number below 1, the series converges.",
+     "about": "It works like the ratio test: limit below 1 means convergence, above 1 divergence, equal to 1 no answer. It's convenient when the term itself is something raised to the n-th power. The same trick underlies the formula for the radius of convergence.",
+     "state": "new",
+     "requires": [
+      "comparison"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "alternating",
+     "hubId": "series",
+     "title": "Alternating series",
+     "line": "Leibniz test, absolute and conditional convergence",
+     "simple": "If the signs of the terms alternate plus-minus, the series can converge even when the series of absolute values diverges.",
+     "about": "The alternating series test says: if the absolute values decrease to zero, the alternating series converges. You tell apart absolute convergence (the series of absolute values converges) and conditional convergence (it converges only thanks to the alternating signs). For example, 1 − 1/2 + 1/3 − … converges, but 1 + 1/2 + 1/3 + … doesn't.",
+     "state": "new",
+     "requires": [
+      "necessary"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "power",
+     "hubId": "series",
+     "title": "Power series",
+     "line": "Series in powers of (x − a) and the region of convergence",
+     "simple": "A power series is an infinite polynomial, and for each x it either adds up to a number or it doesn't.",
+     "about": "It's a series with terms aₙ(x − a)ⁿ, and the main question is for which x it converges. The answer always looks like an interval around the center, plus maybe the endpoints. Power series are how you write sin, exp and many other functions.",
+     "state": "review",
+     "requires": [
+      "dalembert",
+      "taylor"
+     ],
+     "retention": 0.5014
+    },
+    {
+     "id": "radius",
+     "hubId": "series",
+     "title": "Radius of convergence",
+     "line": "The Cauchy–Hadamard formula and checking the endpoints",
+     "simple": "The radius of convergence is the distance from the center within which a power series definitely converges and outside which it definitely diverges.",
+     "about": "You find a number R, and then the series converges for |x − a| < R and diverges for |x − a| > R. At the endpoints of the interval you have to check everything separately, since it can go either way. This is the final step when you analyze any power series.",
+     "state": "new",
+     "requires": [
+      "power",
+      "cauchy-root"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "antideriv",
+     "hubId": "integrals",
+     "title": "Antiderivatives",
+     "line": "The indefinite integral and the table",
+     "simple": "An antiderivative is a function whose derivative is the given one; basically, you run differentiation backwards.",
+     "about": "If F′ = f, then F is an antiderivative of f, and there's a whole family of them, differing by a constant. The indefinite integral is the notation for that whole family. This is the basis for computing areas and for all integration techniques.",
+     "state": "new",
+     "requires": [
+      "rules"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "substitution",
+     "hubId": "integrals",
+     "title": "Substitution",
+     "line": "Changing variables and absorbing into the differential",
+     "simple": "In a tough integral you replace part of the expression with a new letter so that it becomes a standard one.",
+     "about": "It's the chain rule read backwards: if you see a function and its derivative under the integral, replace the function with t. The main thing is not to forget to convert dx and to go back to the original variable at the end. It's the most common integration technique.",
+     "state": "new",
+     "requires": [
+      "antideriv",
+      "chain"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "by-parts",
+     "hubId": "integrals",
+     "title": "Integration by parts",
+     "line": "∫u dv = uv − ∫v du and when to use it",
+     "simple": "If the integrand is a product of two functions, you can shift part of it onto a derivative to make the integral simpler.",
+     "about": "The formula ∫u dv = uv − ∫v du comes from the product rule for derivatives. You choose u so that its derivative gets simpler, and dv so that it's easy to integrate. It works for x·eˣ, x·sin x, ln x and the like.",
+     "state": "new",
+     "requires": [
+      "antideriv"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "rational",
+     "hubId": "integrals",
+     "title": "Partial fractions",
+     "line": "Decomposing rational functions and integrating the pieces",
+     "simple": "You break a fraction of polynomials into simple pieces, and each piece can be integrated from the table.",
+     "about": "First you pull out the whole part, then factor the denominator and write the fraction as a sum of partial fractions. Each partial fraction is integrated separately. The method is universal: every rational function can be integrated in the end.",
+     "state": "new",
+     "requires": [
+      "substitution"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "hyperbolic",
+     "hubId": null,
+     "title": "Hyperbolic functions",
+     "line": "sinh, cosh and tanh: the exponential cousins of sin and cos",
+     "simple": "Sinh and cosh are built from e^x and e^-x, and they behave a lot like sin and cos, just without the circles.",
+     "about": "The hyperbolic sine and cosine are plain combinations of e^x and e^-x. They have their own identities that look like the trig ones with a sign flipped, and their derivatives are just as tidy. You'll run into them in integrals, in limits, and anywhere a hanging chain shows up.",
+     "state": "solid",
+     "requires": [],
+     "retention": 0.93595
+    },
+    {
+     "id": "newton",
+     "hubId": null,
+     "title": "Newton's method",
+     "line": "Finding a root by sliding down tangent lines",
+     "simple": "Pick a guess for a root, slide down the tangent line to the axis, and repeat until you land on it.",
+     "about": "At each step you replace the curve with its tangent line and take the point where that line crosses the x-axis as your next guess. It usually homes in on the root very fast, but a bad starting point or a flat tangent can send it off somewhere strange. It's the derivative doing real work for you.",
+     "state": "review",
+     "requires": [
+      "deriv-def"
+     ],
+     "retention": 0.4274
+    },
+    {
+     "id": "stirling",
+     "hubId": null,
+     "title": "Stirling's formula",
+     "line": "How fast n! grows, in one neat approximation",
+     "simple": "It tells you roughly how big n! gets, using only square roots, powers and e.",
+     "about": "Factorials blow up so quickly that computing them directly is hopeless for big n. Stirling's formula swaps n! for a neat expression that is accurate when n is large. It's handy in limits with factorials and in the ratio test for series.",
+     "state": "new",
+     "requires": [
+      "seq"
+     ],
+     "retention": 0
+    },
+    {
+     "id": "parametric",
+     "hubId": null,
+     "title": "Parametric curves",
+     "line": "Curves given as x(t), y(t) and their tangents",
+     "simple": "Instead of y = f(x), you describe a curve by saying where you are at each moment t.",
+     "about": "A parametric curve gives x and y as separate functions of a parameter t, so it can loop, cross itself or go backwards. You find the tangent slope as dy/dx = y'(t) / x'(t) by using the chain rule. Circles, spirals and cycloids are all easiest this way.",
+     "state": "new",
+     "requires": [
+      "functions",
+      "chain"
+     ],
+     "retention": 0
+    }
+   ],
+   "sessions": [
+    {
+     "title": "Radius of convergence",
+     "date": "2026-10-29",
+     "topics": [
+      "Power series",
+      "Radius of convergence"
+     ]
+    },
+    {
+     "title": "Where the ratio test breaks",
+     "date": "2026-10-28",
+     "topics": [
+      "Ratio test"
+     ]
+    },
+    {
+     "title": "L'Hôpital without the magic",
+     "date": "2026-10-26",
+     "topics": [
+      "L'Hôpital's rule",
+      "Indeterminate forms"
+     ]
+    },
+    {
+     "title": "Taylor up to o(x³)",
+     "date": "2026-10-24",
+     "topics": [
+      "Taylor's formula"
+     ]
+    },
+    {
+     "title": "Discontinuities of the second kind",
+     "date": "2026-10-21",
+     "topics": [
+      "Discontinuities"
+     ]
+    },
+    {
+     "title": "Lecture 7: comparison tests",
+     "date": "2026-10-19",
+     "topics": [
+      "Comparison tests",
+      "Numerical series"
+     ]
+    },
+    {
+     "title": "Why 1^∞ isn't 1",
+     "date": "2026-10-14",
+     "topics": [
+      "Indeterminate forms",
+      "Standard limits"
+     ]
+    },
+    {
+     "title": "ε–δ, explained simply",
+     "date": "2026-10-09",
+     "topics": [
+      "Limit of a function"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "linal",
+   "title": "Linear algebra",
+   "hubs": [],
+   "topics": [],
+   "sessions": []
+  },
+  {
+   "id": "prob",
+   "title": "Probability",
+   "hubs": [],
+   "topics": [],
+   "sessions": []
+  },
+  {
+   "id": "db",
+   "title": "Databases",
+   "hubs": [],
+   "topics": [],
+   "sessions": []
+  }
+ ],
+ "notes": {
+  "dalembert": {
+   "summary": "You look at how many times bigger the next term is than the previous one. If the limit is below one, the series converges; if it's above, it diverges. Exactly one, and the test stays silent.",
+   "notes": [
+    {
+     "kind": "thm",
+     "text": "Let $a_n > 0$ and suppose $q = \\lim_{n\\to\\infty} \\dfrac{a_{n+1}}{a_n}$ exists. If $q < 1$, the series $\\sum a_n$ converges; if $q > 1$, it diverges.",
+     "src": "lecture 7, slide 12"
+    },
+    {
+     "kind": "text",
+     "text": "When $q = 1$ the test tells you nothing: the series $\\sum \\dfrac{1}{n}$ and $\\sum \\dfrac{1}{n^2}$ both give $q = 1$, but the first diverges and the second converges.",
+     "src": "lecture 7, slide 13"
+    }
+   ]
+  },
+  "radius": {
+   "summary": "A number R such that a power series converges for |x − a| < R and diverges for |x − a| > R. The endpoints of the interval are checked separately.",
+   "notes": [
+    {
+     "kind": "thm",
+     "text": "The Cauchy–Hadamard formula:\n\n$$R = \\frac{1}{\\limsup_{n\\to\\infty} \\sqrt[n]{|a_n|}}$$",
+     "src": "lecture 9, slide 4"
+    },
+    {
+     "kind": "text",
+     "text": "If the limit exists, it's often easier to compute $R = \\lim \\left|\\dfrac{a_n}{a_{n+1}}\\right|$.",
+     "src": "lecture 9, slide 6"
+    }
+   ]
+  },
+  "num-series": {
+   "summary": "A series is the limit of its partial sums. It converges if that limit exists and is finite.",
+   "notes": [
+    {
+     "kind": "def",
+     "text": "The series $\\sum_{n=1}^{\\infty} a_n$ converges if the sequence of partial sums $S_N = \\sum_{n=1}^{N} a_n$ converges. Its limit is the sum of the series.",
+     "src": "lecture 5, slide 3"
+    },
+    {
+     "kind": "thm",
+     "text": "The geometric series: $\\sum_{n=0}^{\\infty} q^n = \\dfrac{1}{1-q}$ for $|q| < 1$, and it diverges for $|q| \\ge 1$.",
+     "src": "lecture 5, slide 7"
+    }
+   ]
+  },
+  "comparison": {
+   "summary": "You compare your series with a known one: if yours is no bigger than a convergent one, it converges too, and if it's no smaller than a divergent one, it diverges.",
+   "notes": [
+    {
+     "kind": "thm",
+     "text": "Let $0 \\le a_n \\le b_n$. If $\\sum b_n$ converges, then $\\sum a_n$ converges too. If $\\sum a_n$ diverges, then $\\sum b_n$ diverges too.",
+     "src": "lecture 7, slide 3"
+    },
+    {
+     "kind": "thm",
+     "text": "The limit form: if $\\lim \\dfrac{a_n}{b_n} = c \\in (0, \\infty)$, the series converge or diverge together.",
+     "src": "lecture 7, slide 6"
+    }
+   ]
+  }
+ },
+ "cheatSheets": {
+  "series": {
+   "formulas": [
+    {
+     "name": "Ratio test",
+     "tex": "q = \\lim \\dfrac{a_{n+1}}{a_n}"
+    },
+    {
+     "name": "Root test",
+     "tex": "q = \\lim \\sqrt[n]{a_n}"
+    },
+    {
+     "name": "Cauchy–Hadamard",
+     "tex": "R = \\dfrac{1}{\\limsup \\sqrt[n]{|a_n|}}"
+    },
+    {
+     "name": "Geometric series",
+     "tex": "\\sum_{n=0}^{\\infty} q^n = \\dfrac{1}{1-q},\\ |q|<1"
+    }
+   ],
+   "methods": [
+    {
+     "sign": "the term has $n!$ or $a^n$",
+     "how": "ratio test"
+    },
+    {
+     "sign": "the term is an $n$-th power: $(\\dots)^n$",
+     "how": "root test"
+    },
+    {
+     "sign": "the term looks like $1/n^p$",
+     "how": "comparison (limit form)"
+    },
+    {
+     "sign": "the signs alternate",
+     "how": "Leibniz test, then absolute convergence"
+    },
+    {
+     "sign": "a series in powers of $x$",
+     "how": "radius first, then the endpoints separately"
+    }
+   ],
+   "traps": [
+    "At $q = 1$ the ratio and root tests give no conclusion: use another test",
+    "The divergence test condition $a_n \\to 0$ is not sufficient: $\\sum 1/n$ diverges",
+    "The endpoints of the interval of convergence are checked separately"
+   ]
+  }
+ }
+}

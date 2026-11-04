@@ -43,7 +43,7 @@ function EditBox({ initial, formula, onDone }: { initial: string; formula: boole
       }}
       onBlur={(e) => finish(e.currentTarget.value)}
       className={cn(
-        "field-sizing-content min-w-[12ch] resize-none rounded-[10px] border border-ribbon/70 bg-cloth px-2 py-1 text-paper outline-none placeholder:text-paper-dim",
+        "field-sizing-content min-w-[12ch] resize-none rounded-[2px] border border-ribbon/70 bg-cloth px-2 py-1 text-paper outline-none placeholder:text-paper-dim",
         formula ? "num text-[18px]" : "text-[20px] leading-tight",
       )}
     />
@@ -118,7 +118,7 @@ export function ItemView({
     return (
       <div {...common} className={cn(frame, "cursor-move")} style={{ left: item.x, top: item.y, width: item.w, height: item.h }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={item.src} alt="" draggable={false} className="size-full rounded-[10px] object-cover" />
+        <img src={item.src} alt="" draggable={false} className="size-full rounded-[2px] object-cover" />
         {handles}
       </div>
     );

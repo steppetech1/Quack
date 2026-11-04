@@ -13,7 +13,7 @@ import { useSoon } from "./soon";
 import { useMenu } from "./use-menu";
 
 const ITEM =
-  "flex min-h-10 w-full items-center gap-2.5 rounded-option px-3 text-left text-body text-paper transition-colors hover:bg-cloth-hover";
+  "caps flex min-h-10 w-full items-center gap-2.5 rounded-[2px] px-3 text-left text-paper transition-colors duration-[var(--dur-s)] ease-out [--caps-size:0.75rem] hover:bg-cloth-hover";
 const ICON = "size-[18px] shrink-0 stroke-[1.6] text-paper-dim";
 
 /** Меню профиля внизу левой панели: открывается вверх, как в claude.ai */
@@ -26,7 +26,7 @@ export function ProfileMenu({ active }: { active: boolean }) {
   const { me, logout } = useData();
   // С бэкендом — настоящий профиль, на моках — из словаря
   // На бэкенде, пока профиль не загрузился, мок-имя не показываем
-  const name = me ? (me.display_name ?? me.email.split("@")[0]) : API_MODE ? "" : t.profile.name;
+  const name = me ? (typeof me.settings.name === "string" && me.settings.name ? me.settings.name : me.email.split("@")[0]) : API_MODE ? "" : t.profile.name;
   const email = me ? me.email : API_MODE ? "" : t.profile.email;
   const initial = me ? name.charAt(0).toUpperCase() : API_MODE ? "" : t.profile.initial;
   const [open, setOpen] = useState(false);
@@ -63,9 +63,9 @@ export function ProfileMenu({ active }: { active: boolean }) {
   return (
     <div ref={root} className="relative mt-auto border-t border-seam-soft pt-3">
       {open && (
-        <div className="absolute inset-x-0 bottom-full z-30 mb-2 rounded-[14px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]">
+        <div className="absolute inset-x-0 bottom-full z-30 mb-2 rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-16px_rgb(0_0_0/0.6)]">
           <div className="px-3 pt-2 pb-2.5">
-            <p className="text-body font-medium text-paper">{name}</p>
+            <p className="display-caps truncate text-body text-paper">{name}</p>
             <p className="truncate text-small text-paper-dim">{email}</p>
           </div>
           <ul role="menu" aria-label={t.profile.menu} onKeyDown={onMenuKey} className="border-t border-seam-soft pt-1.5">
@@ -85,7 +85,7 @@ export function ProfileMenu({ active }: { active: boolean }) {
               <button role="menuitem" type="button" aria-expanded={lang} onClick={() => setLang((v) => !v)} className={ITEM}>
                 <Languages aria-hidden className={ICON} />
                 <span className="flex-1">{t.profile.language}</span>
-                <ChevronRight aria-hidden className={cn("size-3.5 text-paper-dim transition-transform duration-200", lang && "rotate-90")} />
+                <ChevronRight aria-hidden className={cn("size-3.5 text-paper-dim transition-transform duration-[var(--dur-s)] ease-out", lang && "rotate-90")} />
               </button>
               {lang && (
                 <ul role="group" aria-label={t.profile.interfaceLanguage} className="mb-1">
@@ -121,7 +121,7 @@ export function ProfileMenu({ active }: { active: boolean }) {
               <button role="menuitem" type="button" onClick={() => later(t.soon.plans)} className={ITEM}>
                 <ArrowUpRight aria-hidden className={ICON} />
                 <span className="flex-1 whitespace-nowrap">{t.profile.upgrade}</span>
-                <span className="num shrink-0 rounded-full border border-seam px-2 py-0.5 text-[0.75rem] text-paper-dim">{t.profile.plan}</span>
+                <span className="caps shrink-0 rounded-pill border border-seam px-2.5 py-0.5 text-paper-dim [--caps-size:0.625rem]">{t.profile.plan}</span>
               </button>
             </li>
             <li role="none">
@@ -139,14 +139,14 @@ export function ProfileMenu({ active }: { active: boolean }) {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex min-h-11 w-full items-center gap-2.5 rounded-control px-3 text-left text-paper transition-colors hover:bg-cloth-hover",
-          (open || active) && "bg-cloth-raised",
+          "flex min-h-11 w-full items-center gap-2.5 rounded-[2px] border border-transparent px-3 text-left text-paper transition-colors duration-[var(--dur-s)] ease-out hover:bg-cloth-hover",
+          (open || active) && "border-seam bg-cloth-raised",
         )}
       >
-        <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-cloth-hover text-small text-paper-dim">
+        <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-pill border border-seam text-small text-paper-dim">
           {initial}
         </span>
-        <span className="min-w-0 flex-1 truncate">{name}</span>
+        <span className="caps min-w-0 flex-1 truncate">{name}</span>
       </button>
     </div>
   );

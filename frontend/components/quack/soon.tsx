@@ -34,9 +34,9 @@ export function SoonProvider({ children }: { children: React.ReactNode }) {
         {msg && (
           <p
             key={msg.n}
-            className="animate-toast rounded-xl border border-seam bg-cloth-raised px-4 py-2.5 text-small text-paper shadow-[0_8px_24px_-8px_rgb(0_0_0/0.6)]"
+            className="animate-toast rounded-[2px] border border-seam bg-cloth-raised px-4 py-2.5 text-small text-paper shadow-[0_8px_24px_-12px_rgb(0_0_0/0.6)]"
           >
-            {!msg.plain && <span className="text-paper-dim">{t.soon.prefix}</span>}
+            {!msg.plain && <span className="caps text-paper-dim">{t.soon.prefix}</span>}
             {msg.text}
           </p>
         )}

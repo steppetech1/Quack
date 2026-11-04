@@ -75,8 +75,6 @@ export type Domain = {
   today: TodayItem[];
   /** Готовность к ближайшему дедлайну, 0–100 */
   readiness?: number;
-  /** Статус на бэкенде: onboarding (темы ещё не подтверждены), active, archived. У моков не задан */
-  status?: string;
   /** Бэкенд ещё не применил свежие события к графу (`lag_degraded`) */
   lagging?: boolean;
 };

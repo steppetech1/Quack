@@ -59,8 +59,8 @@ function PracticeMock({ topicId }: { topicId: string }) {
       <BackLink href={`/topic/${found.topic.id}`}>{clean(found.topic.title)}</BackLink>
       <StubHeader title={t.title(clean(found.topic.title))} />
 
-      <section aria-labelledby="task-h" className="mt-8 rounded-[16px] border border-seam p-5">
-        <h2 id="task-h" className="num text-small text-paper-dim">
+      <section aria-labelledby="task-h" className="mt-8 rounded-[2px] border border-seam p-5">
+        <h2 id="task-h" className="caps text-paper-dim">
           {t.task(i + 1)}
         </h2>
         <p className="mt-2 text-body text-paper">
@@ -70,7 +70,7 @@ function PracticeMock({ topicId }: { topicId: string }) {
         {hints > 0 && (
           <ol className="mt-4 space-y-2">
             {task.hints.slice(0, hints).map((h, k) => (
-              <li key={k} className="rounded-option bg-cloth-raised px-3 py-2 text-small text-paper">
+              <li key={k} className="rounded-[2px] border border-seam-soft px-3 py-2 text-small text-paper">
                 <span className="text-paper-dim">{t.hintNum(k + 1)}: </span>
                 <Inline text={h} />
               </li>
@@ -86,7 +86,7 @@ function PracticeMock({ topicId }: { topicId: string }) {
             setVerdict(norm === task.answer ? "ok" : "no");
           }}
         >
-          <label htmlFor={`${id}-a`} className="mb-1.5 block text-body font-medium text-paper">
+          <label htmlFor={`${id}-a`} className="caps mb-1.5 block text-paper">
             {t.answerLabel}
           </label>
           <input id={`${id}-a`} value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={t.answerPh} className={FIELD} />
@@ -145,8 +145,8 @@ function SessionSummaryMock() {
       <StubHeader title={t.title} body={t.body(summary.title)} />
       <dl className="mt-8 grid grid-cols-3 gap-3">
         {stats.map(([label, value]) => (
-          <div key={label} className="rounded-[14px] border border-seam p-4">
-            <dt className="text-small text-paper-dim">{label}</dt>
+          <div key={label} className="rounded-[2px] border border-seam p-4">
+            <dt className="caps text-paper-dim">{label}</dt>
             <dd className="num mt-1 text-[28px] leading-none text-paper">{value}</dd>
           </div>
         ))}
@@ -198,7 +198,7 @@ function LibraryMock() {
       <ul className="mt-4 border-t border-seam-soft">
         {shown.map((a) => (
           <li key={a.id} className="border-b border-seam-soft">
-            <Link href={a.kind === "note" ? `/notes/${a.id}` : `/topic/${a.topicId}`} className="block rounded-option px-1 py-3 transition-colors hover:bg-cloth-hover">
+            <Link href={a.kind === "note" ? `/notes/${a.id}` : `/topic/${a.topicId}`} className="block rounded-option px-1 py-3 transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover">
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-body text-paper">{a.title}</span>
                 <span className={PILL}>{t.kinds[a.kind]}</span>

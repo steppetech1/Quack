@@ -18,7 +18,7 @@ import { useSoon } from "./soon";
 
 const clean = (s: string) => s.replace(/­/g, "");
 
-const PRIMARY_BTN = "inline-flex h-10 items-center justify-center rounded-control bg-ribbon px-4 text-body font-semibold text-on-ribbon transition-colors hover:bg-ribbon-hover";
+const PRIMARY_BTN = "caps inline-flex h-10 items-center justify-center rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-ribbon-hover";
 
 export function HubPage({ id }: { id: string }) {
   const tx = useT();
@@ -27,11 +27,12 @@ export function HubPage({ id }: { id: string }) {
   const { domain } = useShell();
   const soon = useSoon();
   const { start, busy } = useStartSession();
-  const hub = domain.hubs.find((h) => h.id === id);
+  // "all" is the hub over the whole subject: not a node on the graph, reached from the pill next to it
+  const hub = useMemo(() => (id === "all" ? { id, num: "·", title: domain.title, about: "" } : domain.hubs.find((h) => h.id === id)), [id, domain]);
 
   const data = useMemo(() => {
     if (!hub) return null;
-    const topics = domain.topics.filter((t) => t.hubId === hub.id);
+    const topics = hub.id === "all" ? domain.topics : domain.topics.filter((t) => t.hubId === hub.id);
     // порядок изучения: по глубине «нужно до» внутри главы
     const byId = new Map(topics.map((t) => [t.id, t]));
     const depth = new Map<string, number>();
@@ -93,7 +94,7 @@ export function HubPage({ id }: { id: string }) {
           <button
             type="button"
             onClick={() => soon(tx.hub.pdfSoon)}
-            className="h-10 rounded-control border border-seam px-3 text-small text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+            className="caps h-10 rounded-pill border border-ribbon/60 px-5 text-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-ribbon hover:bg-ribbon hover:text-on-ribbon"
           >
             PDF
           </button>
@@ -112,8 +113,8 @@ export function HubPage({ id }: { id: string }) {
       <Crumbs domainTitle={domain.title} />
 
       {suggested && (
-        <div className="mt-2 rounded-[14px] border border-seam bg-cloth-raised p-4">
-          <p className="font-semibold text-paper">{tx.hub.suggestedTitle}</p>
+        <div className="mt-2 rounded-[2px] border border-seam bg-cloth-raised p-4">
+          <p className="display-caps text-[1.125rem] text-paper">{tx.hub.suggestedTitle}</p>
           <p className="mt-0.5 text-paper-dim">{tx.hub.suggestedBody}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => soon(tx.hub.startChapterSoon(title))} className={PRIMARY_BTN}>
@@ -129,9 +130,9 @@ export function HubPage({ id }: { id: string }) {
       <header className="mt-2 flex items-start gap-4">
         <HubRing progress={progress} suggested={suggested} size={56} />
         <div className="min-w-0 flex-1">
-          <p className="num text-small text-paper-dim">§ {hub.num}</p>
-          <h1 className="font-serif text-display font-bold tracking-[-0.01em] text-paper">{title}</h1>
-          <p className="num mt-1 text-small text-paper-dim">
+          <p className="caps text-paper-dim">§ {hub.num}</p>
+          <h1 className="display-caps text-display text-paper">{title}</h1>
+          <p className="num mt-1.5 text-small text-paper-dim">
             {tx.hub.topicsCount(started, ordered.length)}
           </p>
         </div>
@@ -185,10 +186,10 @@ export function HubPage({ id }: { id: string }) {
           const run = () =>
             void start(
               k === "all"
-                ? { domainId: domain.id, topicId: next.id, mode: "learn" }
+                ? { domainId: domain.id, topicId: next.id, intent: "learn" }
                 : k === "review"
-                  ? { domainId: domain.id, topicId: due.id, mode: "review" }
-                  : { domainId: domain.id, mode: "learn" },
+                  ? { domainId: domain.id, topicId: due.id, intent: "review" }
+                  : { domainId: domain.id, intent: "learn" },
             );
           return <ActionButton key={k} label={a} primary={k === primaryAction} soonText="" onClick={run} disabled={busy} />;
         })}
@@ -198,14 +199,14 @@ export function HubPage({ id }: { id: string }) {
         <ol>
           {ordered.map((t) => (
             <li key={t.id} className="border-b border-seam-soft last:border-0">
-              <Link href={`/topic/${t.id}`} className="flex min-h-14 items-center gap-3 rounded-option px-1 py-2 transition-colors hover:bg-cloth-hover">
+              <Link href={`/topic/${t.id}`} className="flex min-h-14 items-center gap-3 rounded-option px-1 py-2 transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover">
                 <MemoryRing state={t.state} retention={t.retention} size={24} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-paper">{clean(t.title)}</span>
                   {t.misconception && <span className="block truncate text-small text-st-confused">{t.misconception}</span>}
                 </span>
-                <span className={cn("shrink-0 text-small", t.state === "confused" ? "text-st-confused" : "text-paper-dim")}>
-                  {tx.states[t.state].toLowerCase()}
+                <span className={cn("caps shrink-0 [--caps-size:0.625rem]", t.state === "confused" ? "text-st-confused" : "text-paper-dim")}>
+                  {tx.states[t.state]}
                 </span>
                 <ChevronRight aria-hidden className="size-4 shrink-0 text-paper-dim" />
               </Link>

@@ -8,17 +8,17 @@ import { cn } from "@/lib/utils";
 export type Tool = "select" | "hand" | "pen" | "marker" | "eraser" | "text" | "formula";
 
 const BTN =
-  "group relative inline-flex size-11 shrink-0 items-center justify-center rounded-[11px] border border-transparent text-paper-dim transition-colors hover:bg-cloth-hover hover:text-paper disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-paper-dim [&>svg]:size-[19px] [&>svg]:stroke-[1.6]";
-const ON = "border-paper-dim/60 bg-cloth-hover text-paper";
+  "group relative inline-flex size-11 shrink-0 items-center justify-center rounded-[2px] border border-transparent text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-paper-dim [&>svg]:size-[19px] [&>svg]:stroke-[1.6]";
+const ON = "border-ribbon bg-ribbon-soft text-ribbon";
 
 function Tip({ label, keys }: { label: string; keys?: string }) {
   return (
     <span
       aria-hidden
-      className="pointer-events-none absolute left-full z-30 ml-2.5 hidden items-center gap-2 rounded-[10px] border border-seam bg-cloth-deep px-2.5 py-1.5 text-small whitespace-nowrap text-paper opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 md:flex"
+      className="pointer-events-none absolute left-full z-30 ml-2.5 hidden items-center gap-2 caps rounded-[2px] border border-seam bg-cloth-deep px-2.5 py-1.5 whitespace-nowrap text-paper opacity-0 transition-opacity duration-(--dur-s) ease-out group-hover:opacity-100 group-focus-visible:opacity-100 md:flex"
     >
       {label}
-      {keys && <kbd className="num rounded-md border border-seam px-1.5 text-[12px] text-paper-dim">{keys}</kbd>}
+      {keys && <kbd className="num rounded-[2px] border border-seam px-1.5 text-[12px] normal-case text-paper-dim">{keys}</kbd>}
     </span>
   );
 }
@@ -68,7 +68,7 @@ export function Toolbar({
       aria-orientation="vertical"
       data-ui
       className={cn(
-        "z-20 flex gap-1 rounded-[14px] border border-seam bg-cloth-raised p-1 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]",
+        "z-20 flex gap-1 rounded-[2px] border border-seam bg-cloth-raised p-1 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]",
         "max-md:max-w-full max-md:self-start max-md:overflow-x-auto",
         "md:absolute md:top-1/2 md:left-3 md:-translate-y-1/2 md:flex-col md:overflow-visible",
       )}
@@ -95,7 +95,7 @@ export function Toolbar({
               <div
                 role="group"
                 aria-label={tx.board.penColor}
-                className="flex gap-0.5 max-md:ml-1 max-md:items-center md:absolute md:top-0 md:left-full md:ml-3 md:rounded-[14px] md:border md:border-seam md:bg-cloth-raised md:p-1 md:shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
+                className="flex gap-0.5 max-md:ml-1 max-md:items-center md:absolute md:top-0 md:left-full md:ml-3 md:rounded-[2px] md:border md:border-seam md:bg-cloth-raised md:p-1 md:shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
               >
                 {(Object.keys(INK_VAR) as InkColor[]).map((c) => (
                   <button
@@ -104,9 +104,9 @@ export function Toolbar({
                     aria-label={tx.board.color(tx.board.ink[c].toLowerCase())}
                     aria-pressed={ink === c}
                     onClick={() => setInk(c)}
-                    className={cn("inline-flex size-10 items-center justify-center rounded-[11px] border border-transparent hover:bg-cloth-hover", ink === c && "border-paper-dim/60 bg-cloth-hover")}
+                    className={cn("inline-flex size-10 items-center justify-center rounded-[2px] border border-transparent transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover", ink === c && "border-ribbon bg-ribbon-soft")}
                   >
-                    <span aria-hidden className="size-4.5 rounded-full border border-black/30" style={{ background: INK_VAR[c] }} />
+                    <span aria-hidden className="size-4.5 rounded-pill border border-black/30" style={{ background: INK_VAR[c] }} />
                   </button>
                 ))}
               </div>
