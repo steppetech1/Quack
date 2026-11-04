@@ -2,7 +2,8 @@
 #
 # Outside the server only the learner API, sign-in and /healthz are reachable. /health/live,
 # /health/ready, /internal/*, the docs and the OpenAPI document are answered with 404 here and
-# never reach `api` (Т-§19.1, Д-§9.1).
+# never reach `api` (Т-§19.1, Д-§9.1). The one thing Caddy serves itself is /static/viz/* (the
+# pinned D3, Plotly, KaTeX of the visualizations, deploy/static/viz/, WP9.2, D-C-218).
 #
 # `API_DOMAIN` defaults to the production name; a local stack sets API_DOMAIN=localhost and
 # Caddy then serves a locally signed certificate.
@@ -27,6 +28,19 @@
 			flush_interval -1
 			stream_close_delay 30s
 		}
+	}
+
+	# The libraries of `GET /v1/viz/{id}` pages. The page is a sandboxed document without an origin,
+	# so its script, style and font requests are cross-origin: fonts need the CORS header. A path
+	# holds its version and never changes, hence `immutable`.
+	handle /static/viz/* {
+		root * /srv
+		header {
+			Access-Control-Allow-Origin "*"
+			Cache-Control "public, max-age=31536000, immutable"
+			X-Content-Type-Options nosniff
+		}
+		file_server
 	}
 
 	handle {
