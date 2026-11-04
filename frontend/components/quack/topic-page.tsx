@@ -98,7 +98,7 @@ export function TopicPage({ id }: { id: string }) {
       <Crumbs domainTitle={domain.title} hub={hub ? { id: hub.id, num: hub.num, title: hubTitle } : undefined} noChapter={hub ? undefined : tx.graph.noChapter} />
 
       <header className="mt-2 flex items-start justify-between gap-3">
-        <h1 className="font-serif text-display font-bold tracking-[-0.01em] text-paper">{title}</h1>
+        <h1 className="display-caps text-display text-paper">{title}</h1>
         <MoreMenu
           items={[
             { label: tx.topic.rename, soon: tx.topic.renameSoon(title) },
@@ -112,8 +112,8 @@ export function TopicPage({ id }: { id: string }) {
       <div className="mt-4 flex items-start gap-4">
         <MemoryRing state={topic.state} retention={topic.retention} size={40} />
         <div className="min-w-0">
-          <p className="font-semibold text-paper">{tx.states[topic.state].toLowerCase()}</p>
-          <p className="mt-0.5 text-paper-dim">{topic.line}</p>
+          <p className="caps text-paper">{tx.states[topic.state]}</p>
+          <p className="mt-1 text-paper-dim">{topic.line}</p>
           {topic.misconception && <p className="mt-1.5 text-st-confused">{topic.misconception}</p>}
           <p className="num mt-2 text-small text-paper-dim">
             {isNew
@@ -126,7 +126,7 @@ export function TopicPage({ id }: { id: string }) {
       </div>
 
       <section aria-labelledby="topic-about-h" className="mt-6">
-        <h2 id="topic-about-h" className="num text-small tracking-wide text-paper-dim uppercase">
+        <h2 id="topic-about-h" className="caps text-paper-dim">
           {tx.topic.about}
         </h2>
         <p className="mt-1.5 max-w-[62ch] text-body leading-relaxed text-paper">{topic.about}</p>
@@ -142,7 +142,7 @@ export function TopicPage({ id }: { id: string }) {
                 scrollToId("topic-sessions", 16);
                 flash("topic-sessions-h");
               }}
-              className="inline-flex h-10 items-center justify-center rounded-control border border-seam px-4 text-body font-semibold text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+              className="caps inline-flex h-10 items-center justify-center rounded-pill border border-ribbon/60 px-6 text-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-ribbon hover:bg-ribbon hover:text-on-ribbon"
             >
               {a}
             </button>
@@ -178,9 +178,9 @@ export function TopicPage({ id }: { id: string }) {
                     key={c.id}
                     type="button"
                     onClick={() => soon(tx.topic.canvasSoon(c.title))}
-                    className="group block min-h-10 w-full rounded-[16px] border border-seam bg-cloth-raised p-2.5 text-left transition-[transform,border-color] hover:-translate-y-px hover:border-rule sm:w-[196px]"
+                    className="group block min-h-10 w-full rounded-[2px] border border-seam bg-cloth-raised p-2.5 text-left transition-[transform,border-color] duration-(--dur-s) ease-(--ease-out) hover:-translate-y-px hover:border-ribbon sm:w-[196px]"
                   >
-                    <Sketch kind={c.sketch} className="h-[112px] w-full rounded-[14px] bg-cloth transition-colors group-hover:bg-cloth-hover" />
+                    <Sketch kind={c.sketch} className="h-[112px] w-full rounded-[2px] bg-cloth transition-colors group-hover:bg-cloth-hover" />
                     <span className="mt-2 block line-clamp-2 px-0.5 text-small leading-snug text-paper">{c.title}</span>
                     <span className="num block px-0.5 pb-0.5 text-small text-paper-dim">{dayLabel(c.date)}</span>
                   </button>

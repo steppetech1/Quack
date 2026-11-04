@@ -4,7 +4,18 @@ import { Maximize2, Minus, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { hubLabelPx, layoutDomain, type GraphLayout, type GraphMode, type PlacedHub, type PlacedTopic } from "@/lib/graph-layout";
+import {
+  hubLabelPx,
+  hubLabelSizeEst,
+  layoutDomain,
+  placeHubLabels,
+  type GraphLayout,
+  type GraphMode,
+  type HubLabelSize,
+  type HubLabelSpot,
+  type PlacedHub,
+  type PlacedTopic,
+} from "@/lib/graph-layout";
 import { useFmt, useT } from "@/lib/i18n/provider";
 import type { Domain } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -34,6 +45,14 @@ const modeKeyOf = (m: GraphMode) => (m.kind === "hub" ? `hub:${m.hubId}` : m.kin
 const clean = (s: string) => s.replace(/­/g, "");
 
 type Ext = { x0: number; x1: number; y0: number; y1: number };
+
+/** Экранный прямоугольник подписи главы по месту, которое выбрал placeHubLabels */
+function hubLabelBox(hx: number, hy: number, s: HubLabelSpot, size: HubLabelSize, hubR: number): Ext {
+  const near = hubR + 8;
+  const x0 = s.side > 0 ? hx + near + s.dx : hx - near - s.dx - size.w;
+  const y0 = (s.below ? hy + 3 : hy - 3 - size.h) + s.dy;
+  return { x0, x1: x0 + size.w, y0, y1: y0 + size.h };
+}
 
 type Prep = {
   topics: { x: number; y: number; hub: number }[];
@@ -110,7 +129,7 @@ const FREE_OP = 0.3;
 /** Свободные темы в обзоре и при связи с фокусной главой: как яркий кластер × 0.7 */
 const FREE_OP_LIT = 0.7;
 
-const fade = "transition-opacity duration-300 ease-out motion-reduce:transition-none";
+const fade = "transition-opacity duration-(--dur-s) ease-(--ease-out) motion-reduce:transition-none";
 
 export const DomainGraph = forwardRef<
   GraphHandle,
@@ -420,6 +439,44 @@ export const DomainGraph = forwardRef<
   const nodeS = clamp(0.7 + 0.4 * k, 0.9, 1.6);
   const hubS = clamp(0.95 + 0.2 * k, 1.05, 1.3);
 
+  // Подписи глав: реальный размер текста с загруженным шрифтом (оценка по символам, пока не измерили),
+  // место пересчитывается в пикселях при текущем масштабе, чтобы подписи не налезали друг на друга и на кольца
+  const labelEls = useRef<(HTMLElement | null)[]>([]);
+  const [measured, setMeasured] = useState<(HubLabelSize | null)[]>([]);
+  useEffect(() => {
+    const els = labelEls.current;
+    const measure = () =>
+      setMeasured((prev) => {
+        const next = domain.hubs.map((_, i) => {
+          const el = els[i];
+          // запас на обводку текста
+          return el && el.offsetWidth > 0 ? { w: el.offsetWidth + 3, h: el.offsetHeight + 3 } : null;
+        });
+        const same = next.length === prev.length && next.every((s, i) => s?.w === prev[i]?.w && s?.h === prev[i]?.h);
+        return same ? prev : next;
+      });
+    measure();
+    // размер меняется, когда догружается шрифт, меняется язык или текст дедлайна
+    const ro = new ResizeObserver(measure);
+    els.forEach((el) => el && ro.observe(el));
+    return () => ro.disconnect();
+  }, [domain, layout]);
+  const labelSizes = useMemo(() => domain.hubs.map((h, i) => measured[i] ?? hubLabelSizeEst(h)), [domain, measured]);
+  const hubR = 14 * hubS;
+  const { tx: camX, ty: camY } = view;
+  const spots = useMemo(
+    () =>
+      placeHubLabels(
+        layout,
+        labelSizes,
+        k,
+        hubR,
+        7.5 * nodeS + 2,
+        // подпись главы, чей нод в кадре, не должна уходить за край графа
+        size.w > 0 ? { x0: 6 - camX, x1: size.w - 6 - camX, y0: 6 - camY, y1: size.h - 6 - camY } : undefined,
+      ),
+    [layout, labelSizes, k, hubR, nodeS, camX, camY, size.w, size.h],
+  );
 
   // Подписи тем в экранных пикселях: пробуем справа/слева/сверху/снизу, берём первое место без наложений
   const kKey = Math.round(k * 10) / 10;
@@ -435,15 +492,16 @@ export const DomainGraph = forwardRef<
     const hit = (a: B, b: B) => a.x0 < b.x1 + 3 && a.x1 > b.x0 - 3 && a.y0 < b.y1 + 2 && a.y1 > b.y0 - 2;
     const nodes: B[] = layout.topics.map((t) => ({ x0: t.x * kKey - 11, x1: t.x * kKey + 11, y0: t.y * kKey - 11, y1: t.y * kKey + 11 }));
     // узел главы и её подпись тоже занимают место
-    layout.hubs.forEach((h) => {
+    const hs = clamp(0.95 + 0.2 * kKey, 1.05, 1.3);
+    const hubSpots = placeHubLabels(layout, labelSizes, kKey, 14 * hs, R);
+    layout.hubs.forEach((h, i) => {
       const hx = h.x * kKey, hy = h.y * kKey;
       nodes.push({ x0: hx - 14, x1: hx + 14, y0: hy - 14, y1: hy + 14 });
-      const ly0 = h.labelBelow ? hy : hy - 34, ly1 = h.labelBelow ? hy + 34 : hy;
-      nodes.push(h.labelSide === 1 ? { x0: hx + 20, x1: hx + 200, y0: ly0, y1: ly1 } : { x0: hx - 200, x1: hx - 20, y0: ly0, y1: ly1 });
+      nodes.push(hubLabelBox(hx, hy, hubSpots[i], labelSizes[i], 14 * hs));
     });
     const placed: B[] = [];
     [...shown].sort((a, b) => a.y - b.y || a.x - b.x).forEach((t) => {
-      const px = t.title.replace(/­/g, "").length * 7.8;
+      const px = t.title.replace(/­/g, "").length * 8.0; // подпись темы капсом 10px
       const w = Math.min(130, px);
       const h = px > 112 ? 34 : 18;
       const nx = t.x * kKey, ny = t.y * kKey;
@@ -466,7 +524,7 @@ export const DomainGraph = forwardRef<
       out.set(t.id, pick);
     });
     return out;
-  }, [layout, kKey, mode.kind, focusIdx, freeLinks]);
+  }, [layout, labelSizes, kKey, mode.kind, focusIdx, freeLinks]);
 
   const clusterOp = (i: number) => {
     let op: number;
@@ -543,8 +601,8 @@ export const DomainGraph = forwardRef<
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="@container flex min-h-10 shrink-0 flex-wrap items-center gap-x-6 border-b border-seam-soft text-small text-paper-dim">
-        <p aria-live="polite" className="num shrink-0">
+      <div className="@container flex min-h-10 shrink-0 flex-wrap items-center gap-x-6 border-b border-seam-soft text-paper-dim">
+        <p aria-live="polite" className="caps shrink-0">
           {statusText}
         </p>
         <ul
@@ -557,7 +615,7 @@ export const DomainGraph = forwardRef<
           aria-label={tx.graph.statesLabel}
         >
           {(["solid", "review", "confused", "new"] as const).map((s) => (
-            <li key={s} className="flex items-center gap-1.5 whitespace-nowrap">
+            <li key={s} className="caps flex items-center gap-2 whitespace-nowrap">
               <StateDot state={s} />
               {tx.states[s].toLowerCase()}
             </li>
@@ -567,7 +625,7 @@ export const DomainGraph = forwardRef<
           {focusHub && (
             <Link
               href={`/hub/${focusHub.id}`}
-              className="inline-flex h-10 shrink-0 items-center rounded-control px-3 whitespace-nowrap text-paper transition-colors hover:bg-cloth-hover"
+              className="caps inline-flex h-10 shrink-0 items-center rounded-pill px-4 whitespace-nowrap text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover"
             >
               {tx.graph.openChapter}
             </Link>
@@ -576,7 +634,7 @@ export const DomainGraph = forwardRef<
             <button
               type="button"
               onClick={() => onModeChange(OVERVIEW)}
-              className="inline-flex h-10 shrink-0 items-center rounded-control px-3 whitespace-nowrap transition-colors hover:bg-cloth-hover hover:text-paper"
+              className="caps inline-flex h-10 shrink-0 items-center rounded-pill px-4 whitespace-nowrap transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover hover:text-paper"
             >
               {tx.graph.allChapters}
             </button>
@@ -600,7 +658,7 @@ export const DomainGraph = forwardRef<
         tabIndex={0}
         role="application"
         aria-label={tx.graph.ariaGraph(domain.title)}
-        className="relative min-h-0 flex-1 cursor-grab touch-none overflow-hidden rounded-xl outline-none select-none focus-visible:ring-2 focus-visible:ring-ribbon/60 active:cursor-grabbing"
+        className="relative min-h-0 flex-1 cursor-grab touch-none overflow-hidden rounded-[2px] outline-none select-none focus-visible:ring-2 focus-visible:ring-ribbon/60 active:cursor-grabbing"
         onKeyDown={(e) => {
           if (e.target !== e.currentTarget) return;
           const step = 60;
@@ -664,7 +722,7 @@ export const DomainGraph = forwardRef<
                 key={l.id}
                 d={l.d}
                 fill="none"
-                stroke="var(--rule)"
+                stroke="var(--ribbon)"
                 strokeWidth={1.25}
                 strokeLinecap="round"
                 strokeDasharray={l.suggested ? "3 6" : undefined}
@@ -690,7 +748,7 @@ export const DomainGraph = forwardRef<
                     key={e.id}
                     d={e.d}
                     fill="none"
-                    stroke={touchesActive ? "var(--paper)" : "var(--rule)"}
+                    stroke={touchesActive ? "var(--paper)" : "var(--ribbon)"}
                     strokeWidth={0.75}
                     vectorEffect="non-scaling-stroke"
                     className={fade}
@@ -708,7 +766,7 @@ export const DomainGraph = forwardRef<
                   key={e.id}
                   d={e.d}
                   fill="none"
-                  stroke={touchesActive ? "var(--paper)" : lit ? "var(--paper-dim)" : "var(--rule)"}
+                  stroke={touchesActive ? "var(--paper)" : lit ? "var(--paper-dim)" : "var(--ribbon)"}
                   strokeWidth={e.kind === "related" ? 1.1 : 0.75}
                   strokeLinecap="round"
                   strokeDasharray={e.kind === "related" ? "1 5" : undefined}
@@ -728,8 +786,8 @@ export const DomainGraph = forwardRef<
                   y1={t.y}
                   x2={o.x}
                   y2={o.y}
-                  stroke="var(--rule)"
-                  strokeOpacity={0.7}
+                  stroke="var(--ribbon)"
+                  strokeOpacity={0.6}
                   strokeWidth={0.75}
                   strokeDasharray="3 5"
                   vectorEffect="non-scaling-stroke"
@@ -773,13 +831,13 @@ export const DomainGraph = forwardRef<
               />
               <span
                 className={cn(
-                  "absolute top-0 -translate-y-1/2 text-small whitespace-nowrap text-paper-dim",
+                  "caps absolute top-0 -translate-y-1/2 [--caps-size:0.625rem] whitespace-nowrap text-paper-dim",
                   right ? "text-left" : "text-right",
                 )}
                 style={{ opacity: Math.max(outOp, LABEL_FLOOR), ...(right ? { left: rr + 6 } : { right: rr + 6 }) }}
               >
                 {o.title}
-                <span className="num ml-1.5 text-[11px]">· {o.fromDomain.toLowerCase()}</span>
+                <span className="ml-1.5">· {o.fromDomain}</span>
               </span>
             </div>
           );
@@ -790,6 +848,10 @@ export const DomainGraph = forwardRef<
             key={h.id}
             hub={domain.hubs[h.index]}
             placed={h}
+            spot={spots[h.index]}
+            labelRef={(el) => {
+              labelEls.current[h.index] = el;
+            }}
             x={sx(h.x)}
             y={sy(h.y)}
             scale={hubS}
@@ -828,7 +890,7 @@ export const DomainGraph = forwardRef<
             data-card
             onPointerEnter={() => clearTimeout(hideTimer.current)}
             onPointerLeave={leave}
-            className="absolute z-10 rounded-[16px] border border-seam bg-cloth-raised p-4 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
+            className="absolute z-10 rounded-[2px] border border-seam bg-cloth-raised p-4 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
             style={cardPos(sx(shownTopic.x), sy(shownTopic.y), size, shownTopic.misconception ? 300 : 266)}
           >
             <TopicCardBody
@@ -853,9 +915,10 @@ function cardPos(x: number, y: number, size: { w: number; h: number }, cardH: nu
 
 /** Узел главы: кольцо прогресса, название всегда рядом */
 function HubNode({
-  hub, placed, x, y, scale, opacity, labelOpacity, live, onEnter, onOpen,
+  hub, placed, spot, labelRef, x, y, scale, opacity, labelOpacity, live, onEnter, onOpen,
 }: {
-  hub: Domain["hubs"][number]; placed: PlacedHub; x: number; y: number; scale: number; opacity: number; labelOpacity: number;
+  hub: Domain["hubs"][number]; placed: PlacedHub; spot: HubLabelSpot | undefined; labelRef: (el: HTMLElement | null) => void;
+  x: number; y: number; scale: number; opacity: number; labelOpacity: number;
   live: boolean; onEnter: () => void; onOpen: () => void;
 }) {
   const tx = useT();
@@ -865,6 +928,7 @@ function HubNode({
   const box = (R + 4) * 2;
   const mid = box / 2;
   const n = placed.count;
+  const { side, below, dx, dy } = spot ?? { side: placed.labelSide, below: placed.labelBelow, dx: 0, dy: 0 };
   return (
     <button
       type="button"
@@ -912,18 +976,22 @@ function HubNode({
         )}
       </svg>
       <span
+        ref={labelRef}
         aria-hidden
         className={cn(
-          "pointer-events-none absolute top-1/2 flex flex-col gap-0.5 text-[15px] leading-5 font-medium whitespace-nowrap [paint-order:stroke_fill] [-webkit-text-stroke:3px_var(--cloth)]",
+          "pointer-events-none absolute top-1/2 flex flex-col gap-1 whitespace-nowrap [paint-order:stroke_fill] [-webkit-text-stroke:3px_var(--cloth)]",
           fade,
-          placed.labelBelow ? "translate-y-[3px]" : "-translate-y-[calc(100%+3px)]",
-          placed.labelSide === 1 ? "items-start text-left" : "items-end text-right",
+          side === 1 ? "items-start text-left" : "items-end text-right",
         )}
-        style={{ opacity: labelOpacity, ...(placed.labelSide === 1 ? { left: `calc(50% + ${R + 8}px)` } : { right: `calc(50% + ${R + 8}px)` }) }}
+        style={{
+          opacity: labelOpacity,
+          transform: below ? `translateY(${3 + dy}px)` : `translateY(calc(-100% - ${3 - dy}px))`,
+          ...(side === 1 ? { left: `calc(50% + ${R + 8 + dx}px)` } : { right: `calc(50% + ${R + 8 + dx}px)` }),
+        }}
       >
-        <span className="font-semibold text-paper">{clean(hub.title)}</span>
+        <span className="display-caps text-[14px] tracking-[0.04em] text-paper">{clean(hub.title)}</span>
         {hub.deadline && (
-          <span className={cn("flex items-baseline gap-1.5 text-ribbon", placed.labelSide === 1 ? "flex-row" : "flex-row-reverse")}>
+          <span className={cn("caps flex items-baseline gap-1.5 [--caps-size:0.625rem] text-ribbon", side === 1 ? "flex-row" : "flex-row-reverse")}>
             <Duck className="h-3.5 w-4 self-center" />
             <span className="sr-only">{hub.deadline.label}: </span>
             {tx.graph.due} {fullDate(hub.deadline.date)}
@@ -1000,7 +1068,7 @@ function TopicNode({
       {label && (
         <span
           className={cn(
-            "pointer-events-none absolute line-clamp-2 w-[130px] hyphens-manual text-small leading-tight [paint-order:stroke_fill] [-webkit-text-stroke:4px_var(--cloth)]",
+            "caps pointer-events-none absolute line-clamp-2 w-[130px] hyphens-manual [--caps-size:0.625rem] leading-tight [paint-order:stroke_fill] [-webkit-text-stroke:4px_var(--cloth)]",
             anchor === "r" ? "top-1/2 -translate-y-1/2 text-left" : anchor === "l" ? "top-1/2 -translate-y-1/2 text-right" : "left-1/2 -translate-x-1/2 text-center",
             active ? "text-paper" : "text-paper-dim",
           )}

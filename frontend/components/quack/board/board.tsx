@@ -668,8 +668,8 @@ export function Board({
         : { id: NEW_ID, kind: "formula", x: editing.x, y: editing.y, tex: "" }
       : null;
 
-  const BAR = "z-20 rounded-[14px] border border-seam bg-cloth-raised shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]";
-  const BAR_BTN = "inline-flex h-10 items-center justify-center gap-2 rounded-control px-3 text-small whitespace-nowrap text-paper-dim transition-colors hover:bg-cloth-hover hover:text-paper max-md:w-10 max-md:px-0";
+  const BAR = "z-20 rounded-[2px] border border-seam bg-cloth-raised shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]";
+  const BAR_BTN = "caps inline-flex h-10 items-center justify-center gap-2 rounded-[2px] px-3 whitespace-nowrap text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper max-md:w-10 max-md:px-0";
 
   return (
     <div ref={outer} className={cn("relative min-h-0 flex-1 overflow-hidden bg-cloth", className)}>
@@ -748,7 +748,7 @@ export function Board({
           aria-pressed={teacher}
           aria-label={tx.board.teacherLayer}
           onClick={() => setTeacher((v) => !v)}
-          className={cn(BAR_BTN, teacher && "bg-cloth-hover text-paper")}
+          className={cn(BAR_BTN, teacher && "bg-ribbon-soft text-ribbon")}
         >
           <GraduationCap aria-hidden className="size-[18px]" />
           <span className="max-md:sr-only">{tx.board.teacherLayer}</span>
@@ -776,7 +776,7 @@ export function Board({
         <button type="button" aria-label={tx.board.zoomOut} onClick={() => zoomCenter(camRef.current.k / 1.25, true)} className={cn(BAR_BTN, "w-10 px-0")}>
           <Minus aria-hidden className="size-[18px]" />
         </button>
-        <button type="button" aria-label={tx.board.zoomReset} onClick={() => zoomCenter(1, true)} className={cn(BAR_BTN, "num w-14 px-0")}>
+        <button type="button" aria-label={tx.board.zoomReset} onClick={() => zoomCenter(1, true)} className={cn(BAR_BTN, "num w-14 px-0 normal-case tracking-normal")}>
           {pct}%
         </button>
         <button type="button" aria-label={tx.board.zoomIn} onClick={() => zoomCenter(camRef.current.k * 1.25, true)} className={cn(BAR_BTN, "w-10 px-0")}>

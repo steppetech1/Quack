@@ -21,7 +21,7 @@ type Msg =
   | { id: number; role: "user"; text: string }
   | { id: number; role: "bot"; text: string; pills?: string[]; draft?: SkillDraft };
 
-const SUGGEST = "rounded-full border border-seam px-3.5 py-2 text-left text-body text-paper transition-colors hover:border-rule hover:bg-cloth-hover disabled:opacity-40";
+const SUGGEST = "caps rounded-pill border border-seam px-4 py-2 text-left text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon disabled:opacity-40";
 
 const toSkill = (d: SkillDraft): Skill => ({
   id: `sk-${Date.now().toString(36)}`,
@@ -125,19 +125,19 @@ export function SkillChat({
     <section
       ref={root}
       aria-label={tx.skillChat.title}
-      className="mt-5 rounded-[16px] border border-seam bg-cloth-raised p-4 md:p-5"
+      className="mt-5 rounded-[2px] border border-seam bg-cloth-raised p-4 md:p-5"
     >
       <div className="flex items-center justify-between gap-3">
-        <h3 className="font-semibold text-paper">{tx.skillChat.title}</h3>
+        <h3 className="display-caps text-paper">{tx.skillChat.title}</h3>
         <div className="-mr-2 flex items-center gap-1">
           <button
             type="button"
             onClick={() => onManual(lastDraft && lastDraft.role === "bot" && lastDraft.draft ? toSkill(lastDraft.draft) : null)}
-            className="min-h-10 rounded-control px-3 text-small text-paper-dim transition-colors hover:bg-cloth-hover hover:text-paper"
+            className="caps min-h-10 rounded-pill px-3 text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper"
           >
             {tx.skills.writeSelf}
           </button>
-          <IconButton label={tx.shell.close} onClick={onClose}>
+          <IconButton label={tx.shell.close} onClick={onClose} className="rounded-pill">
             <X />
           </IconButton>
         </div>
@@ -153,10 +153,10 @@ export function SkillChat({
         {msgs.map((m) =>
           m.role === "user" ? (
             <div key={m.id} className="flex justify-end">
-              <p className="max-w-[85%] rounded-[14px] bg-cloth-hover px-3.5 py-2 text-body break-words text-paper">{m.text}</p>
+              <p className="max-w-[85%] rounded-[2px] border border-seam bg-cloth-hover/60 px-3.5 py-2 text-body break-words text-paper">{m.text}</p>
             </div>
           ) : (
-            <div key={m.id} className="max-w-[92%] space-y-3">
+            <div key={m.id} className="max-w-[92%] space-y-3 border-l border-seam-soft pl-3.5">
               <p className="text-body text-paper">{m.text}</p>
               {m.draft && (
                 <DraftCard
@@ -179,13 +179,13 @@ export function SkillChat({
           ),
         )}
         {typing && (
-          <p role="status" className="flex items-center gap-2 text-small text-paper-dim">
+          <p role="status" className="caps flex items-center gap-2 text-paper-dim">
             {tx.skillChat.typing}
             <span aria-hidden className="inline-flex gap-0.5">
               {[0, 1, 2].map((i) => (
                 <span
                   key={i}
-                  className="size-1 animate-pulse rounded-full bg-paper-dim"
+                  className="size-1 animate-pulse rounded-pill bg-paper-dim"
                   style={{ animationDelay: `${i * 180}ms` }}
                 />
               ))}
@@ -199,7 +199,7 @@ export function SkillChat({
           e.preventDefault();
           send(value);
         }}
-        className="mt-4 flex items-end gap-2 rounded-[14px] border border-seam bg-cloth p-1.5 has-[textarea:focus-visible]:border-rule"
+        className="mt-4 flex items-end gap-2 rounded-control border border-seam bg-cloth p-1.5 transition-colors duration-(--dur-s) ease-out has-[textarea:focus-visible]:border-ribbon"
       >
         <label htmlFor={`${uid}-in`} className="sr-only">
           {tx.skillChat.inputLabel}
@@ -226,7 +226,7 @@ export function SkillChat({
           label={tx.skillChat.send}
           type="submit"
           disabled={!value.trim() || typing}
-          className="border border-seam disabled:cursor-default disabled:opacity-40"
+          className="rounded-pill border border-seam disabled:cursor-default disabled:opacity-40"
         >
           <ArrowUp />
         </IconButton>
@@ -250,8 +250,8 @@ function DraftCard({
   const cmd = draftCommand(draft);
   return (
     <>
-      <div className={cn("rounded-[14px] border border-seam bg-cloth p-3.5", !active && "opacity-60")}>
-        <p className="font-semibold break-words text-paper">{draft.name}</p>
+      <div className={cn("rounded-[2px] border border-seam bg-cloth p-3.5", !active && "opacity-60")}>
+        <p className="display-caps break-words text-paper">{draft.name}</p>
         <p className="mt-1 text-body break-words text-paper-dim">{draft.text}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {draft.bindings.map((b) => (
@@ -268,14 +268,14 @@ function DraftCard({
           <button
             type="button"
             onClick={onSave}
-            className="h-10 rounded-control bg-ribbon px-4 text-body font-semibold text-on-ribbon transition-colors hover:bg-ribbon-hover"
+            className="caps h-10 rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-out hover:bg-ribbon-hover"
           >
             {tx.skillChat.saveSkill}
           </button>
           <button
             type="button"
             onClick={onManual}
-            className="h-10 rounded-control border border-seam px-4 text-body text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+            className="caps h-10 rounded-pill border border-seam px-6 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon"
           >
             {tx.skillChat.manual}
           </button>

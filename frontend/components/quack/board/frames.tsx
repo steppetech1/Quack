@@ -53,16 +53,16 @@ function HandRow({ line, open, flagged, ring, onToggle }: { line: HandLine; open
           data-nopan
           role="group"
           aria-label={tx.board.frames.readAs}
-          className="absolute top-full left-0 z-30 mt-1 w-[320px] rounded-[14px] border border-seam bg-cloth-raised p-3.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
+          className="absolute top-full left-0 z-30 mt-1 w-[320px] rounded-[2px] border border-seam bg-cloth-raised p-3.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
         >
           <span aria-hidden className="absolute -top-1.5 left-6 size-3 rotate-45 border-t border-l border-seam bg-cloth-raised" />
-          <p className="text-small text-paper-dim">{tx.board.frames.readAsLabel}</p>
+          <p className="caps text-paper-dim">{tx.board.frames.readAsLabel}</p>
           <ScrollRegion className="mt-1 py-1 text-body text-paper" html={katex.renderToString(line.tex, { throwOnError: false, output: "htmlAndMathml" })} />
           <button
             ref={fixBtn}
             type="button"
             onClick={() => soon(tx.board.frames.fixSoon)}
-            className="-mb-1.5 -ml-3 mt-1 inline-flex h-10 items-center rounded-control px-3 text-small text-paper transition-colors hover:bg-cloth-hover"
+            className="-mb-1.5 -ml-3 mt-1 caps inline-flex h-10 items-center rounded-pill px-4 text-paper transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover"
           >
             {tx.board.frames.fix}
           </button>
@@ -89,7 +89,7 @@ function Mark({ m }: { m: TeacherMark }) {
             </span>
           </p>
         ) : (
-          <p className="flex items-start gap-2 rounded-[12px] border border-seam bg-cloth px-2.5 py-2 text-small text-paper-dim">
+          <p className="flex items-start gap-2 rounded-[2px] border border-seam bg-cloth px-2.5 py-2 text-small text-paper-dim">
             <MessageSquareText aria-hidden className="mt-px size-4 shrink-0" />
             <span>
               <span className="sr-only">{tx.board.frames.teacherLayer}</span>
@@ -184,12 +184,12 @@ export const Frames = memo(function Frames({
           id={`block-${f.block.id}`}
           aria-labelledby={`block-${f.block.id}-h`}
           className={cn(
-            "absolute rounded-[14px] border border-seam bg-cloth-raised/60 transition-shadow duration-700",
+            "absolute rounded-[2px] border border-seam bg-cloth-raised/60 transition-shadow duration-700",
             ringKey === `frame:${f.block.id}` ? "shadow-[0_0_0_3px_var(--ribbon)]" : "shadow-[0_0_0_3px_transparent]",
           )}
           style={{ left: f.x, top: f.y, width: f.w, height: f.h }}
         >
-          <Heading id={`block-${f.block.id}-h`} className="num absolute bottom-full left-1 mb-2.5 text-small tracking-wide whitespace-nowrap text-paper-dim uppercase">
+          <Heading id={`block-${f.block.id}-h`} className="caps absolute bottom-full left-1 mb-2.5 whitespace-nowrap text-paper-dim">
             {f.block.title}
           </Heading>
           <FrameBody
