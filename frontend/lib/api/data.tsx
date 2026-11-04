@@ -136,11 +136,11 @@ function ApiData({ children }: { children: React.ReactNode }) {
       setHistory(hist.sessions);
       setError(null);
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) setError(t.live.serverDown);
+      if (!(e instanceof ApiError && e.status === 401)) setError(e instanceof ApiError ? t.live.serverError : t.live.serverDown);
     } finally {
       setReady(true);
     }
-  }, [t.live.serverDown]);
+  }, [t.live.serverDown, t.live.serverError]);
 
   useEffect(() => {
     // first load; a missing cookie answers 401 and the client sends the user to the login screen
@@ -258,12 +258,12 @@ function ApiData({ children }: { children: React.ReactNode }) {
     try {
       await post("/v1/consents", { kind: "terms", version: termsVersion, idempotency_key: idem() });
       setMe((m) => (m ? { ...m, terms_accepted: true } : m));
-    } catch {
-      setError(t.live.serverDown);
+    } catch (e) {
+      setError(e instanceof ApiError ? t.live.serverError : t.live.serverDown);
     } finally {
       setConsentBusy(false);
     }
-  }, [termsVersion, t.live.serverDown]);
+  }, [termsVersion, t.live.serverDown, t.live.serverError]);
 
   const value = useMemo<Data>(
     () => ({ ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),

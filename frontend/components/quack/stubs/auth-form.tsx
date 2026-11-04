@@ -39,7 +39,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       await post("/auth/link", { email: String(form.get("email") ?? "").trim() });
       setSent(true);
     } catch (e) {
-      setError(e instanceof ApiError && e.code === "RATE_LIMITED" ? live.rateLimited : e instanceof ApiError && e.status < 500 ? e.message : live.serverDown);
+      setError(e instanceof ApiError && e.code === "RATE_LIMITED" ? live.rateLimited : e instanceof ApiError && e.status < 500 ? e.message : e instanceof ApiError ? live.serverError : live.serverDown);
     } finally {
       setBusy(false);
     }

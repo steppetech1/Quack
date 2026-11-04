@@ -17,7 +17,7 @@ import { useErrorText } from "./error-text";
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
 
-type Line = { id: string; role: "student" | "teacher"; text: string; degraded?: string | null };
+type Line = { id: string; role: "student" | "teacher"; text: string; degraded?: string | null; interrupted?: boolean };
 /** An interactive element of a turn (task, question…): comes as an `element` frame and is answered with an `element_response` action */
 type Elem = { blockId: string; element: S["Element"]; turnSeq: number | null; answered: boolean };
 type Outcome = "correct" | "incorrect" | "partial" | "unclear";
@@ -131,7 +131,8 @@ export function SessionLive({ id }: { id: string }) {
         if (fresh.length) setElems((e) => [...e.map((x) => ({ ...x })), ...fresh.map((x) => ({ ...x, turnSeq: committed }))]);
       } catch (e) {
         setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e));
-        if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply }]);
+        // what was already shown stays on screen, marked: this part is not committed and is gone after a reload
+        if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply, interrupted: true }]);
       } finally {
         setStreaming(null);
         setThinking(false);
@@ -276,6 +277,7 @@ export function SessionLive({ id }: { id: string }) {
               <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper">
                 <RichText text={l.text} />
                 {l.degraded && <p className="mt-2 text-small text-paper-dim">{t.degraded}</p>}
+                {l.interrupted && <p className="mt-2 text-small text-paper-dim">{t.interrupted}</p>}
               </article>
             ),
           )}
