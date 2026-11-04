@@ -431,6 +431,15 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const blocks = S.cheats[hit.h.key];
     return blocks ? json(res, m === "POST" ? 201 : 200, { artifact_id: id("a-ch-" + hit.h.key), kind: "cheatsheet", topic_id: null, hub_id: g[1], version: 1, offer: false, blocks }) : err(res, "NOT_FOUND", 404, "no cheat sheet yet");
   }
+  // a chapter: deadline (PATCH) and prep mode (POST), both 202 with the seq of the event
+  if ((g = p.match(/^\/v1\/hubs\/([^/]+)(?:\/(prep-mode))?$/)) && (m === "PATCH" || (m === "POST" && g[2]))) {
+    const hit = hubById(g[1]);
+    if (!hit || !hit.d.hubs.includes(hit.h)) return err(res, "NOT_FOUND", 404, "no such chapter");
+    if (m === "PATCH") hit.h.deadlineMs = body.deadline_at_ms ?? null;
+    S.seq += 1;
+    for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
+    return json(res, 202, { seq: S.seq });
+  }
   if ((g = p.match(/^\/v1\/artifacts\/([^/]+)\/blocks\/([^/]+)$/))) {
     for (const [key, blocks] of Object.entries(S.notes)) {
       if (id("a-notes-" + key) !== g[1]) continue;
