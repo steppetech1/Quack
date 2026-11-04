@@ -60,7 +60,7 @@
 Контракт даёт 65 путей, из них не вызывается ни один из этих (все — реальные модули бэка, большинство «влит» по `STATUS.md` §4):
 
 - **Материалы** — `POST /v1/domains/{id}/materials`, `GET /v1/materials/{id}`: загрузка лекций, нет экрана.
-- **Канвас** — весь `v1/canvases/*` (доска, штрихи, распознавание строк, фото, replay), `v1/domains/{id}/canvases`, `v1/sessions/{id}/canvases`: на бэке готово (WP21), во фронте только старые страницы `app/(app)/canvas/*` на моках.
+- **Канвас, что ещё не подключено** — распознавание строк и пометки учителя (`line_ready`, `mark`, `hint`), `POST /v1/canvases/{id}/photos`, `.../pairing`, `.../lines/{id}/correct`, блоки задач (`task_id`, слой учителя). Формулы, тексты и картинки на доске остаются в браузере (у бэка для них нет позиции), название тоже (в `CanvasView` нет поля). Подключено: создание в сессии, список, `GET /v1/canvases/{id}`, чат с учителем (`message` с `canvas_refs`), штрихи по `WS /v1/canvases/{id}/ws` (пачки с подтверждением и повтором) и их возврат из `/replay`. Сокет ходит напрямую к API: в проде нужен `NEXT_PUBLIC_QUACK_WS` (например `wss://api.qvack.online`); чанки replay браузер читает по подписанным ссылкам хранилища, ему нужен CORS для origin фронта.
 - **Компаньон** — `POST /auth/link` (companion scope), фото через телефон.
 - **Режим подготовки и оценка после дедлайна** — `POST /v1/hubs/{id}/prep-mode`, `POST /v1/hubs/{id}/grade`; заодно `minutes` и `grade_hub_ids` из `TodayView` не показаны — только `items` и `pace_warnings`.
 - **Правки темы** — `POST /v1/topics/{id}/hide|known|merge`, `GET /v1/topics/{id}/why`, `POST /v1/disputes`, `POST /v1/verdicts/{seq}/typo`, `POST /v1/episodes/{seq}/reassign`: «я это знаю», разделение темы, оспаривание вердикта — нет кнопок.
