@@ -450,6 +450,27 @@ async def test_boundary_jump_after_retries_is_shown_and_logged() -> None:
     assert any(e["event"] == "guard_violation" and "boundary_jump" in e["reasons"] for e in logs)
 
 
+async def test_unknown_labels_after_retries_are_dropped_from_the_committed_turn() -> None:
+    """A hub label in `targetSkills` and an unknown exposure on every attempt: after the retries
+    the turn is committed without them (it used to fail in `commit` with `UnknownLabelError`)."""
+    provider = ScriptedLLMProvider()
+    _answers(
+        provider,
+        _turn(
+            head=_head(targetSkills=["H1"]),
+            exposures=[{"skill": "S9", "kind": "explained", "approach": "none"}],
+        ),
+    )
+    ports = _ports()
+
+    await _run(ports, provider, guard_max_retries=1)
+
+    [turn] = ports.committed
+    assert turn.output.p1_head.target_skills == []
+    assert turn.output.p3_markup.exposures == []
+    assert turn.guard_retries == 1
+
+
 async def test_markup_labels_reset_after_shown_text() -> None:
     """Unknown label in `p3_markup` after the body was shown → `reset {guard}`, retry."""
     provider = ScriptedLLMProvider()
