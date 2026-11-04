@@ -99,7 +99,7 @@ class Writer:
 
     def __call__(self, request: Any) -> dict[str, Any]:
         self.prompts.append(request.prompt)
-        return {"blocks": [_block(f"Formulas, draft {len(self.prompts)}")], "cards": []}
+        return {"blocks": [_block(f"Formulas, draft {len(self.prompts)}: $x^2$")], "cards": []}
 
 
 def _pages(*counts: int) -> list[RenderPdfResponse]:
@@ -238,6 +238,22 @@ async def test_the_page_count_is_of_the_whole_document(stand: Stand, pg_db: Db) 
     assert "My own trap" in sent and "Formulas, draft 1" in sent
 
 
+async def test_every_fit_round_sends_the_formulas_typeset_not_as_tex(
+    stand: Stand, pg_db: Db
+) -> None:
+    """D-C-250: the page count that decides the next round is the one of the typeset page, so
+    each rendered document carries its formula as an element for KaTeX, never as `$…$` text."""
+    learner = await create_learner(pg_db)
+    hub, _ = await create_hub(pg_db, learner)
+    stand.scenario.push_for(PDF, *_pages(3, 2, 1))
+    await stand.generate(learner, hub)
+    sent = stand.renders()
+    assert len(sent) == 3
+    for document in sent:
+        assert '<span class="quack-math" data-display="false">x^2</span>' in document
+        assert "$x^2$" not in document
+
+
 async def test_a_foreign_hub_is_not_found(stand: Stand, pg_db: Db) -> None:
     learner, stranger = await create_learner(pg_db), await create_learner(pg_db)
     hub, _ = await create_hub(pg_db, learner)
@@ -262,10 +278,39 @@ def test_cheatsheet_html_is_one_a4_document() -> None:
     assert "Calculus &lt;exam&gt;" in html and "Calculus <exam>" not in html
     assert "@page" in html and "A4" in html
     assert "<strong>Lopital</strong>" in html and "<li>sign: indeterminate</li>" in html
-    assert "$0/0$" in html  # formulas stay as TeX for the typesetter
+    assert "$0/0$" not in html  # a formula is a typeset element, not TeX text (WP23.5, D-C-250)
+    assert '<span class="quack-math" data-display="false">0/0</span>' in html
     assert "<script>" not in html and "&lt;script&gt;" in html
     assert html.index("Lopital") < html.index("My trap")
     assert 'data-owner="learner"' in html
+
+
+def _html_of(content: str) -> str:
+    system = Block.model_validate(
+        {"block_id": uuid4(), "kind": "summary", "content": content, "owner": "system"}
+    )
+    return cheatsheet_html("Hub", (system,))
+
+
+def test_formulas_are_marked_for_the_typesetter_not_left_as_tex() -> None:
+    """D-C-250: `$…$` is an inline formula, `$$…$$` a display one (also over several lines); the
+    TeX source sits escaped inside the element and no markdown form touches it."""
+    html = _html_of(
+        "Slope $f'(x)=\frac{a}{b}$ and $a**b*c_1$.\n\n$$\int_0^1 x^2\,dx\n= \tfrac13$$"
+    )
+    assert '<span class="quack-math" data-display="false">f'(x)=\frac{a}{b}</span>' in html
+    assert '<span class="quack-math" data-display="false">a**b*c_1</span>' in html
+    assert (
+        '<span class="quack-math" data-display="true">\int_0^1 x^2\,dx\n= \tfrac13</span>' in html
+    )
+    assert "$" not in html and "<strong>" not in html and "<em>" not in html
+
+
+def test_a_formula_is_escaped_and_money_is_not_a_formula() -> None:
+    html = _html_of(r"Take $a<b$. It costs 5$ or 6$, and \$7 stays.")
+    assert '<span class="quack-math" data-display="false">a&lt;b</span>' in html
+    assert "5$ or 6$" in html and "and $7 stays" in html and "\\$7" not in html
+    assert html.count('class="quack-math"') == 1
 
 
 # --- the input of the writer --------------------------------------------------------------
