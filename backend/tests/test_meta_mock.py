@@ -484,17 +484,22 @@ def _done_items(events: list[StreamEvent]) -> tuple[dict[str, Any], ...]:
 
 async def test_stream_events_have_sorted_keys_on_the_wire() -> None:
     """WP26.2: `data: {json}` lines, keys sorted at the root and nested; item added, text
-    deltas of the message, item done; `response.completed` last; `x-ratelimit-*` headers on
-    the HTTP response of the stream."""
+    deltas of the message, item done; `response.completed`, then `data: [DONE]`; `x-ratelimit-*`
+    headers on the HTTP response of the stream."""
     async with _client() as client:
         response = await client.post("/responses", json=_body(EvaluatorOutput, stream=True))
     assert response.headers["content-type"].startswith("text/event-stream")
     for name in RATE_LIMIT_HEADERS:
         assert name in response.headers, name
+    assert response.text.endswith("\n\ndata: [DONE]\n\n")  # D-B-214: the stream ends with it
     events = [
-        json.loads(line.removeprefix("data:").strip())
-        for line in response.text.splitlines()
-        if line.startswith("data:")
+        json.loads(data)
+        for data in (
+            line.removeprefix("data:").strip()
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        )
+        if data != "[DONE]"
     ]
     for event in events:
         _keys_sorted(event)

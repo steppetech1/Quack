@@ -35,8 +35,11 @@ from quack.artifacts.documents import (
     ArtifactNotFound,
     Block,
     SystemBlock,
+    artifact_id_for,
     get_artifact,
+    version_blocks,
     write_system_blocks,
+    written_version,
 )
 from quack.artifacts.learner_skills import bound_skill, writer_text
 from quack.artifacts.topic_refresh import (
@@ -221,7 +224,8 @@ async def generate_hub_cheatsheet(
     redis: Redis | None = None,
 ) -> CheatsheetResult:
     """Write the hub's cheat sheet and fit it to one A4 page (Т-§17.6). `key` is the consent
-    request: the same key reads the same answers of the writer (law 5)."""
+    request: a round that this key has already written is not asked of the model again
+    (law 5, D-C-217); a repeat renders the last written version and goes on from there."""
     context = await hub_writer_input(
         db, reader, prefetch, settings, learner_id=learner_id, hub_id=hub_id
     )
@@ -231,7 +235,23 @@ async def generate_hub_cheatsheet(
     version: int | None = None
     pages: int | None = None
     rounds = 0
-    for round_ in range(settings.cheatsheet_fit_rounds + 1):
+    first = 0
+    written = await _last_written_round(db, learner_id, hub_id, key, settings.cheatsheet_fit_rounds)
+    if written is not None:
+        first, version = written[0] + 1, written[1]
+        blocks_then = await version_blocks(
+            db,
+            learner_id=learner_id,
+            artifact_id=artifact_id_for(learner_id, "cheatsheet", hub_id),
+            version=version,
+        )
+        rendered = await compute.render_pdf(
+            RenderPdfRequest(html=cheatsheet_html(context.title, blocks_then))
+        )
+        pages, rounds = rendered.page_count, written[0]
+    for round_ in range(first, settings.cheatsheet_fit_rounds + 1):
+        if pages is not None and pages <= 1:
+            break
         if pages is not None:
             sheet = await get_artifact(
                 db, learner_id=learner_id, kind="cheatsheet", owner_id=hub_id
@@ -256,6 +276,7 @@ async def generate_hub_cheatsheet(
             created_by=created_by,
             skill_version=context.skill_version,
             redis=redis,
+            event_key=_round_key(hub_id, key, round_),
         )
         version = sheet.version
         rendered = await compute.render_pdf(
@@ -267,6 +288,25 @@ async def generate_hub_cheatsheet(
     if pages is not None and pages > 1:
         log.info("cheatsheet_over_one_page", hub_id=str(hub_id), pages=pages, rounds=rounds)
     return CheatsheetResult(version, pages, rounds, pages is not None and pages <= 1)
+
+
+def _round_key(hub_id: UUID, key: str, round_: int) -> str:
+    return f"artifact.cheatsheet:{hub_id}:{key}:r{round_}"
+
+
+async def _last_written_round(
+    db: Db, learner_id: UUID, hub_id: UUID, key: str, fit_rounds: int
+) -> tuple[int, int] | None:
+    """`(round, version)` of the latest round this request key has already written."""
+    found: tuple[int, int] | None = None
+    for round_ in range(fit_rounds + 1):
+        version = await written_version(
+            db, learner_id=learner_id, key=_round_key(hub_id, key, round_)
+        )
+        if version is None:
+            break
+        found = (round_, version)
+    return found
 
 
 async def review_hub_cheatsheet(
