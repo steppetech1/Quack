@@ -23,7 +23,7 @@ from tests.db.fixtures import create_learner
 from tests.support.llm import ScriptedLLMProvider
 from tests.support.resources import build_app_resources
 
-BLOCK = {"updates": None, "kind": "definition", "content": "A limit…", "sources": [],
+BLOCK = {"updates": None, "kind": "summary", "content": "A limit…", "sources": [],
          "skills": ["S1"]}  # fmt: skip
 
 
@@ -106,7 +106,7 @@ async def test_notes_request_writes_notes_and_answers_once(pg_db: Db, settings: 
         )
 
     notes = await get_artifact(pg_db, learner_id=learner, kind="notes", owner_id=topic_id)
-    assert notes.version == 1 and notes.blocks[0].kind == "definition"
+    assert notes.version == 1 and notes.blocks[0].kind == "summary"
     (done,) = await _completed(pg_db, learner)
     body = done["payload"]
     assert (body["ok"], body["kind"], body["request_id"]) == (True, "artifact", str(request_id))
@@ -159,10 +159,10 @@ async def test_a_request_that_cannot_succeed_is_answered_not_ok(
     assert len(provider.calls) == 0
 
     unknown = await _request(pg_db, learner, "notes", uuid4())
-    await answer_artifact_request(
-        ctx, reader, _prefetch, learner_id=learner, request_id=unknown
-    )
-    answers = [(a["payload"]["ok"], a["payload"]["error"]) for a in await _completed(pg_db, learner)]
+    await answer_artifact_request(ctx, reader, _prefetch, learner_id=learner, request_id=unknown)
+    answers = [
+        (a["payload"]["ok"], a["payload"]["error"]) for a in await _completed(pg_db, learner)
+    ]
     assert answers == [
         (False, "topic_required"), (False, "unsupported_artifact"), (False, "nothing_written")
     ]  # fmt: skip

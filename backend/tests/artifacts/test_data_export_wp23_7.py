@@ -34,7 +34,9 @@ def _ctx(db: Db, store: InMemoryObjectStore, settings: Settings) -> JobContext:
     return cast(JobContext, SimpleNamespace(db=db, storage=store, settings=settings))
 
 
-async def _event(db: Db, learner: UUID, text: str) -> None:
+async def _event(db: Db, learner: UUID, text: str, topic_id: UUID | None = None) -> UUID:
+    topic_id = topic_id or uuid4()
+    domain_id = uuid4()
     await append_events(
         db,
         learner,
@@ -42,25 +44,28 @@ async def _event(db: Db, learner: UUID, text: str) -> None:
             NewEvent(
                 type="topic.created",
                 payload={
-                    "topic_id": uuid4(), "domain_id": uuid4(), "name": text, "origin": "session"
+                    "topic_id": topic_id, "domain_id": domain_id, "name": text, "origin": "session"
                 },
                 actor="code",
                 idempotency_key=f"topic:{text}",
+                domain_id=domain_id,
             )
         ],
     )  # fmt: skip
+    return topic_id
 
 
 async def _populate(db: Db, store: InMemoryObjectStore, learner: UUID) -> UUID:
-    await _event(db, learner, "Limits")
     await _event(db, learner, "Series")
-    topic_id = uuid4()
+    topic_id = await _event(db, learner, "Limits")
     await write_system_blocks(
         db, learner_id=learner, kind="notes", owner_id=topic_id,
         blocks=[SystemBlock(kind="definition", content="A limit is $L$.")],
         created_by="artifact_writer@1",
     )  # fmt: skip
-    await store.put(f"learners/{learner}/materials/m1/original.pdf", b"%PDF-bytes", "application/pdf")
+    await store.put(
+        f"learners/{learner}/materials/m1/original.pdf", b"%PDF-bytes", "application/pdf"
+    )
     return topic_id
 
 
@@ -111,9 +116,12 @@ async def test_archive_holds_events_documents_objects_and_readable_artifacts(
     assert "Someone else's topic" not in archive.read("events.jsonl").decode()
 
     artifacts = json.loads(archive.read("documents/content.artifacts.json"))
-    assert [a["artifact_id"] for a in artifacts] and all(a["learner_id"] == str(learner) for a in artifacts)
+    assert [a["artifact_id"] for a in artifacts] and all(
+        a["learner_id"] == str(learner) for a in artifacts
+    )
     assert "documents/content.artifact_versions.json" in names
-    assert json.loads(archive.read("documents/core.learners.json"))[0]["learner_id"] == str(learner)
+    (me,) = json.loads(archive.read("documents/core.learners.json"))
+    assert me["learner_id"] == str(learner)
 
     assert archive.read("objects/materials/m1/original.pdf") == b"%PDF-bytes"
     assert not any(n.startswith("objects/exports/") for n in names)  # no archive in an archive
