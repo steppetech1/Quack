@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
 
 import pytest
 from neo4j import AsyncDriver
@@ -86,3 +87,32 @@ async def system_without_llm(
     stand.llm.fail(ScriptedFailure("unavailable", times=ALWAYS))
     async with _running(stand) as running:
         yield running
+
+
+type StandFactory = Callable[..., AbstractAsyncContextManager[System]]
+
+
+@pytest.fixture
+def stand(
+    settings: Settings, neo4j: AsyncDriver, redis: Redis, pg_db: Db, p4_database: str
+) -> StandFactory:
+    """`async with stand(neo4j=..., redis=..., storage=..., deletions=..., email=...) as system`:
+    a running stand with some of its resources replaced (T-E11); the processes of Phase 4 keep
+    their own, working connections."""
+
+    @asynccontextmanager
+    async def make(
+        *, neo4j_driver: Any = None, redis_client: Any = redis, **resources: Any
+    ) -> AsyncIterator[System]:
+        built = await build_system(
+            settings,
+            neo4j if neo4j_driver is None else neo4j_driver,
+            redis_client,
+            pg_db,
+            p4_database,
+            **resources,
+        )
+        async with _running(built) as running:
+            yield running
+
+    return make

@@ -122,9 +122,9 @@ def script_task_checker(system: System) -> None:
     )
 
 
-def script_teacher(system: System) -> None:
-    """The first turn offers the task, the later ones only talk."""
-    turns = iter([teacher_turn(with_task=True)])
+def script_teacher(system: System, pattern: tuple[bool, ...] = (True,)) -> None:
+    """The turns offer a task where `pattern` says so; the turns after it only talk."""
+    turns = iter([teacher_turn(with_task=with_task) for with_task in pattern])
     system.llm.respond(SCHEMA, lambda _r: next(turns, teacher_turn(with_task=False)))
 
 
@@ -208,3 +208,29 @@ async def run_text_journey(system: System, *, extractor: bool = True) -> Journey
     return Journey(
         learner, domain_id, topic_id, session_id, task["task_id"], answer_seq, answer_frames
     )
+
+
+async def answer_latest_task(
+    system: System, learner: Learner, session_id: UUID, value: str = "1/3"
+) -> list[tuple[str, dict[str, Any]]]:
+    """A number answer to the newest task of the learner; the frames of the turn."""
+    task = await system.resources.db.fetch_one(
+        "SELECT task_id FROM content.tasks WHERE learner_id = %(learner_id)s "
+        "ORDER BY created_seq DESC LIMIT 1",
+        {"learner_id": learner.learner_id},
+    )
+    assert task is not None
+    answered = await act(
+        system,
+        learner,
+        session_id,
+        {
+            "kind": "answer",
+            "task_id": str(task["task_id"]),
+            "answer": {"kind": "number", "value": value},
+            "text": f"I think the ratio is {value}",
+        },
+    )
+    frames = sse_events(answered)
+    assert "error" not in [n for n, _ in frames], frames
+    return frames

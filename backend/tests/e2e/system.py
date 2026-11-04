@@ -214,10 +214,11 @@ class System:
         )
         return await self._accept_terms(learner_id, email, {"Cookie": f"{SESSION_COOKIE}={cookie}"})
 
-    async def sign_in_by_link(self) -> Learner:
+    async def sign_in_by_link(self, email: str | None = None) -> Learner:
         """The way in of T-E1: `POST /auth/link`, the link of the mail, `GET /auth/link/verify`
-        (the session cookie comes back in `set-cookie`), then the terms."""
-        email = f"e2e-{uuid4().hex[:12]}@example.com"
+        (the session cookie comes back in `set-cookie`), then the terms. `email` signs in an
+        address again (T-E12: the same address after the account was deleted)."""
+        email = email or f"e2e-{uuid4().hex[:12]}@example.com"
         sent = await self.client.post("/auth/link", json={"email": email})
         assert sent.status_code == 200, sent.text
         token = parse_qs(urlsplit(self.resources.email.last_link(email)).query)["token"][0]  # type: ignore[attr-defined]
@@ -265,6 +266,7 @@ async def build_system(
     redis: Redis | Any | None,
     db: Db,
     p4_dsn: str,
+    **resources: Any,
 ) -> System:
     """The stand over `db` (`pg_db`); `p4_dsn` is its address, which the processes of Phase 4 open
     for themselves."""
@@ -283,7 +285,13 @@ async def build_system(
     llm.respond("SolutionSpace", lambda _request: SPACE.model_dump(mode="json"))
     compute = ComputeScenario()
     resources = build_app_resources(
-        settings, neo4j, redis, db=db, provider=llm, compute=scripted_compute(compute)
+        settings,
+        neo4j,
+        redis,
+        db=db,
+        provider=llm,
+        compute=scripted_compute(compute),
+        **resources,
     )
     app = create_app(settings, resources=resources)
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
