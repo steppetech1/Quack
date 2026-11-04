@@ -301,7 +301,7 @@ async def build_system(
     llm.respond("AnalystOutput", lambda _request: QUIET_ANALYST)
     llm.respond("ArtifactWriterOutput", lambda _request: {"blocks": [], "cards": []})
     compute = ComputeScenario()
-    resources = build_app_resources(
+    built = build_app_resources(
         settings,
         neo4j,
         redis,
@@ -310,7 +310,7 @@ async def build_system(
         compute=scripted_compute(compute),
         **resources,
     )
-    app = create_app(settings, resources=resources)
+    app = create_app(settings, resources=built)
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
     return System(
         settings=settings,
@@ -318,7 +318,7 @@ async def build_system(
         redis=redis,
         llm=llm,
         compute=compute,
-        resources=resources,
+        resources=built,
         app=app,
         client=client,
     )

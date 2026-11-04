@@ -8,7 +8,7 @@ learner but the log row; a new account with the same address starts empty."""
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, LiteralString
 from uuid import UUID
 
 from tests.e2e.journey import ok
@@ -17,7 +17,7 @@ from tests.e2e.text_journey import event_types, run_text_journey
 from tests.support.deletions import FakeDeletionJournal
 
 
-async def count(system: System, sql: str, **params: Any) -> int:
+async def count(system: System, sql: LiteralString, **params: Any) -> int:
     row = await system.resources.db.fetch_one(sql, params)
     assert row is not None
     return int(row["n"])
