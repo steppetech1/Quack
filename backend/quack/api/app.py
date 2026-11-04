@@ -21,6 +21,7 @@ from quack.api.openapi import install_openapi, render_openapi
 from quack.api.ratelimit import enforce_action_rate_limit
 from quack.api.resources import AppResources, create_app_resources
 from quack.artifacts.cards_routes import router as cards_router
+from quack.artifacts.export_routes import router as export_router
 from quack.artifacts.hub_cheatsheet_routes import router as hub_cheatsheet_router
 from quack.artifacts.notes_routes import router as notes_router
 from quack.artifacts.skills_routes import router as skills_router
@@ -229,6 +230,7 @@ def create_app(
     app.include_router(session_router, dependencies=[Depends(enforce_action_rate_limit)])
     app.include_router(notes_router)
     app.include_router(cards_router)
+    app.include_router(export_router)
     app.include_router(skills_router)
     app.include_router(viz_router)
     app.include_router(hub_cheatsheet_router)
