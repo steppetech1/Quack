@@ -673,6 +673,23 @@ export interface paths {
         patch: operations["patch_learner_skill_v1_learner_skills__skill_id__patch"];
         trace?: never;
     };
+    "/v1/learner/exports/{export_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Export */
+        get: operations["get_export_v1_learner_exports__export_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learner/preferences": {
         parameters: {
             query?: never;
@@ -1066,6 +1083,40 @@ export interface paths {
         };
         /** Get Topic Cards */
         get: operations["get_topic_cards_v1_topics__topic_id__cards_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/topics/{topic_id}/export/anki": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Anki */
+        get: operations["export_anki_v1_topics__topic_id__export_anki_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/topics/{topic_id}/export/obsidian": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Obsidian */
+        get: operations["export_obsidian_v1_topics__topic_id__export_obsidian_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1836,6 +1887,29 @@ export interface components {
         };
         /** @enum {string} */
         EvidenceSource: "code" | "model" | "conversation";
+        /**
+         * ExportStatus
+         * @description `pending` — requested, the archive is not ready; `ready` — `download_url` lives
+         *     `expires_in_s`; `expired` — the archive is deleted or past its term (build a new one).
+         */
+        ExportStatus: {
+            /** Download Url */
+            download_url: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Expires In S */
+            expires_in_s: number | null;
+            /**
+             * Export Id
+             * Format: uuid
+             */
+            export_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "ready" | "expired";
+        };
         /**
          * FeedEvent
          * @description An event of the session feed (`GET /v1/sessions/{id}`, D-B-210).
@@ -6244,6 +6318,64 @@ export interface operations {
             };
         };
     };
+    get_export_v1_learner_exports__export_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportStatus"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     set_preference_endpoint_v1_learner_preferences_patch: {
         parameters: {
             query?: never;
@@ -7659,6 +7791,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CardsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_anki_v1_topics__topic_id__export_anki_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deck */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_obsidian_v1_topics__topic_id__export_obsidian_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The vault */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
                 };
             };
             /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
