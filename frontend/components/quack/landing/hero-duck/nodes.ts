@@ -46,6 +46,34 @@ type Link = { a: number; b: number; mx: number; my: number; vx: number; vy: numb
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
+/** Раскладка: `near` — [смещение x, смещение y, радиус, цвет] в долях ширины утки; `links` — пары индексов из `near`; `far` — дальние узлы без связей */
+export type NodeLayout = { near: [number, number, number, number][]; links: [number, number][]; far?: [number, number][] };
+
+const HERO_NEAR: NodeLayout["near"] = [
+  [-0.38, 0.06, 0.046, 0],
+  [-0.6, -0.14, 0.042, 1],
+  [-0.42, -0.38, 0.043, 2],
+  [-0.66, -0.56, 0.039, 0],
+  [0.38, 0.0, 0.045, 2],
+  [0.6, -0.24, 0.041, 0],
+  [0.44, -0.48, 0.039, 1],
+];
+const HERO_LINKS: NodeLayout["links"] = [
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [4, 5],
+  [5, 6],
+];
+const HERO_FAR: [number, number][] = [
+  [-0.9, -0.72],
+  [-0.14, -0.82],
+  [0.3, -0.7],
+  [0.92, -0.74],
+  [-0.95, -0.2],
+  [0.98, -0.08],
+];
+
 export class NodeField {
   private nodes: Node[] = [];
   private links: Link[] = [];
@@ -58,35 +86,14 @@ export class NodeField {
   private shakeUntil = 0;
   private sweepUntil = 0;
 
-  constructor() {
+  /** Без аргумента — раскладка лендинга вокруг утки; с `layout` — своя (например, цепочки на странице нового предмета) */
+  constructor(layout?: NodeLayout) {
     // ближние: четыре слева цепочкой, три справа; смещения от якоря — в ширинах утки
-    const near: [number, number, number, number][] = [
-      [-0.38, 0.06, 0.046, 0],
-      [-0.6, -0.14, 0.042, 1],
-      [-0.42, -0.38, 0.043, 2],
-      [-0.66, -0.56, 0.039, 0],
-      [0.38, 0.0, 0.045, 2],
-      [0.6, -0.24, 0.041, 0],
-      [0.44, -0.48, 0.039, 1],
-    ];
+    const near = layout?.near ?? HERO_NEAR;
     for (const [hx, hy, r, color] of near) this.nodes.push(this.make(hx, hy, r, color, 1, true));
-    this.links = [
-      [0, 1],
-      [1, 2],
-      [2, 3],
-      [4, 5],
-      [5, 6],
-    ].map(([a, b]) => ({ a, b, mx: 0, my: 0, vx: 0, vy: 0 }));
+    this.links = (layout?.links ?? HERO_LINKS).map(([a, b]) => ({ a, b, mx: 0, my: 0, vx: 0, vy: 0 }));
     // дальние: 6 узлов в свободной полосе выше и по сторонам; чем дальше от утки — тем меньше и тусклее
-    const far: [number, number][] = [
-      [-0.9, -0.72],
-      [-0.14, -0.82],
-      [0.3, -0.7],
-      [0.92, -0.74],
-      [-0.95, -0.2],
-      [0.98, -0.08],
-    ];
-    far.forEach(([hx, hy], i) => {
+    (layout?.far ?? HERO_FAR).forEach(([hx, hy], i) => {
       const d = Math.min(1, Math.hypot(hx, hy * 1.3) / 1.4);
       this.nodes.push(this.make(hx + rnd(-0.04, 0.04), hy + rnd(-0.04, 0.04), 0.032 - 0.013 * d, i % 3, 0.5 - 0.28 * d, false));
     });
@@ -96,8 +103,8 @@ export class NodeField {
     return { hx, hy, x: 0, y: 0, vx: 0, vy: 0, r, color, alpha, near, phase: rnd(0, Math.PI * 2), dots: [], scatter: { x: rnd(-1, 1), y: rnd(-1, 0.2) } };
   }
 
-  /** Пересобрать под размер сцены: `cell` — шаг частиц сцены в CSS px */
-  layout(duckPx: number, cell: number, dpr: number) {
+  /** Пересобрать под размер сцены: `cell` — шаг частиц сцены в CSS px; `maxDots` — потолок точек в облаке (крупным узлам нужно больше) */
+  layout(duckPx: number, cell: number, dpr: number, maxDots = 140) {
     this.duck = duckPx;
     // узел — облако случайных точек, как «Quack!»: частицы того же мелкого размера, к центру очень плотно,
     // поэтому издали он читается цельной точкой, а к краю редеет и тает
@@ -106,7 +113,7 @@ export class NodeField {
     for (const n of this.nodes) {
       n.dots = [];
       const R = n.r * duckPx;
-      const count = Math.round(Math.max(18, Math.min(140, ((R * R) / (step * step)) * 2.2)));
+      const count = Math.round(Math.max(18, Math.min(maxDots, ((R * R) / (step * step)) * 2.2)));
       for (let i = 0; i < count; i++) {
         const t = Math.pow(Math.random(), 2.2); // сильный сдвиг к центру
         const ang = Math.random() * Math.PI * 2;
