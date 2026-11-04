@@ -23,6 +23,25 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-241. Q-C-1: `timeout_ms` в тестах compute; `illustrations/` не описывается в `keys.py`
+- Класс: C
+- WP / место: #300 (A → C); `compute/tests/test_compute_service.py`, `backend/tests/test_ops_p4_recovery.py`
+- Контекст: продуктовый `timeout_ms` 1500 делал тесты `compute` зависимыми от загрузки машины; префикс `illustrations/` нигде не описан в `Т-§3.3`, ключ строит `agents/illustration.py` (зона B).
+- Решение: (1) хелпер `check` передаёт `timeout_ms=10_000` (`symbolic_background_timeout_ms`, `Т-§6`), явное значение в тесте перекрывает его, тест на таймаут (50 мс) не тронут. (2) Префикс `illustrations/` в `storage/keys.py` не описывать: ключ принадлежит B, а источник `events` находит его по `agent.completed.result_ref`; добавлен тест именно с этим событием. (3) `thumbnail_key`, `photo_crop_key` — к сведению: писателя нет; когда появится, новый источник в `orphan_objects.py` + тест (D-C-215).
+- Почему: D-A-248, D-A-249 п.12; D-C-215.
+- Обратимость: полная.
+- Тесты: `test_an_illustration_named_only_by_agent_completed_is_kept`; `compute/tests/test_compute_service.py` с новым умолчанием.
+- Требует подтверждения владельцем: нет
+
+### D-C-240. WP23.7: экспорт темы в Obsidian и Anki и статус архива данных (`GET`-маршруты); `POST /v1/learner/export` ждёт `data_export` у A
+- Класс: C (раскладка хранилища, привязка карточки к ответу, форма статуса в документах не заданы; поставка задачи - у A)
+- WP / место: WP23.7, `Т-§19.6`, `Т-§19.7`, §6.4; `quack/artifacts/topic_export.py`, `quack/artifacts/export_routes.py`, `tests/e2e/routes/c.py`, `openapi.json`, `genanki` в `pyproject.toml` (назван в ТЗ §4.6)
+- Контекст: ТЗ задаёт Markdown с YAML, `[[ссылками]]` по `REQUIRES`, формулами в `$...$` и колоду Anki из фиксированных карточек, но не говорит, что кладётся в архив при экспорте одной темы, что на обороте карточки (ответ живёт в задаче банка, `D-C-140`) и как выглядит состояние архива. `POST /v1/learner/export` должен писать `agent.requested {kind: data_export}`: вида нет в `AgentKind` (`quack/events/records.py`, строка 102), значит записать запрос нечем (`D-C-231`).
+- Решение: (1) `GET /v1/topics/{id}/export/obsidian` - zip с одним файлом `{имя темы}.md` (имя без `\ / : * ? " < > | # ^ [ ]`); YAML: `domain` (имя из `domain.created`, иначе id), `domain_id`, `topic_id`, `date` (день выгрузки), `sources` (материал и страница из `sources` блоков, без повторов); блоки под заголовками по виду, блок с `unverified` помечен `> [!warning] не проверено`; в конце `Опирается на` и `Нужна для` со ссылками `[[имя]]` на соседние темы (`topic_requires`). Файлы соседних тем в архив не кладутся: ссылка Obsidian на несуществующую заметку допустима. (2) `GET /v1/topics/{id}/export/anki` - `.apkg`: лицо карточки - `prompt`, оборот - ответ задачи (`answer_spec`: верные варианты, `$latex$` значения, первый из `accepted`, `key_ideas`; формы без короткого ответа дают пустой оборот); формулы `$...$` становятся `\(...\)`, текст экранируется; id колоды и модели, `guid` заметки выводятся из id темы и карточки, повторная выгрузка обновляет импорт Anki, не дублирует. (3) Ответ файла идёт телом (`Content-Disposition: attachment`), не по ссылке: файл мал, собирается из записей ученика на лету и в хранилище не пишется. Чужая и неизвестная тема - 404. (4) `GET /v1/learner/exports/{id}`: `ready` - ссылка хранилища на оставшийся срок (`expires_at - now`, `export_link_ttl_hours`) и `expires_in_s`; строка `expired` или `ready` с истёкшим сроком - `expired` без ссылки (очистка может ещё не пройти); строки ещё нет, но есть `agent.requested` вида `data_export` с этим `request_id` у этого ученика - `pending`; иначе и чужой - 404. (5) `POST /v1/learner/export` не сделан. Нужно от A: `"data_export"` в `AgentKind` (`quack/events/records.py:102`) и строка `"data_export": "export.data"` в `AGENT_JOB_KINDS` (`quack/jobs/rules_p4.py:108`) с нагрузкой `{request_id}`; после этого C добавляет маршрут (ключ идемпотентности - `export_id`, `agent.requested` от `learner`, `202` с `export_id`) и запись в реестр e2e.
+- Почему: `Т-§19.7`, ТЗ WP23.7, `D-C-140` (карточка - задача банка), `D-C-231`, закон 1 (запрос ученика - событие, маршрут сам задачу не ставит).
+- Обратимость: код; раскладка vault и колоды - формат для ученика, менять только вперёд.
+- Тесты: `tests/artifacts/test_topic_export_wp23_7.py` (vault, YAML, ссылки, имя файла, колода и её повторяемость, формы ответа, три маршрута, чужой ученик, 401, статусы `pending`/`ready`/`expired`); `tests/e2e/routes/c.py` (маршруты в `other_routes`, `export_id` в `ids`).
+
 ### D-C-250. WP23.5: формулы листа печатает KaTeX 0.16.11 в Chromium compute; страница размечает формулу элементом `quack-math`, файлы KaTeX лежат в образе compute
 - Класс: C (compute, кроме math; `quack/artifacts/hub_cheatsheet.py`)
 - WP / место: WP23.5, `Т-§17.6`; `backend/quack/artifacts/hub_cheatsheet.py` (`cheatsheet_html`), `compute/quack_compute/renderer.py` (`Renderer.pdf`), `compute/quack_compute/settings.py` (`katex_dir`), `compute/quack_compute/katex/0.16.11/`, `.gitattributes`
