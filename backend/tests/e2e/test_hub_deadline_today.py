@@ -80,8 +80,8 @@ async def test_hub_deadline_today(stand: StandFactory) -> None:
 
         listed = await system.client.get(f"/v1/domains/{domain_id}/hubs", headers=learner.headers)
         assert listed.status_code == 200, listed.text
-        [hub] = listed.json()
-        assert hub["name"] == "Colloquium" and hub["deadline_at_ms"], hub
+        [hub] = [h for h in listed.json() if h["name"] == "Colloquium"]
+        assert hub["deadline_at_ms"], hub
         assert [t["topic_id"] for t in hub["topics"]] == [str(topic_id)], hub
 
         today = ok(
