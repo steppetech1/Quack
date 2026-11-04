@@ -13,6 +13,10 @@ A separate ASGI process that answers `POST /responses` as the Responses API does
 - a given share of 429 with `retry-after` as seconds, an HTTP date, none or all three in turn;
   a given share of cut answers (`status: incomplete`, partial JSON);
 - `response_format`, `temperature` or no `store: false` → 400, as Meta does (Т-§11.1);
+- Phase 4 (ТЗ Ф4 WP26.2): the schemas of every role of `Т-§11.1` (`PROMPT_CONTRACTS.md`) are
+  answered by the minimal instance; roles whose minimal instance the code cannot use get a
+  usable answer by the name of the schema (`teacher@2` text, a task of `task_generator@1`
+  with its key found by `task_checker@1` / `task_arbiter@1`, a confident model verdict);
 - Phase 4 (ТЗ Ф4 WP26.2, seam S13, D-B-125 п.3): `stream: true` gives SSE `data: {json}` lines
   with sorted keys — per item `response.output_item.added`, `response.output_text.delta` for a
   message, `response.output_item.done`, then `response.completed` / `response.incomplete`, then
@@ -65,8 +69,18 @@ FIXED_UUID = "00000000-0000-4000-8000-000000000000"
 FIXED_DATETIME = "2026-01-01T00:00:00Z"
 FIXED_DATE = "2026-01-01"
 TEACHER_SCHEMA = "TeacherOutput"
+TEACHER_V2_SCHEMA = "TeacherOutputV2"
 TASK_GEN_SCHEMA = "TaskGenOutput"
+TASK_GENERATOR_SCHEMA = "TaskGeneratorOutput"
+TASK_CHECK_SCHEMA = "TaskCheckOutput"
+VERDICT_SCHEMA = "ModelVerdictOutput"
 STRUCTURER_SCHEMA = "StructurerOutput"
+# D-C-224: a model verdict of the stand is sure enough not to ask for a second opinion.
+VERDICT_CONFIDENCE = 0.9
+# The label of the skill the generated task tests: the generator is given one skill, `S1`.
+GENERATED_SKILL_LABEL = "S1"
+# Math kinds of `task_generator@1` (the `kind` block is an answer type): a numeric task.
+MATH_KINDS = frozenset({"math", "number", "expression", "quantity"})
 # D-C-108: characters of the answer text per `response.output_text.delta`.
 STREAM_DELTA_CHARS = 16
 
@@ -189,6 +203,7 @@ def _string(schema: dict[str, Any], text_chars: int | None) -> str:
 
 
 _KIND_HEADER = re.compile(r"### Kind of problem\s+(\w+)")
+_FIRST_OPTION = re.compile(r"### Options\s+([^\s.]+)\.")
 
 
 def _texts(node: Any) -> list[str]:
@@ -226,6 +241,49 @@ def _choice_task(instance: dict[str, Any]) -> dict[str, Any]:
     ]
     answer = {**instance["answer"], "type": "choice", "value": "A"}
     return {**instance, "answer": answer, "options": options}
+
+
+def _teacher_v2(instance: dict[str, Any], text_chars: int) -> dict[str, Any]:
+    """`teacher@2` answer with a body: one text block of `text_chars` characters (the minimal
+    instance has no blocks, the turn would show nothing)."""
+    text = (SHORT_TEXT * (text_chars // len(SHORT_TEXT) + 1))[:text_chars]
+    block = {"block_id": "b1", "element_id": None, "text": text}
+    return {**instance, "p2_body": {**instance["p2_body"], "blocks": [block]}}
+
+
+def _generated_task(instance: dict[str, Any], kind: str | None) -> dict[str, Any]:
+    """`task_generator@1` answer the code accepts (`Т-§5.3` form rules): one task that tests
+    `S1` — a choice with the correct option `A` at level 1, or a number `2` at level 2 for a
+    math kind. `task_checker@1` finds the same key (`_checked_answer`)."""
+    draft = instance["tasks"][0]
+    markup = draft["markup"]
+    if kind in MATH_KINDS:
+        tests = [{"level": 2, "new_skill": None, "skill": GENERATED_SKILL_LABEL}]
+        answer = {**markup["answer"], "type": "number", "value": {"latex": "2", "sympy": "2"}}
+        answer["options"] = None
+    else:
+        tests = [{"level": 1, "new_skill": None, "skill": GENERATED_SKILL_LABEL}]
+        options = [
+            {"correct": True, "option_id": "A", "text": "text"},
+            {"correct": False, "option_id": "B", "text": "text"},
+        ]
+        answer = {**markup["answer"], "type": "choice", "options": options}
+    task = {**draft, "markup": {**markup, "answer": answer, "tests": tests}}
+    return {**instance, "tasks": [task]}
+
+
+def _checked_answer(instance: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    """`task_checker@1` / `task_arbiter@1` answer that agrees with `_generated_task`: the
+    first listed option when the problem has options, else the number `2`. The markup is not
+    disputed (`levels_fit` all true, the method is not named)."""
+    first = next(
+        (m.group(1) for text in _texts(body.get("input")) if (m := _FIRST_OPTION.search(text))),
+        None,
+    )
+    if first is not None:
+        return {**instance, "answer_math": None, "answer_text": first, "levels_fit": [True]}
+    math = {"latex": "2", "sympy": "2"}
+    return {**instance, "answer_math": math, "answer_text": "2", "levels_fit": [True]}
 
 
 def _structure() -> dict[str, Any]:
@@ -517,12 +575,20 @@ async def _responses(request: Request) -> Response:
 
     text_chars = config.teacher_chars if fmt.get("name") == TEACHER_SCHEMA else None
     instance = minimal_instance(fmt["schema"], text_chars=text_chars)
+    if fmt.get("name") == TEACHER_V2_SCHEMA:
+        instance = _teacher_v2(instance, config.teacher_chars)
     if fmt.get("name") == TASK_GEN_SCHEMA:
         instance = (
             _math_task(instance) if _requested_kind(body) == "math" else _choice_task(instance)
         )
     elif fmt.get("name") == STRUCTURER_SCHEMA:
         instance = _structure()
+    elif fmt.get("name") == TASK_GENERATOR_SCHEMA:
+        instance = _generated_task(instance, _requested_kind(body))
+    elif fmt.get("name") == TASK_CHECK_SCHEMA:
+        instance = _checked_answer(instance, body)
+    elif fmt.get("name") == VERDICT_SCHEMA:
+        instance = {**instance, "confidence": VERDICT_CONFIDENCE}
     answer = orjson.dumps(instance, option=orjson.OPT_SORT_KEYS).decode()
     input_tokens = _tokens(orjson.dumps(body.get("input", "")).decode())
     reasoning_tokens = REASONING_TOKENS["high" if effort == "high" else "low"]
