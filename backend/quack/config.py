@@ -526,6 +526,10 @@ class Settings(BaseSettings):
     symbolic_background_timeout_ms: int = 10000
     symbolic_check_delay_ms: int = 3000
     min_sig_digits: int = 3
+    # Largest decimal exponent of a learner's number checked instantly; a larger one goes to
+    # the symbolic check (an exact `Fraction` of `1e-999999999` stalls the API). The documents
+    # give no value; starting value.
+    instant_number_max_exponent: int = Field(default=1000, ge=1)
     numeric_points: int = 20
     # WP11.5 (Т-§6.6): numbers of the numeric check sent to compute in `/v1/math/*`; the
     # documents give none of them. Phase 4 decision D-B-124.

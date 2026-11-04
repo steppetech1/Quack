@@ -305,18 +305,26 @@ class _Written:
     sig_digits: int | None
 
 
-def _parse_number(text: str) -> _Written | None:
+def _parse_number(text: str, *, max_exponent: int | None = None) -> _Written | None:
     """Decimal comma or point, `3/4`, scientific notation (Т-§6.4); `None` — not a plain
-    number (an expression, or not a number at all)."""
+    number (an expression, or not a number at all).
+
+    `max_exponent` bounds the decimal exponent of a learner's answer: `1e-999999999` would
+    otherwise be turned into an exact `Fraction` with a billion-digit power of ten inside the
+    API. Such an answer is not checked instantly and goes on to the symbolic check."""
     text = text.strip().replace(" ", "").replace(",", ".")
     if not _RATIONAL.match(text):
         return None
     if "/" in text:
-        num, den = text.split("/")
-        if Fraction(Decimal(den)) == 0:
+        num, den = (Decimal(part) for part in text.split("/"))
+        if _too_large(num, max_exponent) or _too_large(den, max_exponent):
             return None
-        return _Written(Fraction(Decimal(num)) / Fraction(Decimal(den)), None, None)
+        if den == 0:
+            return None
+        return _Written(Fraction(num) / Fraction(den), None, None)
     dec = Decimal(text)
+    if _too_large(dec, max_exponent):
+        return None
     exponent = dec.as_tuple().exponent
     assert isinstance(exponent, int)  # a finite decimal: the regex allows nothing else
     digits = dec.as_tuple().digits
@@ -324,8 +332,17 @@ def _parse_number(text: str) -> _Written | None:
     return _Written(Fraction(dec), Fraction(1, 2) * Fraction(10) ** exponent, significant)
 
 
+def _too_large(dec: Decimal, max_exponent: int | None) -> bool:
+    """`Decimal` keeps the exponent as a number, so this check itself is cheap."""
+    if max_exponent is None:
+        return False
+    exponent = dec.as_tuple().exponent
+    assert isinstance(exponent, int)
+    return abs(exponent) > max_exponent or abs(dec.adjusted()) > max_exponent
+
+
 def _number(value: str, reference: str, spec: AnswerSpec, settings: Settings) -> Outcome | None:
-    written = _parse_number(value)
+    written = _parse_number(value, max_exponent=settings.instant_number_max_exponent)
     expected = _parse_number(reference)
     if written is None or expected is None:
         return None
@@ -363,7 +380,8 @@ def _sequence(value: str, spec: AnswerSpec, settings: Settings) -> Outcome | Non
     if any(_parse_number(r) is None for r in references):
         return None
     elements = [e for e in value.strip().strip(_ENCLOSING).split(",") if e.strip()]
-    if any(_parse_number(e) is None for e in elements):
+    limit = settings.instant_number_max_exponent
+    if any(_parse_number(e, max_exponent=limit) is None for e in elements):
         return None
     if len(elements) != len(references):
         return "incorrect"

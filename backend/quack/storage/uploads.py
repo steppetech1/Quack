@@ -57,6 +57,13 @@ def _sniff(data: bytes) -> UploadKind | None:
     return None
 
 
+def check_upload_size(size: int | None, *, max_mb: int) -> None:
+    """Over `max_mb` (`upload_max_mb`) → `UploadRejected` (413). `None` — the size is not known
+    yet (the body is checked again once read)."""
+    if size is not None and size > max_mb * _BYTES_PER_MB:
+        raise UploadRejected("size", f"upload is larger than {max_mb} MB")
+
+
 def detect_upload(
     data: bytes,
     *,
@@ -67,8 +74,7 @@ def detect_upload(
     """The kind of an upload by its first bytes; `filename` is never looked at (Т-§19.8).
     Over `max_mb` (`upload_max_mb`) or not one of `allowed` → `UploadRejected`."""
     del filename  # the name and its extension do not decide the type
-    if len(data) > max_mb * _BYTES_PER_MB:
-        raise UploadRejected("size", f"upload is larger than {max_mb} MB")
+    check_upload_size(len(data), max_mb=max_mb)
     kind = _sniff(data)
     if kind is None or kind not in allowed:
         kinds = ", ".join(sorted(allowed))
