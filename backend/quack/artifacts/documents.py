@@ -237,6 +237,7 @@ async def write_system_blocks(
     created_by: str,
     skill_version: int | None = None,
     redis: Redis | None = None,
+    event_key: str | None = None,
 ) -> Artifact:
     """A new version from the system blocks (the artifact writer, WP23.2), D-C-125:
 
@@ -245,6 +246,9 @@ async def write_system_blocks(
     - a block without `block_id` (or naming no block) is appended;
     - system blocks of the current version that no block names are dropped — the writer returns
       the whole system part; learner blocks always stay where they are.
+
+    `event_key` names the `artifact.updated` event of the new version, so that a later run can
+    ask `written_version` whether this request already wrote its version (D-C-217).
     """
     domain_id = await _domain_of_owner(db, learner_id, kind, owner_id)
 
@@ -294,7 +298,15 @@ async def write_system_blocks(
         actor=created_by,
         skill_version=skill_version,
         redis=redis,
+        event_key=event_key,
     )
+
+
+async def written_version(db: Db, *, learner_id: UUID, key: str) -> int | None:
+    """The version an `artifact.updated` event of this `event_key` wrote; None — no such event
+    (the request has not written yet, or its blocks changed nothing)."""
+    found = await db.fetch_one(_EVENT_BY_KEY, {"learner_id": learner_id, "idempotency_key": key})
+    return None if found is None else int(found["payload"]["version"])
 
 
 async def edit_block(
