@@ -8,7 +8,8 @@ import { startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { BackLink, PageShell } from "../page-parts";
-import { AREA, FIELD, Field, PRIMARY_BTN, SECONDARY_BTN, StubHeader } from "../stubs/stub-parts";
+import { NodeChain } from "../stubs/node-chain";
+import { FIELD, Field, PILL_FIELD, PRIMARY_BTN, SECONDARY_BTN } from "../stubs/stub-parts";
 import { useErrorText } from "./error-text";
 
 /** The first message of a session started from an input box waits here while the page switches to the real id */
@@ -80,28 +81,41 @@ export function NewDomainLive() {
   const existing = suggestion?.decision === "existing" ? domains.find((d) => d.id === suggestion.domain_id) : undefined;
 
   return (
-    <PageShell>
+    <PageShell width={960}>
       <BackLink href="/">{tx.shell.subjects}</BackLink>
-      <StubHeader title={t.title} body={t.body} />
       {!suggestion ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (text.trim()) void classify();
-          }}
-        >
-          <Field id={`${id}-text`} label={live.domainAsk}>
-            <textarea id={`${id}-text`} value={text} onChange={(e) => setText(e.target.value)} required placeholder={live.domainAskPh} className={AREA} />
-          </Field>
-          {error && (
-            <p role="alert" className="mt-4 text-small text-st-confused">
-              {error}
-            </p>
-          )}
-          <button type="submit" disabled={busy || !text.trim()} className={cn(PRIMARY_BTN, "mt-6")}>
-            {busy ? live.domainChecking : live.domainFind}
-          </button>
-        </form>
+        <div className="flex min-h-[65vh] flex-col items-center justify-center gap-8 px-2 text-center">
+          <h1 className="display-caps text-[clamp(2rem,4.5vw,3.25rem)] text-paper">{t.title}</h1>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (text.trim()) void classify();
+            }}
+            className="flex w-full max-w-2xl flex-col items-center gap-5"
+          >
+            <div className="flex w-full items-center gap-3 sm:gap-4 md:gap-6">
+              <NodeChain side="left" className="w-12 shrink-0 sm:w-20 md:w-28 lg:w-40 xl:w-[210px]" />
+              <input
+                id={`${id}-text`}
+                aria-label={live.domainAsk}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                required
+                placeholder={live.domainAskPh}
+                className={cn(PILL_FIELD, "min-w-0 flex-1")}
+              />
+              <NodeChain side="right" className="w-12 shrink-0 sm:w-20 md:w-28 lg:w-40 xl:w-[210px]" />
+            </div>
+            {error && (
+              <p role="alert" className="text-small text-st-confused">
+                {error}
+              </p>
+            )}
+            <button type="submit" disabled={busy || !text.trim()} className={PRIMARY_BTN}>
+              {busy ? live.domainChecking : live.domainFind}
+            </button>
+          </form>
+        </div>
       ) : (
         <section aria-live="polite" className="mt-6">
           <p className="text-body text-paper">

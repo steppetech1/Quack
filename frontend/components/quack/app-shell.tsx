@@ -87,6 +87,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [pendingTopic, setPendingTopic] = useState<string | null>(null);
   // null — решает ширина экрана: на узком десктопе панель свёрнута
   const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
+  // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
+  const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
   const [drawer, setDrawer] = useState<"domains" | "sessions" | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -214,16 +216,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </a>
         <div inert={!!drawer || menuOpen} className="flex h-dvh">
           {!fullscreen && (
-            <aside aria-label={t.shell.subjects} className="hidden w-62 shrink-0 border-r border-seam-soft md:block">
-              <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
+            <aside
+              aria-label={t.shell.subjects}
+              className={cn("hidden shrink-0 border-r border-seam-soft transition-[width] duration-300 ease-out md:block", domainsCollapsed ? "w-14" : "w-62")}
+            >
+              <DomainSidebar
+                domains={domains}
+                activeId={activeId}
+                onSelect={selectDomain}
+                collapsed={domainsCollapsed}
+                onToggle={() => setDomainsCollapsed((v) => !v)}
+              />
             </aside>
           )}
 
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
+            {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
-              <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
-                <PanelLeft />
-              </IconButton>
+              {pathname !== "/" && (
+                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
+                  <PanelLeft />
+                </IconButton>
+              )}
               <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
               {/* на телефоне кнопка меню в верхней полосе */}
               <div ref={barToggle} data-menu-anchor className="ml-auto">

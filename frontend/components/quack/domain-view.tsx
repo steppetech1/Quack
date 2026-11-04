@@ -7,15 +7,16 @@ import type { TodayRec } from "@/lib/graph/types";
 import { useFmt, useLocale, useMocks, useT } from "@/lib/i18n/provider";
 import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
+import { useData } from "@/lib/api/data";
 import { useShell } from "./app-shell";
 import { CanvasesList, CanvasSearch } from "./canvases-page";
 import { Composer } from "./composer";
 import { DomainGraph, type GraphHandle } from "./domain-graph";
+import { DomainTree } from "./domain-tree";
 import { LayeredGraph } from "./graph/layered-graph";
 import { NumText } from "./num-text";
 import { EmptyDomain } from "./empty-domain";
 import { TodayCards } from "./today-cards";
-import { TopicList } from "./topic-list";
 import { TopicSearch } from "./topic-search";
 
 type View = "graph" | "canvases";
@@ -80,7 +81,9 @@ export function DomainView() {
   const { fullDate, inDays } = useFmt();
   const { canvasesOf } = useMocks();
   const { locale } = useLocale();
-  const { domain, startSession, graphMode, setGraphMode } = useShell();
+  const { domain, selectDomain, startSession, graphMode, setGraphMode } = useShell();
+  const data = useData();
+  const domains = data.domains.length ? data.domains : [domain];
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -115,7 +118,8 @@ export function DomainView() {
       graph.current?.focusTopic(id);
     } else {
       setOpenTopic(id);
-      requestAnimationFrame(() => scrollToId(`topic-${id}`, 120));
+      // Хаб темы раскрывается в DomainTree асинхронно (эффект на смену openTopicId) — ждём кадр подольше
+      setTimeout(() => scrollToId(`topic-${id}`, 120), 80);
     }
   };
 
@@ -209,7 +213,7 @@ export function DomainView() {
               </div>
               <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} className="md:hidden" idPrefix="m" />
               <div className="md:hidden">
-                <TopicList domain={domain} openId={openTopic} />
+                <DomainTree domains={domains} activeId={domain.id} onSelect={selectDomain} showNewSubject={false} openTopicId={openTopic} />
               </div>
               <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} className="hidden md:grid" />
             </>
