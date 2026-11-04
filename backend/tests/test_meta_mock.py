@@ -34,12 +34,15 @@ from quack.llm.streaming import (
     tool_calls,
 )
 from quack.llm.strict_schema import to_strict_json_schema
+from quack.practice.role_outputs import ModelVerdictOutput, TaskCheckOutput, TaskGeneratorOutput
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.session.schemas import (
     ExtractorOutput,
     ExtractorOutputV2,
     TeacherOutput,
 )
+from quack.session.teacher_output import TeacherOutputV2
+from tests.llm.prompt_contracts import ALL_PROMPT_SCHEMAS
 
 # The nine output models of T-O5; `CheckpointerOutput` → `ExtractorOutputV2` (WP13, D-C-029).
 OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
@@ -52,6 +55,10 @@ OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
     TaskGenOutput,
     EvaluatorOutput,
     ArtifactGenOutput,
+)
+# Every (prompt, output schema) pair of `PROMPT_CONTRACTS.md`: the roles of `Т-§11.1` (WP26.2).
+ROLE_SCHEMAS: tuple[tuple[str, type[BaseModel]], ...] = tuple(
+    (ref, model) for ref, models in ALL_PROMPT_SCHEMAS.items() for model in models
 )
 RATE_LIMIT_HEADERS = (
     "x-ratelimit-limit-requests",
@@ -578,3 +585,131 @@ async def test_stream_429_before_the_stream() -> None:
     finally:
         await adapter.aclose()
     assert caught.value.retry_after_sec is not None
+
+
+# --- Phase 4: answers by the roles of Т-§11.1 (ТЗ Ф4 WP26.2) -------------------------------
+
+
+def _role_id(pair: tuple[str, type[BaseModel]]) -> str:
+    return f"{pair[0]}-{pair[1].__name__}"
+
+
+def test_roles_cover_every_prompt_of_the_contracts_file() -> None:
+    """The parametrized tests below walk `PROMPT_CONTRACTS.md` as the registry has it: a role
+    added to the registry gets the wire tests without a line here."""
+    assert {ref for ref, _ in ROLE_SCHEMAS} == set(ALL_PROMPT_SCHEMAS)
+    assert len(ROLE_SCHEMAS) >= 31
+
+
+@pytest.mark.parametrize("pair", ROLE_SCHEMAS, ids=_role_id)
+async def test_role_answer_validates_on_the_wire(pair: tuple[str, type[BaseModel]]) -> None:
+    """Each role schema of the contracts file: the answer passes `model_validate_json` and has
+    sorted keys at every depth (Т-§11.8)."""
+    ref, model = pair
+    body = _body(model, prompt_cache_key=ref)
+    async with _client() as client:
+        response = await client.post("/responses", json=body)
+    assert response.status_code == 200
+    text = _answer_text(response.json())
+    model.model_validate_json(text)
+    _keys_sorted(json.loads(text))
+
+
+@pytest.mark.parametrize("pair", ROLE_SCHEMAS, ids=_role_id)
+async def test_role_stream_validates_through_the_adapter(
+    pair: tuple[str, type[BaseModel]],
+) -> None:
+    """S13 for every role: the streamed text collected by B's adapter validates."""
+    _, model = pair
+    events = await _stream(_stream_request(model))
+    model.model_validate_json(_streamed_text(events))
+
+
+def _blocks(*blocks: tuple[str, str]) -> str:
+    """A prompt as the templates of the roles render it: `### Name` and the text."""
+    return "\n\n".join(f"### {name}\n\n{text}" for name, text in blocks)
+
+
+async def _answer(model: type[BaseModel], prompt: str = "Hello", **extra: Any) -> Any:
+    body = _body(model, input=[{"role": "user", "content": prompt}], **extra)
+    async with _client() as client:
+        response = await client.post("/responses", json=body)
+    return model.model_validate_json(_answer_text(response.json()))
+
+
+async def test_teacher_v2_answer_has_a_body_of_the_requested_length() -> None:
+    """`teacher@2`: the minimal instance has no blocks and the turn would show nothing; the
+    answer carries one text block of `teacher_chars` characters."""
+    config = MetaMockConfig(latency="zero", teacher_chars=120)
+    async with _client(config) as client:
+        response = await client.post("/responses", json=_body(TeacherOutputV2))
+    output = TeacherOutputV2.model_validate_json(_answer_text(response.json()))
+    [block] = output.p2_body.blocks
+    assert block.text is not None and len(block.text) == 120 and block.element_id is None
+    assert not output.p3_markup.tasks
+
+
+@pytest.mark.parametrize(
+    ("kind", "answer_type", "level"), [("choice", "choice", 1), ("number", "number", 2)]
+)
+async def test_task_generator_answer_passes_the_form_rules(
+    kind: str, answer_type: str, level: int
+) -> None:
+    """`task_generator@1`: the task tests the given skill label and passes the form rules of
+    Т-§5.3 (`validate_markup`): a choice with one correct option, or a number with a value."""
+    from quack.practice.markup import validate_markup
+
+    prompt = _blocks(("Target skill", "S1"), ("Kind of problem", kind), ("Purpose", "new"))
+    output: TaskGeneratorOutput = await _answer(TaskGeneratorOutput, prompt)
+    [draft] = output.tasks
+    violations = validate_markup(
+        draft.markup,
+        skill_labels={"S1"},
+        misconception_labels=set(),
+        task_labels=set(),
+    )
+    assert violations == []
+    assert draft.markup.answer.type == answer_type
+    assert [t.level for t in draft.markup.tests] == [level]
+    assert draft.condition.text and draft.solution
+
+
+async def test_task_generator_without_a_kind_gives_a_choice() -> None:
+    output: TaskGeneratorOutput = await _answer(TaskGeneratorOutput)
+    assert output.tasks[0].markup.answer.type == "choice"
+
+
+@pytest.mark.parametrize("ref", ["task_checker@1", "task_arbiter@1"])
+async def test_task_checker_finds_the_key_of_the_generated_task(ref: str) -> None:
+    """`task_checker@1` / `task_arbiter@1`: blind solving agrees with the key of the task the
+    mock generated, and does not dispute the markup (otherwise every task goes to the arbiter
+    and is thrown away, Т-§5.6)."""
+    generated: TaskGeneratorOutput = await _answer(
+        TaskGeneratorOutput, _blocks(("Kind of problem", "choice"))
+    )
+    [option] = [o for o in generated.tasks[0].markup.answer.options or [] if o.correct]
+    prompt = _blocks(("Problem", "text"), ("Options", "A. text\nB. text"), ("Claimed markup", "-"))
+    choice = await _answer(TaskCheckOutput, prompt, prompt_cache_key=ref)
+    assert choice.answer_text == option.option_id and choice.answer_math is None
+    assert choice.levels_fit == [True] and choice.method_named is False
+
+    no_options = _blocks(("Problem", "text"), ("Options", "(none)"), ("Claimed markup", "-"))
+    number = await _answer(TaskCheckOutput, no_options, prompt_cache_key=ref)
+    assert number.answer_text == "2" and number.answer_math is not None
+    assert number.answer_math.sympy == "2"
+    math: TaskGeneratorOutput = await _answer(
+        TaskGeneratorOutput, _blocks(("Kind of problem", "number"))
+    )
+    value = math.tasks[0].markup.answer.value
+    assert value is not None and value.sympy == number.answer_math.sympy
+
+
+@pytest.mark.parametrize("ref", ["verdict_free@1", "verdict_proof@1", "second_opinion@1"])
+async def test_model_verdict_is_confident_enough_to_stand(ref: str) -> None:
+    """The verdict roles: confidence at or above `verdict_min_confidence`, so a verdict of the
+    stand does not call a second opinion by itself (Т-§7.7)."""
+    from quack.config import Settings
+
+    output: ModelVerdictOutput = await _answer(ModelVerdictOutput, prompt_cache_key=ref)
+    assert output.confidence >= Settings().verdict_min_confidence
+    assert output.outcome == "correct"
