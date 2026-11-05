@@ -4,7 +4,7 @@ import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { API_MODE } from "@/lib/api/client";
-import { daysFromToday } from "@/lib/format";
+import { daysFromToday, localIso } from "@/lib/format";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -70,7 +70,7 @@ export function HubPage({ id }: { id: string }) {
     return { ordered, materials: [...materials.values()], timeline };
   }, [domain, hub, getTopicDetails]);
   const materialItems: Material[] = api.real
-    ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(m.created_at.slice(0, 10)), kind: "pdf" as const }))
+    ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(localIso(Date.parse(m.created_at))), kind: "pdf" as const }))
     : data?.materials ?? [];
 
   if (!hub || !data) {

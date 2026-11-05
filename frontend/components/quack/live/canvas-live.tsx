@@ -8,6 +8,7 @@ import { getCanvas, openCanvas, readCanvasTitle, writeCanvasTitle, type CanvasVi
 import { ApiError } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
+import { localIso } from "@/lib/format";
 import { useFmt, useT } from "@/lib/i18n/provider";
 import { useShell } from "../app-shell";
 import { Board } from "../board/board";
@@ -108,7 +109,7 @@ export function CanvasLive({ id }: { id: string }) {
               maxLength={80}
               className="h-6 w-full min-w-0 bg-transparent font-display text-body uppercase tracking-[0.02em] text-paper outline-none placeholder:text-paper-dim focus-visible:outline-2 focus-visible:outline-ribbon"
             />
-            <p className="caps mt-0.5 hidden truncate [--caps-size:0.625rem] text-paper-dim sm:block">{fullDate(view.updated_at.slice(0, 10))}</p>
+            <p className="caps mt-0.5 hidden truncate [--caps-size:0.625rem] text-paper-dim sm:block">{fullDate(localIso(Date.parse(view.updated_at)))}</p>
           </div>
         </>
       }

@@ -8,7 +8,7 @@ import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useT } from "@/lib/i18n/provider";
-import { MOCK_TODAY } from "@/lib/mock";
+import { todayIso } from "@/lib/format";
 import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
@@ -182,7 +182,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sessions: Session[] =
     // С бэкендом новая сессия появляется в списке сама, как только создана
     pending && !API_MODE && domain.id === SESSION_DOMAIN
-      ? [{ id: "new", href: "/session/new", date: MOCK_TODAY, title: pending, topics: [] }, ...domain.sessions]
+      ? [{ id: "new", href: "/session/new", date: todayIso(), title: pending, topics: [] }, ...domain.sessions]
       : domain.sessions;
 
   const toggleSessions = () =>
