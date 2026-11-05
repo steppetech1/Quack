@@ -82,3 +82,28 @@ async def test_set_unordered_vector_elementwise() -> None:
     assert await _outcome({"type": "set", "items": items}, "1, 3") == "incorrect"
     assert await _outcome({"type": "vector", "items": items}, "(1, 2)") == "correct"
     assert await _outcome({"type": "vector", "items": items}, "(2, 1)") == "incorrect"
+
+
+async def _result(spec: dict[str, Any], value: str, settings: Settings) -> object:
+    answer_spec = AnswerSpec.model_validate(spec)
+    answer = LearnerAnswer(kind=answer_spec.type, value=value)
+    return await check(answer, answer_spec, answer_seq=7, part="main", settings=settings)
+
+
+@pytest.mark.parametrize("value", ["1e-999999999", "1e999999999", "1e-999999999/3", "1/1e999999"])
+async def test_number_with_a_huge_exponent_is_not_checked_instantly(value: str) -> None:
+    """An exact `Fraction` of such a number would stall the API: it is left to the symbolic
+    check (`instant_number_max_exponent`)."""
+    assert not isinstance(await _result(THIRD, value, SETTINGS), Verdict)
+
+
+async def test_number_exponent_limit_is_a_setting() -> None:
+    settings = Settings(instant_number_max_exponent=5)
+    spec = {"type": "number", "value": {"latex": "10^{-5}", "sympy": "1e-5"}}
+    assert isinstance(await _result(spec, "1e-5", settings), Verdict)
+    assert not isinstance(await _result(spec, "1e-6", settings), Verdict)
+    vector = {
+        "type": "vector",
+        "items": [{"latex": "1", "sympy": "1"}, {"latex": "2", "sympy": "2"}],
+    }
+    assert not isinstance(await _result(vector, "(1e-6, 2)", settings), Verdict)
