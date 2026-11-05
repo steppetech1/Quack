@@ -4,7 +4,7 @@ import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { API_MODE } from "@/lib/api/client";
-import { localIso } from "@/lib/format";
+import { daysFromToday, localIso } from "@/lib/format";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -90,6 +90,8 @@ export function HubPage({ id }: { id: string }) {
   const apiCheat = api.real && api.cheat && api.cheat.blocks.length ? api.cheat : null;
   const apiCheatText = apiCheat ? (apiCheat.blocks as { content: string }[]).map((b) => b.content).join("\n\n") : "";
   const deadline = hub.deadline;
+  /** the date is behind us: prep mode makes no sense any more, the offer to enter the mark takes its place */
+  const passed = !!deadline && daysFromToday(deadline.date) < 0;
   const suggested = hub.suggested;
   // ровно одна жёлтая кнопка: подготовка к дедлайну, иначе «Вперемешку»; в предложенной главе — «Начать главу»
   const primaryAction = deadline ? null : suggested ? null : "mixed";
@@ -184,9 +186,15 @@ export function HubPage({ id }: { id: string }) {
               )}
             </div>
           </div>
-          <button type="button" disabled={api.busy} onClick={() => (api.real ? void api.prep() : soon(tx.hub.prepSoon))} className={cn(PRIMARY_BTN, "mt-3 max-sm:w-full")}>
-            {tx.hub.prep}
-          </button>
+          {api.real && api.gradeOffer ? (
+            <GradeOffer busy={api.busy} onSave={(mark, scale) => void api.grade(mark, scale)} onLater={api.dismissGrade} />
+          ) : (
+            !passed && (
+              <button type="button" disabled={api.busy} onClick={() => (api.real ? void api.prep() : soon(tx.hub.prepSoon))} className={cn(PRIMARY_BTN, "mt-3 max-sm:w-full")}>
+                {tx.hub.prep}
+              </button>
+            )
+          )}
         </div>
       )}
 
@@ -301,6 +309,65 @@ function DeadlineEditor({ initial, busy, onSave, onCancel }: { initial?: string;
       <button type="button" onClick={onCancel} className={TEXT_BTN}>
         {t.deadlineCancel}
       </button>
+    </form>
+  );
+}
+
+const SCALES = ["1–5", "1–10", "0–100", "A–F"] as const;
+
+/** After the deadline: enter the real mark (optional, WP17.5). The scale is free text of the backend, up to 40 characters, like the mark */
+function GradeOffer({ busy, onSave, onLater }: { busy: boolean; onSave: (mark: string, scale: string) => void; onLater: () => void }) {
+  const tx = useT().hub;
+  const [mark, setMark] = useState("");
+  /** one of SCALES, "pass" or "other" */
+  const [pick, setPick] = useState<string>(SCALES[0]);
+  const [custom, setCustom] = useState("");
+  const scale = pick === "pass" ? tx.gradePass : pick === "other" ? custom.trim() : pick;
+  const ready = !!mark.trim() && !!scale;
+  const chip = (on: boolean) =>
+    cn(
+      "caps h-10 rounded-pill border px-4 transition-colors duration-(--dur-s) ease-out",
+      on ? "border-ribbon bg-ribbon-soft text-paper" : "border-seam text-paper-dim hover:border-ribbon hover:text-paper",
+    );
+  const field = "h-10 rounded-control border border-seam bg-cloth-deep px-3 text-body text-paper outline-none focus-visible:border-ribbon";
+  return (
+    <form
+      className="mt-3 max-w-[62ch]"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) onSave(mark.trim(), scale);
+      }}
+    >
+      <p className="display-caps text-paper">{tx.gradeTitle}</p>
+      <p className="mt-1 text-paper-dim">{tx.gradeBody}</p>
+      <fieldset className="mt-3">
+        <legend className="caps mb-1.5 text-paper-dim">{tx.gradeScaleLabel}</legend>
+        <div className="flex flex-wrap gap-2">
+          {[...SCALES, "pass", "other"].map((s) => (
+            <button key={s} type="button" aria-pressed={pick === s} onClick={() => setPick(s)} className={chip(pick === s)}>
+              {s === "pass" ? tx.gradePass : s === "other" ? tx.gradeOther : s}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        {pick === "other" && (
+          <label className="flex flex-col gap-1.5">
+            <span className="caps text-paper-dim">{tx.gradeOtherLabel}</span>
+            <input value={custom} maxLength={40} onChange={(e) => setCustom(e.target.value)} className={cn(field, "w-40")} />
+          </label>
+        )}
+        <label className="flex flex-col gap-1.5">
+          <span className="caps text-paper-dim">{tx.gradeLabel}</span>
+          <input value={mark} maxLength={40} onChange={(e) => setMark(e.target.value)} className={cn(field, "w-32")} />
+        </label>
+        <button type="submit" disabled={busy || !ready} className={PRIMARY_BTN + " disabled:opacity-50"}>
+          {tx.gradeSend}
+        </button>
+        <button type="button" onClick={onLater} className={TEXT_BTN}>
+          {tx.gradeLater}
+        </button>
+      </div>
     </form>
   );
 }

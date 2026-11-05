@@ -388,7 +388,10 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const pace_warnings = overdue
       ? [{ hub_id: id("h-" + overdue.key), ready: overdue.topics.filter((t) => t.state === STATE.solid).length, not_ready: overdue.topics.filter((t) => t.state !== STATE.solid).length, forecast: 3 }]
       : [];
-    return json(res, 200, { items, minutes: items.length * 10, grade_hub_ids: [], pace_warnings });
+    // hubs whose date is before today and that have no mark yet (the offer to enter it)
+    const startOfDay = new Date().setHours(0, 0, 0, 0);
+    const grade_hub_ids = d.hubs.filter((h) => h.deadlineMs && h.deadlineMs < startOfDay && !(S.graded ??= new Set()).has(h.key)).map((h) => id("h-" + h.key));
+    return json(res, 200, { items, minutes: items.length * 10, grade_hub_ids, pace_warnings });
   }
   if ((g = p.match(/^\/v1\/domains\/([^/]+)\/(graph|hubs)$/))) {
     const d = domainById(g[1]);
@@ -474,11 +477,15 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
     return json(res, 202, { seq: S.seq });
   }
-  // a chapter: deadline (PATCH) and prep mode (POST), both 202 with the seq of the event
-  if ((g = p.match(/^\/v1\/hubs\/([^/]+)(?:\/(prep-mode))?$/)) && (m === "PATCH" || (m === "POST" && g[2]))) {
+  // a chapter: deadline (PATCH), prep mode and the mark after the deadline (POST), all 202 with the seq of the event
+  if ((g = p.match(/^\/v1\/hubs\/([^/]+)(?:\/(prep-mode|grade))?$/)) && (m === "PATCH" || (m === "POST" && g[2]))) {
     const hit = hubById(g[1]);
     if (!hit || !hit.d.hubs.includes(hit.h)) return err(res, "NOT_FOUND", 404, "no such chapter");
     if (m === "PATCH") hit.h.deadlineMs = body.deadline_at_ms ?? null;
+    if (g[2] === "grade") {
+      if (!body.grade || !body.scale || String(body.grade).length > 40 || String(body.scale).length > 40) return err(res, "VALIDATION_ERROR", 422, "grade and scale: 1-40 characters");
+      (S.graded ??= new Set()).add(hit.h.key);
+    }
     S.seq += 1;
     for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
     return json(res, 202, { seq: S.seq });
