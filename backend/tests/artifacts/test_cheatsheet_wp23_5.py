@@ -249,7 +249,7 @@ async def test_every_fit_round_sends_the_formulas_typeset_not_as_tex(
     hub, _ = await create_hub(pg_db, learner)
     stand.scenario.push_for(PDF, *_pages(3, 2, 1))
     await stand.generate(learner, hub)
-    sent = [json.loads(body)["html"] for body in stand.renders()]
+    sent = stand.renders()  # already the HTML of each request: `renders()` decodes the JSON body
     assert len(sent) == 3
     for document in sent:
         assert '<span class="quack-math" data-display="false">x^2</span>' in document
