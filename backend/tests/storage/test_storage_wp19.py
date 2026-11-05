@@ -172,6 +172,25 @@ async def test_s3_store_down_is_storage_unavailable() -> None:
         await store.aclose()
 
 
+async def test_s3_unset_endpoint_is_storage_unavailable_not_a_crash() -> None:
+    """An unset `s3_endpoint` (empty string, the config default) makes aiobotocore reject the
+    client itself with a bare `ValueError` on first use; that must also become
+    `StorageUnavailable` (Т-§20.7), not propagate and crash the caller (the canvas WS, D-C-241
+    diagnosis)."""
+    store = _store(endpoint="")
+    try:
+        with pytest.raises(StorageUnavailable):
+            await store.put("learners/x/a.bin", b"x", "application/octet-stream")
+        with pytest.raises(StorageUnavailable):
+            await store.get("learners/x/a.bin")
+        with pytest.raises(StorageUnavailable):
+            await store.list_objects("learners/x/")
+        with pytest.raises(StorageUnavailable):
+            await store.delete_keys(["learners/x/a.bin"])
+    finally:
+        await store.aclose()
+
+
 async def test_presigned_get_is_path_style_with_ttl() -> None:
     """Д-§8.4: Contabo needs path-style; the link lives `object_url_ttl_s`."""
     store = _store("https://eu2.contabostorage.com")
