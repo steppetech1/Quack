@@ -28,25 +28,16 @@ services:
   # (REPORT_CANVAS_STROKES_AND_TEACHER_VISION.md recommendation 1). Real deployments set
   # S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY to a real S3-compatible provider instead.
   minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+    image: bitnamilegacy/minio:latest
     restart: unless-stopped
     networks: [backend, local]
     ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
     environment:
       MINIO_ROOT_USER: quack
       MINIO_ROOT_PASSWORD: quack12345
+      MINIO_DEFAULT_BUCKETS: quack-learners
     volumes:
-      - minio-data:/data
-
-  minio-init:
-    image: minio/mc:latest
-    networks: [backend, local]
-    depends_on: [minio]
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 quack quack12345; do sleep 1; done &&
-      mc mb -p local/quack-learners || true"
+      - minio-data:/bitnami/minio/data
 
 networks:
   local: {}
