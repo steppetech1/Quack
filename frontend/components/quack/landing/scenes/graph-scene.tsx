@@ -8,7 +8,7 @@ import { NodeCard } from "./node-card";
 import { Headline, Rise, useInView } from "./reveal";
 import { DuckStage } from "./scene-duck";
 import { approach, cellSize, rand, sceneForm } from "./scene-utils";
-import { storyStore } from "./story";
+import { storyStore, useArmed } from "./story";
 
 /** Узлы большого графа: положение в долях рамки графа (x, y), цвет палитры, главный ли */
 const NODES: { x: number; y: number; color: number; hub?: boolean }[] = [
@@ -65,9 +65,12 @@ export function GraphScene({ scrollRef, slot }: { scrollRef: RefObject<HTMLEleme
   const [hot, setHot] = useState(-1);
   const hotRef = useRef(-1);
   const nodesText = t.nodes;
+  // холсты, WebGL с уткой и физика поднимаются по очереди, когда браузер свободен (см. useArmed)
+  const armed = useArmed(2);
   const pin = slot !== undefined; // закреплённый режим: рамка ровно в окно, на узком окне тексты уходят под граф в два столбца
 
   useEffect(() => {
+    if (!armed) return;
     const sec = secRef.current;
     const stageEl = stageRef.current;
     const cv = cvRef.current;
@@ -460,7 +463,7 @@ export function GraphScene({ scrollRef, slot }: { scrollRef: RefObject<HTMLEleme
       evt.removeEventListener("pointerleave", onLeave);
       duck.dispose();
     };
-  }, [scrollRef, nodesText, slot]);
+  }, [scrollRef, nodesText, slot, armed]);
 
   const card = hot >= 0 ? nodesText[hot] : null;
 

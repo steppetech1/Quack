@@ -1008,12 +1008,27 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
     };
 
     let raf = 0;
+    // Слабое устройство: кадр сцены (JS, без работы видеокарты) дольше ~11 мс — не успевает за 60 к/с вместе с остальным.
+    // Тогда рисуем через кадр (30 к/с; время шага `dt` настоящее, скорость движения не меняется), а вернёмся к полной
+    // частоте, когда кадр станет короче ~8 мс. Первые кадры (раскладка, спрайты) в среднее не идут
+    let cost = 0;
+    let warm = 0;
+    let half = false;
+    let skip = false;
     const tick = () => {
       raf = requestAnimationFrame(tick);
+      if (half) {
+        skip = !skip;
+        if (skip) return;
+      }
       const t = performance.now();
       const dt = Math.min(0.05, (t - last) / 1000);
       last = t;
       draw((t - t0) / 1000, dt);
+      if (++warm > 30) {
+        cost = cost * 0.9 + (performance.now() - t) * 0.1;
+        half = half ? cost > 8 : cost > 11;
+      }
     };
     let visible = true;
     const sync = () => {

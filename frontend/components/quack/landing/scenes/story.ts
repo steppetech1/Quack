@@ -55,3 +55,73 @@ export function goToScene(root: HTMLElement | null, id: string, e?: { preventDef
 export function onAnchor(id: string) {
   return (e: { preventDefault: () => void }) => goToScene(document.querySelector<HTMLElement>("main[data-pinned]"), id, e);
 }
+
+/**
+ * Тяжёлую часть сцен (холсты на весь экран, свой WebGL-контекст с уткой, утка и физика) поднимаем не вместе с первым
+ * экраном, а по очереди, когда браузер свободен: иначе всё это ложится на одну длинную задачу при загрузке, а сцены ждут
+ * внизу, пока их не увидят. Первая сцена — после загрузки и паузы, вторая — ещё через паузу. Если человек успел
+ * прокрутить, нажать клавишу или коснуться экрана раньше, поднимаются обе сразу.
+ */
+const arming = { n: 0, started: false, subs: new Set<() => void>() };
+
+function armTo(n: number) {
+  if (n <= arming.n) return;
+  arming.n = n;
+  arming.subs.forEach((f) => f());
+}
+
+function startArming() {
+  if (arming.started || typeof window === "undefined") return;
+  arming.started = true;
+  const inputs = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+  const timers: number[] = [];
+  const stop = () => {
+    for (const e of inputs) window.removeEventListener(e, onInput);
+    timers.forEach((t) => window.clearTimeout(t));
+  };
+  const onInput = () => {
+    armTo(2);
+    stop();
+  };
+  for (const e of inputs) window.addEventListener(e, onInput, { passive: true });
+  const idle = (fn: () => void, timeout: number) => {
+    if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(fn, { timeout });
+    else timers.push(window.setTimeout(fn, timeout / 2));
+  };
+  // сначала пауза, чтобы первый экран успел встать и нарисовать утку; потом по очереди, в простое браузера
+  const go = () =>
+    timers.push(
+      window.setTimeout(
+        () =>
+          idle(() => {
+            armTo(1);
+            timers.push(
+              window.setTimeout(
+                () =>
+                  idle(() => {
+                    armTo(2);
+                    stop();
+                  }, 2000),
+                600,
+              ),
+            );
+          }, 2500),
+        1200,
+      ),
+    );
+  if (document.readyState === "complete") go();
+  else window.addEventListener("load", go, { once: true });
+}
+
+/** `true`, когда пора поднимать сцену с этим номером очереди (1 — первая после первого экрана, 2 — вторая); на сервере всегда `false` */
+export function useArmed(order: number): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      arming.subs.add(cb);
+      startArming();
+      return () => arming.subs.delete(cb);
+    },
+    () => arming.n >= order,
+    () => false,
+  );
+}
