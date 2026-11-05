@@ -3,18 +3,21 @@
 import { MoreHorizontal } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
-import { slugCommand } from "@/lib/skills";
+import { skillName, slugCommand } from "@/lib/skills";
 import type { Skill, SkillBinding } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./icon-button";
 import { PILL } from "./page-parts";
 import { SkillChat } from "./skill-chat";
 import { useMenu } from "./use-menu";
+import { API_MODE } from "@/lib/api/client";
+import { useNotice } from "./soon";
 import { useSkills } from "./use-skills";
 
 export function SkillsTab() {
   const tx = useT();
-  const { skills, update } = useSkills();
+  const { skills, save: saveSkill, remove, toggle, canToggle } = useSkills();
+  const notice = useNotice();
   // "chat" — помощник; { skill } — редактор (skill: null — пустой, новый)
   const [editing, setEditing] = useState<"chat" | { skill: Skill | null } | null>(null);
   const createBtn = useRef<HTMLButtonElement>(null);
@@ -36,8 +39,10 @@ export function SkillsTab() {
     setEditing(null);
   };
 
-  const save = (s: Skill) => {
-    update((prev) => (prev.some((x) => x.id === s.id) ? prev.map((x) => (x.id === s.id ? s : x)) : [...prev, s]));
+  // on the backend a save can fail (name or artifact type taken, bad name): say why and keep the form open
+  const save = async (s: Skill) => {
+    const err = await saveSkill(s, tx.live.serverError);
+    if (err) return notice(err);
     close();
   };
 
@@ -91,12 +96,12 @@ export function SkillsTab() {
           <SkillRow
             key={s.id}
             skill={s}
-            onToggle={() => update((prev) => prev.map((x) => (x.id === s.id ? { ...x, enabled: !x.enabled } : x)))}
+            onToggle={canToggle ? () => toggle(s.id) : undefined}
             onEdit={(from) => {
               opener.current = from;
               setEditing({ skill: s });
             }}
-            onDelete={() => update((prev) => prev.filter((x) => x.id !== s.id))}
+            onDelete={() => void remove(s.id, tx.live.serverError).then((err) => err && notice(err))}
           />
         ))}
         {skills.length === 0 && (
@@ -119,7 +124,8 @@ function SkillRow({
   onDelete,
 }: {
   skill: Skill;
-  onToggle: () => void;
+  /** `undefined`: the backend has no on/off for a skill, no switch is shown */
+  onToggle?: () => void;
   onEdit: (from: HTMLElement | null) => void;
   onDelete: () => void;
 }) {
@@ -144,7 +150,7 @@ function SkillRow({
         <p className="mt-1 line-clamp-2 text-paper-dim">{skill.text}</p>
       </div>
       <div className="-mt-1 flex shrink-0 items-center">
-        <Switch checked={skill.enabled} onChange={onToggle} labelledBy={nameId} />
+        {onToggle && <Switch checked={skill.enabled} onChange={onToggle} labelledBy={nameId} />}
         <RowMenu name={skill.name} onEdit={onEdit} onDelete={onDelete} />
       </div>
     </li>
@@ -245,13 +251,14 @@ function RowMenu({ name, onEdit, onDelete }: { name: string; onEdit: (from: HTML
 const FIELD =
   "block w-full rounded-control border border-seam bg-cloth px-3 text-body text-paper transition-colors duration-(--dur-s) ease-out focus-visible:border-ribbon";
 
-function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | null; isNew: boolean; onSave: (s: Skill) => void; onCancel: () => void }) {
+function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | null; isNew: boolean; onSave: (s: Skill) => void | Promise<void>; onCancel: () => void }) {
   const tx = useT();
   const uid = useId();
   const [name, setName] = useState(initial?.name ?? "");
   const [text, setText] = useState(initial?.text ?? "");
   const [bindings, setBindings] = useState<SkillBinding[]>(initial?.bindings ?? []);
-  const [callable, setCallable] = useState(initial ? !!initial.command : false);
+  // on the backend every skill is called by its name
+  const [callable, setCallable] = useState(API_MODE || (initial ? !!initial.command : false));
   const [errors, setErrors] = useState<{ name?: string; text?: string }>({});
   const nameRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -273,7 +280,8 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const errs: typeof errors = {};
-    if (!name.trim()) errs.name = tx.skills.nameError;
+    // on the backend the name is the `/command`: it must have letters or digits in it
+    if (!name.trim() || (API_MODE && !skillName(name))) errs.name = tx.skills.nameError;
     if (!text.trim()) errs.text = tx.skills.textError;
     setErrors(errs);
     if (errs.name) return nameRef.current?.focus();
@@ -283,7 +291,7 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
       name: name.trim(),
       text: text.trim(),
       bindings,
-      command: callable && slug ? slug : undefined,
+      command: callable && slug ? (API_MODE ? skillName(name) : slug) : undefined,
       enabled: initial?.enabled ?? true,
     });
   };
@@ -365,6 +373,12 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
         </div>
       </fieldset>
 
+      {API_MODE ? (
+        <p className="mt-3 text-body text-paper">
+          {tx.skills.callable}
+          <code className="num ml-2 text-small text-paper-dim">{slug ? `/${skillName(name)}` : tx.skills.commandHint}</code>
+        </p>
+      ) : (
       <label className="mt-3 flex min-h-10 cursor-pointer items-center gap-3 text-body text-paper">
         <input
           type="checkbox"
@@ -379,6 +393,7 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
           )}
         </span>
       </label>
+      )}
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button
