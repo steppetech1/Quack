@@ -190,6 +190,7 @@ export const en = {
     about: "About",
     artifacts: "Notes and practice",
     noNotes: "No notes yet. They show up after the first session on this topic.",
+    notesGenerating: "The duck is writing up notes and cards from your session — usually a few minutes. Check back soon.",
     noCards: "No cards yet. The duck makes them after your first problems.",
     noSolved: "No solved problems yet. The first one gets saved here.",
     canvasSoon: (title: string) => `canvas “${title}”`,
