@@ -29,7 +29,7 @@ export function LandingFooter() {
         <div className="mt-16 grid gap-10 border-t border-[#f1e4d6]/10 pt-10 sm:grid-cols-[1.4fr_1fr_1fr]">
           <div>
             <p className="text-[1.5rem] font-extrabold tracking-[-0.06em] text-[#f6eadc]">
-              Qvack<span className="text-[#ff8a2a]">!</span>
+              Quack<span className="text-[#ff8a2a]">!</span>
             </p>
             <p className="mt-2 text-[0.875rem] text-[#8d8273]">{t.footer.note}</p>
           </div>
@@ -54,7 +54,7 @@ export function LandingFooter() {
         </div>
 
         <p className="mt-12 border-t border-[#f1e4d6]/10 py-6 text-[0.8125rem] text-[#8d8273]">
-          © {new Date().getFullYear()} Qvack! · {t.footer.rights}
+          © {new Date().getFullYear()} Quack! · {t.footer.rights}
         </p>
       </div>
     </footer>

@@ -57,7 +57,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       <div className="mx-auto grid min-h-full max-w-[1400px] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
         <section className="relative h-[40svh] min-h-60 lg:h-auto">
           <p className="display-caps absolute left-6 top-6 text-[1.375rem] text-[#f6eadc] lg:left-10 lg:top-8">
-            Qvack<span className="text-[#ff8a2a]">!</span>
+            Quack<span className="text-[#ff8a2a]">!</span>
           </p>
         </section>
 

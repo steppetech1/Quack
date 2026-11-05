@@ -238,7 +238,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <PanelLeft />
                 </IconButton>
               )}
-              <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
+              <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
               {/* на телефоне кнопка меню в верхней полосе */}
               <div ref={barToggle} data-menu-anchor className="ml-auto">
                 <MenuToggle
