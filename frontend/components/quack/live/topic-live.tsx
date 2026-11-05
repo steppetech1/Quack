@@ -245,7 +245,11 @@ export function TopicLive({ id }: { id: string }) {
 
         <PageSection id="topic-artifacts" title={tx.topic.artifacts}>
           {docs.length === 0 && deck.length === 0 ? (
-            <p className="text-paper-dim">{tx.topic.noNotes}</p>
+            // the learner has studied this topic (state isn't "new"), so empty means the background
+            // job hasn't finished yet, not "nothing happened" — the live stream re-fetches on its own
+            <p role="status" className="text-paper-dim">
+              {state === "new" ? tx.topic.noNotes : tx.topic.notesGenerating}
+            </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {docs.map((d) => (
