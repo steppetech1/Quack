@@ -154,6 +154,7 @@ export const en = {
     inSessions: "In sessions",
     cheatLater: "The cheat sheet shows up closer to the deadline.",
     buildNow: "Build it now",
+    photoMaterial: "Photo of notes",
     buildSoon: "building the cheat sheet",
   },
   topic: {
@@ -681,6 +682,13 @@ export const en = {
 
     refreshCheat: "Update the cheat sheet",
     buildCheat: "Build a cheat sheet",
+    prepOn: "Prep mode is on for this chapter.",
+    deadlineSaved: "The deadline is saved.",
+    deadlineRemoved: "The deadline is removed.",
+    deadlineLabel: "Deadline date",
+    deadlineSave: "Save",
+    deadlineRemove: "Remove the deadline",
+    deadlineCancel: "Cancel",
     cheatQueued: "The cheat sheet is being built. It will show up here when it is ready.",
     iKnowThis: "I already know this",
     knownDone: "Noted. The topic will count as known once it is checked.",

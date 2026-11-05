@@ -186,7 +186,7 @@ export function ActionButton({
 }
 
 /** Меню «⋯»: пункты пока ведут на «скоро» */
-export function MoreMenu({ items }: { items: { label: string; soon: string }[] }) {
+export function MoreMenu({ items }: { items: { label: string; soon: string; onSelect?: () => void }[] }) {
   const t = useT();
   const soon = useSoon();
   const [open, setOpen] = useState(false);
@@ -219,7 +219,8 @@ export function MoreMenu({ items }: { items: { label: string; soon: string }[] }
                 type="button"
                 onClick={() => {
                   setOpen(false);
-                  soon(it.soon);
+                  if (it.onSelect) it.onSelect();
+                  else soon(it.soon);
                 }}
                 className="flex min-h-10 w-full items-center rounded-option px-3 text-left text-body text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover"
               >
