@@ -8,7 +8,10 @@ export const API_MODE = process.env.NEXT_PUBLIC_QUACK_API === "1";
 
 /** Requests go through the Next.js proxy (`next.config.ts` rewrites `/api/*` to the backend), so no CORS */
 const BASE = "/api";
-const TOKEN_KEY = "quack.token";
+
+/** A direct backend URL for a resource fetched by the browser itself (an `<iframe src>`, for example),
+ * through the same proxy and cookie auth as every other request. */
+export const apiUrl = (path: string) => BASE + path;
 
 export class ApiError extends Error {
   constructor(
@@ -20,39 +23,20 @@ export class ApiError extends Error {
   }
 }
 
-export function getToken(): string | null {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function setToken(token: string | null) {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    // private mode: the session lives until the tab closes
-  }
-}
-
 /** Every write on the backend is idempotent by key */
 export const idem = () => crypto.randomUUID();
 
+/** The session is the `quack_session` cookie (HttpOnly, same origin through the proxy): no token in JS */
 function headers(json: boolean): HeadersInit {
   const h: Record<string, string> = {};
   if (json) h["Content-Type"] = "application/json";
-  const token = getToken();
-  if (token) h.Authorization = `Bearer ${token}`;
   return h;
 }
 
-/** A missing or expired token sends the user to the login screen */
+/** No cookie or an expired one sends the user to the login screen */
 function onUnauthorized() {
-  setToken(null);
   if (typeof window !== "undefined" && !/^\/(login|signup)/.test(window.location.pathname)) {
-    // full reload on purpose: no router here, and all in-memory data belongs to the old token
+    // full reload on purpose: no router here, and all in-memory data belongs to the old session
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign("/login");
   }
@@ -72,7 +56,7 @@ async function toError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, code, message);
 }
 
-export async function api<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
+export async function api<T>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method,
     headers: headers(body !== undefined),
@@ -89,7 +73,7 @@ export async function api<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: 
  * against the schema's path templates (`/v1/topics/{topic_id}/…`), and the body and the response
  * come from that operation. A body that doesn't fit the backend is a compile error, not a 422.
  */
-type WriteMethod = "post" | "patch" | "delete";
+type WriteMethod = "post" | "patch" | "put" | "delete";
 /** `/v1/topics/{topic_id}/x` → `/v1/topics/${string}/x` */
 type Template<P extends string> = P extends `${infer A}{${string}}${infer B}` ? `${A}${string}${Template<B>}` : P;
 type Op<P extends string, M extends WriteMethod> = {
@@ -110,11 +94,20 @@ export type ResponseOf<P extends string, M extends WriteMethod> =
 /** The body argument is optional only where the endpoint takes none */
 type BodyArg<P extends string, M extends WriteMethod> = undefined extends BodyOf<P, M> ? [body?: BodyOf<P, M>] : [body: BodyOf<P, M>];
 
+/** A file to the backend (multipart): the browser sets the boundary, so no Content-Type here */
+export async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(BASE + path, { method: "POST", body: form });
+  if (!res.ok) throw await toError(res);
+  return (await res.json()) as T;
+}
+
 export const get = <T>(path: string) => api<T>("GET", path);
 export const post = <P extends WritePath<"post">>(path: P, ...[body]: BodyArg<P, "post">) =>
   api<ResponseOf<P, "post">>("POST", path, body ?? {});
 export const patch = <P extends WritePath<"patch">>(path: P, ...[body]: BodyArg<P, "patch">) =>
   api<ResponseOf<P, "patch">>("PATCH", path, body);
+export const put = <P extends WritePath<"put">>(path: P, ...[body]: BodyArg<P, "put">) =>
+  api<ResponseOf<P, "put">>("PUT", path, body);
 export const del = <P extends WritePath<"delete">>(path: P, ...[body]: BodyArg<P, "delete">) =>
   api<ResponseOf<P, "delete">>("DELETE", path, body);
 
@@ -125,7 +118,7 @@ export const qs = (params: Record<string, string | number | undefined | null>) =
 
 export type SseEvent = { event: string; data: Record<string, unknown> };
 
-/** SSE over fetch: the backend needs the Authorization header, which EventSource can't send */
+/** SSE over fetch: a POST body (actions) can't go through EventSource */
 export function sse<P extends WritePath<"post">>(
   method: "POST",
   path: P,
@@ -166,11 +159,15 @@ export async function sse(
         else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
       }
       if (!data.length) continue;
+      // Only the parse is guarded: an exception from the handler (for example the `error` frame turned into an ApiError)
+      // must reach the caller as it is, not be caught here and replayed as a frame with raw data and no error code
+      let parsed: Record<string, unknown>;
       try {
-        onEvent({ event, data: JSON.parse(data.join("\n")) });
+        parsed = JSON.parse(data.join("\n"));
       } catch {
-        onEvent({ event, data: { raw: data.join("\n") } });
+        parsed = { raw: data.join("\n") };
       }
+      onEvent({ event, data: parsed });
     }
   }
 }

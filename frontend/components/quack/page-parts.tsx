@@ -67,13 +67,13 @@ export function HubRing({ progress, suggested, size = 56 }: { progress: number; 
   );
 }
 
-const CRUMB_LINK = "inline-flex min-h-10 items-center rounded-control px-2 transition-colors hover:bg-cloth-hover hover:text-paper";
+const CRUMB_LINK = "inline-flex min-h-10 items-center rounded-pill px-3 transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover hover:text-paper";
 
 /** Ссылка «← назад» над заголовком: везде на одном месте и в одном стиле */
 export function BackLink({ href, children }: { href: string; children: React.ReactNode }) {
   const t = useT();
   return (
-    <nav aria-label={t.page.path} className="-ml-2 flex flex-wrap items-center text-small text-paper-dim">
+    <nav aria-label={t.page.path} className="caps -ml-3 flex flex-wrap items-center text-paper-dim">
       <Link href={href} className={CRUMB_LINK}>
         ← {children}
       </Link>
@@ -85,7 +85,7 @@ export function BackLink({ href, children }: { href: string; children: React.Rea
 export function Crumbs({ domainTitle, hub, noChapter }: { domainTitle: string; hub?: { id: string; num: string; title: string }; noChapter?: string }) {
   const t = useT();
   return (
-    <nav aria-label={t.page.path} className="-ml-2 flex flex-wrap items-center text-small text-paper-dim">
+    <nav aria-label={t.page.path} className="caps -ml-3 flex flex-wrap items-center text-paper-dim">
       <Link href="/" className={CRUMB_LINK}>
         ← {domainTitle}
       </Link>
@@ -93,14 +93,14 @@ export function Crumbs({ domainTitle, hub, noChapter }: { domainTitle: string; h
         <>
           <span aria-hidden>/</span>
           <Link href={`/hub/${hub.id}`} className={CRUMB_LINK}>
-            <span className="num">§ {hub.num}</span>&nbsp;{hub.title}
+            § {hub.num}&nbsp;{hub.title}
           </Link>
         </>
       )}
       {!hub && noChapter && (
         <>
           <span aria-hidden>/</span>
-          <span className="inline-flex min-h-10 items-center px-2">{noChapter}</span>
+          <span className="inline-flex min-h-10 items-center px-3">{noChapter}</span>
         </>
       )}
     </nav>
@@ -138,9 +138,9 @@ export function PageSection({
   return (
     <section aria-labelledby={`${id}-h`} id={id} className="mt-9 scroll-mt-4 border-t border-seam-soft pt-4">
       <div className="mb-3 flex min-h-10 items-center justify-between gap-3">
-        <h2 id={`${id}-h`} className="num text-small tracking-wide text-paper-dim uppercase">
+        <h2 id={`${id}-h`} className="caps text-paper-dim">
           § {title}
-          {count !== undefined && <span className="ml-2 text-paper">{count}</span>}
+          {count !== undefined && <span className="num ml-2 text-paper">{count}</span>}
         </h2>
         {action}
       </div>
@@ -150,7 +150,7 @@ export function PageSection({
 }
 
 export const TEXT_BTN =
-  "inline-flex h-10 items-center rounded-control px-3 text-small text-paper-dim transition-colors hover:bg-cloth-hover hover:text-paper";
+  "caps inline-flex h-10 items-center rounded-pill px-4 text-paper-dim transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover hover:text-paper";
 
 /** Действие: ссылка, если есть адрес сессии, иначе кнопка с «скоро» */
 export function ActionButton({
@@ -171,8 +171,8 @@ export function ActionButton({
 }) {
   const soon = useSoon();
   const cls = cn(
-    "inline-flex h-10 items-center justify-center rounded-control px-4 text-body font-semibold transition-colors",
-    primary ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-rule hover:bg-cloth-hover",
+    "caps inline-flex h-10 items-center justify-center rounded-pill px-6 transition-colors duration-(--dur-s) ease-(--ease-out)",
+    primary ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-ribbon/60 text-ribbon hover:border-ribbon hover:bg-ribbon hover:text-on-ribbon",
   );
   return href ? (
     <Link href={href} className={cls}>
@@ -186,7 +186,7 @@ export function ActionButton({
 }
 
 /** Меню «⋯»: пункты пока ведут на «скоро» */
-export function MoreMenu({ items }: { items: { label: string; soon: string }[] }) {
+export function MoreMenu({ items }: { items: { label: string; soon: string; onSelect?: () => void }[] }) {
   const t = useT();
   const soon = useSoon();
   const [open, setOpen] = useState(false);
@@ -211,7 +211,7 @@ export function MoreMenu({ items }: { items: { label: string; soon: string }[] }
         <MoreHorizontal />
       </IconButton>
       {open && (
-        <ul role="menu" aria-label={t.page.actions} onKeyDown={onMenuKey} className="absolute top-full right-0 z-20 mt-1 w-64 rounded-[14px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]">
+        <ul role="menu" aria-label={t.page.actions} onKeyDown={onMenuKey} className="absolute top-full right-0 z-20 mt-1 w-64 rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]">
           {items.map((it) => (
             <li key={it.label} role="none">
               <button
@@ -219,9 +219,10 @@ export function MoreMenu({ items }: { items: { label: string; soon: string }[] }
                 type="button"
                 onClick={() => {
                   setOpen(false);
-                  soon(it.soon);
+                  if (it.onSelect) it.onSelect();
+                  else soon(it.soon);
                 }}
-                className="flex min-h-10 w-full items-center rounded-option px-3 text-left text-body text-paper transition-colors hover:bg-cloth-hover"
+                className="flex min-h-10 w-full items-center rounded-option px-3 text-left text-body text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover"
               >
                 {it.label}
               </button>
@@ -233,7 +234,7 @@ export function MoreMenu({ items }: { items: { label: string; soon: string }[] }
   );
 }
 
-export const PILL = "inline-flex shrink-0 items-center rounded-full border border-seam px-2.5 py-0.5 text-small whitespace-nowrap text-paper-dim";
+export const PILL = "caps inline-flex shrink-0 items-center rounded-pill border border-seam px-3 py-1 [--caps-size:0.625rem] whitespace-nowrap text-paper-dim";
 
 export function MaterialsList({ items }: { items: Material[] }) {
   const t = useT();

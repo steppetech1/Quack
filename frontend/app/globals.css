@@ -4,27 +4,46 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Переплёт задачника: тёмный коленкор, бумажный текст, охра тиснения */
+/* Тёплый графит: почти чёрный фон с тёплым оттенком и один янтарный акцент (по мотивам modal.com) */
 :root {
-  --cloth: #1c1915;
-  --cloth-deep: #171410;
-  --cloth-raised: #24201a;
-  --cloth-hover: #2c2720;
-  --seam: #3a3329;
-  --seam-soft: #2e2921;
-  --paper: #e6dccb;
-  --paper-dim: #a99e8b;
-  --rule: #6f6657;
-  --duck: #cdc2ad;
-  --ribbon: #e5863b;
-  --ribbon-hover: #ec9a57;
-  --ribbon-soft: #e5863b29;
-  --on-ribbon: #1c1915;
+  --cloth: #141311;
+  --cloth-deep: #100f0d;
+  --cloth-raised: #181714;
+  --cloth-hover: #211f1b;
+  /* границы — тёплый белый с альфой: одинаково ложатся на любую поверхность */
+  --seam: #fff4e124;
+  --seam-soft: #fff4e114;
+  --paper: #e8e4dc;
+  --paper-dim: #aaa497; /* ≥4.5:1 и на cloth-hover */
+  --rule: #736e63;
+  --duck: #edb966;
+  --ribbon: #edb966;
+  --ribbon-hover: #f3c985;
+  --ribbon-soft: #edb96626;
+  --on-ribbon: #1a1408;
 
-  --st-solid: #8fb08a;
-  --st-review: #86a8c6;
-  --st-confused: #d6727c;
-  --st-new: #9a8f7d;
+  /* состояния тем; зелёный и синий не пересекаются с акцентом */
+  --st-solid: #8fc79a;
+  --st-review: #86a9c9;
+  --st-confused: #ef8c7a;
+  --st-new: #8d877b;
+
+  /* индикаторы графа: свои цвета, не пересекаются с цветами состояний тем и с акцентом */
+  --ind-new: #4f9dff;
+  --ind-relevant: #a68bff;
+  --ind-deadline: #2ec4b6;
+  --ind-weak: #e75cc4;
+  --ind-review: #c6e35a;
+
+  /* движение */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-s: 0.3s;
+  --dur-m: 0.6s;
+  --dur-l: 1.2s;
+
+  /* шрифты (next/font задаёт --font-manrope и --font-jetbrains) */
+  --font-display: var(--font-manrope), system-ui, sans-serif;
+  --font-label: var(--font-jetbrains), ui-monospace, monospace;
 
   /* shadcn */
   --background: var(--cloth);
@@ -45,7 +64,7 @@
   --border: var(--seam);
   --input: var(--seam);
   --ring: var(--ribbon);
-  --radius: 0.75rem;
+  --radius: 6px; /* карточки и панели */
   --sidebar: var(--cloth-deep);
   --sidebar-foreground: var(--paper);
   --sidebar-primary: var(--ribbon);
@@ -82,12 +101,19 @@
   --color-st-review: var(--st-review);
   --color-st-confused: var(--st-confused);
   --color-st-new: var(--st-new);
+  --color-ind-new: var(--ind-new);
+  --color-ind-relevant: var(--ind-relevant);
+  --color-ind-deadline: var(--ind-deadline);
+  --color-ind-weak: var(--ind-weak);
+  --color-ind-review: var(--ind-review);
 
-  --font-sans: var(--font-golos);
-  --font-mono: var(--font-jetbrains);
-  --font-serif: var(--font-pt-serif);
+  --font-sans: var(--font-manrope), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-display: var(--font-manrope), system-ui, sans-serif;
+  --font-label: var(--font-jetbrains), ui-monospace, monospace;
+  --font-serif: var(--font-manrope), system-ui, sans-serif;
   --font-hand: var(--font-caveat);
-  --font-heading: var(--font-pt-serif);
+  --font-heading: var(--font-manrope), system-ui, sans-serif;
 
   /* Три кегля на весь экран + дисплей для названия домена */
   --text-small: 0.8125rem;
@@ -135,12 +161,16 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
-  /* DESIGN: control 11px — кнопки и поля; option 10px — строки списков и пункты меню */
-  --radius-control: 11px;
-  --radius-option: 10px;
+  /* control — поля и строки; option — пункты меню; pill — кнопки и теги */
+  --radius-control: 6px;
+  --radius-option: 4px;
+  --radius-pill: 9999px;
 
-  --animate-found: found 1.6s cubic-bezier(0.16, 1, 0.3, 1) 2;
-  --animate-toast: toast 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-found: found 1.6s var(--ease-out) 2;
+  --animate-toast: toast 0.35s var(--ease-out);
+  /* шторка: --mask-y уходит 0% -> 100% (скрыть) или обратно (показать) */
+  --animate-wipe-out: wipe-out var(--dur-m) var(--ease-out) both;
+  --animate-wipe-in: wipe-in var(--dur-m) var(--ease-out) both;
 
   --animate-breathe: breathe 3s ease-in-out infinite;
 
@@ -156,6 +186,21 @@
     from { transform: translateY(8px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
   }
+  @keyframes wipe-out {
+    from { --mask-y: 0%; }
+    to { --mask-y: 100%; }
+  }
+  @keyframes wipe-in {
+    from { --mask-y: 100%; }
+    to { --mask-y: 0%; }
+  }
+}
+
+/* чтобы --mask-y можно было анимировать */
+@property --mask-y {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
 }
 
 @layer base {
@@ -189,7 +234,7 @@
 }
 
 [data-flash] {
-  border-radius: 8px;
+  border-radius: 6px;
   animation: flash 1.5s ease-out forwards;
 }
 @keyframes flash {
@@ -201,6 +246,57 @@
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+}
+
+/* мелкая подпись: моно, обычный регистр; размер — через [--caps-size:0.75rem]. Имя осталось от прежнего капса */
+@utility caps {
+  font-family: var(--font-label);
+  font-size: var(--caps-size, 0.6875rem);
+  font-weight: 400;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+}
+
+/* заголовок (названия, пункты меню). Имя осталось от прежнего капса; нужен капс — добавь uppercase */
+@utility display-caps {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+/* полосатый текст: вертикальные штрихи + рваный край (фильтр #quack-ragged лежит в layout.tsx) */
+@utility text-striped {
+  -webkit-mask-image: repeating-linear-gradient(
+    90deg,
+    #000 0 var(--stripe-line, 2px),
+    transparent var(--stripe-line, 2px) var(--stripe-step, 3px)
+  );
+  mask-image: repeating-linear-gradient(
+    90deg,
+    #000 0 var(--stripe-line, 2px),
+    transparent var(--stripe-line, 2px) var(--stripe-step, 3px)
+  );
+  filter: url(#quack-ragged);
+}
+
+/* лёгкий шум поверх цвета фона: bg-cloth grain (слой background-image, текст не трогает) */
+@utility grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.93 0 0 0 0 0.89 0 0 0 0 0.82 0.12 0 0 0 -0.025'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+/* шторка как у референса: вверху сплошно, внизу мягко в прозрачность;
+   --mask-y: 0% — виден весь элемент, 100% — скрыт (маска уезжает вверх) */
+@utility mask-wipe {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 50%, transparent 100%);
+  -webkit-mask-size: 100% 200%;
+  mask-size: 100% 200%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: 0 calc(var(--mask-y, 0%) * 2);
+  mask-position: 0 calc(var(--mask-y, 0%) * 2);
 }
 
 @media (prefers-reduced-motion: reduce) {

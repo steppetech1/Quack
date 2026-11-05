@@ -27,6 +27,7 @@ import { BoardChat } from "./chat";
 import { Frames } from "./frames";
 import { ItemView } from "./items";
 import { Toolbar, type Tool } from "./toolbar";
+import { useCanvasSync } from "./use-canvas-sync";
 
 type Cam = { x: number; y: number; k: number };
 type Gesture =
@@ -47,6 +48,7 @@ const isTyping = (t: EventTarget | null) => !!(t as Element | null)?.closest?.("
 export function Board({
   canvas,
   canvasId,
+  live,
   mode,
   focusBlock = null,
   topLeft,
@@ -55,6 +57,8 @@ export function Board({
 }: {
   canvas?: Canvas;
   canvasId: string;
+  /** A canvas of the backend: the chat talks to this session's teacher */
+  live?: { sessionId: string };
   mode: "edit" | "view";
   focusBlock?: string | null;
   topLeft?: React.ReactNode;
@@ -121,6 +125,20 @@ export function Board({
     setItems(next);
     syncHist();
   }, [syncHist, setItems]);
+
+  // a canvas of the backend: the strokes go to its journal and come back from it
+  const sync = useCanvasSync({
+    enabled: !!live,
+    canvasId,
+    items,
+    loaded,
+    restore: (add) =>
+      mutate((prev) => {
+        const have = new Set(prev.map((i) => i.id));
+        const fresh = add.filter((s) => !have.has(s.id));
+        return fresh.length ? [...prev, ...fresh] : prev;
+      }, false),
+  });
 
   const undo = () => {
     const s = stacks.current;
@@ -668,8 +686,8 @@ export function Board({
         : { id: NEW_ID, kind: "formula", x: editing.x, y: editing.y, tex: "" }
       : null;
 
-  const BAR = "z-20 rounded-[14px] border border-seam bg-cloth-raised shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]";
-  const BAR_BTN = "inline-flex h-10 items-center justify-center gap-2 rounded-control px-3 text-small whitespace-nowrap text-paper-dim transition-colors hover:bg-cloth-hover hover:text-paper max-md:w-10 max-md:px-0";
+  const BAR = "z-20 rounded-[2px] border border-seam bg-cloth-raised shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]";
+  const BAR_BTN = "caps inline-flex h-10 items-center justify-center gap-2 rounded-[2px] px-3 whitespace-nowrap text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper max-md:w-10 max-md:px-0";
 
   return (
     <div ref={outer} className={cn("relative min-h-0 flex-1 overflow-hidden bg-cloth", className)}>
@@ -736,6 +754,12 @@ export function Board({
         </p>
       )}
 
+      {live && sync !== "saved" && (
+        <p role="status" className="caps pointer-events-none absolute top-[4.25rem] left-4 z-10 text-paper-dim [text-shadow:0_0_8px_#141311]">
+          {sync === "saving" ? tx.board.sync.saving : tx.board.sync.offline}
+        </p>
+      )}
+
       {/* Верхние панели */}
       {topLeft && (
         <div data-ui className={cn("absolute top-3 left-3 flex max-w-[calc(100%-8.5rem)] items-center gap-1 p-1 md:max-w-[calc(100%-26rem)]", BAR)}>
@@ -748,7 +772,7 @@ export function Board({
           aria-pressed={teacher}
           aria-label={tx.board.teacherLayer}
           onClick={() => setTeacher((v) => !v)}
-          className={cn(BAR_BTN, teacher && "bg-cloth-hover text-paper")}
+          className={cn(BAR_BTN, teacher && "bg-ribbon-soft text-ribbon")}
         >
           <GraduationCap aria-hidden className="size-[18px]" />
           <span className="max-md:sr-only">{tx.board.teacherLayer}</span>
@@ -776,7 +800,7 @@ export function Board({
         <button type="button" aria-label={tx.board.zoomOut} onClick={() => zoomCenter(camRef.current.k / 1.25, true)} className={cn(BAR_BTN, "w-10 px-0")}>
           <Minus aria-hidden className="size-[18px]" />
         </button>
-        <button type="button" aria-label={tx.board.zoomReset} onClick={() => zoomCenter(1, true)} className={cn(BAR_BTN, "num w-14 px-0")}>
+        <button type="button" aria-label={tx.board.zoomReset} onClick={() => zoomCenter(1, true)} className={cn(BAR_BTN, "num w-14 px-0 normal-case tracking-normal")}>
           {pct}%
         </button>
         <button type="button" aria-label={tx.board.zoomIn} onClick={() => zoomCenter(camRef.current.k * 1.25, true)} className={cn(BAR_BTN, "w-10 px-0")}>
@@ -814,7 +838,7 @@ export function Board({
               canUndo={hist.undo}
               canRedo={hist.redo}
             />
-            <BoardChat canvasId={canvasId} onJump={jump} />
+            <BoardChat canvasId={canvasId} sessionId={live?.sessionId} onJump={jump} />
           </div>
         </>
       )}

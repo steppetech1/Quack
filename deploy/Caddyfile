@@ -1,0 +1,54 @@
+# Quack edge (ТЗ Фазы 4 WP9.2, Д-§3.1, Д-§10). TLS, redirect 80 -> 443, proxy to `api`.
+#
+# Outside the server only the learner API, sign-in and /healthz are reachable. /health/live,
+# /health/ready, /internal/*, the docs and the OpenAPI document are answered with 404 here and
+# never reach `api` (Т-§19.1, Д-§9.1). The one thing Caddy serves itself is /static/viz/* (the
+# pinned D3, Plotly, KaTeX of the visualizations, deploy/static/viz/, WP9.2, D-C-218).
+#
+# `API_DOMAIN` defaults to the production name; a local stack sets API_DOMAIN=localhost and
+# Caddy then serves a locally signed certificate.
+
+{
+	# Let's Encrypt only, no ZeroSSL fallback (Д-§3.1: CAA allows letsencrypt.org alone).
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+{$API_DOMAIN:api.qvack.online} {
+	@public {
+		path /healthz /auth/* /v1/*
+	}
+
+	handle @public {
+		# `flush_interval -1`: SSE of the teacher turn and the change channel are not buffered
+		# (Д-§3.1, Т-§1.10).
+		# `stream_close_delay`: a config reload must not cut the canvas WebSocket at once; the
+		# client reconnects and resends unacknowledged stroke batches (Д-§3.1, Т-§15.2).
+		# Starting value.
+		reverse_proxy api:8000 {
+			flush_interval -1
+			stream_close_delay 30s
+		}
+	}
+
+	# The libraries of `GET /v1/viz/{id}` pages. The page is a sandboxed document without an origin,
+	# so its script, style and font requests are cross-origin: fonts need the CORS header. A path
+	# holds its version and never changes, hence `immutable`.
+	handle /static/viz/* {
+		root * /srv
+		header {
+			Access-Control-Allow-Origin "*"
+			Cache-Control "public, max-age=31536000, immutable"
+			X-Content-Type-Options nosniff
+		}
+		file_server
+	}
+
+	handle {
+		respond "not found" 404
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

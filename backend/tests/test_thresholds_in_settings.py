@@ -1,14 +1,15 @@
 """WP1.6: thresholds of Phase 2 live in `Settings` under a name, not as module constants
 (ТЗ Фазы 3 §0.3, §6.2, audit A7). Values are unchanged; behaviour is covered by the existing
-tests of the streams, so these tests pin the names, the defaults and the absence of constants.
+tests of the streams, so these tests pin the diagnostic defaults (they go with the diagnostic,
+backend/TESTS.md) and the absence of constants. The pins of the other defaults and the check
+that `session/deps.py` has no RATE_LIMIT constant were removed (D-C-146): the consumers' tests
+take the limits from `Settings`.
 """
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
-
-import pytest
 
 from quack.config import Settings
 
@@ -19,20 +20,6 @@ QUACK_DIR = Path(__file__).resolve().parent.parent / "quack"
 # (D-C-013); `graph/` holds mathematical and unit constants of the folds.
 SCANNED = ("domains", "artifacts", "api")
 NOT_SCANNED = {"artifacts/practice.py", "artifacts/params.py", "api/ratelimit.py"}
-
-
-def test_stream_c_defaults_equal_phase_2_values() -> None:
-    settings = Settings()
-    assert settings.auth_requests_per_ip_per_min == 10
-    assert settings.learner_actions_per_min == 60
-    assert settings.turns_per_min == 20
-    assert settings.jwt_ttl_days == 7
-    assert settings.curation_defer_min == 10
-    assert settings.curation_min_evidence_for_promotion == 2
-    assert settings.health_check_timeout_s == 2.0
-    assert settings.search_min_query_len == 2
-    assert settings.search_default_limit == 20
-    assert settings.search_max_limit == 100
 
 
 def test_diagnostic_parameters_have_phase_2_values() -> None:
@@ -81,12 +68,3 @@ def test_no_numeric_threshold_constants_left_in_stream_c_modules() -> None:
             if names := _numeric_constants(path):
                 offenders[relative] = names
     assert offenders == {}, "move to Settings under a named parameter (WP1.6)"
-
-
-@pytest.mark.parametrize(
-    "module",
-    ["domains/auth.py", "session/deps.py"],
-)
-def test_rate_limit_constants_are_gone(module: str) -> None:
-    source = (QUACK_DIR / module).read_text(encoding="utf-8")
-    assert "RATE_LIMIT" not in source

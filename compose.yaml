@@ -1,20 +1,28 @@
 # Quack stack (ТЗ Фазы 3 WP9.2, Д-§3, Д-§4.1, Д-§6.1, Д-§7). Values are starting points.
 #
 # Secrets and per-host values come from `.env` next to this file (names: backend/.env.example
-# plus POSTGRES_PASSWORD). No service publishes a port here; `compose.override.yaml` publishes
-# the databases and the API on 127.0.0.1 for local work. Caddy, backup and alerts belong to the
-# DevOps track and are added on top of this file.
+# plus POSTGRES_PASSWORD). Only `caddy` publishes ports (80, 443, Д-§10); its config is
+# deploy/Caddyfile. `compose.override.yaml` publishes the databases and the API on 127.0.0.1 for
+# local work. Backup and alerts are added on top of this file.
 #
 # Small machine (Docker with ~4 GB): NEO4J_HEAP=512m NEO4J_PAGECACHE=256m NEO4J_TX_MAX=256m
 # NEO4J_MEM_LIMIT=1536m NEO4J_MEMSWAP_LIMIT=1920m.
 #
 # Test learners: `docker compose exec api python -m quack.cli ops seed-learners --count N --out
-# /tmp/learners.json` — in `api`, the only service with JWT_SECRET (tokens are signed with it).
+# /tmp/learners.json` — each learner gets a session token (ТЗ Ф4 WP18.3).
 #
 # Load stand: `docker compose --profile loadtest up` adds `meta-mock`; point api and workers to it
-# with META_API_BASE_URL=http://meta-mock:8080 (no /v1 suffix).
+# with META_API_BASE_URL=http://meta-mock:8080 (no /v1 suffix). Leave LANGSMITH_API_KEY empty there
+# (no tracing, Д-§11); with ENV=prod set LLM_PRICES to any valid table, with ENV=dev nothing.
 
 name: quack
+
+# Д-§4.2: json-file, 10 MB x 5 files per container.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
 
 x-backend-image: &backend-image
   image: ${QUACK_BACKEND_IMAGE:-quack-backend:local}
@@ -31,6 +39,14 @@ x-db-env: &db-env
   NEO4J_USER: neo4j
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
   REDIS_URL: redis://redis:6379/0
+
+# WP9.2, WP16.5 (Т-§13.6 п.1, D-C-218): the libraries a visualization page may load, name -> path
+# under VIZ_STATIC_BASE_URL. Caddy serves deploy/static/viz/ at /static/viz/ of the API domain;
+# `api` puts the address into the CSP of `GET /v1/viz/{id}`, `workers` into the prompt of the
+# builder. A new library or version is a new path here and in deploy/static/viz/.
+x-viz-env: &viz-env
+  VIZ_STATIC_BASE_URL: ${VIZ_STATIC_BASE_URL:-https://${API_DOMAIN:-api.qvack.online}/static/viz}
+  VIZ_LIBRARIES: '{"d3": "d3/7.9.0/d3.min.js", "plotly": "plotly/2.35.2/plotly.min.js", "katex": "katex/0.16.11/katex.min.js", "katex-css": "katex/0.16.11/katex.min.css"}'
 
 x-after-migrate: &after-migrate
   depends_on:
@@ -73,6 +89,7 @@ services:
       timeout: 3s
       retries: 20
     mem_limit: 1792m
+    logging: *default-logging
     memswap_limit: 2240m
     cpus: 2.0
 
@@ -97,6 +114,7 @@ services:
       retries: 30
       start_period: 30s
     mem_limit: ${NEO4J_MEM_LIMIT:-4g}
+    logging: *default-logging
     memswap_limit: ${NEO4J_MEMSWAP_LIMIT:-5g}
     cpus: 2.0
 
@@ -112,10 +130,13 @@ services:
       timeout: 3s
       retries: 20
     mem_limit: 192m
+    logging: *default-logging
     memswap_limit: 240m
     cpus: 0.25
 
   migrate:
+    # `ops migrate` = `dbmate up` on /app/db/migrations (WP1.1, WP9); api, projector and workers
+    # wait for it to complete (D-C-160).
     <<: *backend-image
     restart: "no"
     command: ["ops", "migrate"]
@@ -124,11 +145,16 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       QUACK_VERSION: ${QUACK_VERSION:-dev}
       POSTGRES_DSN: postgresql://quack:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/quack
+      # `ops db-roles` runs in this service too (superuser DSN); `ops migrate` ignores them.
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
+      READER_DB_PASSWORD: ${READER_DB_PASSWORD:-}
+      MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
     networks: [backend]
     mem_limit: 256m
+    logging: *default-logging
     memswap_limit: 320m
     cpus: 0.5
 
@@ -149,15 +175,33 @@ services:
         condition: service_started
         required: false
     environment:
-      <<: *db-env
+      <<: [*db-env, *viz-env]
       API_HOST: 0.0.0.0
       API_PORT: "8000"
       API_WORKERS: "2"
       API_GRACEFUL_SHUTDOWN_S: "30"
       COMPUTE_URL: http://compute:8001
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       META_API_KEY: ${META_API_KEY:-}
       META_API_BASE_URL: ${META_API_BASE_URL:-}
+      # D-B-198, D-B-201: the price table of Т-§11.4 (JSON; prod refuses to start without it) and
+      # the tracing key (empty: tracing off). Not for the `loadtest` profile (Д-§11).
+      LLM_PRICES: ${LLM_PRICES:-}
+      LLM_POOL_BUDGET_USD: ${LLM_POOL_BUDGET_USD:-0}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      # D-C-133: where sign-in returns (Д-§2.1, Д-§3.1) and the version of the terms (Т-§19.4).
+      AUTH_SUCCESS_REDIRECT_URL: ${AUTH_SUCCESS_REDIRECT_URL:-}
+      TERMS_VERSION: ${TERMS_VERSION:-}
+      # Д-§7: the secrets of `api` — mail, Google sign-in, learner objects, deletions bucket.
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      GOOGLE_OIDC_CLIENT_ID: ${GOOGLE_OIDC_CLIENT_ID:-}
+      GOOGLE_OIDC_CLIENT_SECRET: ${GOOGLE_OIDC_CLIENT_SECRET:-}
+      S3_BUCKET_LEARNERS: ${S3_BUCKET_LEARNERS:-quack-learners}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      DELETIONS_S3_ENDPOINT: ${DELETIONS_S3_ENDPOINT:-}
+      DELETIONS_S3_ACCESS_KEY: ${DELETIONS_S3_ACCESS_KEY:-}
+      DELETIONS_S3_SECRET_KEY: ${DELETIONS_S3_SECRET_KEY:-}
     networks: [backend, egress]
     healthcheck:
       test:
@@ -171,6 +215,7 @@ services:
       start_period: 20s
     stop_grace_period: 35s
     mem_limit: 1g
+    logging: *default-logging
     memswap_limit: 1280m
     cpus: 1.5
 
@@ -180,9 +225,12 @@ services:
     # No META_API_KEY and no compute: the projector reads the log and writes the graph only.
     environment:
       <<: *db-env
+      # Д-§4.1: 8 Postgres connections for the projector and the dispatcher.
+      PG_POOL_MAX_SIZE: "8"
     networks: [backend]
     stop_grace_period: 15s
     mem_limit: 512m
+    logging: *default-logging
     memswap_limit: 640m
     cpus: 1.0
 
@@ -203,14 +251,32 @@ services:
         condition: service_started
         required: false
     environment:
-      <<: *db-env
+      <<: [*db-env, *viz-env]
       COMPUTE_URL: http://compute:8001
       WORKER_SHUTDOWN_GRACE_S: "20"
+      # Д-§4.1: 5 Postgres connections per workers process (2 × 5).
+      PG_POOL_MAX_SIZE: "5"
       META_API_KEY: ${META_API_KEY:-}
       META_API_BASE_URL: ${META_API_BASE_URL:-}
+      # D-B-198, D-B-201: the price table of Т-§11.4 (JSON; prod refuses to start without it) and
+      # the tracing key (empty: tracing off). Not for the `loadtest` profile (Д-§11).
+      LLM_PRICES: ${LLM_PRICES:-}
+      LLM_POOL_BUDGET_USD: ${LLM_POOL_BUDGET_USD:-0}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      # Д-§7: the secrets of `workers` — embeddings, learner objects, daily deletions check.
+      MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
+      MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+      S3_BUCKET_LEARNERS: ${S3_BUCKET_LEARNERS:-quack-learners}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      DELETIONS_S3_ENDPOINT: ${DELETIONS_S3_ENDPOINT:-}
+      DELETIONS_S3_ACCESS_KEY: ${DELETIONS_S3_ACCESS_KEY:-}
+      DELETIONS_S3_SECRET_KEY: ${DELETIONS_S3_SECRET_KEY:-}
     networks: [backend, egress]
     stop_grace_period: 25s
     mem_limit: 1g
+    logging: *default-logging
     memswap_limit: 1280m
     cpus: 1.0
 
@@ -226,8 +292,103 @@ services:
     shm_size: 256mb
     stop_grace_period: 10s
     mem_limit: 2g
+    logging: *default-logging
     memswap_limit: 2560m
     cpus: 3.0
+
+  backup:
+    # Д-§8.1: run by the host timer (`docker compose run --rm backup`) and by deploy.sh before a
+    # migration (`... backup ops backup now`); never started by `up`.
+    <<: *backend-image
+    profiles: [backup]
+    restart: "no"
+    command: ["ops", "backup"]
+    # Д-§7: the dump reads as `quack_reader`, created by `ops db-roles` (deploy.sh runs it).
+    environment:
+      ENV: ${ENV:-prod}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      QUACK_VERSION: ${QUACK_VERSION:-dev}
+      POSTGRES_DSN: postgresql://quack_reader:${READER_DB_PASSWORD:-}@postgres:5432/quack
+      BACKUP_LOCAL_DIR: /backups
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:-}
+      BACKUP_S3_SECRET_KEY: ${BACKUP_S3_SECRET_KEY:-}
+      BACKUP_AGE_PUBLIC_KEY: ${BACKUP_AGE_PUBLIC_KEY:-}
+      HEARTBEAT_BACKUP_URL: ${HEARTBEAT_BACKUP_URL:-}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_WEBHOOK_FORMAT: ${ALERT_WEBHOOK_FORMAT:-slack}
+      ALERT_WEBHOOK_CHAT_ID: ${ALERT_WEBHOOK_CHAT_ID:-${TELEGRAM_CHAT_ID:-}}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    volumes:
+      # Directory 700, owned by the container user (uid 10001), see setup-server.sh.
+      - ${QUACK_BACKUPS_DIR:-/srv/quack/backups}:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, egress]
+    mem_limit: 256m
+    memswap_limit: 320m
+    cpus: 0.5
+    logging: *default-logging
+
+  alerts:
+    # Д-§9.3: run by the host timer every 5 minutes (`docker compose run --rm alerts`), never
+    # started by `up`. Reads Postgres as `quack_reader` and Redis; containers and disk come from
+    # the file the host timer writes (no Docker socket here).
+    <<: *backend-image
+    profiles: [alerts]
+    restart: "no"
+    command: ["ops", "alerts"]
+    environment:
+      ENV: ${ENV:-prod}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      QUACK_VERSION: ${QUACK_VERSION:-dev}
+      POSTGRES_DSN: postgresql://quack_reader:${READER_DB_PASSWORD:-}@postgres:5432/quack
+      REDIS_URL: redis://redis:6379/0
+      BACKUP_LOCAL_DIR: /backups
+      HOST_STATE_PATH: /host-state/state.json
+      HEALTHZ_URL: http://api:8000/healthz
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_WEBHOOK_FORMAT: ${ALERT_WEBHOOK_FORMAT:-slack}
+      ALERT_WEBHOOK_CHAT_ID: ${ALERT_WEBHOOK_CHAT_ID:-${TELEGRAM_CHAT_ID:-}}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      HEARTBEAT_ALERTS_URL: ${HEARTBEAT_ALERTS_URL:-}
+    volumes:
+      - ${QUACK_BACKUPS_DIR:-/srv/quack/backups}:/backups:ro
+      - /run/quack:/host-state:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [backend, egress]
+    mem_limit: 256m
+    memswap_limit: 320m
+    cpus: 0.5
+    logging: *default-logging
+
+  caddy:
+    # Д-§3, Д-§3.1: the only service that publishes ports (Д-§10). Config comes from deploy/.
+    image: caddy:${CADDY_VERSION:-2.10}
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-api.qvack.online}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/static:/srv/static:ro
+      - caddy-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [backend, egress]
+    stop_grace_period: 10s
+    mem_limit: 128m
+    memswap_limit: 160m
+    cpus: 0.25
+    logging: *default-logging
 
   meta-mock:
     <<: *backend-image
@@ -238,6 +399,7 @@ services:
       META_MOCK_LATENCY: ${META_MOCK_LATENCY:-measured}
     networks: [backend]
     mem_limit: 256m
+    logging: *default-logging
     memswap_limit: 320m
     cpus: 0.5
 
@@ -249,3 +411,4 @@ networks:
 volumes:
   postgres-data: {}
   neo4j-data: {}
+  caddy-data: {}

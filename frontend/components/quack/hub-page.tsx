@@ -2,8 +2,9 @@
 
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { API_MODE } from "@/lib/api/client";
+import { daysFromToday, localIso } from "@/lib/format";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -12,13 +13,16 @@ import { ArtifactHost, type WindowSpec } from "./artifact-window";
 import { CheatCard, CheatSheetContent } from "./artifact-content";
 import { Duck } from "./duck";
 import { ActionButton, Crumbs, HubRing, MaterialsList, MemoryRing, MomentsList, MoreMenu, PageFrame, PageSection, TEXT_BTN } from "./page-parts";
+import { ExpandableCard } from "./artifact-window";
+import { Markdown, plainText } from "./live/markdown";
+import { useHubApi } from "./live/use-hub-api";
 import { NumText } from "./num-text";
 import { useStartSession } from "./live/use-start-session";
 import { useSoon } from "./soon";
 
 const clean = (s: string) => s.replace(/­/g, "");
 
-const PRIMARY_BTN = "inline-flex h-10 items-center justify-center rounded-control bg-ribbon px-4 text-body font-semibold text-on-ribbon transition-colors hover:bg-ribbon-hover";
+const PRIMARY_BTN = "caps inline-flex h-10 items-center justify-center rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-ribbon-hover";
 
 export function HubPage({ id }: { id: string }) {
   const tx = useT();
@@ -27,11 +31,14 @@ export function HubPage({ id }: { id: string }) {
   const { domain } = useShell();
   const soon = useSoon();
   const { start, busy } = useStartSession();
-  const hub = domain.hubs.find((h) => h.id === id);
+  const api = useHubApi(id, domain.id, API_MODE);
+  const [editingDeadline, setEditingDeadline] = useState(false);
+  // "all" is the hub over the whole subject: not a node on the graph, reached from the pill next to it
+  const hub = useMemo(() => (id === "all" ? { id, num: "·", title: domain.title, about: "" } : domain.hubs.find((h) => h.id === id)), [id, domain]);
 
   const data = useMemo(() => {
     if (!hub) return null;
-    const topics = domain.topics.filter((t) => t.hubId === hub.id);
+    const topics = hub.id === "all" ? domain.topics : domain.topics.filter((t) => t.hubId === hub.id);
     // порядок изучения: по глубине «нужно до» внутри главы
     const byId = new Map(topics.map((t) => [t.id, t]));
     const depth = new Map<string, number>();
@@ -62,6 +69,9 @@ export function HubPage({ id }: { id: string }) {
       .map((m) => ({ ...m, href: m.sessionId ? domain.sessions.find((s) => s.id === m.sessionId)?.href : undefined, topicTitle: m.topicTitles.join(", ") }));
     return { ordered, materials: [...materials.values()], timeline };
   }, [domain, hub, getTopicDetails]);
+  const materialItems: Material[] = api.real
+    ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(localIso(Date.parse(m.created_at))), kind: "pdf" as const }))
+    : data?.materials ?? [];
 
   if (!hub || !data) {
     return (
@@ -77,14 +87,20 @@ export function HubPage({ id }: { id: string }) {
   const started = ordered.filter((t) => t.state !== "new").length;
   const progress = ordered.length ? started / ordered.length : 0;
   const cheat = cheatSheets[hub.id];
+  const apiCheat = api.real && api.cheat && api.cheat.blocks.length ? api.cheat : null;
+  const apiCheatText = apiCheat ? (apiCheat.blocks as { content: string }[]).map((b) => b.content).join("\n\n") : "";
   const deadline = hub.deadline;
+  /** the date is behind us: prep mode makes no sense any more, the offer to enter the mark takes its place */
+  const passed = !!deadline && daysFromToday(deadline.date) < 0;
   const suggested = hub.suggested;
   // ровно одна жёлтая кнопка: подготовка к дедлайну, иначе «Вперемешку»; в предложенной главе — «Начать главу»
   const primaryAction = deadline ? null : suggested ? null : "mixed";
 
   const cheatTitle = deadline ? tx.hub.cheatDeadline : tx.hub.cheat;
   const windows: Record<string, WindowSpec> = {};
-  if (cheat) {
+  if (apiCheat) {
+    windows.cheatsheet = { title: cheatTitle, meta: tx.hub.cheatMeta, body: <Markdown text={apiCheatText} /> };
+  } else if (cheat) {
     windows.cheatsheet = {
       title: cheatTitle,
       meta: tx.hub.cheatMeta,
@@ -93,7 +109,7 @@ export function HubPage({ id }: { id: string }) {
           <button
             type="button"
             onClick={() => soon(tx.hub.pdfSoon)}
-            className="h-10 rounded-control border border-seam px-3 text-small text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+            className="caps h-10 rounded-pill border border-ribbon/60 px-5 text-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-ribbon hover:bg-ribbon hover:text-on-ribbon"
           >
             PDF
           </button>
@@ -112,8 +128,8 @@ export function HubPage({ id }: { id: string }) {
       <Crumbs domainTitle={domain.title} />
 
       {suggested && (
-        <div className="mt-2 rounded-[14px] border border-seam bg-cloth-raised p-4">
-          <p className="font-semibold text-paper">{tx.hub.suggestedTitle}</p>
+        <div className="mt-2 rounded-[2px] border border-seam bg-cloth-raised p-4">
+          <p className="display-caps text-[1.125rem] text-paper">{tx.hub.suggestedTitle}</p>
           <p className="mt-0.5 text-paper-dim">{tx.hub.suggestedBody}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => soon(tx.hub.startChapterSoon(title))} className={PRIMARY_BTN}>
@@ -129,19 +145,28 @@ export function HubPage({ id }: { id: string }) {
       <header className="mt-2 flex items-start gap-4">
         <HubRing progress={progress} suggested={suggested} size={56} />
         <div className="min-w-0 flex-1">
-          <p className="num text-small text-paper-dim">§ {hub.num}</p>
-          <h1 className="font-serif text-display font-bold tracking-[-0.01em] text-paper">{title}</h1>
-          <p className="num mt-1 text-small text-paper-dim">
+          <p className="caps text-paper-dim">§ {hub.num}</p>
+          <h1 className="display-caps text-display text-paper">{title}</h1>
+          <p className="num mt-1.5 text-small text-paper-dim">
             {tx.hub.topicsCount(started, ordered.length)}
           </p>
         </div>
         <MoreMenu
           items={[
             { label: tx.hub.editTopics, soon: tx.hub.editTopicsSoon(title) },
-            { label: tx.hub.editDeadline, soon: tx.hub.editDeadlineSoon },
+            { label: tx.hub.editDeadline, soon: tx.hub.editDeadlineSoon, onSelect: api.real ? () => setEditingDeadline(true) : undefined },
           ]}
         />
       </header>
+
+      {editingDeadline && api.real && (
+        <DeadlineEditor
+          initial={deadline?.date}
+          busy={api.busy}
+          onSave={(ms) => void api.setDeadline(ms).then(() => setEditingDeadline(false))}
+          onCancel={() => setEditingDeadline(false)}
+        />
+      )}
 
       <p className="mt-4 max-w-[62ch] text-body leading-relaxed text-paper">{hub.about}</p>
 
@@ -161,9 +186,15 @@ export function HubPage({ id }: { id: string }) {
               )}
             </div>
           </div>
-          <button type="button" onClick={() => soon(tx.hub.prepSoon)} className={cn(PRIMARY_BTN, "mt-3 max-sm:w-full")}>
-            {tx.hub.prep}
-          </button>
+          {api.real && api.gradeOffer ? (
+            <GradeOffer busy={api.busy} onSave={(mark, scale) => void api.grade(mark, scale)} onLater={api.dismissGrade} />
+          ) : (
+            !passed && (
+              <button type="button" disabled={api.busy} onClick={() => (api.real ? void api.prep() : soon(tx.hub.prepSoon))} className={cn(PRIMARY_BTN, "mt-3 max-sm:w-full")}>
+                {tx.hub.prep}
+              </button>
+            )
+          )}
         </div>
       )}
 
@@ -185,10 +216,10 @@ export function HubPage({ id }: { id: string }) {
           const run = () =>
             void start(
               k === "all"
-                ? { domainId: domain.id, topicId: next.id, mode: "learn" }
+                ? { domainId: domain.id, topicId: next.id, intent: "learn" }
                 : k === "review"
-                  ? { domainId: domain.id, topicId: due.id, mode: "review" }
-                  : { domainId: domain.id, mode: "learn" },
+                  ? { domainId: domain.id, topicId: due.id, intent: "review" }
+                  : { domainId: domain.id, intent: "learn" },
             );
           return <ActionButton key={k} label={a} primary={k === primaryAction} soonText="" onClick={run} disabled={busy} />;
         })}
@@ -198,14 +229,14 @@ export function HubPage({ id }: { id: string }) {
         <ol>
           {ordered.map((t) => (
             <li key={t.id} className="border-b border-seam-soft last:border-0">
-              <Link href={`/topic/${t.id}`} className="flex min-h-14 items-center gap-3 rounded-option px-1 py-2 transition-colors hover:bg-cloth-hover">
+              <Link href={`/topic/${t.id}`} className="flex min-h-14 items-center gap-3 rounded-option px-1 py-2 transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover">
                 <MemoryRing state={t.state} retention={t.retention} size={24} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-paper">{clean(t.title)}</span>
                   {t.misconception && <span className="block truncate text-small text-st-confused">{t.misconception}</span>}
                 </span>
-                <span className={cn("shrink-0 text-small", t.state === "confused" ? "text-st-confused" : "text-paper-dim")}>
-                  {tx.states[t.state].toLowerCase()}
+                <span className={cn("caps shrink-0 [--caps-size:0.625rem]", t.state === "confused" ? "text-st-confused" : "text-paper-dim")}>
+                  {tx.states[t.state]}
                 </span>
                 <ChevronRight aria-hidden className="size-4 shrink-0 text-paper-dim" />
               </Link>
@@ -215,12 +246,19 @@ export function HubPage({ id }: { id: string }) {
       </PageSection>
 
       <PageSection id="hub-cheat" title={tx.hub.cheat}>
-        {cheat ? (
+        {apiCheat ? (
+          <ExpandableCard artifact="cheatsheet">
+            <span className="display-caps block px-4 pt-3 text-paper">{cheatTitle}</span>
+            <span aria-hidden className="mt-1 block h-[72px] overflow-hidden px-4 text-small leading-relaxed text-paper-dim [mask-image:linear-gradient(to_bottom,#000_55%,transparent)]">
+              {plainText(apiCheatText)}
+            </span>
+          </ExpandableCard>
+        ) : cheat ? (
           <CheatCard cheat={cheat} title={cheatTitle} />
         ) : (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <p className="text-paper-dim">{tx.hub.cheatLater}</p>
-            <button type="button" onClick={() => soon(tx.hub.buildSoon)} className={cn(TEXT_BTN, "-ml-3 sm:ml-0")}>
+            <button type="button" disabled={api.busy} onClick={() => (api.real ? void api.buildCheat() : soon(tx.hub.buildSoon))} className={cn(TEXT_BTN, "-ml-3 sm:ml-0")}>
               {tx.hub.buildNow}
             </button>
           </div>
@@ -228,7 +266,7 @@ export function HubPage({ id }: { id: string }) {
       </PageSection>
 
       <PageSection id="hub-materials" title={tx.hub.materials}>
-        <MaterialsList items={data.materials} />
+        <MaterialsList items={materialItems} />
       </PageSection>
 
       <PageSection id="hub-sessions" title={tx.hub.inSessions}>
@@ -236,5 +274,100 @@ export function HubPage({ id }: { id: string }) {
       </PageSection>
     </PageFrame>
     </ArtifactHost>
+  );
+}
+
+/** Date of the chapter's deadline (to the end of that day, local time), or none */
+function DeadlineEditor({ initial, busy, onSave, onCancel }: { initial?: string; busy: boolean; onSave: (ms: number | null) => void; onCancel: () => void }) {
+  const t = useT().live;
+  const [date, setDate] = useState(initial ?? "");
+  return (
+    <form
+      className="mt-4 flex flex-wrap items-end gap-3 border-t border-seam-soft pt-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (date) onSave(new Date(`${date}T23:59:59`).getTime());
+      }}
+    >
+      <label className="flex flex-col gap-1.5">
+        <span className="caps text-paper-dim">{t.deadlineLabel}</span>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="h-10 rounded-control border border-seam bg-cloth-deep px-3 text-body text-paper outline-none focus-visible:border-ribbon"
+        />
+      </label>
+      <button type="submit" disabled={busy || !date} className={PRIMARY_BTN + " disabled:opacity-50"}>
+        {t.deadlineSave}
+      </button>
+      {initial && (
+        <button type="button" disabled={busy} onClick={() => onSave(null)} className={TEXT_BTN}>
+          {t.deadlineRemove}
+        </button>
+      )}
+      <button type="button" onClick={onCancel} className={TEXT_BTN}>
+        {t.deadlineCancel}
+      </button>
+    </form>
+  );
+}
+
+const SCALES = ["1–5", "1–10", "0–100", "A–F"] as const;
+
+/** After the deadline: enter the real mark (optional, WP17.5). The scale is free text of the backend, up to 40 characters, like the mark */
+function GradeOffer({ busy, onSave, onLater }: { busy: boolean; onSave: (mark: string, scale: string) => void; onLater: () => void }) {
+  const tx = useT().hub;
+  const [mark, setMark] = useState("");
+  /** one of SCALES, "pass" or "other" */
+  const [pick, setPick] = useState<string>(SCALES[0]);
+  const [custom, setCustom] = useState("");
+  const scale = pick === "pass" ? tx.gradePass : pick === "other" ? custom.trim() : pick;
+  const ready = !!mark.trim() && !!scale;
+  const chip = (on: boolean) =>
+    cn(
+      "caps h-10 rounded-pill border px-4 transition-colors duration-(--dur-s) ease-out",
+      on ? "border-ribbon bg-ribbon-soft text-paper" : "border-seam text-paper-dim hover:border-ribbon hover:text-paper",
+    );
+  const field = "h-10 rounded-control border border-seam bg-cloth-deep px-3 text-body text-paper outline-none focus-visible:border-ribbon";
+  return (
+    <form
+      className="mt-3 max-w-[62ch]"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) onSave(mark.trim(), scale);
+      }}
+    >
+      <p className="display-caps text-paper">{tx.gradeTitle}</p>
+      <p className="mt-1 text-paper-dim">{tx.gradeBody}</p>
+      <fieldset className="mt-3">
+        <legend className="caps mb-1.5 text-paper-dim">{tx.gradeScaleLabel}</legend>
+        <div className="flex flex-wrap gap-2">
+          {[...SCALES, "pass", "other"].map((s) => (
+            <button key={s} type="button" aria-pressed={pick === s} onClick={() => setPick(s)} className={chip(pick === s)}>
+              {s === "pass" ? tx.gradePass : s === "other" ? tx.gradeOther : s}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        {pick === "other" && (
+          <label className="flex flex-col gap-1.5">
+            <span className="caps text-paper-dim">{tx.gradeOtherLabel}</span>
+            <input value={custom} maxLength={40} onChange={(e) => setCustom(e.target.value)} className={cn(field, "w-40")} />
+          </label>
+        )}
+        <label className="flex flex-col gap-1.5">
+          <span className="caps text-paper-dim">{tx.gradeLabel}</span>
+          <input value={mark} maxLength={40} onChange={(e) => setMark(e.target.value)} className={cn(field, "w-32")} />
+        </label>
+        <button type="submit" disabled={busy || !ready} className={PRIMARY_BTN + " disabled:opacity-50"}>
+          {tx.gradeSend}
+        </button>
+        <button type="button" onClick={onLater} className={TEXT_BTN}>
+          {tx.gradeLater}
+        </button>
+      </div>
+    </form>
   );
 }

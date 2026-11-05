@@ -19,6 +19,9 @@ CORE = {
     "config",
     "logging",
     "db",
+    # ТЗ Ф4 §4.1: new core packages of stream C (WP19, WP20).
+    "storage",
+    "embeddings",
     "events",
     "graph",
     "jobs",
@@ -26,7 +29,13 @@ CORE = {
     "prompts",
     "compute_client",
 }
-PRODUCT = {"domains", "session", "artifacts", "practice"}
+# ТЗ Ф4 §4.1: `agents` (stream B), `auth` (stream C, WP18), `materials` (stream C, WP20) and
+# `canvas` (stream C, WP21) are product packages; other new packages join with their WPs.
+PRODUCT = {
+    "domains", "session", "artifacts", "practice", "agents", "auth", "materials", "canvas",
+    # ТЗ Ф4 §4.1: `review` (WP17) and `deletion` (WP25) of stream A.
+    "review", "deletion",
+}  # fmt: skip
 ASSEMBLY_MODULES = ("quack.api.app", "quack.runtime", "quack.cli", "quack.ops")
 
 # Imports that still violate §4.1 because the importing file belongs to stream B and stream C
@@ -232,7 +241,9 @@ NEO4J_SESSION_CALLS = frozenset({"session", "execute_write", "begin_transaction"
 # only `verify_schema` and the implementation of `read_session`.
 NEO4J_WRITERS: dict[str, frozenset[str] | None] = {
     "quack.graph.neo4j_store": None,
-    "quack.graph.rebuild": None,
+    "quack.graph.projection.store": frozenset(
+        {"write_batch", "replace_learner", "delete_learner_graph"}
+    ),
     "quack.db.neo4j": frozenset({"verify_schema", "read_session"}),
 }
 # Files of stream B that still open sessions on the driver themselves (ТЗ §7.3: stream C does

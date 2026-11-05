@@ -3,6 +3,8 @@
 import { Check, ChevronDown, PenLine, Plus, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { API_MODE } from "@/lib/api/client";
+import { useApiCanvases } from "@/lib/api/use-canvases";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Canvas } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -13,7 +15,7 @@ const clean = (s: string) => s.replace(/­/g, "");
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const FILTER_PILL =
-  "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-4 text-small whitespace-nowrap transition-colors";
+  "caps inline-flex h-10 shrink-0 items-center gap-1.5 rounded-pill border px-5 whitespace-nowrap transition-colors duration-(--dur-s) ease-out";
 
 /** Подсветка совпадения запроса в строке */
 function Hl({ text, q }: { text: string; q: string }) {
@@ -23,7 +25,7 @@ function Hl({ text, q }: { text: string; q: string }) {
     <>
       {parts.map((p, i) =>
         i % 2 === 1 ? (
-          <mark key={i} className="rounded-[4px] bg-ribbon/25 px-0.5 text-paper">
+          <mark key={i} className="rounded-[2px] bg-ribbon/25 px-0.5 text-paper">
             {p}
           </mark>
         ) : (
@@ -75,16 +77,16 @@ function TopicMenu({
         onClick={() => setOpen((o) => !o)}
         className={cn(
           FILTER_PILL,
-          current ? "border-paper-dim bg-cloth-hover text-paper" : "border-seam text-paper-dim hover:border-rule hover:text-paper",
+          current ? "border-ribbon bg-ribbon-soft text-paper" : "border-seam text-paper-dim hover:border-ribbon hover:text-paper",
         )}
       >
         <span className="max-w-44 truncate">{current ? current.title : tx.canvases.topicAny}</span>
-        <ChevronDown aria-hidden className={cn("size-4 transition-transform", open && "rotate-180")} />
+        <ChevronDown aria-hidden className={cn("size-4 transition-transform duration-(--dur-s) ease-out", open && "rotate-180")} />
       </button>
       {open && (
         <ul
           id={listId}
-          className="absolute top-12 left-0 z-30 max-h-72 w-72 overflow-y-auto rounded-[16px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
+          className="absolute top-12 left-0 z-30 max-h-72 w-72 overflow-y-auto rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
         >
           {[{ id: null, title: tx.canvases.anyTopic }, ...topics].map((t) => (
             <li key={t.id ?? "all"}>
@@ -98,7 +100,7 @@ function TopicMenu({
                 className="flex min-h-10 w-full items-center gap-2 rounded-option px-3 py-2 text-left transition-colors hover:bg-cloth-hover"
               >
                 <span className="flex-1">{t.title}</span>
-                {t.id === value && <Check aria-hidden className="size-4 text-paper-dim" />}
+                {t.id === value && <Check aria-hidden className="size-4 text-ribbon" />}
               </button>
             </li>
           ))}
@@ -120,14 +122,14 @@ export function CanvasSearch({ value, onChange }: { value: string; onChange: (v:
         onChange={(e) => onChange(e.target.value)}
         aria-label={tx.canvases.search}
         placeholder={tx.canvases.search}
-        className="h-10 w-full rounded-control border border-seam bg-cloth-deep pr-10 pl-9 text-body text-paper transition-colors hover:border-rule focus-visible:border-ribbon/70 [&::-webkit-search-cancel-button]:hidden"
+        className="h-10 w-full rounded-control border border-seam bg-cloth-deep pr-10 pl-9 text-body text-paper transition-colors duration-(--dur-s) ease-out hover:border-rule focus-visible:border-ribbon [&::-webkit-search-cancel-button]:hidden"
       />
       {value && (
         <button
           type="button"
           aria-label={tx.canvases.clearSearch}
           onClick={() => onChange("")}
-          className="absolute top-0 right-0 inline-flex size-10 items-center justify-center rounded-control text-paper-dim hover:text-paper"
+          className="absolute top-0 right-0 inline-flex size-10 items-center justify-center rounded-pill text-paper-dim hover:text-paper"
         >
           <X aria-hidden className="size-4" />
         </button>
@@ -144,7 +146,8 @@ export function CanvasesList({ query, onResetQuery }: { query: string; onResetQu
   const [topic, setTopic] = useState<string | null>(null);
   const [solved, setSolved] = useState<"all" | "done" | "no">("all");
 
-  const all = useMemo(() => canvasesOf(domain.id), [domain.id, canvasesOf]);
+  const live = useApiCanvases(domain.id);
+  const all = useMemo(() => (API_MODE ? live : canvasesOf(domain.id)), [live, domain.id, canvasesOf]);
   const topicName = useMemo(() => new Map(domain.topics.map((t) => [t.id, clean(t.title)])), [domain.topics]);
   const topicOptions = useMemo(() => {
     const ids = new Set(all.flatMap((c) => c.topics));
@@ -185,7 +188,7 @@ export function CanvasesList({ query, onResetQuery }: { query: string; onResetQu
   const newBtn = (
     <Link
       href="/canvas/new"
-      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-control border border-seam px-4 text-body text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+      className="caps inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-pill border border-seam px-5 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon"
     >
       <Plus aria-hidden className="size-[18px]" />
       {tx.canvases.newCanvas}
@@ -246,7 +249,7 @@ export function CanvasesList({ query, onResetQuery }: { query: string; onResetQu
                       setTopic(null);
                       setSolved("all");
                     }}
-                    className="mt-3 inline-flex h-10 items-center rounded-control border border-seam px-3 text-small text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+                    className="caps mt-3 inline-flex h-10 items-center rounded-pill border border-seam px-5 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon"
                   >
                     {tx.canvases.reset}
                   </button>
@@ -256,28 +259,28 @@ export function CanvasesList({ query, onResetQuery }: { query: string; onResetQu
               <div className="mt-7 flex flex-col gap-9 pb-2">
                 {groups.map(([date, items]) => (
                   <section key={date} aria-labelledby={`g-${date}`}>
-                    <h2 id={`g-${date}`} className="num mb-4 flex items-center gap-3 text-small tracking-wide text-paper-dim uppercase">
+                    <h2 id={`g-${date}`} className="caps mb-4 flex items-center gap-3 text-paper-dim">
                       {dayLabel(date)}
                       <span aria-hidden className="h-px flex-1 bg-seam-soft" />
                     </h2>
                     <ul className="columns-2 gap-4 sm:columns-[190px]">
                       {items.map(({ c, line }) => {
-                        const blockId = line ? line.blockId : firstTaskBlock(c).id;
+                        const blockId = line ? line.blockId : firstTaskBlock(c)?.id;
                         return (
                           <li key={c.id} className="mb-5 break-inside-avoid">
                             <Link
-                              href={`/canvas/${c.id}?block=${blockId}`}
-                              className="group block rounded-[14px] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ribbon"
+                              href={blockId ? `/canvas/${c.id}?block=${blockId}` : `/canvas/${c.id}`}
+                              className="group block rounded-[2px] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ribbon"
                             >
                               <CanvasThumb canvas={c} />
                               <span className="mt-1.5 block">
-                                <span className="line-clamp-2 block text-small leading-snug text-paper">
+                                <span className="display-caps line-clamp-2 block text-small leading-snug text-paper">
                                   <Hl text={c.title} q={q} />
                                 </span>
                                 <span className="mt-0.5 line-clamp-2 block text-small text-paper-dim">
                                   {c.topics.map((id) => topicName.get(id) ?? id).join(" · ")}
                                 </span>
-                                <span className={cn("block text-small", c.solved === "no" ? "text-paper-dim" : "text-st-solid")}>
+                                <span className={cn("caps mt-1 block", c.solved === "no" ? "text-paper-dim" : "text-st-solid")}>
                                   {tx.solved[c.solved]}
                                 </span>
                                 {line && (

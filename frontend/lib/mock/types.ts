@@ -75,8 +75,6 @@ export type Domain = {
   today: TodayItem[];
   /** Готовность к ближайшему дедлайну, 0–100 */
   readiness?: number;
-  /** Статус на бэкенде: onboarding (темы ещё не подтверждены), active, archived. У моков не задан */
-  status?: string;
   /** Бэкенд ещё не применил свежие события к графу (`lag_degraded`) */
   lagging?: boolean;
 };
@@ -93,7 +91,7 @@ export type NoteBlock = {
 
 export type CardKind = "definition" | "sign" | "distinction" | "myth";
 
-export type StudyCard = { id: string; kind: CardKind; front: string; back: string };
+export type StudyCard = { id: string; kind: CardKind; front: string; back: string; /** the learner edited it: the system never rewrites such a card (backend `owner = learner`) */ mine?: boolean };
 
 export type CanvasSketch = "ratio" | "plot" | "estimate";
 

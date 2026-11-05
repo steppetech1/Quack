@@ -4,6 +4,115 @@
  */
 
 export interface paths {
+    "/auth/google/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Google Callback */
+        get: operations["google_callback_auth_google_callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/google/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Google Start */
+        get: operations["google_start_auth_google_start_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Link
+         * @description A one-time link by mail; the same answer for a known and a new address.
+         */
+        post: operations["post_link_auth_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/link/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Verify Link */
+        get: operations["verify_link_auth_link_verify_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["logout_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/companion/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Companion Pair
+         * @description WP22.1: the phone exchanges the token for a `companion` session of the canvas (cookie);
+         *     an unknown, used or expired token — 401.
+         */
+        post: operations["companion_pair_companion_pair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -55,24 +164,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/artifacts": {
+    "/v1/artifacts/{artifact_id}/blocks/{block_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List Artifacts */
-        get: operations["list_artifacts_v1_artifacts_get"];
-        put?: never;
+        get?: never;
+        /** Put Block */
+        put: operations["put_block_v1_artifacts__artifact_id__blocks__block_id__put"];
         post?: never;
-        delete?: never;
+        /** Remove Block */
+        delete: operations["remove_block_v1_artifacts__artifact_id__blocks__block_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/artifacts/notes": {
+    "/v1/artifacts/{artifact_id}/blocks/{block_id}/accept": {
         parameters: {
             query?: never;
             header?: never;
@@ -81,15 +191,114 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Note */
-        post: operations["create_note_v1_artifacts_notes_post"];
+        /** Accept Block */
+        post: operations["accept_block_v1_artifacts__artifact_id__blocks__block_id__accept_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/artifacts/notes/{artifact_id}": {
+    "/v1/canvases/{canvas_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Canvas */
+        get: operations["get_canvas_v1_canvases__canvas_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/canvases/{canvas_id}/lines/{line_id}/correct": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Correct Line
+         * @description WP21.3: `handwriting.corrected` (Т-§2.8, П-9.7); a canvas or line of another learner, or
+         *     a line the canvas does not have, is 404.
+         */
+        post: operations["correct_line_v1_canvases__canvas_id__lines__line_id__correct_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/canvases/{canvas_id}/pairing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pairing
+         * @description WP22.1: a one-time pairing token of the learner's canvas (Т-§16.1).
+         */
+        post: operations["pairing_v1_canvases__canvas_id__pairing_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/canvases/{canvas_id}/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Photo
+         * @description WP22.2: the laptop (`full`) or the phone paired to this canvas (`companion`, WP22.1);
+         *     a companion of another canvas — 403 (T-CP1).
+         */
+        post: operations["upload_photo_v1_canvases__canvas_id__photos_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/canvases/{canvas_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Canvas Replay
+         * @description WP21.6: links live `object_url_ttl_s`; a canvas without a session has no strokes.
+         */
+        get: operations["canvas_replay_v1_canvases__canvas_id__replay_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/cards/{card_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -99,32 +308,15 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Note */
-        delete: operations["delete_note_v1_artifacts_notes__artifact_id__delete"];
+        /** Remove Card */
+        delete: operations["remove_card_v1_cards__card_id__delete"];
         options?: never;
         head?: never;
-        /** Update Note */
-        patch: operations["update_note_v1_artifacts_notes__artifact_id__patch"];
+        /** Patch Card */
+        patch: operations["patch_card_v1_cards__card_id__patch"];
         trace?: never;
     };
-    "/v1/artifacts/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Search Artifacts */
-        get: operations["search_artifacts_v1_artifacts_search_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/login": {
+    "/v1/consents": {
         parameters: {
             query?: never;
             header?: never;
@@ -133,32 +325,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Login Endpoint */
-        post: operations["login_endpoint_v1_auth_login_post"];
+        /** Post Consent */
+        post: operations["post_consent_v1_consents_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/me": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Me Endpoint */
-        get: operations["me_endpoint_v1_auth_me_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/register": {
+    "/v1/consents/research": {
         parameters: {
             query?: never;
             header?: never;
@@ -167,8 +342,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Register Endpoint */
-        post: operations["register_endpoint_v1_auth_register_post"];
+        post?: never;
+        /** Delete Research */
+        delete: operations["delete_research_v1_consents_research_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/disputes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** File Dispute Endpoint */
+        post: operations["file_dispute_endpoint_v1_disputes_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -193,6 +385,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/domains/classify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Classify Domain Endpoint */
+        post: operations["classify_domain_endpoint_v1_domains_classify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/domains/{domain_id}": {
         parameters: {
             query?: never;
@@ -200,93 +409,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Domain Endpoint */
-        get: operations["get_domain_endpoint_v1_domains__domain_id__get"];
+        get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Domain Endpoint */
+        delete: operations["delete_domain_endpoint_v1_domains__domain_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/domains/{domain_id}/archive": {
+    "/v1/domains/{domain_id}/canvases": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** Archive Domain Endpoint */
-        post: operations["archive_domain_endpoint_v1_domains__domain_id__archive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/domains/{domain_id}/diagnostic/answer": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Answer Diagnostic Endpoint */
-        post: operations["answer_diagnostic_endpoint_v1_domains__domain_id__diagnostic_answer_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/domains/{domain_id}/diagnostic/finish": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Finish Diagnostic Endpoint */
-        post: operations["finish_diagnostic_endpoint_v1_domains__domain_id__diagnostic_finish_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/domains/{domain_id}/diagnostic/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Start Diagnostic Endpoint */
-        post: operations["start_diagnostic_endpoint_v1_domains__domain_id__diagnostic_start_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/domains/{domain_id}/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Export Domain */
-        get: operations["export_domain_v1_domains__domain_id__export_get"];
+        /** Domain Canvases */
+        get: operations["domain_canvases_v1_domains__domain_id__canvases_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -312,66 +453,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/domains/{domain_id}/structure": {
+    "/v1/domains/{domain_id}/hubs": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Domain Hubs Endpoint */
+        get: operations["domain_hubs_endpoint_v1_domains__domain_id__hubs_get"];
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Edit Structure Endpoint */
-        patch: operations["edit_structure_endpoint_v1_domains__domain_id__structure_patch"];
-        trace?: never;
-    };
-    "/v1/domains/{domain_id}/structure/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Confirm Structure Endpoint */
-        post: operations["confirm_structure_endpoint_v1_domains__domain_id__structure_confirm_post"];
+        /** Create Hub Endpoint */
+        post: operations["create_hub_endpoint_v1_domains__domain_id__hubs_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/domains/{domain_id}/structure/propose": {
+    "/v1/domains/{domain_id}/materials": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Materials */
+        get: operations["list_materials_v1_domains__domain_id__materials_get"];
         put?: never;
-        /** Propose Structure Endpoint */
-        post: operations["propose_structure_endpoint_v1_domains__domain_id__structure_propose_post"];
+        /** Upload Material */
+        post: operations["upload_material_v1_domains__domain_id__materials_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/domains/{domain_id}/topics/{topic_id}": {
+    "/v1/domains/{domain_id}/today": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Topic Detail Endpoint */
-        get: operations["get_topic_detail_endpoint_v1_domains__domain_id__topics__topic_id__get"];
+        /** Today Endpoint */
+        get: operations["today_endpoint_v1_domains__domain_id__today_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -380,7 +506,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/domains/{domain_id}/topics/{topic_id}/status": {
+    "/v1/episodes/{episode_seq}/reassign": {
         parameters: {
             query?: never;
             header?: never;
@@ -389,12 +515,102 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Reassign Episode Endpoint */
+        post: operations["reassign_episode_endpoint_v1_episodes__episode_seq__reassign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hubs/{hub_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Hub View Endpoint */
+        get: operations["hub_view_endpoint_v1_hubs__hub_id__get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Update Topic Status Endpoint */
-        patch: operations["update_topic_status_endpoint_v1_domains__domain_id__topics__topic_id__status_patch"];
+        /**
+         * Edit Hub Endpoint
+         * @description WP6.3, ТЗ §6.4 «Хабы»: the learner corrects the scope and the date (Т-§4.8).
+         */
+        patch: operations["edit_hub_endpoint_v1_hubs__hub_id__patch"];
+        trace?: never;
+    };
+    "/v1/hubs/{hub_id}/cheatsheet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Hub Cheatsheet */
+        get: operations["get_hub_cheatsheet_v1_hubs__hub_id__cheatsheet_get"];
+        put?: never;
+        /** Agree To Hub Cheatsheet */
+        post: operations["agree_to_hub_cheatsheet_v1_hubs__hub_id__cheatsheet_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hubs/{hub_id}/cheatsheet/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review Cheatsheet */
+        post: operations["review_cheatsheet_v1_hubs__hub_id__cheatsheet_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hubs/{hub_id}/grade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Grade Endpoint */
+        post: operations["grade_endpoint_v1_hubs__hub_id__grade_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hubs/{hub_id}/prep-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prep Mode Endpoint */
+        post: operations["prep_mode_endpoint_v1_hubs__hub_id__prep_mode_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/learner": {
@@ -407,8 +623,68 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Learner Endpoint */
+        /**
+         * Delete Learner Endpoint
+         * @description WP25 п.3: the whole account — rows, objects, the subgraph, the learner's traces by their
+         *     pseudonym (D-A-206). The session goes with the rows: the next request is `401`.
+         */
         delete: operations["delete_learner_endpoint_v1_learner_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learner-skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Learner Skills */
+        get: operations["get_learner_skills_v1_learner_skills_get"];
+        put?: never;
+        /** Post Learner Skill */
+        post: operations["post_learner_skill_v1_learner_skills_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learner-skills/{skill_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Learner Skill
+         * @description The skill with all its versions; the answer is the skills that are left.
+         */
+        delete: operations["remove_learner_skill_v1_learner_skills__skill_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Learner Skill */
+        patch: operations["patch_learner_skill_v1_learner_skills__skill_id__patch"];
+        trace?: never;
+    };
+    "/v1/learner/exports/{export_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Export */
+        get: operations["get_export_v1_learner_exports__export_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -427,8 +703,25 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update Preferences Endpoint */
-        patch: operations["update_preferences_endpoint_v1_learner_preferences_patch"];
+        /** Set Preference Endpoint */
+        patch: operations["set_preference_endpoint_v1_learner_preferences_patch"];
+        trace?: never;
+    };
+    "/v1/learner/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Settings */
+        patch: operations["patch_settings_v1_learner_settings_patch"];
         trace?: never;
     };
     "/v1/learner/stream": {
@@ -440,9 +733,86 @@ export interface paths {
         };
         /**
          * Get Learner Stream
-         * @description SSE `projection_advanced` (WP7); data are fetched with ordinary GETs.
+         * @description SSE `projection_advanced` (WP7), `artifact_updated`, `material_parsed`, `verdict_revised`,
+         *     `jobs_changed` (ТЗ Ф4 §4.8); data are fetched with ordinary GETs.
          */
         get: operations["get_learner_stream_v1_learner_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/llm/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Llm Access
+         * @description Owner decision D-B-211: what the client shows before the learner acts. The remainder of
+         *     the pool itself is not shown (operational data).
+         */
+        get: operations["llm_access_v1_llm_access_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/materials/{material_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Material */
+        get: operations["get_material_v1_materials__material_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_v1_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search
+         * @description D-C-116: the query length and the size of the answer follow the Phase 3 search
+         *     (`search_min_query_len`, `search_default_limit`, `search_max_limit`).
+         */
+        get: operations["search_v1_search_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -503,6 +873,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{session_id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Action
+         * @description ТЗ Ф4 WP13.1 (`Т-§1.4`): one learner action of an open session of the learner. A kind
+         *     without a teacher turn answers `201 {seq}`; a kind with one — SSE frames of §4.7 (D-B-156);
+         *     a session the inactivity sweep ended comes back first (WP13.10). The learner is the one of
+         *     the session cookie (Т-§19.1).
+         */
+        post: operations["post_action_v1_sessions__session_id__actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{session_id}/canvases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open Canvas */
+        post: operations["open_canvas_v1_sessions__session_id__canvases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{session_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Session
+         * @description `session.ended {reason: learner}` (WP13.10); the learner's end is final, a repeat changes
+         *     nothing.
+         */
+        post: operations["end_session_v1_sessions__session_id__end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{session_id}/events": {
         parameters: {
             query?: never;
@@ -514,23 +945,6 @@ export interface paths {
         get: operations["session_events_v1_sessions__session_id__events_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{session_id}/finish": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Finish Session */
-        post: operations["finish_session_v1_sessions__session_id__finish_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -554,41 +968,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{session_id}/tasks/next": {
+    "/v1/sessions/{session_id}/jobs": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Session Jobs
+         * @description ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and
+         *     `running`; a session of another learner or none — `404` (D-B-207).
+         */
+        get: operations["session_jobs_v1_sessions__session_id__jobs_get"];
         put?: never;
-        /** Next Task */
-        post: operations["next_task_v1_sessions__session_id__tasks_next_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{session_id}/tasks/{task_id}/hint": {
+    "/v1/sessions/{session_id}/summary": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Session Summary Route
+         * @description ТЗ Ф4 WP8.3 (`Т-§2.6`, `П-4.10`): «до и после» сессии в кодах. Declared by stream A in this
+         *     router (§7.3, crossing 3); the body is `quack.graph.read.summary` (D-A-213, D-A-217).
+         */
+        get: operations["session_summary_route_v1_sessions__session_id__summary_get"];
         put?: never;
-        /** Give Hint */
-        post: operations["give_hint_v1_sessions__session_id__tasks__task_id__hint_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{session_id}/tasks/{task_id}/submit": {
+    "/v1/sessions/{session_id}/voice": {
         parameters: {
             query?: never;
             header?: never;
@@ -597,25 +1019,34 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Submit Answer */
-        post: operations["submit_answer_v1_sessions__session_id__tasks__task_id__submit_post"];
+        /**
+         * Upload Voice
+         * @description WP21.6: one segment of speech (WAV) with its start and end by the device clock; the
+         *     audio is not stored (П-14.1). The companion has no voice (T-CP1: 403). A session of another
+         *     learner is 404; compressed audio is 415; the same segment again gives the same answer.
+         *     Larger than `upload_max_mb` is 413 before the body is read (Т-§19.8, as photos).
+         */
+        post: operations["upload_voice_v1_sessions__session_id__voice_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{session_id}/turns": {
+    "/v1/system-templates": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get System Templates
+         * @description The prompt files of the system with their versions (Т-§11.6), as they are.
+         */
+        get: operations["get_system_templates_v1_system_templates_get"];
         put?: never;
-        /** Post Turn */
-        post: operations["post_turn_v1_sessions__session_id__turns_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -629,25 +1060,30 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Topic Detail Short Endpoint */
-        get: operations["get_topic_detail_short_endpoint_v1_topics__topic_id__get"];
+        /** Get Topic Endpoint */
+        get: operations["get_topic_endpoint_v1_topics__topic_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Topic Endpoint
+         * @description WP25: the physical deletion of a topic (privacy); «убрать с графа» is `…/hide`.
+         */
+        delete: operations["delete_topic_endpoint_v1_topics__topic_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename Topic Endpoint */
+        patch: operations["rename_topic_endpoint_v1_topics__topic_id__patch"];
         trace?: never;
     };
-    "/v1/topics/{topic_id}/cheatsheet": {
+    "/v1/topics/{topic_id}/cards": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Cheatsheet */
-        get: operations["get_cheatsheet_v1_topics__topic_id__cheatsheet_get"];
+        /** Get Topic Cards */
+        get: operations["get_topic_cards_v1_topics__topic_id__cards_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -656,7 +1092,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/topics/{topic_id}/cheatsheet/refresh": {
+    "/v1/topics/{topic_id}/export/anki": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Anki */
+        get: operations["export_anki_v1_topics__topic_id__export_anki_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/topics/{topic_id}/export/obsidian": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Obsidian */
+        get: operations["export_obsidian_v1_topics__topic_id__export_obsidian_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/topics/{topic_id}/hide": {
         parameters: {
             query?: never;
             header?: never;
@@ -665,15 +1135,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request Cheatsheet Refresh */
-        post: operations["request_cheatsheet_refresh_v1_topics__topic_id__cheatsheet_refresh_post"];
+        /** Hide Topic Endpoint */
+        post: operations["hide_topic_endpoint_v1_topics__topic_id__hide_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/topics/{topic_id}/status": {
+    "/v1/topics/{topic_id}/known": {
         parameters: {
             query?: never;
             header?: never;
@@ -682,178 +1152,270 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Claim Known Endpoint */
+        post: operations["claim_known_endpoint_v1_topics__topic_id__known_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/topics/{topic_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge Topic Endpoint */
+        post: operations["merge_topic_endpoint_v1_topics__topic_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/topics/{topic_id}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Topic Notes */
+        get: operations["topic_notes_v1_topics__topic_id__notes_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Update Topic Status Short Endpoint */
-        patch: operations["update_topic_status_short_endpoint_v1_topics__topic_id__status_patch"];
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/topics/{topic_id}/why": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Topic Why Endpoint */
+        get: operations["topic_why_endpoint_v1_topics__topic_id__why_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/verdicts/{answer_seq}/typo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Declare Typo Endpoint */
+        post: operations["declare_typo_endpoint_v1_verdicts__answer_seq__typo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/viz/{viz_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Viz */
+        get: operations["get_viz_v1_viz__viz_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** ActiveSession */
-        ActiveSession: {
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /**
-             * Last Activity At
-             * Format: date-time
-             */
-            last_activity_at: string;
-            /** Last Checkpoint Turn */
-            last_checkpoint_turn: number;
-            /** Last Turn Index */
-            last_turn_index: number;
-            /** Mode */
-            mode: string;
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            session_id: string;
-            /**
-             * Started At
-             * Format: date-time
-             */
-            started_at: string;
-            /** Status */
-            status: string;
-            /** Topic Id */
-            topic_id: string | null;
+        /** Accepted */
+        Accepted: {
+            /** Seq */
+            seq: number;
         };
-        /** AnswerDiagnosticRequest */
-        AnswerDiagnosticRequest: {
-            /** Answer */
-            answer: string;
-            /** Confidence Self Report */
-            confidence_self_report?: number | null;
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Response Time Sec */
-            response_time_sec?: number | null;
+        /** @enum {string} */
+        AccessMode: "normal" | "tight" | "judges_only";
+        /**
+         * ActionFrame
+         * @description The `data` of one SSE frame of `POST /v1/sessions/{id}/actions` (ТЗ Ф4 §4.7); the SSE
+         *     event name is `FRAME_EVENTS[type(frame)]`. The `: keepalive` comment is not a frame.
+         */
+        ActionFrame: components["schemas"]["ActionRecordedFrame"] | components["schemas"]["StatusFrame"] | components["schemas"]["VerdictFrame"] | components["schemas"]["TokenFrame"] | components["schemas"]["ResetFrame"] | components["schemas"]["ElementFrame"] | components["schemas"]["TurnCommittedFrame"] | components["schemas"]["ErrorFrame"];
+        /**
+         * ActionRecordedFrame
+         * @description `action_recorded {seq, verdict?}`: right after the action event is committed.
+         */
+        ActionRecordedFrame: {
+            /** Seq */
+            seq: number;
+            verdict?: components["schemas"]["VerdictFrame"] | null;
+        };
+        /**
+         * AnswerAction
+         * @description `answer.submitted` (+ instant verdict in the same transaction, Т-§6.1).
+         */
+        AnswerAction: {
+            answer: components["schemas"]["LearnerAnswer"];
+            confidence?: components["schemas"]["Confidence"] | null;
+            /** Element Id */
+            element_id?: string | null;
             /**
-             * Session Id
+             * Idempotency Key
              * Format: uuid
              */
-            session_id: string;
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "answer";
+            /** Part */
+            part?: string | null;
+            /** Self Assessment */
+            self_assessment?: boolean | null;
+            /** Solve Time Ms */
+            solve_time_ms?: number | null;
+            /** @default chat */
+            source?: components["schemas"]["AnswerSource"];
             /**
              * Task Id
              * Format: uuid
              */
             task_id: string;
+            /** Text */
+            text?: string | null;
         };
-        /** AnswerDiagnosticResponse */
-        AnswerDiagnosticResponse: {
-            /** Is Correct */
-            is_correct: boolean;
-            next_question?: components["schemas"]["DiagnosticQuestion"] | null;
-            /** Score */
-            score: number;
-            /** Should Finish */
-            should_finish: boolean;
-        };
-        /** ArchiveDomainRequest */
-        ArchiveDomainRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Reason */
-            reason?: string | null;
-        };
-        /** ArchiveDomainResponse */
-        ArchiveDomainResponse: {
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /** Seq */
-            seq: number;
-            /**
-             * Status
-             * @default archived
-             * @constant
-             */
-            status?: "archived";
-        };
-        /** ArtifactListResponse */
-        ArtifactListResponse: {
-            /** Artifacts */
-            artifacts: components["schemas"]["ArtifactView"][];
-        };
-        /** ArtifactRefView */
-        ArtifactRefView: {
+        /** @enum {string} */
+        AnswerSource: "chat" | "canvas" | "photo" | "card";
+        /** @enum {string} */
+        AnswerType: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text";
+        /**
+         * ArtifactResponse
+         * @description An artifact at its current version; blocks with the names of Т-§17.2.
+         */
+        ArtifactResponse: {
             /**
              * Artifact Id
              * Format: uuid
              */
             artifact_id: string;
+            /** Blocks */
+            blocks: {
+                [key: string]: unknown;
+            }[];
+            /** Hub Id */
+            hub_id: string | null;
             /** Kind */
             kind: string;
-            /** Title */
-            title: string;
-            /**
-             * Version
-             * @default 1
-             */
-            version?: number;
-        };
-        /** ArtifactSearchHit */
-        ArtifactSearchHit: {
-            /**
-             * Artifact Id
-             * Format: uuid
-             */
-            artifact_id: string;
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /** Kind */
-            kind: string;
-            /** Title */
-            title: string;
             /** Topic Id */
             topic_id: string | null;
             /** Version */
             version: number;
         };
         /**
-         * ArtifactView
-         * @description A row of core.artifacts (A14).
+         * Block
+         * @description П-9.4: task (condition and room for the solution), visualization, hint, reference card.
          */
-        ArtifactView: {
+        Block: {
+            /** Block Id */
+            block_id: string;
             /**
-             * Artifact Id
+             * Kind
+             * @enum {string}
+             */
+            kind: "task" | "visualization" | "hint" | "reference_card";
+            layout?: components["schemas"]["Layout"];
+            /** Task Id */
+            task_id?: string | null;
+        };
+        /** BlockEdit */
+        BlockEdit: {
+            /** Content */
+            content: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** BoardDoc */
+        BoardDoc: {
+            /** Blocks */
+            blocks?: components["schemas"]["Block"][];
+            learner?: components["schemas"]["LearnerLayer"];
+            teacher?: components["schemas"]["TeacherLayer"];
+        };
+        /** Body_upload_material_v1_domains__domain_id__materials_post */
+        Body_upload_material_v1_domains__domain_id__materials_post: {
+            /** File */
+            file: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /** Body_upload_photo_v1_canvases__canvas_id__photos_post */
+        Body_upload_photo_v1_canvases__canvas_id__photos_post: {
+            /** File */
+            file: string;
+        };
+        /** Body_upload_voice_v1_sessions__session_id__voice_post */
+        Body_upload_voice_v1_sessions__session_id__voice_post: {
+            /** Audio */
+            audio: string;
+            /** Ended At Ms */
+            ended_at_ms: number;
+            /** Started At Ms */
+            started_at_ms: number;
+        };
+        /** CanvasList */
+        CanvasList: {
+            /** Canvases */
+            canvases: components["schemas"]["CanvasView"][];
+        };
+        /**
+         * CanvasRef
+         * @description A canvas line or block picked by the lasso (Т-§15.6).
+         */
+        CanvasRef: {
+            /** Block Id */
+            block_id?: string | null;
+            /**
+             * Canvas Id
              * Format: uuid
              */
-            artifact_id: string;
-            /** Content Md */
-            content_md: string;
+            canvas_id: string;
+            /** Line Id */
+            line_id?: string | null;
+        };
+        /** CanvasView */
+        CanvasView: {
             /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Domain Id
+             * Canvas Id
              * Format: uuid
              */
-            domain_id: string;
-            /** Kind */
-            kind: string;
+            canvas_id: string;
+            doc: components["schemas"]["BoardDoc"];
             /** Session Id */
             session_id: string | null;
-            /** Title */
-            title: string;
-            /** Topic Id */
-            topic_id: string | null;
+            /** Task Id */
+            task_id: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -862,80 +1424,206 @@ export interface components {
             /** Version */
             version: number;
         };
-        /** AuthResponse */
-        AuthResponse: {
-            /** Display Name */
-            display_name?: string | null;
-            /** Email */
-            email: string;
-            /**
-             * Learner Id
-             * Format: uuid
-             */
-            learner_id: string;
-            /** Preferences */
-            preferences?: {
-                [key: string]: unknown;
-            };
-            /** Token */
-            token: string;
-        };
-        /** CheatsheetRefreshRequest */
-        CheatsheetRefreshRequest: {
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-        };
-        /** CheatsheetRefreshResponse */
-        CheatsheetRefreshResponse: {
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            /**
-             * Status
-             * @constant
-             */
-            status: "queued";
-        };
-        /** CheckpointView */
-        CheckpointView: {
-            /** Key Observations */
-            key_observations: string[];
-            /** Open Threads */
-            open_threads: string[];
-            /** Rolling Summary */
-            rolling_summary: string;
-            /** Up To Turn Index */
-            up_to_turn_index: number;
-        };
-        /** ConfirmStructureRequest */
-        ConfirmStructureRequest: {
+        /** CardEdit */
+        CardEdit: {
             /** Idempotency Key */
             idempotency_key: string;
-            /** Structure Version */
-            structure_version: number;
+            /** Prompt */
+            prompt: string;
         };
-        /** ConfirmStructureResponse */
-        ConfirmStructureResponse: {
-            /** Active Structure Version */
-            active_structure_version: number;
+        /**
+         * CardSeriesElement
+         * @description Серия карточек: card labels (`C…`, §17).
+         */
+        CardSeriesElement: {
+            /** Cards */
+            cards: string[];
+            /** Element Id */
+            element_id: string;
             /**
-             * Domain Id
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "card_series";
+        };
+        /**
+         * CardsResponse
+         * @description The topic's cards at the current version; `card_id` is the task to answer.
+         */
+        CardsResponse: {
+            /**
+             * Artifact Id
              * Format: uuid
              */
-            domain_id: string;
-            /** Seq */
-            seq: number;
+            artifact_id: string;
+            /** Cards */
+            cards: {
+                [key: string]: unknown;
+            }[];
+            /** Topic Id */
+            topic_id: string | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * CheatsheetResponse
+         * @description The sheet at its current version and whether to offer it now (D-C-144).
+         */
+        CheatsheetResponse: {
             /**
-             * Status
-             * @default active
-             * @constant
+             * Artifact Id
+             * Format: uuid
              */
-            status?: "active";
+            artifact_id: string;
+            /** Blocks */
+            blocks: {
+                [key: string]: unknown;
+            }[];
+            /** Hub Id */
+            hub_id: string | null;
+            /** Kind */
+            kind: string;
+            /** Offer */
+            offer: boolean;
+            /** Topic Id */
+            topic_id: string | null;
+            /** Version */
+            version: number;
+        };
+        /** CheckSkipAction */
+        CheckSkipAction: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "check_skip";
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /**
+         * ChoiceElement
+         * @description Вопрос с выбором: options are in the task spec (`answer.options`).
+         */
+        ChoiceElement: {
+            /** Ask Confidence */
+            ask_confidence: boolean;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "choice";
+            /** Prompt */
+            prompt: string;
+        };
+        /**
+         * ClassifyDomainRequest
+         * @description `{text | material_id}`: exactly one of them.
+         */
+        ClassifyDomainRequest: {
+            /** Material Id */
+            material_id?: string | null;
+            /** Text */
+            text?: string | null;
+        };
+        /**
+         * ClientParams
+         * @description Numbers of the client from the server config (ТЗ Ф4 §6.7).
+         */
+        ClientParams: {
+            /** Capture Still Ms */
+            capture_still_ms: number;
+            /** Line Pause Ms */
+            line_pause_ms: number;
+            /** Stroke Batch Ms */
+            stroke_batch_ms: number;
+        };
+        Confidence: number;
+        /**
+         * ConfidenceAction
+         * @description `confidence.reported {target_seq, value}`: no teacher turn (`201`).
+         */
+        ConfidenceAction: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "confidence";
+            /** Target Seq */
+            target_seq: number;
+            value: components["schemas"]["Confidence"];
+        };
+        /** ConsentRecorded */
+        ConsentRecorded: {
+            /** Given */
+            given: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "terms" | "research";
+            /** Version */
+            version: string;
+        };
+        /** ConsentRequest */
+        ConsentRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "terms" | "research";
+            /** Version */
+            version: string;
+        };
+        /**
+         * ConsentResponse
+         * @description The consent request; a repeat with the same key gives the same one.
+         */
+        ConsentResponse: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** ConsentRevocation */
+        ConsentRevocation: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Version */
+            version: string;
+        };
+        /** @enum {string} */
+        ControlType: "tasks" | "colloquium_proofs" | "oral_theory" | "no_goal";
+        /** CorrectedLine */
+        CorrectedLine: {
+            /**
+             * Canvas Id
+             * Format: uuid
+             */
+            canvas_id: string;
+            /** Line Id */
+            line_id: string;
+            /** Sympy */
+            sympy: string | null;
+            /** Text */
+            text: string;
         };
         /** CreateDomainRequest */
         CreateDomainRequest: {
@@ -943,8 +1631,6 @@ export interface components {
             idempotency_key: string;
             /** Name */
             name: string;
-            /** Slug */
-            slug?: string | null;
         };
         /** CreateDomainResponse */
         CreateDomainResponse: {
@@ -957,59 +1643,53 @@ export interface components {
             name: string;
             /** Seq */
             seq: number;
-            /** Slug */
-            slug: string;
-            /** Status */
-            status: string;
         };
-        /** DeleteLearnerResponse */
-        DeleteLearnerResponse: {
+        /** CreateHub */
+        CreateHub: {
             /**
-             * Requested At
-             * Format: date-time
-             */
-            requested_at: string;
-            /**
-             * Status
-             * @default pending_purge
-             * @constant
-             */
-            status?: "pending_purge";
-        };
-        /** DiagnosticQuestion */
-        DiagnosticQuestion: {
-            /**
-             * Kind
-             * @default choice
+             * Control Type
+             * @default no_goal
              * @enum {string}
              */
-            kind?: "open" | "math" | "code" | "choice";
-            /** Options */
-            options?: string[];
-            /** Prompt Text */
-            prompt_text: string;
+            control_type?: "tasks" | "colloquium_proofs" | "oral_theory" | "no_goal";
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * DeletionResponse
+         * @description The id of the deletion and the term the copies still live (Д-§8.6).
+         */
+        DeletionResponse: {
+            /** Copies Days */
+            copies_days: number;
             /**
-             * Skill Id
+             * Deletion Id
              * Format: uuid
              */
-            skill_id: string;
-            /**
-             * Task Id
-             * Format: uuid
-             */
-            task_id: string;
-            /**
-             * Topic Id
-             * Format: uuid
-             */
-            topic_id: string;
+            deletion_id: string;
         };
         /** @enum {string} */
-        DisplayState: "locked" | "available" | "in_progress" | "solid" | "rusty";
-        /** DomainGraphResponse */
+        DisplayState: "confused_with" | "persistent_error" | "struggling" | "inconsistent" | "solved_independently" | "known_from_other_domain" | "in_progress" | "not_tested" | "none";
+        /** DisputeRequest */
+        DisputeRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Target Id */
+            target_id: string;
+            /**
+             * Target Kind
+             * @enum {string}
+             */
+            target_kind: "evidence" | "misconception" | "verdict";
+        };
+        /**
+         * DomainGraphResponse
+         * @description `projected_seq` — how far the graph has read the log; `lag_degraded` — it is behind the
+         *     learner's last event (the map may miss the latest events, Т-§2.6).
+         */
         DomainGraphResponse: {
-            /** Applied Seq */
-            applied_seq: number;
             /**
              * Domain Id
              * Format: uuid
@@ -1017,8 +1697,10 @@ export interface components {
             domain_id: string;
             /** Lag Degraded */
             lag_degraded: boolean;
-            /** Prereqs */
-            prereqs: components["schemas"]["PrereqEdge"][];
+            /** Projected Seq */
+            projected_seq: number;
+            /** Requires */
+            requires: components["schemas"]["TopicRequires"][];
             /** Topics */
             topics: components["schemas"]["TopicNodeView"][];
         };
@@ -1027,76 +1709,98 @@ export interface components {
             /** Domains */
             domains: components["schemas"]["DomainSummary"][];
         };
-        /** DomainSummary */
+        /**
+         * DomainSuggestion
+         * @description `existing` — `domain_id` of the learner's domain; `new` — `name` of a new domain;
+         *     `unclear` — nothing is suggested.
+         */
+        DomainSuggestion: {
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "existing" | "new" | "unclear";
+            /** Domain Id */
+            domain_id?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /**
+         * DomainSummary
+         * @description A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1).
+         */
         DomainSummary: {
             /**
-             * Active Structure Version
-             * @default 0
+             * Created At
+             * Format: date-time
              */
-            active_structure_version?: number;
-            /** Created At */
-            created_at?: string | null;
-            /**
-             * Created Seq
-             * @default 0
-             */
-            created_seq?: number;
+            created_at: string;
+            /** Created Seq */
+            created_seq: number;
             /**
              * Domain Id
              * Format: uuid
              */
             domain_id: string;
-            /**
-             * Has Materials
-             * @default false
-             */
-            has_materials?: boolean;
             /** Name */
             name: string;
-            /** Slug */
-            slug: string;
-            /** Status */
-            status: string;
-            /** Updated At */
-            updated_at?: string | null;
-            /**
-             * Updated Seq
-             * @default 0
-             */
-            updated_seq?: number;
         };
-        /** EditStructureRequest */
-        EditStructureRequest: {
-            /** Added Prereqs */
-            added_prereqs?: components["schemas"]["PrereqEdge"][];
-            /** Added Skills */
-            added_skills?: components["schemas"]["SkillDraft"][];
-            /** Added Topics */
-            added_topics?: components["schemas"]["TopicDraft"][];
-            /** Archived Skill Ids */
-            archived_skill_ids?: string[];
-            /** Archived Topic Ids */
-            archived_topic_ids?: string[];
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Removed Prereqs */
-            removed_prereqs?: components["schemas"]["PrereqEdge"][];
-            /** Updated Skills */
-            updated_skills?: components["schemas"]["SkillPatch"][];
-            /** Updated Topics */
-            updated_topics?: components["schemas"]["TopicPatch"][];
+        /**
+         * EditHub
+         * @description `topics` — the whole new scope with required levels (empty levels — by `controlType`,
+         *     WP6.3); `deadline_at_ms` — the new date, `null` removes it. At least one of them.
+         */
+        EditHub: {
+            /** Deadline At Ms */
+            deadline_at_ms?: number | null;
+            /** Topics */
+            topics?: components["schemas"]["HubTopicLevels"][] | null;
         };
-        /** EditStructureResponse */
-        EditStructureResponse: {
-            /** Active Structure Version */
-            active_structure_version: number;
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
+        /**
+         * Edited
+         * @description The number of the appended event.
+         */
+        Edited: {
             /** Seq */
             seq: number;
+        };
+        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"];
+        /**
+         * ElementFrame
+         * @description `element {block_id, element}`: after its markup passed the code check.
+         */
+        ElementFrame: {
+            /** Block Id */
+            block_id: string;
+            element: components["schemas"]["Element"];
+        };
+        /**
+         * ElementResponseAction
+         * @description `element.responded` (+ `answer.submitted` if the element is a task).
+         */
+        ElementResponseAction: {
+            answer?: components["schemas"]["LearnerAnswer"] | null;
+            confidence?: components["schemas"]["Confidence"] | null;
+            /** Element Id */
+            element_id: string;
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "element_response";
+            /** Response */
+            response: string;
+            /** Text */
+            text?: string | null;
+            /** Turn Seq */
+            turn_seq: number;
         };
         /** ErrorBody */
         ErrorBody: {
@@ -1114,126 +1818,168 @@ export interface components {
             request_id: string;
         };
         /** @enum {string} */
-        ErrorCode: "IDEMPOTENCY_CONFLICT" | "TURN_LOCKED" | "LLM_DEGRADED" | "NOT_FOUND" | "VALIDATION_ERROR" | "UNAUTHORIZED" | "RATE_LIMITED" | "SERVICE_UNAVAILABLE";
+        ErrorCode: "IDEMPOTENCY_CONFLICT" | "TURN_LOCKED" | "LLM_DEGRADED" | "NOT_FOUND" | "VALIDATION_ERROR" | "UNAUTHORIZED" | "RATE_LIMITED" | "SERVICE_UNAVAILABLE" | "UPLOAD_REJECTED" | "UNAUTHENTICATED" | "CONSENT_REQUIRED";
+        /**
+         * ErrorFrame
+         * @description `error {code, message, retryable}`: an error before the write — no turn in the log.
+         */
+        ErrorFrame: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Retryable */
+            retryable: boolean;
+        };
         /** ErrorResponse */
         ErrorResponse: {
             error: components["schemas"]["ErrorBody"];
         };
-        /** EventSearchHit */
-        EventSearchHit: {
+        /**
+         * EventAccepted
+         * @description The number of the appended event (the learner's change, Т-§2.8).
+         */
+        EventAccepted: {
+            /** Seq */
+            seq: number;
+        };
+        /**
+         * EvidenceFact
+         * @description One piece of evidence for a level (Т-§8.7): quote, task, tier by code, date, id for
+         *     the "disagree" action (Т-§2.8). `assistance` / `hint_step` — the help given (Evidence
+         *     `assistance`, `hintStep`, `Т-§3.4.3`), `skill_history` shows it (`Т-§10.4`, D-A-127).
+         */
+        EvidenceFact: {
             /**
-             * Occurred At
-             * Format: date-time
+             * Assistance
+             * @default none
+             * @enum {string}
              */
-            occurred_at: string;
+            assistance?: "none" | "hint" | "shown_solution";
+            /**
+             * Evidence Id
+             * Format: uuid
+             */
+            evidence_id: string;
+            /** Hint Step */
+            hint_step?: number | null;
+            level: components["schemas"]["Level"];
+            /** Occurred At Ms */
+            occurred_at_ms: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "correct" | "incorrect" | "partial" | "unclear";
+            /** Quote */
+            quote?: string | null;
             /** Seq */
             seq: number;
             /** Session Id */
-            session_id: string | null;
-            /** Text */
-            text: string;
-            /** Type */
-            type: string;
-        };
-        /** ExportDomain */
-        ExportDomain: {
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /** Name */
-            name: string;
-            /** Slug */
-            slug: string;
-        };
-        /** ExportJson */
-        ExportJson: {
-            /** Digests */
-            digests: components["schemas"]["ArtifactView"][];
-            domain: components["schemas"]["ExportDomain"];
-            /** Notes */
-            notes: components["schemas"]["ArtifactView"][];
-            /** Topics */
-            topics: components["schemas"]["ExportTopic"][];
-        };
-        /** ExportMdResponse */
-        ExportMdResponse: {
-            /** Content Md */
-            content_md: string;
-        };
-        /**
-         * ExportSkill
-         * @description `pMastery` / `masteryStatus` keep the names of the Neo4j `Skill` properties.
-         */
-        ExportSkill: {
-            /** Masterystatus */
-            masteryStatus: string;
-            /** Name */
-            name: string;
-            /** Pmastery */
-            pMastery: number;
+            session_id?: string | null;
             /**
              * Skill Id
              * Format: uuid
              */
             skill_id: string;
+            source: components["schemas"]["EvidenceSource"];
+            /** Task Id */
+            task_id?: string | null;
         };
-        /** ExportTopic */
-        ExportTopic: {
-            cheatsheet: components["schemas"]["ArtifactView"] | null;
-            /** Name */
-            name: string;
-            /** Skills */
-            skills: components["schemas"]["ExportSkill"][];
+        /** @enum {string} */
+        EvidenceSource: "code" | "model" | "conversation";
+        /**
+         * ExportStatus
+         * @description `pending` — requested, the archive is not ready; `ready` — `download_url` lives
+         *     `expires_in_s`; `expired` — the archive is deleted or past its term (build a new one).
+         */
+        ExportStatus: {
+            /** Download Url */
+            download_url: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Expires In S */
+            expires_in_s: number | null;
             /**
-             * Topic Id
+             * Export Id
              * Format: uuid
              */
-            topic_id: string;
-        };
-        /** FinishDiagnosticRequest */
-        FinishDiagnosticRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            session_id: string;
-        };
-        /** FinishDiagnosticResponse */
-        FinishDiagnosticResponse: {
-            /** Inferred Priors */
-            inferred_priors: components["schemas"]["TopicPriorItem"][];
-            /** Seq */
-            seq: number;
-            /** Tested Topic Ids */
-            tested_topic_ids: string[];
-        };
-        /** FinishResponse */
-        FinishResponse: {
-            /** End Seq */
-            end_seq: number;
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            session_id: string;
+            export_id: string;
             /**
              * Status
-             * @constant
+             * @enum {string}
              */
-            status: "completed";
-            /** Summary Stats */
-            summary_stats: {
+            status: "pending" | "ready" | "expired";
+        };
+        /**
+         * FeedEvent
+         * @description An event of the session feed (`GET /v1/sessions/{id}`, D-B-210).
+         */
+        FeedEvent: {
+            /** Actor */
+            actor: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Payload */
+            payload: {
                 [key: string]: unknown;
             };
+            /** Seq */
+            seq: number;
+            /** Type */
+            type: string;
         };
-        /** FinishSessionRequest */
-        FinishSessionRequest: {
-            /** Idempotency Key */
+        /**
+         * FlagUnclearAction
+         * @description `item.flagged_unclear {turn_seq, block_id, quote}` (Т-§12.3).
+         */
+        FlagUnclearAction: {
+            /** Block Id */
+            block_id: string;
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
             idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "flag_unclear";
+            /** Quote */
+            quote: string;
+            /** Turn Seq */
+            turn_seq: number;
+        };
+        /**
+         * FreeAnswerElement
+         * @description Свободный ответ, «объясни своими словами»: the rubric is in the task spec
+         *     (`answer.key_ideas`); the answer is text or voice.
+         */
+        FreeAnswerElement: {
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "free_answer";
+            /** Prompt */
+            prompt: string;
+            /** Voice */
+            voice: boolean;
+        };
+        /** @enum {string} */
+        GapType: "no_idea" | "when_to_apply" | "confusion" | "execution" | "slip" | "misconception" | "none";
+        /** Grade */
+        Grade: {
+            /** Grade */
+            grade: string;
+            /** Scale */
+            scale: string;
         };
         /** HealthLive */
         HealthLive: {
@@ -1264,41 +2010,450 @@ export interface components {
             /** Ttl Sec */
             ttl_sec: number;
         };
-        /** HintRequest */
-        HintRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
+        /**
+         * Hint
+         * @description A quiet hint near the place where the learner is stuck, one step at a time (П-9.5).
+         */
+        Hint: {
+            /** Hint Id */
+            hint_id: string;
+            /** Line Id */
+            line_id?: string | null;
+            /** Step */
+            step: number;
             /**
-             * Turn Id
+             * Task Id
              * Format: uuid
              */
-            turn_id: string;
+            task_id: string;
+            /** Text */
+            text: string;
         };
-        /** HintResponse */
-        HintResponse: {
-            /** Hint Level */
-            hint_level: number;
-            /** Hint Text */
-            hint_text: string;
-            /** Independence Penalty */
-            independence_penalty: number;
-            /** Seq */
-            seq: number;
+        /** HintRequestAction */
+        HintRequestAction: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "hint_request";
             /**
              * Task Id
              * Format: uuid
              */
             task_id: string;
         };
-        /** LearnerMeResponse */
-        LearnerMeResponse: {
+        /** HubCreated */
+        HubCreated: {
+            /**
+             * Hub Id
+             * Format: uuid
+             */
+            hub_id: string;
+            /** Seq */
+            seq: number;
+        };
+        /**
+         * HubGoal
+         * @description A goal hub of a domain for slot 4 (Т-§10.1, WP14.1): read from the graph, so merges,
+         *     splits and renames of topics are already applied (D-A-137).
+         */
+        HubGoal: {
+            control_type: components["schemas"]["ControlType"];
+            /** Deadline At Ms */
+            deadline_at_ms?: number | null;
+            /**
+             * Hub Id
+             * Format: uuid
+             */
+            hub_id: string;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /**
+             * Topics
+             * @default []
+             */
+            topics?: components["schemas"]["HubTopicGoal"][];
+        };
+        /**
+         * HubReadiness
+         * @description `topic_readiness` (Т-§14.5): "9 of 14 topics are ready", direct basis only.
+         */
+        HubReadiness: {
+            /**
+             * Hub Id
+             * Format: uuid
+             */
+            hub_id: string;
+            /**
+             * Not Ready Topic Ids
+             * @default []
+             */
+            not_ready_topic_ids?: string[];
+            /**
+             * Ready Topic Ids
+             * @default []
+             */
+            ready_topic_ids?: string[];
+        };
+        /**
+         * HubTopicGoal
+         * @description A topic of a hub with the levels the control requires of it (Т-§4.8, `INCLUDES`).
+         */
+        HubTopicGoal: {
+            /** Name */
+            name: string;
+            /** Required Levels */
+            required_levels: components["schemas"]["Level"][];
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+        };
+        /** HubTopicLevels */
+        HubTopicLevels: {
+            /** Required Levels */
+            required_levels?: components["schemas"]["Level"][];
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+        };
+        /** HubView */
+        HubView: {
+            goal: components["schemas"]["HubGoal"];
+            readiness: components["schemas"]["HubReadiness"];
+        };
+        /**
+         * IntentAction
+         * @description «Изучать / Практиковать / Повторять» on a topic or a hub (Т-§12.7) →
+         *     `message.sent {intent, topic_id | hub_id}` (ТЗ Ф4 WP13.1).
+         */
+        IntentAction: {
+            /** Hub Id */
+            hub_id?: string | null;
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "learn" | "practice" | "review";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "intent";
+            /** Topic Id */
+            topic_id?: string | null;
+        };
+        /** @enum {string} */
+        ItemReason: "due" | "consolidation" | "misconception" | "deadline";
+        /**
+         * KeyedRequest
+         * @description §6.4: a changing path carries `idempotency_key` (T-E2).
+         */
+        KeyedRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /**
+         * LLMAccess
+         * @description D-B-211: `mode` of the money pool; `judge` — the learner said «I am a Meta judge»;
+         *     `blocked` — the client shows the banner with the one button (`preference_key` = true).
+         */
+        LLMAccess: {
+            /** Blocked */
+            blocked: boolean;
+            /** Judge */
+            judge: boolean;
+            mode: components["schemas"]["AccessMode"];
+            /** Preference Key */
+            preference_key: string;
+        };
+        /**
+         * Layout
+         * @description Where a block lies and whether it is collapsed (П-9.4 «двигать, сворачивать»).
+         */
+        Layout: {
+            /**
+             * Collapsed
+             * @default false
+             */
+            collapsed?: boolean;
+            /** Height */
+            height?: number | null;
+            /** Width */
+            width?: number | null;
+            /**
+             * X
+             * @default 0
+             */
+            x?: number;
+            /**
+             * Y
+             * @default 0
+             */
+            y?: number;
+        };
+        /**
+         * LearnerAnswer
+         * @description `answer.submitted.answer` (§6.3): raw `value` (option id for `choice`), `latex` /
+         *     `sympy` from the formula editor or the recognizer (Т-§6.5, Т-§22.7).
+         */
+        LearnerAnswer: {
+            kind: components["schemas"]["AnswerType"];
+            /** Latex */
+            latex?: string | null;
+            /** Sympy */
+            sympy?: string | null;
+            /** Value */
+            value: string;
+        };
+        /**
+         * LearnerDrawing
+         * @description A drawing cut from a sheet photo (WP22.3 step 5; Т-§16.3 п.4, D-C-153): the image without
+         *     its paper in the store and the box of the area as shares of the sheet.
+         */
+        LearnerDrawing: {
+            /** Bbox */
+            bbox: [
+                number,
+                number,
+                number,
+                number
+            ];
+            /** Drawing Id */
+            drawing_id: string;
+            /** Object Key */
+            object_key: string;
+            /**
+             * Photo Id
+             * Format: uuid
+             */
+            photo_id: string;
+        };
+        /**
+         * LearnerLayer
+         * @description The learner's strokes are in the journal; here — what the learner typed and the drawings
+         *     cut from the photos of the sheet.
+         */
+        LearnerLayer: {
+            /** Drawings */
+            drawings?: components["schemas"]["LearnerDrawing"][];
+            /** Typed Formulas */
+            typed_formulas?: components["schemas"]["TypedFormula"][];
+        };
+        /** LearnerSettings */
+        LearnerSettings: {
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+        };
+        /** LearnerSettingsPatch */
+        LearnerSettingsPatch: {
+            /** Timezone */
+            timezone: string;
+        };
+        /** LearnerSkillBindings */
+        LearnerSkillBindings: {
+            /** Artifact Types */
+            artifact_types?: string[];
+        };
+        /** LearnerSkillCreate */
+        LearnerSkillCreate: {
+            bindings?: components["schemas"]["LearnerSkillBindings"];
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Instruction */
+            instruction: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * LearnerSkillPatch
+         * @description Fields not given stay as they are; a change is a new version.
+         */
+        LearnerSkillPatch: {
+            bindings?: components["schemas"]["LearnerSkillBindings"] | null;
+            /** Instruction */
+            instruction?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /** LearnerSkillView */
+        LearnerSkillView: {
+            bindings: components["schemas"]["LearnerSkillBindings"];
+            /** Instruction */
+            instruction: string;
+            /** Name */
+            name: string;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+            /** Version */
+            version: number;
+        };
+        /** LearnerSkillsResponse */
+        LearnerSkillsResponse: {
+            /** Skills */
+            skills: components["schemas"]["LearnerSkillView"][];
+        };
+        Level: number;
+        /** @enum {string} */
+        LevelBasis: "direct" | "transfer";
+        /** LevelCode */
+        LevelCode: {
+            basis?: components["schemas"]["LevelBasis"] | null;
+            level: components["schemas"]["Level"];
+            status: components["schemas"]["LevelStatus"];
+        };
+        /** @enum {string} */
+        LevelStatus: "proven" | "implied" | "unstable" | "failed" | "not_tested";
+        /** LevelView */
+        LevelView: {
+            /** Basis */
+            basis: string;
+            /** Level */
+            level: number;
+            /** Status */
+            status: string;
+        };
+        /**
+         * LineCorrection
+         * @description WP21.3: how the line really reads (`Т-§22.7`: LaTeX to show, SymPy to check).
+         */
+        LineCorrection: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Sympy */
+            sympy?: string | null;
+            /** Text */
+            text: string;
+        };
+        /** LinkRequest */
+        LinkRequest: {
+            /** Email */
+            email: string;
+        };
+        /**
+         * LinkSent
+         * @description The same answer for a known and a new address (WP18.1).
+         */
+        LinkSent: {
+            /**
+             * Status
+             * @default sent
+             * @constant
+             */
+            status?: "sent";
+        };
+        /**
+         * Mark
+         * @description A mark on a step (WP21.5): `error` confirmed, `question` when unsure (Т-§12.4).
+         */
+        Mark: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "error" | "question";
+            /** Line Id */
+            line_id: string;
+            /** Mark Id */
+            mark_id: string;
+            /** Text */
+            text: string;
+        };
+        /** MaterialDetailView */
+        MaterialDetailView: {
+            /** File Url */
+            file_url: string;
+            material: components["schemas"]["MaterialView"];
+            /** Pages */
+            pages: components["schemas"]["MaterialPageView"][];
+        };
+        /**
+         * MaterialLinkElement
+         * @description Ссылка на материал: a chunk label (`P…`) and its page or slide.
+         */
+        MaterialLinkElement: {
+            /** Chunk */
+            chunk: string;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "material_link";
+            /** Page */
+            page: number | null;
+        };
+        /** MaterialList */
+        MaterialList: {
+            /** Materials */
+            materials: components["schemas"]["MaterialView"][];
+        };
+        /** MaterialPageView */
+        MaterialPageView: {
+            /** Image Url */
+            image_url: string | null;
+            /** Page */
+            page: number;
+            /** Text */
+            text: string;
+        };
+        /** MaterialView */
+        MaterialView: {
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
-            /** Display Name */
-            display_name?: string | null;
+            /** Domain Id */
+            domain_id: string | null;
+            /**
+             * Material Id
+             * Format: uuid
+             */
+            material_id: string;
+            /** Mime */
+            mime: string;
+            /** Pages Count */
+            pages_count: number | null;
+            /** Session Id */
+            session_id: string | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * MathValue
+         * @description Т-§22.7: `latex` for display, `sympy` — canonical SymPy string for checking.
+         */
+        MathValue: {
+            /** Latex */
+            latex: string;
+            /** Sympy */
+            sympy: string;
+        };
+        /** Me */
+        Me: {
+            client: components["schemas"]["ClientParams"];
             /** Email */
             email: string;
             /**
@@ -1306,181 +2461,834 @@ export interface components {
              * Format: uuid
              */
             learner_id: string;
-            /** Preferences */
-            preferences?: {
+            /** Settings */
+            settings: {
                 [key: string]: unknown;
             };
+            /** Terms Accepted */
+            terms_accepted: boolean;
+            /** Terms Version */
+            terms_version: string | null;
         };
-        /** LoginRequest */
-        LoginRequest: {
-            /** Email */
-            email: string;
-            /** Password */
-            password: string;
-        };
-        /** MisconceptionDraft */
-        MisconceptionDraft: {
-            /** Description */
-            description?: string | null;
+        /** MergeTopic */
+        MergeTopic: {
             /**
-             * Misconception Id
+             * Into
              * Format: uuid
              */
-            misconception_id: string;
-            /** Name */
-            name: string;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
+            into: string;
         };
-        /** MisconceptionNodeView */
-        MisconceptionNodeView: {
+        /**
+         * MessageAction
+         * @description `message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).
+         */
+        MessageAction: {
             /**
-             * Description
-             * @default
+             * Canvas Refs
+             * @default []
              */
-            description?: string;
-            /** Last Seen At */
-            last_seen_at: number;
+            canvas_refs?: components["schemas"]["CanvasRef"][];
             /**
-             * Misconception Id
+             * Idempotency Key
              * Format: uuid
              */
-            misconception_id: string;
-            /** Name */
-            name: string;
-            /** Occurrences */
-            occurrences: number;
-            /** Resist Count */
-            resist_count: number;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
-            /** Status */
-            status: string;
-        };
-        /** NextTaskRequest */
-        NextTaskRequest: {
-            /** Idempotency Key */
             idempotency_key: string;
             /**
-             * Kind
-             * @default math
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind?: "open" | "math" | "code" | "choice";
+            kind: "message";
+            /**
+             * Material Ids
+             * @default []
+             */
+            material_ids?: string[];
+            /** Skill Invocation */
+            skill_invocation?: string | null;
+            /** Text */
+            text: string;
+        };
+        /** OpenCanvas */
+        OpenCanvas: {
+            /** Task Id */
+            task_id?: string | null;
+        };
+        /** @enum {string} */
+        Outcome: "correct" | "incorrect" | "partial" | "unclear";
+        /**
+         * PaceWarning
+         * @description `Т-§14.6`: the hub will not be ready by its date at the current pace.
+         */
+        PaceWarning: {
+            /** Forecast */
+            forecast: number;
+            /**
+             * Hub Id
+             * Format: uuid
+             */
+            hub_id: string;
+            /** Not Ready */
+            not_ready: number;
+            /** Ready */
+            ready: number;
+        };
+        /**
+         * PairElement
+         * @description Пара на различение: two task elements whose markups point at each other
+         *     (`pairTaskId`).
+         */
+        PairElement: {
+            /** Element Id */
+            element_id: string;
+            /** First Element Id */
+            first_element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "pair";
+            /** Second Element Id */
+            second_element_id: string;
+        };
+        /** PairRequest */
+        PairRequest: {
+            /** Token */
+            token: string;
+        };
+        /** Paired */
+        Paired: {
+            /**
+             * Canvas Id
+             * Format: uuid
+             */
+            canvas_id: string;
+        };
+        /**
+         * PairingIssued
+         * @description WP22.1: the frontend builds the QR with a link carrying `token` (Т-§16.1).
+         */
+        PairingIssued: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Token */
+            token: string;
+        };
+        /** PhotoView */
+        PhotoView: {
+            /**
+             * Canvas Id
+             * Format: uuid
+             */
+            canvas_id: string;
+            /**
+             * Photo Id
+             * Format: uuid
+             */
+            photo_id: string;
+        };
+        /**
+         * Place
+         * @description «Места в сессиях» (`Т-§4.7`, `П-3.3`): an exposure or an evidence of a skill of the
+         *     topic — its session and the number of its event.
+         */
+        Place: {
+            /**
+             * At Ms
+             * @default 0
+             */
+            at_ms?: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "exposure" | "evidence";
+            /** Seq */
+            seq: number;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /**
+         * PlotSpec
+         * @description A simple plot of one function (Т-§12.3 «простой график»).
+         */
+        PlotSpec: {
+            function: components["schemas"]["MathValue"];
+            /** Variable */
+            variable: string;
+            /** X Max */
+            x_max: number;
+            /** X Min */
+            x_min: number;
+        };
+        /**
+         * PredictionElement
+         * @description Предсказание: a question before a step of the explanation.
+         */
+        PredictionElement: {
+            /** Ask Confidence */
+            ask_confidence: boolean;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "prediction";
+            /** Prompt */
+            prompt: string;
+        };
+        /** PrepMode */
+        PrepMode: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /** ReassignEpisode */
+        ReassignEpisode: {
             /**
              * Topic Id
              * Format: uuid
              */
             topic_id: string;
+        };
+        /**
+         * ReferenceCardElement
+         * @description Справочная карточка: formulas and definitions.
+         */
+        ReferenceCardElement: {
+            /** Element Id */
+            element_id: string;
+            /** Items */
+            items: components["schemas"]["ReferenceItem"][];
             /**
-             * Turn Id
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "reference_card";
+        };
+        /** ReferenceItem */
+        ReferenceItem: {
+            formula: components["schemas"]["MathValue"] | null;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+        };
+        /** RenameTopic */
+        RenameTopic: {
+            /** Name */
+            name: string;
+        };
+        /** ReplayChunkView */
+        ReplayChunkView: {
+            /** Size */
+            size: number;
+            /** Url */
+            url: string;
+        };
+        /**
+         * ReplayView
+         * @description Signed links to the stroke chunks of the canvas, oldest first (Т-§15.7, D-C-135).
+         */
+        ReplayView: {
+            /** Chunks */
+            chunks: components["schemas"]["ReplayChunkView"][];
+            /** Expires In S */
+            expires_in_s: number;
+        };
+        /**
+         * ResetFrame
+         * @description `reset {reason}`: the shown part is replaced by «уточняю…» (Т-§12.2 этап 3).
+         */
+        ResetFrame: {
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "spoiler" | "guard";
+        };
+        /**
+         * ReviewResponse
+         * @description The sheet after the review; `remarks` — the system blocks added to the learner's sheet.
+         */
+        ReviewResponse: {
+            /**
+             * Artifact Id
              * Format: uuid
              */
-            turn_id: string;
-        };
-        /** NextTaskResponse */
-        NextTaskResponse: {
-            /** Degraded */
-            degraded: boolean;
-            /** Difficulty */
-            difficulty: number;
-            /** Family Id */
-            family_id: string;
+            artifact_id: string;
+            /** Blocks */
+            blocks: {
+                [key: string]: unknown;
+            }[];
+            /** Hub Id */
+            hub_id: string | null;
             /** Kind */
             kind: string;
-            /** Prompt Text */
-            prompt_text: string;
+            /** Remarks */
+            remarks: {
+                [key: string]: unknown;
+            }[];
+            /** Topic Id */
+            topic_id: string | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * Scaffold
+         * @description A scaffold of the solution with gaps the learner fills with the pen (П-9.5).
+         */
+        Scaffold: {
+            /** Block Id */
+            block_id: string;
+            /** Item Id */
+            item_id: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * ScaffoldElement
+         * @description Каркас с пропусками: every gap is a part of the task spec (Т-§5.2); `target` —
+         *     chat or a block in the teacher layer of the canvas (Т-§15.1).
+         */
+        ScaffoldElement: {
+            /** Element Id */
+            element_id: string;
+            /** Gaps */
+            gaps: components["schemas"]["ScaffoldGap"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "scaffold";
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "chat" | "canvas";
+            /** Text */
+            text: string;
+        };
+        /** ScaffoldGap */
+        ScaffoldGap: {
+            /** Part */
+            part: string;
+            /** Placeholder */
+            placeholder: string;
+        };
+        /**
+         * SearchHitView
+         * @description WP20.5: the session, `seq`, the snippet and the type of a found event.
+         */
+        SearchHitView: {
+            /** Seq */
+            seq: number;
+            /** Session Id */
+            session_id: string | null;
+            /** Snippet */
+            snippet: string;
+            /** Type */
+            type: string;
+        };
+        /** SearchHits */
+        SearchHits: {
+            /** Hits */
+            hits: components["schemas"]["SearchHitView"][];
+        };
+        /**
+         * SessionDetail
+         * @description `GET /v1/sessions/{id}`: the session and its feed of events by `seq` (D-B-210).
+         */
+        SessionDetail: {
+            /**
+             * Domain Id
+             * Format: uuid
+             */
+            domain_id: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** Events */
+            events: components["schemas"]["FeedEvent"][];
+            /** Hub Id */
+            hub_id: string | null;
+            /** Intent */
+            intent: string | null;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            last_activity_at: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            /** Start Seq */
+            start_seq: number | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "ended";
+            /** Topic Id */
+            topic_id: string | null;
+        };
+        /** @enum {string} */
+        SessionIntent: "learn" | "practice" | "review" | "free";
+        /**
+         * SessionJob
+         * @description A row of the learner's plaque (Т-§13.8): a visible job of the session.
+         */
+        SessionJob: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Job Key */
+            job_key: string;
+            /** Kind */
+            kind: string;
+            /** Status */
+            status: string;
+        };
+        /** SessionJobsResponse */
+        SessionJobsResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["SessionJob"][];
+        };
+        /** SessionListResponse */
+        SessionListResponse: {
+            /** Sessions */
+            sessions: components["schemas"]["SessionView"][];
+        };
+        /** SessionSummary */
+        SessionSummary: {
+            /** Before Seq */
+            before_seq: number;
+            /**
+             * Domain Id
+             * Format: uuid
+             */
+            domain_id: string;
+            /** Ended Reason */
+            ended_reason?: string | null;
+            /** Hub Id */
+            hub_id?: string | null;
+            /** Intent */
+            intent: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            /** Skills */
+            skills: components["schemas"]["SkillChange"][];
+            /** Started Seq */
+            started_seq: number;
+            /** Tasks */
+            tasks: components["schemas"]["TaskDone"][];
+            /** Topic Id */
+            topic_id?: string | null;
+        };
+        /** SessionView */
+        SessionView: {
+            /**
+             * Domain Id
+             * Format: uuid
+             */
+            domain_id: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** Hub Id */
+            hub_id: string | null;
+            /** Intent */
+            intent: string | null;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            last_activity_at: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            /** Start Seq */
+            start_seq: number | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "ended";
+            /** Topic Id */
+            topic_id: string | null;
+        };
+        /**
+         * SetPreferenceRequest
+         * @description `preference.set {key, value}` (ТЗ Ф4 §6.4 «Ученик»).
+         */
+        SetPreferenceRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Key */
+            key: string;
+            /** Value */
+            value: string | number | boolean;
+        };
+        /** SetPreferenceResponse */
+        SetPreferenceResponse: {
+            /** Key */
+            key: string;
+            /** Seq */
+            seq: number;
+            /** Value */
+            value: string | number | boolean;
+        };
+        /**
+         * ShortAnswerElement
+         * @description Короткий ответ: the answer type and spec are in the task.
+         */
+        ShortAnswerElement: {
+            /** Ask Confidence */
+            ask_confidence: boolean;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "short_answer";
+            /** Prompt */
+            prompt: string;
+        };
+        /**
+         * SignedIn
+         * @description Without `auth_success_redirect_url` (D-C-105) sign-in answers 200 with the cookie.
+         */
+        SignedIn: {
+            /**
+             * Learner Id
+             * Format: uuid
+             */
+            learner_id: string;
+        };
+        /** SignedOut */
+        SignedOut: {
+            /**
+             * Status
+             * @default signed_out
+             * @constant
+             */
+            status?: "signed_out";
+        };
+        /**
+         * SkillChange
+         * @description `before` is `None` for a skill that did not exist before the session; `after` is `None`
+         *     when the skill is no longer read under this id (merged away).
+         */
+        SkillChange: {
+            after?: components["schemas"]["SkillCodes"] | null;
+            before?: components["schemas"]["SkillCodes"] | null;
+            /** Changed */
+            changed: boolean;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+            /** Topic Id */
+            topic_id?: string | null;
+        };
+        /**
+         * SkillCodes
+         * @description The state of a skill in codes — no names, no weights, no times.
+         */
+        SkillCodes: {
+            /**
+             * Consolidation Flag
+             * @default false
+             */
+            consolidation_flag?: boolean;
+            gap_type?: components["schemas"]["GapType"] | null;
+            /** Levels */
+            levels: components["schemas"]["LevelCode"][];
+        };
+        /** SkillView */
+        SkillView: {
+            /** Levels */
+            levels: components["schemas"]["LevelView"][];
+            /** Name */
+            name: string;
+            /**
+             * Ret Due At Ms
+             * @default 0
+             */
+            ret_due_at_ms?: number;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+        };
+        /** SolutionRequestAction */
+        SolutionRequestAction: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "solution_request";
             /**
              * Task Id
              * Format: uuid
              */
             task_id: string;
         };
-        /** NoteCreateRequest */
-        NoteCreateRequest: {
+        /**
+         * StartSession
+         * @description `POST /v1/sessions` (WP13.10): the domain, the intent, a topic or a hub.
+         */
+        StartSession: {
             /**
              * Domain Id
              * Format: uuid
              */
             domain_id: string;
-            /** Idempotency Key */
+            /** Hub Id */
+            hub_id?: string | null;
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
             idempotency_key: string;
-            /** Session Id */
-            session_id?: string | null;
-            /** Text */
-            text: string;
-            /** Title */
-            title: string;
+            intent: components["schemas"]["SessionIntent"];
+            /** Today Item */
+            today_item?: string | null;
             /** Topic Id */
             topic_id?: string | null;
         };
-        /** NoteCreateResponse */
-        NoteCreateResponse: {
+        /**
+         * StatusFrame
+         * @description `status`: `thinking` after admission; `tool` with the tool name on each tool call.
+         */
+        StatusFrame: {
             /**
-             * Artifact Id
-             * Format: uuid
+             * State
+             * @enum {string}
              */
-            artifact_id: string;
-            /** Seq */
-            seq: number;
-            /**
-             * Version
-             * @constant
-             */
-            version: 1;
+            state: "thinking" | "tool";
+            /** Tool */
+            tool?: string | null;
         };
-        /** NoteDeleteRequest */
-        NoteDeleteRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
-        };
-        /** NoteDeleteResponse */
-        NoteDeleteResponse: {
-            /**
-             * Artifact Id
-             * Format: uuid
-             */
-            artifact_id: string;
-            /**
-             * Is Deleted
-             * @constant
-             */
-            is_deleted: true;
-            /** Seq */
-            seq: number;
-        };
-        /** NoteUpdateRequest */
-        NoteUpdateRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
+        /** SystemTemplate */
+        SystemTemplate: {
+            /** Role */
+            role: string;
+            /** Sha256 */
+            sha256: string;
             /** Text */
             text: string;
-            /** Title */
-            title: string;
-        };
-        /** NoteUpdateResponse */
-        NoteUpdateResponse: {
-            /**
-             * Artifact Id
-             * Format: uuid
-             */
-            artifact_id: string;
-            /** Seq */
-            seq: number;
             /** Version */
             version: number;
         };
+        /** SystemTemplatesResponse */
+        SystemTemplatesResponse: {
+            /** Templates */
+            templates: components["schemas"]["SystemTemplate"][];
+        };
+        /** @enum {string} */
+        TaskClosing: "solved" | "skipped" | "solution_shown";
         /**
-         * PrereqEdge
-         * @description `from_topic_id` is a prerequisite of `to_topic_id`: (from)-[:PREREQ_OF]->(to).
+         * TaskDone
+         * @description A task of the session: answers given, the deepest hint step shown, the outcome of the
+         *     last verdict and how it was closed (`None` — left open).
          */
-        PrereqEdge: {
+        TaskDone: {
+            /** Answers */
+            answers: number;
+            closed?: components["schemas"]["TaskClosing"] | null;
+            /** Hint Step */
+            hint_step: number;
+            last_outcome?: components["schemas"]["Outcome"] | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /**
+         * TaskElement
+         * @description Задача, with the «solve on the canvas» button.
+         */
+        TaskElement: {
+            /** Ask Confidence */
+            ask_confidence: boolean;
+            /** Canvas */
+            canvas: boolean;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "task";
+            /** Prompt */
+            prompt: string;
+        };
+        /** TeacherLayer */
+        TeacherLayer: {
+            /** Hints */
+            hints?: components["schemas"]["Hint"][];
+            /** Marks */
+            marks?: components["schemas"]["Mark"][];
+            /** Scaffolds */
+            scaffolds?: components["schemas"]["Scaffold"][];
+            /** Visualizations */
+            visualizations?: components["schemas"]["Visualization"][];
+        };
+        /**
+         * TimedQuizElement
+         * @description Пробник с таймером: task elements and the time.
+         */
+        TimedQuizElement: {
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "timed_quiz";
+            /** Task Element Ids */
+            task_element_ids: string[];
+            /** Time Limit S */
+            time_limit_s: number;
+        };
+        /** TodayEntry */
+        TodayEntry: {
+            /** Reasons */
+            reasons: components["schemas"]["ItemReason"][];
+            /** Score */
+            score: number;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+            /** Topic Id */
+            topic_id?: string | null;
+        };
+        /**
+         * TodayView
+         * @description Empty `items` — no plaque (`Т-§14.4`). `grade_hub_ids` — hubs whose date has passed
+         *     and that have no grade yet: the offer to enter it (WP17.5).
+         */
+        TodayView: {
+            /**
+             * Grade Hub Ids
+             * @default []
+             */
+            grade_hub_ids?: string[];
+            /**
+             * Items
+             * @default []
+             */
+            items?: components["schemas"]["TodayEntry"][];
+            /**
+             * Minutes
+             * @default 0
+             */
+            minutes?: number;
+            /**
+             * Pace Warnings
+             * @default []
+             */
+            pace_warnings?: components["schemas"]["PaceWarning"][];
+        };
+        /**
+         * TokenFrame
+         * @description `token {text}`: checked body text (Т-§12.2 этап 3).
+         */
+        TokenFrame: {
+            /** Text */
+            text: string;
+        };
+        /**
+         * TopicDisplay
+         * @description The state of a topic in codes (ТЗ Ф4 WP6.2, `Т-§8.6`, `Т-§22.2`): one model for the
+         *     projector (phase C writes it as `displayState`, `displayReason`, `displayLevel`,
+         *     `displayDomainId`), the API and the context renderer. `displayReason` — the skill or the
+         *     misconception the rule fired on (`Т-§8.7`), "" — none; `displayLevel` 0, `displayDomainId`
+         *     "" — not given (law 8). Proposed, hidden and off-domain topics have `none`.
+         */
+        TopicDisplay: {
+            /**
+             * Display Domain Id
+             * @default
+             */
+            display_domain_id?: string;
+            /**
+             * Display Level
+             * @default 0
+             */
+            display_level?: number;
+            /**
+             * Display Reason
+             * @default
+             */
+            display_reason?: string;
+            /** @default none */
+            display_state?: components["schemas"]["DisplayState"];
+        };
+        /**
+         * TopicNodeView
+         * @description A topic on the map: the state is the code and its parameters, never a sentence.
+         */
+        TopicNodeView: {
+            display: components["schemas"]["TopicDisplay"];
+            /** Name */
+            name: string;
+            /**
+             * Nearest Due At Ms
+             * @default 0
+             */
+            nearest_due_at_ms?: number;
+            /**
+             * Skill Count
+             * @default 0
+             */
+            skill_count?: number;
+            /** Status */
+            status: string;
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+            /** Visibility */
+            visibility: string;
+        };
+        /**
+         * TopicRequires
+         * @description A derived link between topics (Т-§4.6); weight — the number of skill links.
+         */
+        TopicRequires: {
             /**
              * From Topic Id
              * Format: uuid
@@ -1491,531 +3299,186 @@ export interface components {
              * Format: uuid
              */
             to_topic_id: string;
+            /** Weight */
+            weight: number;
         };
-        /** ProposeStructureRequest */
-        ProposeStructureRequest: {
-            /** Background */
-            background: string;
-            /** Focus Areas */
-            focus_areas: string[];
-            /** Goals */
-            goals: string;
-            /** Idempotency Key */
-            idempotency_key: string;
-        };
-        /** ProposeStructureResponse */
-        ProposeStructureResponse: {
-            /**
-             * Degraded
-             * @default false
-             */
-            degraded?: boolean;
+        /** TopicView */
+        TopicView: {
+            display: components["schemas"]["TopicDisplay"];
             /**
              * Domain Id
              * Format: uuid
              */
             domain_id: string;
-            /** Misconceptions */
-            misconceptions?: components["schemas"]["MisconceptionDraft"][];
-            /** Prereqs */
-            prereqs: components["schemas"]["PrereqEdge"][];
-            /** Skill Deps */
-            skill_deps: components["schemas"]["SkillDepEdge"][];
-            /** Skills */
-            skills: components["schemas"]["SkillDraft"][];
-            /** Structure Version */
-            structure_version: number;
-            /** Topics */
-            topics: components["schemas"]["TopicDraft"][];
-        };
-        /** RegisterRequest */
-        RegisterRequest: {
-            /** Display Name */
-            display_name?: string | null;
-            /** Email */
-            email: string;
-            /** Password */
-            password: string;
-            /** Preferences */
-            preferences?: {
-                [key: string]: unknown;
-            };
-        };
-        /** SearchResponse */
-        SearchResponse: {
-            /** Artifact Hits */
-            artifact_hits: components["schemas"]["ArtifactSearchHit"][];
-            /** Event Hits */
-            event_hits: components["schemas"]["EventSearchHit"][];
-        };
-        /** SessionDetail */
-        SessionDetail: {
-            checkpoint?: components["schemas"]["CheckpointView"] | null;
+            /** Name */
+            name: string;
             /**
-             * Domain Id
-             * Format: uuid
+             * Nearest Due At Ms
+             * @default 0
              */
-            domain_id: string;
+            nearest_due_at_ms?: number;
             /**
-             * Last Activity At
-             * Format: date-time
+             * Places
+             * @default []
              */
-            last_activity_at: string;
-            /** Last Checkpoint Turn */
-            last_checkpoint_turn: number;
-            /** Last Turn Index */
-            last_turn_index: number;
-            /** Mode */
-            mode: string;
+            places?: components["schemas"]["Place"][];
             /**
-             * Session Id
-             * Format: uuid
+             * Skills
+             * @default []
              */
-            session_id: string;
-            /**
-             * Started At
-             * Format: date-time
-             */
-            started_at: string;
+            skills?: components["schemas"]["SkillView"][];
             /** Status */
             status: string;
-            /** Topic Id */
-            topic_id: string | null;
-            /** Turns */
-            turns: components["schemas"]["TurnView"][];
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+            /** Visibility */
+            visibility: string;
         };
         /**
-         * SessionListItem
-         * @description A row of the session history: the active session and the closed ones.
+         * TurnCommittedFrame
+         * @description `turn_committed {seq, degraded_mode, effort, role}` after `turn.committed`.
          */
-        SessionListItem: {
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /** Ended At */
-            ended_at: string | null;
-            /** Goal */
-            goal: string | null;
-            /**
-             * Last Activity At
-             * Format: date-time
-             */
-            last_activity_at: string;
-            /** Last Checkpoint Turn */
-            last_checkpoint_turn: number;
-            /** Last Turn Index */
-            last_turn_index: number;
-            /** Mode */
-            mode: string;
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            session_id: string;
-            /**
-             * Started At
-             * Format: date-time
-             */
-            started_at: string;
-            /** Status */
-            status: string;
-            /** Topic Id */
-            topic_id: string | null;
-        };
-        /** SessionListResponse */
-        SessionListResponse: {
-            /** Sessions */
-            sessions: components["schemas"]["SessionListItem"][];
-        };
-        /** SessionStarted */
-        SessionStarted: {
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /** Mode */
-            mode: string;
-            /** Plan */
-            plan: {
-                [key: string]: unknown;
-            }[];
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            session_id: string;
-            /** Start Seq */
-            start_seq: number;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "active" | "completed" | "abandoned";
-            /** Topic Id */
-            topic_id: string | null;
-        };
-        /**
-         * SkillDepEdge
-         * @description `skill_id` depends on `depends_on_skill_id`: (skill)-[:DEPENDS_ON]->(dependency).
-         */
-        SkillDepEdge: {
-            /**
-             * Depends On Skill Id
-             * Format: uuid
-             */
-            depends_on_skill_id: string;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
-        };
-        /** SkillDraft */
-        SkillDraft: {
-            /** Description */
-            description?: string | null;
-            /** Name */
-            name: string;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
-            /**
-             * Topic Id
-             * Format: uuid
-             */
-            topic_id: string;
-        };
-        /** SkillNodeView */
-        SkillNodeView: {
-            /** Confidence */
-            confidence: number;
-            /**
-             * Description
-             * @default
-             */
-            description?: string;
-            /** Distinct Families */
-            distinct_families: number;
-            /** Effective Mastery */
-            effective_mastery: number;
-            /** Evidence Count */
-            evidence_count: number;
-            /** Is Rusty */
-            is_rusty: boolean;
-            /** Last Practiced At */
-            last_practiced_at: number;
-            /** Last Reviewed At */
-            last_reviewed_at: number;
-            /** Mastery Status */
-            mastery_status: string;
-            /** Name */
-            name: string;
-            /** Next Review At */
-            next_review_at: number;
-            /**
-             * Origin
-             * @default structure
-             */
-            origin?: string;
-            /** P Mastery */
-            p_mastery: number;
-            /**
-             * Prior Confidence
-             * @default 0
-             */
-            prior_confidence?: number;
-            /**
-             * Prior Mastery
-             * @default 0
-             */
-            prior_mastery?: number;
-            /**
-             * Prior Source
-             * @default none
-             */
-            prior_source?: string;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
-            /** Stability */
-            stability: number;
-            /** Status */
-            status: string;
-            /**
-             * Topic Id
-             * Format: uuid
-             */
-            topic_id: string;
-        };
-        /** SkillPatch */
-        SkillPatch: {
-            /** Description */
-            description?: string | null;
-            /** Name */
-            name?: string | null;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
-            /** Topic Id */
-            topic_id?: string | null;
-        };
-        /** StartDiagnosticRequest */
-        StartDiagnosticRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
-        };
-        /** StartDiagnosticResponse */
-        StartDiagnosticResponse: {
-            /** Candidate Topic Ids */
-            candidate_topic_ids: string[];
-            next_question: components["schemas"]["DiagnosticQuestion"];
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            session_id: string;
-        };
-        /** StartSessionRequest */
-        StartSessionRequest: {
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /** Goal */
-            goal?: string | null;
-            /** Idempotency Key */
-            idempotency_key: string;
-            /**
-             * Mode
-             * @default learn
-             * @enum {string}
-             */
-            mode?: "learn" | "practice" | "review";
-            /** Plan */
-            plan?: {
-                [key: string]: unknown;
-            }[] | null;
-            /** Topic Id */
-            topic_id?: string | null;
-        };
-        /** SubmitRequest */
-        SubmitRequest: {
-            /** Answer */
-            answer: string;
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Response Time Sec */
-            response_time_sec?: number | null;
-            /**
-             * Turn Id
-             * Format: uuid
-             */
-            turn_id: string;
-        };
-        /** SubmitResponse */
-        SubmitResponse: {
-            /** Evaluator */
-            evaluator: string;
-            /** Feedback */
-            feedback: string;
-            /** Independence */
-            independence: number;
-            /** Is Correct */
-            is_correct: boolean;
-            /** Score */
-            score: number;
-            /** Seq */
-            seq: number;
-            /** Skill Scores */
-            skill_scores: unknown[];
-            /**
-             * Task Id
-             * Format: uuid
-             */
-            task_id: string;
-            /** Triggered Misconceptions */
-            triggered_misconceptions: unknown[];
-        };
-        /** TopicDetailResponse */
-        TopicDetailResponse: {
-            /** Artifacts */
-            artifacts: components["schemas"]["ArtifactRefView"][];
-            /** Misconceptions */
-            misconceptions: components["schemas"]["MisconceptionNodeView"][];
-            /** Skill Deps */
-            skill_deps: components["schemas"]["SkillDepEdge"][];
-            /** Skills */
-            skills: components["schemas"]["SkillNodeView"][];
-            topic: components["schemas"]["TopicNodeView"];
-        };
-        /** TopicDraft */
-        TopicDraft: {
-            /** Description */
-            description?: string | null;
-            /** Name */
-            name: string;
-            /**
-             * Topic Id
-             * Format: uuid
-             */
-            topic_id: string;
-        };
-        /** TopicNodeView */
-        TopicNodeView: {
-            /** Confidence */
-            confidence: number;
-            /** Coverage */
-            coverage: number;
-            /**
-             * Description
-             * @default
-             */
-            description?: string;
-            display_state: components["schemas"]["DisplayState"];
-            /**
-             * Domain Id
-             * Format: uuid
-             */
-            domain_id: string;
-            /** Hub Score */
-            hub_score: number;
-            /** Mastery */
-            mastery: number;
-            /** Name */
-            name: string;
-            /** Nearest Review At */
-            nearest_review_at: number;
-            /** Skill Count */
-            skill_count: number;
-            /** Status */
-            status: string;
-            /**
-             * Topic Id
-             * Format: uuid
-             */
-            topic_id: string;
-        };
-        /** TopicPatch */
-        TopicPatch: {
-            /** Description */
-            description?: string | null;
-            /** Name */
-            name?: string | null;
-            /**
-             * Topic Id
-             * Format: uuid
-             */
-            topic_id: string;
-        };
-        /** TopicPriorItem */
-        TopicPriorItem: {
-            /** Confidence */
-            confidence: number;
-            /** Prior Mastery */
-            prior_mastery: number;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
-            /**
-             * Source
-             * @enum {string}
-             */
-            source: "tested" | "propagated" | "self_report";
-            /**
-             * Topic Id
-             * Format: uuid
-             */
-            topic_id: string;
-        };
-        /** TurnRequest */
-        TurnRequest: {
-            /**
-             * Hints Used
-             * @default 0
-             */
-            hints_used?: number;
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Related Task Id */
-            related_task_id?: string | null;
-            /** Response Time Sec */
-            response_time_sec?: number | null;
-            /** Text */
-            text: string;
-        };
-        /** TurnView */
-        TurnView: {
+        TurnCommittedFrame: {
             /** Degraded Mode */
-            degraded_mode?: string | null;
-            /** Pedagogical Move */
-            pedagogical_move?: string | null;
-            /** Related Task Id */
-            related_task_id?: string | null;
+            degraded_mode: ("budget_exceeded" | "llm_unavailable" | "memory_unavailable" | "teacher_fallback" | "projector_lag") | null;
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "low" | "high";
             /**
              * Role
              * @enum {string}
              */
-            role: "student" | "teacher";
+            role: "teacher" | "teacher_fallback";
             /** Seq */
             seq: number;
-            /** Text */
-            text: string;
+        };
+        /**
+         * TypedFormula
+         * @description A formula typed in a typing block (`typed_formula {block_id, latex}`, WP21.2).
+         */
+        TypedFormula: {
+            /** Block Id */
+            block_id: string;
+            /** Latex */
+            latex: string;
+        };
+        /** TypoRequest */
+        TypoRequest: {
             /**
-             * Turn Id
-             * Format: uuid
+             * Part
+             * @default main
              */
-            turn_id: string;
-            /** Turn Index */
-            turn_index: number;
+            part?: string;
         };
-        /** UpdatePreferencesRequest */
-        UpdatePreferencesRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Preferences */
-            preferences: {
-                [key: string]: unknown;
-            };
-        };
-        /** UpdatePreferencesResponse */
-        UpdatePreferencesResponse: {
-            /** Preferences */
-            preferences: {
-                [key: string]: unknown;
-            };
-            /** Seq */
-            seq: number;
-        };
-        /** UpdateTopicStatusRequest */
-        UpdateTopicStatusRequest: {
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Reason */
-            reason?: string | null;
+        /**
+         * VerdictFrame
+         * @description `verdict`: a fast verdict that came during the turn (Т-§6.1).
+         */
+        VerdictFrame: {
+            /** Answer Seq */
+            answer_seq: number;
             /**
-             * Status
+             * Method
              * @enum {string}
              */
-            status: "active" | "skipped" | "archived";
+            method: "exact" | "numeric" | "symbolic" | "units" | "model";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "correct" | "incorrect" | "partial" | "unclear";
+            /** Part */
+            part: string;
+            /**
+             * Verification
+             * @enum {string}
+             */
+            verification: "code" | "model";
         };
-        /** UpdateTopicStatusResponse */
-        UpdateTopicStatusResponse: {
+        /**
+         * Visualization
+         * @description A visualization laid next to the solution (П-9.5; artifact `Т-§13.6`).
+         */
+        Visualization: {
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            artifact_id: string;
+            /** Block Id */
+            block_id: string;
+            /** Item Id */
+            item_id: string;
+        };
+        /**
+         * VisualizationElement
+         * @description Визуализация, демо: a ready artifact (agent request label `R…`, Т-§13.6) or a simple
+         *     plot; exactly one is set.
+         */
+        VisualizationElement: {
+            /** Element Id */
+            element_id: string;
+            /** Is Task */
+            is_task: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "visualization";
+            plot: components["schemas"]["PlotSpec"] | null;
+            /** Request */
+            request: string | null;
+        };
+        /**
+         * VoiceView
+         * @description WP21.6: what was heard; `seq` is the `voice.transcribed` event, `null` for silence.
+         */
+        VoiceView: {
+            /** Ended At Ms */
+            ended_at_ms: number;
             /** Seq */
-            seq: number;
-            /** Status */
-            status: string;
+            seq: number | null;
+            /** Started At Ms */
+            started_at_ms: number;
+            /** Text */
+            text: string;
+        };
+        /**
+         * WhyChoiceElement
+         * @description «Почему» как выбор: 3–4 reasonings and «other» (П-4.5); options in the task spec.
+         */
+        WhyChoiceElement: {
+            /** Allow Other */
+            allow_other: boolean;
+            /** Ask Confidence */
+            ask_confidence: boolean;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "why_choice";
+            /** Prompt */
+            prompt: string;
+        };
+        /**
+         * WhyFacts
+         * @description `why` (Т-§8.7): the deciding evidence of the level and the latest `why_recent_n`.
+         */
+        WhyFacts: {
+            deciding?: components["schemas"]["EvidenceFact"] | null;
+            level?: components["schemas"]["Level"] | null;
+            /**
+             * Recent
+             * @default []
+             */
+            recent?: components["schemas"]["EvidenceFact"][];
             /**
              * Topic Id
              * Format: uuid
@@ -2031,6 +3494,189 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    google_callback_auth_google_callback_get: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedIn"];
+                };
+            };
+            /** @description Signed in: back to the app */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    google_start_auth_google_start_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To Google */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    post_link_auth_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkSent"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    verify_link_auth_link_verify_get: {
+        parameters: {
+            query: {
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedIn"];
+                };
+            };
+            /** @description Signed in: back to the app */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    logout_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedOut"];
+                };
+            };
+        };
+    };
+    companion_pair_companion_pair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Paired"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     live_health_live_get: {
         parameters: {
             query?: never;
@@ -2109,138 +3755,19 @@ export interface operations {
             };
         };
     };
-    list_artifacts_v1_artifacts_get: {
-        parameters: {
-            query?: {
-                domain_id?: string | null;
-                topic_id?: string | null;
-                kind?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ArtifactListResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    create_note_v1_artifacts_notes_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NoteCreateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NoteCreateResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    delete_note_v1_artifacts_notes__artifact_id__delete: {
+    put_block_v1_artifacts__artifact_id__blocks__block_id__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 artifact_id: string;
+                block_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NoteDeleteRequest"];
+                "application/json": components["schemas"]["BlockEdit"];
             };
         };
         responses: {
@@ -2250,10 +3777,73 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NoteDeleteResponse"];
+                    "application/json": components["schemas"]["ArtifactResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_block_v1_artifacts__artifact_id__blocks__block_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                artifact_id: string;
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2309,18 +3899,19 @@ export interface operations {
             };
         };
     };
-    update_note_v1_artifacts_notes__artifact_id__patch: {
+    accept_block_v1_artifacts__artifact_id__blocks__block_id__accept_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 artifact_id: string;
+                block_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NoteUpdateRequest"];
+                "application/json": components["schemas"]["KeyedRequest"];
             };
         };
         responses: {
@@ -2330,10 +3921,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NoteUpdateResponse"];
+                    "application/json": components["schemas"]["ArtifactResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2389,15 +3980,13 @@ export interface operations {
             };
         };
     };
-    search_artifacts_v1_artifacts_search_get: {
+    get_canvas_v1_canvases__canvas_id__get: {
         parameters: {
-            query: {
-                q: string;
-                domain_id?: string | null;
-                limit?: number | null;
-            };
+            query?: never;
             header?: never;
-            path?: never;
+            path: {
+                canvas_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -2408,11 +3997,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SearchResponse"];
+                    "application/json": components["schemas"]["CanvasView"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2440,16 +4038,19 @@ export interface operations {
             };
         };
     };
-    login_endpoint_v1_auth_login_post: {
+    correct_line_v1_canvases__canvas_id__lines__line_id__correct_post: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                canvas_id: string;
+                line_id: string;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LoginRequest"];
+                "application/json": components["schemas"]["LineCorrection"];
             };
         };
         responses: {
@@ -2459,7 +4060,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuthResponse"];
+                    "application/json": components["schemas"]["CorrectedLine"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
@@ -2500,26 +4119,64 @@ export interface operations {
             };
         };
     };
-    me_endpoint_v1_auth_me_get: {
+    pairing_v1_canvases__canvas_id__pairing_post: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                canvas_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LearnerMeResponse"];
+                    "application/json": components["schemas"]["PairingIssued"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2538,16 +4195,18 @@ export interface operations {
             };
         };
     };
-    register_endpoint_v1_auth_register_post: {
+    upload_photo_v1_canvases__canvas_id__photos_post: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                canvas_id: string;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisterRequest"];
+                "multipart/form-data": components["schemas"]["Body_upload_photo_v1_canvases__canvas_id__photos_post"];
             };
         };
         responses: {
@@ -2557,7 +4216,450 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuthResponse"];
+                    "application/json": components["schemas"]["PhotoView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    canvas_replay_v1_canvases__canvas_id__replay_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplayView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_card_v1_cards__card_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patch_card_v1_cards__card_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CardEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    post_consent_v1_consents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentRecorded"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_research_v1_consents_research_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentRevocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentRecorded"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    file_dispute_endpoint_v1_disputes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisputeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventAccepted"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
@@ -2600,9 +4702,7 @@ export interface operations {
     };
     list_domains_endpoint_v1_domains_get: {
         parameters: {
-            query?: {
-                include_archived?: boolean;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -2618,17 +4718,8 @@ export interface operations {
                     "application/json": components["schemas"]["DomainListResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2669,7 +4760,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreateDomainResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2716,7 +4807,76 @@ export interface operations {
             };
         };
     };
-    get_domain_endpoint_v1_domains__domain_id__get: {
+    classify_domain_endpoint_v1_domains_classify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifyDomainRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainSuggestion"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_domain_endpoint_v1_domains__domain_id__delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -2733,72 +4893,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DomainSummary"];
+                    "application/json": components["schemas"]["DeletionResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    archive_domain_endpoint_v1_domains__domain_id__archive_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                domain_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ArchiveDomainRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ArchiveDomainResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2854,251 +4952,9 @@ export interface operations {
             };
         };
     };
-    answer_diagnostic_endpoint_v1_domains__domain_id__diagnostic_answer_post: {
+    domain_canvases_v1_domains__domain_id__canvases_get: {
         parameters: {
             query?: never;
-            header?: never;
-            path: {
-                domain_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AnswerDiagnosticRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnswerDiagnosticResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    finish_diagnostic_endpoint_v1_domains__domain_id__diagnostic_finish_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                domain_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FinishDiagnosticRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinishDiagnosticResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    start_diagnostic_endpoint_v1_domains__domain_id__diagnostic_start_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                domain_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["StartDiagnosticRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StartDiagnosticResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    export_domain_v1_domains__domain_id__export_get: {
-        parameters: {
-            query?: {
-                format?: "md" | "json";
-            };
             header?: never;
             path: {
                 domain_id: string;
@@ -3113,10 +4969,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExportMdResponse"] | components["schemas"]["ExportJson"];
+                    "application/json": components["schemas"]["CanvasList"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3157,7 +5013,7 @@ export interface operations {
     get_domain_graph_endpoint_v1_domains__domain_id__graph_get: {
         parameters: {
             query?: {
-                include_archived?: boolean;
+                include_hidden?: boolean;
             };
             header?: never;
             path: {
@@ -3176,7 +5032,7 @@ export interface operations {
                     "application/json": components["schemas"]["DomainGraphResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3214,253 +5070,12 @@ export interface operations {
             };
         };
     };
-    edit_structure_endpoint_v1_domains__domain_id__structure_patch: {
+    domain_hubs_endpoint_v1_domains__domain_id__hubs_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 domain_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EditStructureRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EditStructureResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    confirm_structure_endpoint_v1_domains__domain_id__structure_confirm_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                domain_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConfirmStructureRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConfirmStructureResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    propose_structure_endpoint_v1_domains__domain_id__structure_propose_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                domain_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProposeStructureRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProposeStructureResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    get_topic_detail_endpoint_v1_domains__domain_id__topics__topic_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                domain_id: string;
-                topic_id: string;
             };
             cookie?: never;
         };
@@ -3472,10 +5087,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TopicDetailResponse"];
+                    "application/json": components["schemas"]["HubGoal"][];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3513,19 +5128,650 @@ export interface operations {
             };
         };
     };
-    update_topic_status_endpoint_v1_domains__domain_id__topics__topic_id__status_patch: {
+    create_hub_endpoint_v1_domains__domain_id__hubs_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 domain_id: string;
-                topic_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateTopicStatusRequest"];
+                "application/json": components["schemas"]["CreateHub"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubCreated"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_materials_v1_domains__domain_id__materials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialList"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    upload_material_v1_domains__domain_id__materials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_material_v1_domains__domain_id__materials_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    today_endpoint_v1_domains__domain_id__today_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TodayView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reassign_episode_endpoint_v1_episodes__episode_seq__reassign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                episode_seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReassignEpisode"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Edited"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    hub_view_endpoint_v1_hubs__hub_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    edit_hub_endpoint_v1_hubs__hub_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditHub"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Edited"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_hub_cheatsheet_v1_hubs__hub_id__cheatsheet_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheatsheetResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    agree_to_hub_cheatsheet_v1_hubs__hub_id__cheatsheet_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    review_cheatsheet_v1_hubs__hub_id__cheatsheet_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyedRequest"];
             };
         };
         responses: {
@@ -3535,10 +5781,170 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UpdateTopicStatusResponse"];
+                    "application/json": components["schemas"]["ReviewResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    grade_endpoint_v1_hubs__hub_id__grade_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Grade"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Accepted"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    prep_mode_endpoint_v1_hubs__hub_id__prep_mode_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrepMode"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Accepted"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3609,10 +6015,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeleteLearnerResponse"];
+                    "application/json": components["schemas"]["DeletionResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3650,7 +6056,45 @@ export interface operations {
             };
         };
     };
-    update_preferences_endpoint_v1_learner_preferences_patch: {
+    get_learner_skills_v1_learner_skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerSkillsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    post_learner_skill_v1_learner_skills_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3659,7 +6103,154 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdatePreferencesRequest"];
+                "application/json": components["schemas"]["LearnerSkillCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerSkillView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_learner_skill_v1_learner_skills__skill_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerSkillsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patch_learner_skill_v1_learner_skills__skill_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnerSkillPatch"];
             };
         };
         responses: {
@@ -3669,10 +6260,215 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UpdatePreferencesResponse"];
+                    "application/json": components["schemas"]["LearnerSkillView"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_export_v1_learner_exports__export_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportStatus"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    set_preference_endpoint_v1_learner_preferences_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPreferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetPreferenceResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patch_settings_v1_learner_settings_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnerSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerSettings"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3737,8 +6533,193 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    llm_access_v1_llm_access_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMAccess"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_material_v1_materials__material_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                material_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialDetailView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    me_v1_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    search_v1_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                domain_id?: string | null;
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchHits"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3778,7 +6759,7 @@ export interface operations {
                     "application/json": components["schemas"]["SessionListResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3816,7 +6797,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["StartSessionRequest"];
+                "application/json": components["schemas"]["StartSession"];
             };
         };
         responses: {
@@ -3826,10 +6807,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionStarted"];
+                    "application/json": components["schemas"]["SessionView"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3891,10 +6872,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ActiveSession"] | null;
+                    "application/json": components["schemas"]["SessionView"] | null;
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3934,7 +6915,7 @@ export interface operations {
                     "application/json": components["schemas"]["SessionDetail"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3954,6 +6935,254 @@ export interface operations {
             };
             /** @description VALIDATION_ERROR */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    post_action_v1_sessions__session_id__actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageAction"] | components["schemas"]["IntentAction"] | components["schemas"]["AnswerAction"] | components["schemas"]["ElementResponseAction"] | components["schemas"]["HintRequestAction"] | components["schemas"]["SolutionRequestAction"] | components["schemas"]["CheckSkipAction"] | components["schemas"]["FlagUnclearAction"] | components["schemas"]["ConfidenceAction"];
+            };
+        };
+        responses: {
+            /** @description Actions with a teacher turn: SSE frames in the order of ТЗ Ф4 §4.7. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["ActionFrame"];
+                };
+            };
+            /** @description Actions without a teacher turn (`confidence`): the action event seq. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Seq */
+                        seq: number;
+                    };
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    open_canvas_v1_sessions__session_id__canvases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenCanvas"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    end_session_v1_sessions__session_id__end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3992,7 +7221,7 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -4012,86 +7241,6 @@ export interface operations {
             };
             /** @description VALIDATION_ERROR */
             422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    finish_session_v1_sessions__session_id__finish_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FinishSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinishResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4130,7 +7279,7 @@ export interface operations {
                     "application/json": components["schemas"]["HeartbeatResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -4177,7 +7326,123 @@ export interface operations {
             };
         };
     };
-    next_task_v1_sessions__session_id__tasks_next_post: {
+    session_jobs_v1_sessions__session_id__jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionJobsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    session_summary_route_v1_sessions__session_id__summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSummary"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    upload_voice_v1_sessions__session_id__voice_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4188,20 +7453,20 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["NextTaskRequest"];
+                "multipart/form-data": components["schemas"]["Body_upload_voice_v1_sessions__session_id__voice_post"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NextTaskResponse"];
+                    "application/json": components["schemas"]["VoiceView"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -4257,21 +7522,14 @@ export interface operations {
             };
         };
     };
-    give_hint_v1_sessions__session_id__tasks__task_id__hint_post: {
+    get_system_templates_v1_system_templates_get: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                session_id: string;
-                task_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HintRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -4279,47 +7537,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HintResponse"];
+                    "application/json": components["schemas"]["SystemTemplatesResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4338,168 +7560,7 @@ export interface operations {
             };
         };
     };
-    submit_answer_v1_sessions__session_id__tasks__task_id__submit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubmitResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    post_turn_v1_sessions__session_id__turns_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TurnRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    get_topic_detail_short_endpoint_v1_topics__topic_id__get: {
+    get_topic_endpoint_v1_topics__topic_id__get: {
         parameters: {
             query?: never;
             header?: never;
@@ -4516,10 +7577,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TopicDetailResponse"];
+                    "application/json": components["schemas"]["TopicView"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -4557,7 +7618,7 @@ export interface operations {
             };
         };
     };
-    get_cheatsheet_v1_topics__topic_id__cheatsheet_get: {
+    delete_topic_endpoint_v1_topics__topic_id__delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -4574,72 +7635,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ArtifactView"] | null;
+                    "application/json": components["schemas"]["DeletionResponse"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    request_cheatsheet_refresh_v1_topics__topic_id__cheatsheet_refresh_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CheatsheetRefreshRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CheatsheetRefreshResponse"];
-                };
-            };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -4695,7 +7694,7 @@ export interface operations {
             };
         };
     };
-    update_topic_status_short_endpoint_v1_topics__topic_id__status_patch: {
+    rename_topic_endpoint_v1_topics__topic_id__patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -4706,20 +7705,20 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateTopicStatusRequest"];
+                "application/json": components["schemas"]["RenameTopic"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UpdateTopicStatusResponse"];
+                    "application/json": components["schemas"]["Edited"];
                 };
             };
-            /** @description UNAUTHORIZED: missing, invalid or revoked token */
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -4757,6 +7756,668 @@ export interface operations {
             };
             /** @description RATE_LIMITED; details.retry_after_sec */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_topic_cards_v1_topics__topic_id__cards_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_anki_v1_topics__topic_id__export_anki_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deck */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_obsidian_v1_topics__topic_id__export_obsidian_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The vault */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    hide_topic_endpoint_v1_topics__topic_id__hide_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Edited"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    claim_known_endpoint_v1_topics__topic_id__known_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Edited"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    merge_topic_endpoint_v1_topics__topic_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeTopic"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Edited"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    topic_notes_v1_topics__topic_id__notes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    topic_why_endpoint_v1_topics__topic_id__why_get: {
+        parameters: {
+            query?: {
+                level?: number | null;
+            };
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhyFacts"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    declare_typo_endpoint_v1_verdicts__answer_seq__typo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                answer_seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TypoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventAccepted"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_viz_v1_viz__viz_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                viz_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

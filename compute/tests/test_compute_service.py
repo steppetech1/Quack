@@ -27,6 +27,9 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
 async def check(
     client: httpx.AsyncClient, mode: str, student: str, reference: str, **fields: Any
 ) -> dict[str, Any]:
+    # Т-§6: the background timeout (`symbolic_background_timeout_ms`) is 10 s; the product
+    # default of 1500 ms must not make the tests depend on the machine (Q-C-1, D-A-249 п.12).
+    fields.setdefault("timeout_ms", 10_000)
     response = await client.post(
         "/v1/check/math",
         json={"mode": mode, "student_expr": student, "reference_expr": reference, **fields},

@@ -6,11 +6,20 @@ code lives here under a name.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, SecretStr, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class FoldParams(BaseModel):
@@ -95,17 +104,113 @@ class DiagnosticParams(BaseModel):
     default_tested_depth: float = 0.5
 
 
-# Q6 (PHASE3_NOTES): tokens are HS256; RFC 7518 §3.2 requires a key at least as long as the
-# hash output (256 bits). A property of the algorithm, not a tunable threshold.
-HS256_MIN_SECRET_BYTES = 32
-
 # Д-§7: the secrets each process role needs in prod (compose passes only these, ТЗ WP9.2).
+# JWT_SECRET is gone with JWT (ТЗ Ф4 §2.3 row 3, WP18.3).
 _PROD_SECRETS_BY_ROLE: dict[str, tuple[str, ...]] = {
-    "api": ("JWT_SECRET", "META_API_KEY", "NEO4J_PASSWORD"),
+    "api": ("META_API_KEY", "NEO4J_PASSWORD"),
     "workers": ("META_API_KEY", "NEO4J_PASSWORD"),
     "projector": ("NEO4J_PASSWORD",),
     "ops": (),
 }
+
+
+# --- stream B ---
+type PriorityClass = Literal["P0", "P1", "P2", "P3"]
+
+WONDER = "muse-wonder-1.0"
+SPARK = "muse-spark-1.3"
+
+
+class RoleConfig(BaseModel):
+    """One row of the role table Т-§11.1 (ТЗ Ф4 WP10.1). `effort`, `max_output_tokens` and
+    `prompt` are null for the roles that are not text calls (`segmenter`, `voice`,
+    `illustrator`): Т-§11.1 gives them no effort row (D-B-101). `hard_model` — the model of the
+    hard calls of a role whose row reads «Spark, для сложных — Wonder» (`solution_space`,
+    `task_generator`; ТЗ Ф4 WP12.4, WP12.6, D-B-166)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    model: str
+    effort: Literal["low", "high"] | None
+    max_output_tokens: int | None
+    priority_class: PriorityClass
+    timeout_s: float
+    prompt: str | None
+    hard_model: str | None = None
+
+
+def _role(
+    model: str,
+    effort: Literal["low", "high"] | None,
+    max_output_tokens: int | None,
+    priority_class: PriorityClass,
+    prompt: str | None,
+    timeout_s: float = 60.0,
+) -> RoleConfig:
+    return RoleConfig(
+        model=model,
+        effort=effort,
+        max_output_tokens=max_output_tokens,
+        priority_class=priority_class,
+        timeout_s=timeout_s,
+        prompt=prompt,
+    )
+
+
+def default_llm_roles() -> dict[str, RoleConfig]:
+    """Т-§11.1 (models, effort, output limits), Т-§11.3 (priority classes), Т-§1.3 (model ids).
+    Timeouts: teacher 45 s and teacher_fallback 30 s as in Phase 3, others `llm_timeout_sec`
+    (60 s). Classes of roles with two uses (`recognizer`, `builder`) and of `voice` — D-B-101.
+    Output limits of ten roles are set by the stand measurement with `effort` (D-B-134): the
+    Т-§11.1 figure of 4096 came from a spike without a reasoning level."""
+    return {
+        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@2", 45.0),
+        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@2", 30.0),
+        "extractor": _role(SPARK, "high", 16384, "P2", "extractor@3"),
+        "verdict_free": _role(SPARK, "high", 8192, "P1", "verdict_free@1"),
+        "verdict_proof": _role(WONDER, "high", 8192, "P1", "verdict_proof@1"),
+        "second_opinion": _role(WONDER, "high", 8192, "P1", "second_opinion@1"),
+        "canvas_diagnoser": _role(SPARK, "low", 4096, "P0", "canvas_diagnoser@1"),
+        "recognizer": _role(SPARK, "low", 4096, "P0", "recognizer@1"),
+        "segmenter": _role("sam-3.1", None, None, "P1", None),
+        "voice": _role("muse-voice-transcribe-1.0", None, None, "P1", None),
+        "analyst": _role(SPARK, "high", 16384, "P2", "analyst@1"),
+        "analyst_deep": _role(WONDER, "high", 16384, "P2", "analyst@1"),
+        "builder": _role(SPARK, "high", 8192, "P2", "builder@1"),
+        "material_parser": _role(SPARK, "high", 4096, "P2", "material_parser@1"),
+        "task_generator": _role(SPARK, "high", 8192, "P2", "task_generator@1").model_copy(
+            update={"hard_model": WONDER}
+        ),
+        "task_checker": _role(SPARK, "high", 8192, "P1", "task_checker@1"),
+        "task_arbiter": _role(WONDER, "high", 8192, "P2", "task_arbiter@1"),
+        "solution_space": _role(SPARK, "high", 8192, "P2", "solution_space@1").model_copy(
+            update={"hard_model": WONDER}
+        ),
+        "viz_builder": _role(WONDER, "high", 16384, "P2", "viz_builder@1"),
+        "viz_checker": _role(SPARK, "low", 4096, "P2", "viz_checker@1"),
+        "misconception_describer": _role(SPARK, "high", 4096, "P3", "misconception_describer@1"),
+        "artifact_writer": _role(SPARK, "high", 4096, "P2", "artifact_writer@1"),
+        "today_planner": _role(SPARK, "high", 4096, "P2", "today_planner@1"),
+        "domain_classifier": _role(SPARK, "low", 4096, "P1", "domain_classifier@1"),
+        "release_judge": _role(WONDER, "high", 8192, "P3", "release_judge@1"),
+        "illustrator": _role("muse-image-1.0", None, None, "P2", None),
+    }
+
+
+class ModelPrice(BaseModel):
+    """Т-§11.4: dollars per 1M tokens of one model (ТЗ Ф4 WP10.4). `per_minute` — dollars per
+    minute of audio and `per_image` — dollars per picture, for the calls that report no tokens
+    (`voice`, `illustrator`; D-B-198) and are 0 unless the owner sets them. The three token prices
+    are required, a price is not negative and an unknown key is an error: a typo or a gap would
+    otherwise cost the model at 0 and silently void the dollar budgets (D-B-199; D-C-150)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input: float = Field(ge=0)
+    cached_input: float = Field(ge=0)
+    output: float = Field(ge=0)
+    per_minute: float = Field(default=0.0, ge=0)
+    per_image: float = Field(default=0.0, ge=0)
 
 
 class Settings(BaseSettings):
@@ -122,7 +227,6 @@ class Settings(BaseSettings):
     neo4j_password: SecretStr = SecretStr("neo4j")
     redis_url: str = "redis://localhost:6379/0"
     compute_url: str = "http://localhost:8001"
-    jwt_secret: SecretStr = SecretStr("")
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
@@ -178,17 +282,99 @@ class Settings(BaseSettings):
     # WP3.3: periodic jobs. Phase 3 decisions (ТЗ §6.2).
     scheduler_tick_s: float = 15.0
     session_sweep_interval_s: int = 60
-    purge_deleted_interval_s: int = 600
     # WP3.4: a job deferred to the next UTC midnight gets up to this much random jitter.
     daily_budget_defer_jitter_s: int = 900
     # WP11.1 (Т-§22.4): dispatcher inside `projector`; batch size as projector_batch_max_events.
     dispatcher_concurrency: int = 8
     dispatcher_batch_size: int = 100
     dispatcher_restart_pause_s: float = 5.0
+    # Phase 4 (ТЗ Ф4 §6.7, stream A). Starting values: Т-§21.3, Т-§22.11, Д-§14.1.
+    # `evidence_tier_weights`, `hint_step_penalty`, `hot_window_min` (stream C block) and
+    # `episode_context_turns` (stream B block) already exist under these names (§6.7 «есть»).
+    # `projector_batch_max_events` -> `projector_batch_size` and `rebuild_max_tx_ops` 200 000
+    # come with the projector rewrite in WP3 (Phase 4 decision D-A-102).
+    # WP1.2: pool of `Db` per process; the docs give no sizes (Phase 4 decision D-A-101).
+    pg_pool_min_size: int = 1
+    pg_pool_max_size: int = 10
+    # Т-§2.7, Т-§2.4.
+    rebuild_concurrency: int = 2
+    projector_lag_p95_ms: int = 500
+    # Т-§7.9: derived evidence.
+    requires_min_confidence: float = 0.6
+    same_idea_min_confidence: float = 0.7
+    # Т-§7.9: the weight factor of an evidence derived through REQUIRES (indirect) or SAME_IDEA
+    # (transfer); part of rules@3, so a change needs a new rules version and a rebuild.
+    derived_indirect_factor: float = 0.5
+    derived_transfer_factor: float = 0.6
+    # Т-§7.5: episodes.
+    episode_max_turns: int = 12
+    episode_idle_min: int = 10
+    # Т-§8.2: understanding.
+    level_recency_factor: float = 0.6
+    proof_min_weight: float = 0.8
+    fail_min_weight: float = 0.8
+    unstable_min_weight: float = 0.4
+    delayed_fail_factor: float = 0.25
+    level_implications: dict[int, list[int]] = Field(
+        default_factory=lambda: {3: [1], 4: [3, 1], 5: [1], 6: [3, 1]}
+    )
+    # Т-§8.3: retention.
+    delay_threshold_h: int = 20
+    target_retention: float = 0.9
+    retention_fit_min_reviews: int = 1000
+    # Т-§8.4, Т-§8.5, Т-§8.7.
+    gap_window: int = 5
+    control_type_levels: dict[str, list[int]] = Field(
+        default_factory=lambda: {
+            "tasks": [3, 4],
+            "colloquium_proofs": [2, 3, 6],
+            "oral_theory": [2, 6],
+            "no_goal": [3],
+        }
+    )
+    why_recent_n: int = 3
+    # D-A-141, D-A-242: last exposures per skill in the slice of the teacher (no number in Т-§10.2).
+    slice_recent_exposures: int = 3
+    # Т-§9.2, Т-§9.5: misconceptions and profile.
+    fix_min_resists: int = 2
+    watch_days: int = 3
+    profile_min_samples: int = 10
+    calibration_window: int = 200
+    calibration_min_reports: int = 10
+    # Т-§13.2, Т-§4.10, Т-§3.2: queue and periodic work.
+    max_jobs_per_learner: int = 4
+    graph_hygiene_every_topics: int = 10
+    turn_manifest_retention_days: int = 30
+    # Т-§18.2: level status -> predicted probability of a correct answer (calibrated, Т-§18.5).
+    p_proven: float = 0.9
+    p_derived: float = 0.7
+    p_unstable: float = 0.5
+    p_failed: float = 0.2
+    p_unknown: float = 0.4
+    # Т-§14: review, «Today», pace, prep mode.
+    review_trigger_retention: float = 0.85
+    forgetting_domain_idle_days: int = 30
+    review_item_minutes: float = 1.5
+    # Slot 6 in the preparation mode (WP17.4, D-B-216): items shown per list.
+    prep_slot_max_items: int = 12
+    today_max_items: int = 3
+    # WP17.2: «подбирается на первых данных»; the class B record comes with WP17.
+    today_min_score: float = 0.0
+    # WP17.1: «веса в конфиге» without names or values — Phase 4 decision at WP17 (1.0 each).
+    review_weight_need: float = 1.0
+    review_weight_deadline: float = 1.0
+    review_weight_forgetting: float = 1.0
+    review_weight_consolidation: float = 1.0
+    pace_window_days: int = 14
+    pace_warning_margin: float = 0.8
+    pace_min_active_days: int = 5
+    cheatsheet_offer_days: int = 7
 
     # --- stream B ---
     # Т-§7.5: turns before the episode given to the extractor for understanding only (WP12).
     episode_context_turns: int = 3
+    # WP16.7 (Т-§7.11): offline runs of the extractor per episode of the reference set (kappa).
+    extraction_eval_runs: int = 5
     # WP5.7 (Д-§7, R4): Meta API credentials; the old LLM_API_* names are read as fallbacks.
     meta_api_key: SecretStr = Field(
         default=SecretStr(""), validation_alias=AliasChoices("META_API_KEY", "LLM_API_KEY")
@@ -205,13 +391,11 @@ class Settings(BaseSettings):
         }
     )
     llm_concurrency_default: int = 4
-    # WP5.7 (Т-§11.1): reasoning effort, output limit and timeout by role; roles without an
-    # entry in llm_role_timeout_s use llm_timeout_sec. Teacher "high" is chosen per turn (WP6.5).
+    # WP5.7 (Т-§11.1): reasoning effort, output limit and timeout of the Phase 3 roles outside
+    # `llm_roles`, and overrides of its rows (D-B-208); the rest use llm_timeout_sec. Teacher
+    # "high" is chosen per turn (WP6.5).
     llm_role_reasoning: dict[str, Literal["low", "high"]] = Field(
         default_factory=lambda: {
-            "teacher": "low",
-            "teacher_fallback": "low",
-            "extractor": "high",
             "evaluator": "high",
             "diagnostic": "high",
             "task_gen": "high",
@@ -222,9 +406,6 @@ class Settings(BaseSettings):
     )
     llm_role_max_output_tokens: dict[str, int] = Field(
         default_factory=lambda: {
-            "teacher": 8192,
-            "teacher_fallback": 4096,
-            "extractor": 4096,
             "evaluator": 4096,
             "diagnostic": 4096,
             "task_gen": 4096,
@@ -234,9 +415,7 @@ class Settings(BaseSettings):
         }
     )
     max_output_tokens_cap: int = 16384
-    llm_role_timeout_s: dict[str, float] = Field(
-        default_factory=lambda: {"teacher": 45.0, "teacher_fallback": 30.0}
-    )
+    llm_role_timeout_s: dict[str, float] = Field(default_factory=dict)
     # WP5.2 (Т-§11.2): retries on failure and on 429; base_ms and max_wait_s are Phase 3
     # decisions (ТЗ §6.2).
     llm_retry_attempts: int = 2
@@ -265,6 +444,8 @@ class Settings(BaseSettings):
     conversation_collapse_turns: int = 12
     # WP14.1 (Т-§4.5): label limits per call.
     candidate_skills_k: int = 15
+    # WP12.7 (Т-§5.7 «LIMIT 5»): tasks returned by one selection.
+    task_select_limit: int = 5
     label_max_topics: int = 8
     label_max_tasks: int = 5
     # WP6.2 (D-C-013): practice thresholds moved from quack/artifacts/params.py (ТЗ-П3).
@@ -286,16 +467,131 @@ class Settings(BaseSettings):
     # WP15 (Т-§12.1, Т-§12.4): spoiler guard retries; numbers with |x| below this are not checked.
     guard_max_retries: int = 2
     spoiler_ignore_abs_below: int = 10
+    # --- Phase 4, stream B (ТЗ Ф4 §6.7; starting values Т-§21.3, Т-§22.11) ---
+    # WP10.1: the role table Т-§11.1, one row per role.
+    llm_roles: dict[str, RoleConfig] = Field(default_factory=default_llm_roles)
+    # WP10.4 (Т-§11.4, ТЗ Ф4 §2.3 строка 9): prices come from the owner; empty until then.
+    # JSON in `LLM_PRICES`; an empty string is the empty table (D-C-149).
+    llm_prices: Annotated[dict[str, ModelPrice], NoDecode] = Field(default_factory=dict)
+    # WP10.3 (Т-§11.5).
+    tool_timeout_ms: int = 2000
+    # WP10.3: model steps of one tool loop before it is cut. Phase 4 decision D-B-117.
+    tool_loop_max_steps: int = 4
+    # WP10.4 (Т-§11.4); owner decision D-B-211: generous per-learner budgets while the pool
+    # is full, the values of Т-§11.4 once it runs low (`tight_*`).
+    session_agent_budget_usd: float = 5.0
+    learner_daily_budget_usd: float = 20.0
+    tight_session_agent_budget_usd: float = 0.5
+    tight_learner_daily_budget_usd: float = 3.0
+    # D-B-211: the money for models, in dollars (`LLM_POOL_BUDGET_USD`); 0 — no pool, the mode
+    # is always `normal`. The remainder is the pool minus every cost in `ops.llm_usage`.
+    llm_pool_budget_usd: float = 0.0
+    llm_pool_tight_remaining_usd: float = 100.0
+    llm_pool_judges_only_remaining_usd: float = 50.0
+    llm_pool_cache_s: float = 30.0
+    # D-B-211: the preference (`preference.set`) by which a learner says «I am a Meta judge».
+    meta_judge_preference_key: str = "meta_judge"
+    # WP13.4 (Т-§12.2).
+    spoiler_holdback_chars: int = 120
+    # WP14.5 (Т-§10.1).
+    teacher_context_target_tokens: int = 30000
+    teacher_context_max_tokens: int = 60000
+    # WP14.2 (Т-§10.2).
+    memory_skills_max: int = 12
+    # Phase 4 decision D-B-102: threshold of "confident enough" gap type (Т-§10.2).
+    gap_type_min_confidence: float = 0.6
+    # WP14.4 (Т-§10.4): result limits of the memory tools. Phase 4 decision D-B-103.
+    memory_tool_limits: dict[str, int] = Field(
+        default_factory=lambda: {
+            "skill_history": 10,
+            "similar_mistakes": 5,
+            "past_solution": 2,
+            "voice_at_line": 1,
+            "search_materials": 5,
+            "prerequisites": 10,
+        }
+    )
+    # WP16.3 (Т-§4.3, Т-§4.2, Т-§4.6; D-B-205): candidates per subject; the confidence of
+    # `same_idea` by the category of the model; of `REQUIRES` by origin (material > model).
+    candidate_k: int = 15
+    same_idea_confidence: dict[str, float] = Field(
+        default_factory=lambda: {"low": 0.4, "medium": 0.75, "high": 0.9}
+    )
+    reconcile_requires_confidence: dict[str, float] = Field(
+        default_factory=lambda: {"material": 0.85, "model": 0.65}
+    )
+    # WP16.3 (Т-§4.10; D-B-185): a duplicate candidate scores cosine + weight × shared neighbours.
+    hygiene_min_score: float = 0.9
+    hygiene_neighbour_weight: float = 0.1
+    # WP16.4 (Т-§4.9).
+    domain_autolink_confidence: float = 0.8
+    # WP11.2–11.3 (Т-§6.1, Т-§6.4, Т-§6.6).
+    symbolic_inline_timeout_ms: int = 1500
+    symbolic_background_timeout_ms: int = 10000
+    symbolic_check_delay_ms: int = 3000
+    min_sig_digits: int = 3
+    # Largest decimal exponent of a learner's number checked instantly; a larger one goes to
+    # the symbolic check (an exact `Fraction` of `1e-999999999` stalls the API). The documents
+    # give no value; starting value.
+    instant_number_max_exponent: int = Field(default=1000, ge=1)
+    numeric_points: int = 20
+    # WP11.5 (Т-§6.6): numbers of the numeric check sent to compute in `/v1/math/*`; the
+    # documents give none of them. Phase 4 decision D-B-124.
+    math_precision_digits: int = 30
+    math_sample_low: float = -10.0
+    math_sample_high: float = 10.0
+    math_positive_sample_min: float = 1e-3
+    math_max_attempts_per_point: int = 10
+    math_rel_tol: float = 1e-9
+    math_abs_tol: float = 1e-12
+    # Share of `timeout_ms` given to `simplify(a − b)` (Т-§6.6 «свой таймаут»). D-B-124.
+    math_simplify_share: float = 0.8
+    # WP11.6 (Т-§7.7).
+    verdict_min_confidence: float = 0.7
+    # WP11.7 (Т-§6.9, Т-§16.3): below this recognition confidence the reading is «unsure»;
+    # the documents give no number. Phase 4 decision D-B-127.
+    recognition_min_confidence: float = 0.8
+    second_opinion_model: str = WONDER
+    # WP13.9 (Т-§3.2).
+    turn_context_sample_rate: float = 0.02
+    # WP16.5 (Т-§22.10: one fix round; target value Т-§21.3 is 3).
+    viz_max_fix_rounds: int = 1
+    viz_static_base_url: str = ""
+    # WP16.5 (Т-§13.6 п.1): the allowed libraries, name → path under `viz_static_base_url`; the
+    # documents name D3, Plotly, KaTeX but no files or versions (D-B-177 [ПРОВЕРИТЬ], C: WP9.2).
+    viz_libraries: dict[str, str] = Field(default_factory=dict)
+    # WP8.2 (WP16.6): the short check of «я это уже знаю» — at most this many tasks, one per
+    # skill of the topic (the document says «1–3»). D-B-193.
+    known_check_max_tasks: int = Field(default=3, ge=1)
+    # WP10.6 (ТЗ Ф4 §2.3 строка 20): UUIDv5 namespace of the learner pseudonym in traces.
+    # Phase 4 decision D-B-105: a fixed namespace, never changed after the first trace.
+    langsmith_pseudonym_ns: str = "6f1c2a9e-4b7d-5e3a-9c21-0d8e7f6a5b43"
+    # WP10.6 (Д-§7: the key only in `api` and `workers`; Д-§11: off in tests and `loadtest`).
+    # An empty key means tracing off. D-B-201, D-B-202.
+    langsmith_api_key: SecretStr = SecretStr("")
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    langsmith_project: str = "quack"
+    langsmith_timeout_s: float = 5.0
+    # Days after which LangSmith drops a trace (a setting of the LangSmith project, set by the
+    # owner; the number is the one the owner sets there, [ПРОВЕРИТЬ] the plan's value).
+    langsmith_retention_days: int = 14
+    # WP15 (Т-§9.4): root-cause confidence category of extractor@3 → number. D-B-106.
+    root_cause_confidence_map: dict[Literal["low", "medium", "high"], float] = Field(
+        default_factory=lambda: {"low": 0.3, "medium": 0.6, "high": 0.9}
+    )
+    # WP10.3 (Т-§11.8 п.1): fallback two-step teacher turn, off until the live run says so.
+    teacher_two_step: bool = False
+    # WP16.7 (Т-§18.2): attempts of Т1 (the latest) the Brier score of `ops metrics` replays the
+    # memory for; each one replays the learner's log. Phase 4 decision D-B-195.
+    metrics_brier_max_attempts: int = Field(default=200, ge=1)
 
     # --- stream C ---
     # WP8.3: probe timeout of /health/ready and /healthz (was HEALTH_CHECK_TIMEOUT_SEC).
     health_check_timeout_s: float = 2.0
     # WP1.5 (Т-§19.1, ТЗ-П1, ТЗ-П2): fixed 60 s windows, keys ratelimit:{scope}:{key}.
-    auth_requests_per_ip_per_min: int = 10
     learner_actions_per_min: int = 60
     turns_per_min: int = 20
-    # WP1.6: moved from quack/domains (JWT_TTL_DAYS, CURATION_DEFER_MINUTES).
-    jwt_ttl_days: int = 7
+    # WP1.6: moved from quack/domains (CURATION_DEFER_MINUTES).
     curation_defer_min: int = 10
     # WP1.6, audit A7: other thresholds of Phase 2 (domains, artifacts) — Phase 3 decision D-C-014.
     curation_min_evidence_for_promotion: int = 2
@@ -314,6 +610,138 @@ class Settings(BaseSettings):
     # Т-§7.4 «окно горит» ×0.5; ТЗ §6.2 не называет параметр — Phase 3 decision D-C-019.
     hot_window_factor: float = 0.5
 
+    # Phase 4 (ТЗ Фазы 4 §6.7), stream C. Secrets per role — Д-§7; values from Т-§21.3,
+    # Т-§22.11, Д-§14.1. `None` — the value is not in the documents (Phase 4 decision D-C-105).
+    # WP18 (Т-§19.1, Д-§3.1, Д-§7)
+    auth_link_ttl_min: int = 15
+    auth_link_per_email_per_hour: int = 5
+    auth_link_per_ip_per_hour: int = 20
+    auth_session_ttl_days: int = 7
+    session_cookie_domain: str = "qvack.online"
+    auth_success_redirect_url: str | None = None
+    terms_version: str | None = None
+    # Phase 4 decision D-C-104: names of sender and redirect URI are not in §6.7.
+    auth_email_from: str = "login@qvack.online"
+    google_oidc_redirect_url: str = "https://api.qvack.online/auth/google/callback"
+    email_api_key: SecretStr = SecretStr("")
+    google_oidc_client_id: SecretStr = SecretStr("")
+    google_oidc_client_secret: SecretStr = SecretStr("")
+    # Timeout of one HTTP call of sign-in (Resend, Google token and certificates). The documents
+    # name no value: the one of `compute_timeout_sec` (Phase 4 decision of stream C, to confirm).
+    auth_http_timeout_s: float = 5.0
+    # WP19 (Т-§19.8, Д-§8.4)
+    upload_max_mb: int = 50
+    object_url_ttl_s: int = 300
+    export_link_ttl_hours: int = 24
+    # WP23.7 (D-C-231): the events of the archive of a learner are read this many rows at a time.
+    export_events_page: int = Field(default=1000, ge=1)
+    s3_bucket_learners: str = "quack-learners"
+    s3_endpoint: SecretStr = SecretStr("")
+    s3_access_key: SecretStr = SecretStr("")
+    s3_secret_key: SecretStr = SecretStr("")
+    # WP25 seam S9 (Д-§8.5). Phase 4 decision D-C-103: the R2 endpoint is a config address.
+    deletions_bucket: str = "quack-deletions"
+    deletions_s3_endpoint: str = ""
+    deletions_s3_access_key: SecretStr = SecretStr("")
+    deletions_s3_secret_key: SecretStr = SecretStr("")
+    # WP20 (Т-§10.5, ТЗ §2.3 п.17)
+    materials_k: int = 5
+    # WP20.2 (Т-§3.4.5 «около 1–2 КБ», Т-§4.3 «параллельно для больших материалов»;
+    # Phase 4 decision D-C-201): chunk size in characters, chunks per `material_parser` call,
+    # calls in flight, marks kept per chunk.
+    material_chunk_chars: int = Field(default=1500, ge=200)
+    material_chunk_max_chars: int = Field(default=2000, ge=200)
+    material_parser_batch: int = Field(default=8, ge=1)
+    material_parser_concurrency: int = Field(default=4, ge=1)
+    material_marks_per_chunk: int = Field(default=6, ge=1)
+    # WP20.2 tail (D-C-213, D-C-214): deadlines of a syllabus kept per material; a PDF page with
+    # fewer characters of text than `material_scan_min_chars` is read from its image, at most
+    # `material_scan_max_pages` pages of one file.
+    material_deadlines_max: int = Field(default=20, ge=1)
+    # WP20.2, #271 (D-C-217): problems of one material that become seminar tasks, at most.
+    material_seminar_tasks_max: int = Field(default=30, ge=1)
+    material_scan_min_chars: int = Field(default=20, ge=0)
+    material_scan_max_pages: int = Field(default=50, ge=1)
+    # Т-§3.4.6, Т-§10.5: the reserve taken inside SEARCH before post-filters and the final k.
+    vector_search_reserve: int = 30
+    embedding_dim: int = 768
+    # Т-§10.5: the task instruction of a query «как рекомендует карточка модели»; the starting
+    # value is the card's own example (D-C-117, [ПРОВЕРИТЬ] by the search quality check).
+    embedding_query_instruction: str = (
+        "Given a web search query, retrieve relevant passages that answer the query"
+    )
+    modal_token_id: SecretStr = SecretStr("")
+    modal_token_secret: SecretStr = SecretStr("")
+    # WP21 (Т-§15, Т-§22.11)
+    stroke_chunk_seconds: int = 10
+    mark_min_confidence: float = 0.8
+    error_grace_ms: int = 8000
+    stuck_idle_s: int = 60
+    stuck_erase_times: int = 3
+    max_unprompted_marks_per_task: int = 2
+    min_intervention_gap_s: int = 45
+    # Client parameters served in GET /v1/me (ТЗ §6.7); Т-§21.3 (§15.2, §15.3, §16.2).
+    stroke_batch_ms: int = 300
+    line_pause_ms: int = 1200
+    capture_still_ms: int = 700
+    # WP22 (Т-§16, Т-§22.6)
+    pairing_ttl_s: int = 120
+    sheet_line_match_threshold: float = 0.2
+    new_sheet_match_share: float = 0.3
+    # WP23 (Т-§17)
+    cards_per_topic_max: int = 15
+    cheatsheet_fit_rounds: int = 2
+    # Т-§17.8 (WP23.6): longest instruction of a learner skill, in characters (D-C-216)
+    learner_skill_max_chars: int = 2000
+    # Т-§17.4 (WP23.3): formulas of one block that code sends to compute; the rest stay unchecked
+    artifact_formulas_per_block_max: int = 5
+    # Т-§17.4 (WP23.3): longest side of a formula sent to compute (the `MathInput` limit)
+    artifact_formula_chars_max: int = 2000
+    # WP9 (Д-§2.1, Д-§4.2, Д-§8.1, Д-§9.3)
+    disk_warn_pct: int = 75
+    disk_crit_pct: int = 90
+    team_daily_alert_usd: float = 60.0
+    backup_interval_hours: int = 6
+    backup_retention_days: int = 14
+    # `ops backup` (Д-§8.1, Д-§7): R2 key limited to the bucket; `file:///dir` in the endpoint
+    # writes into a directory instead (tests, local stack).
+    backup_bucket: str = "quack-backups"
+    backup_s3_endpoint: SecretStr = SecretStr("")
+    backup_s3_access_key: SecretStr = SecretStr("")
+    backup_s3_secret_key: SecretStr = SecretStr("")
+    backup_age_public_key: str = ""
+    backup_local_dir: str = "/backups"
+    heartbeat_backup_url: SecretStr = SecretStr("")
+    alert_webhook_url: SecretStr = SecretStr("")
+    # `ops db-roles` (Д-§7): passwords of the three Postgres roles.
+    app_db_password: SecretStr = SecretStr("")
+    reader_db_password: SecretStr = SecretStr("")
+    migrator_db_password: SecretStr = SecretStr("")
+    # Д-§14.3: the chat is not chosen yet, the body shape follows the setting (ops/notify.py).
+    alert_webhook_format: Literal["slack", "discord", "telegram"] = "slack"
+    alert_webhook_chat_id: str = ""
+    telegram_bot_token: SecretStr = SecretStr("")
+    telegram_chat_id: str = ""
+    # `ops alerts` (Д-§9.3): starting values of the table; every run is a fresh container, the
+    # hold times are measured in Redis.
+    heartbeat_alerts_url: SecretStr = SecretStr("")
+    healthz_url: str = "http://api:8000/healthz"
+    host_state_path: str = "/host-state/state.json"
+    alert_healthz_hold_s: int = 300
+    alert_backup_grace_min: int = 30
+    alert_projector_lag_hold_s: int = 600
+    alert_queue_age_s: int = 600
+    alert_failed_share: float = 0.10
+    alert_pressure_hold_s: int = 300
+    alert_renotify_s: int = 3600
+    alert_restart_loop_delta: int = 3
+    alert_host_state_max_age_s: int = 900
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["https://app.qvack.online", "https://preview.qvack.online"]
+    )
+    # WP24: hard timeout of a compute PDF, image or render job — Phase 4 decision D-C-107.
+    compute_task_timeout_s: float = 60.0
+
     fold: FoldParams = Field(default_factory=FoldParams)
 
     @model_validator(mode="after")
@@ -330,13 +758,22 @@ class Settings(BaseSettings):
         )
         return self
 
+    @field_validator("llm_prices", mode="before")
+    @classmethod
+    def _read_llm_prices(cls, value: Any) -> Any:
+        """`LLM_PRICES` is JSON; an empty or blank string (compose passes `${LLM_PRICES:-}`) is
+        the empty table, so dev starts and prod refuses with the message of D-B-198 (D-C-149)."""
+        if isinstance(value, str | bytes):
+            text = value.decode() if isinstance(value, bytes) else value
+            return json.loads(text) if text.strip() else {}
+        return value
+
     @model_validator(mode="after")
     def _require_secrets_in_prod(self) -> Settings:
         """Д-§7, ТЗ WP9.2: each process gets only its own secrets, prod requires exactly those of
         the role (`projector` has no META_API_KEY, `migrate` and other `ops` commands none)."""
         if self.env == "prod":
             secrets = {
-                "JWT_SECRET": self.jwt_secret,
                 "META_API_KEY": self.meta_api_key,
                 "NEO4J_PASSWORD": self.neo4j_password,
             }
@@ -347,23 +784,15 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise ValueError(f"missing required secrets for ENV=prod: {', '.join(missing)}")
-            jwt_bytes = len(self.jwt_secret.get_secret_value().encode())
-            if "JWT_SECRET" in _PROD_SECRETS_BY_ROLE[self.process_role] and (
-                jwt_bytes < HS256_MIN_SECRET_BYTES
-            ):
-                raise ValueError(
-                    f"JWT_SECRET for ENV=prod must be at least {HS256_MIN_SECRET_BYTES} bytes"
-                )
         return self
 
-    @property
-    def sqlalchemy_dsn(self) -> str:
-        """POSTGRES_DSN rewritten for the SQLAlchemy asyncpg dialect."""
-        dsn = self.postgres_dsn
-        for prefix in ("postgresql+asyncpg://", "postgresql://", "postgres://"):
-            if dsn.startswith(prefix):
-                return "postgresql+asyncpg://" + dsn[len(prefix) :]
-        raise ValueError("POSTGRES_DSN must start with postgresql://")
+    @model_validator(mode="after")
+    def _require_prices_in_prod(self) -> Settings:
+        """ТЗ Ф4 §2.3 row 9, WP10.4: the processes that call models (`api`, `workers`) do not
+        start in prod without the price table; `dev`/`test` run with zero prices (D-B-198)."""
+        if self.env == "prod" and self.process_role in ("api", "workers") and not self.llm_prices:
+            raise ValueError("LLM_PRICES is required for ENV=prod (price table of Т-§11.4)")
+        return self
 
     @property
     def llm_api_key(self) -> SecretStr:
@@ -375,15 +804,69 @@ class Settings(BaseSettings):
         """R4: the old name of `meta_api_base_url`, kept for readers not yet moved to it."""
         return self.meta_api_base_url
 
-    def model_for_role(self, role: str) -> str:
-        return self.llm_role_models.get(role, self.llm_default_model)
+    def model_for_role(self, role: str, *, hard: bool = False) -> str:
+        """An explicit `llm_role_models` entry, else the role row of `llm_roles` (Т-§11.1,
+        D-B-188), else the default model; `hard` — a hard call of a role with `hard_model`
+        (D-B-166)."""
+        hard_model = self.llm_roles[role].hard_model if role in self.llm_roles else None
+        if hard and hard_model is not None:
+            return hard_model
+        if role in self.llm_role_models:
+            return self.llm_role_models[role]
+        if role in self.llm_roles:
+            return self.llm_roles[role].model
+        return self.llm_default_model
+
+    def effort_for_role(self, role: str) -> Literal["low", "high"] | None:
+        """An `llm_role_reasoning` entry, else the role row of `llm_roles` (D-B-208)."""
+        if role in self.llm_role_reasoning:
+            return self.llm_role_reasoning[role]
+        return self.llm_roles[role].effort if role in self.llm_roles else None
+
+    def max_output_tokens_for_role(self, role: str) -> int | None:
+        """An `llm_role_max_output_tokens` entry, else the role row of `llm_roles` (D-B-208)."""
+        if role in self.llm_role_max_output_tokens:
+            return self.llm_role_max_output_tokens[role]
+        return self.llm_roles[role].max_output_tokens if role in self.llm_roles else None
+
+    def timeout_for_role(self, role: str) -> float:
+        """An `llm_role_timeout_s` entry, else the role row of `llm_roles`, else
+        `llm_timeout_sec` (D-B-208)."""
+        if role in self.llm_role_timeout_s:
+            return self.llm_role_timeout_s[role]
+        return self.llm_roles[role].timeout_s if role in self.llm_roles else self.llm_timeout_sec
 
     def secret_values(self) -> list[str]:
         """Values the logger must mask (Д-§7)."""
         values = [
             self.meta_api_key.get_secret_value(),
-            self.jwt_secret.get_secret_value(),
             self.neo4j_password.get_secret_value(),
+            *(
+                secret.get_secret_value()
+                for secret in (
+                    self.email_api_key,
+                    self.langsmith_api_key,
+                    self.google_oidc_client_id,
+                    self.google_oidc_client_secret,
+                    self.s3_endpoint,
+                    self.s3_access_key,
+                    self.s3_secret_key,
+                    self.deletions_s3_access_key,
+                    self.deletions_s3_secret_key,
+                    self.backup_s3_endpoint,
+                    self.backup_s3_access_key,
+                    self.backup_s3_secret_key,
+                    self.heartbeat_backup_url,
+                    self.alert_webhook_url,
+                    self.telegram_bot_token,
+                    self.heartbeat_alerts_url,
+                    self.app_db_password,
+                    self.reader_db_password,
+                    self.migrator_db_password,
+                    self.modal_token_id,
+                    self.modal_token_secret,
+                )
+            ),
         ]
         return [v for v in values if len(v) >= 4]
 

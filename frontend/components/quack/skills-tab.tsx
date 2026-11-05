@@ -3,18 +3,21 @@
 import { MoreHorizontal } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
-import { slugCommand } from "@/lib/skills";
+import { skillName, slugCommand } from "@/lib/skills";
 import type { Skill, SkillBinding } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./icon-button";
 import { PILL } from "./page-parts";
 import { SkillChat } from "./skill-chat";
 import { useMenu } from "./use-menu";
+import { API_MODE } from "@/lib/api/client";
+import { useNotice } from "./soon";
 import { useSkills } from "./use-skills";
 
 export function SkillsTab() {
   const tx = useT();
-  const { skills, update } = useSkills();
+  const { skills, save: saveSkill, remove, toggle, canToggle } = useSkills();
+  const notice = useNotice();
   // "chat" — помощник; { skill } — редактор (skill: null — пустой, новый)
   const [editing, setEditing] = useState<"chat" | { skill: Skill | null } | null>(null);
   const createBtn = useRef<HTMLButtonElement>(null);
@@ -36,8 +39,10 @@ export function SkillsTab() {
     setEditing(null);
   };
 
-  const save = (s: Skill) => {
-    update((prev) => (prev.some((x) => x.id === s.id) ? prev.map((x) => (x.id === s.id ? s : x)) : [...prev, s]));
+  // on the backend a save can fail (name or artifact type taken, bad name): say why and keep the form open
+  const save = async (s: Skill) => {
+    const err = await saveSkill(s, tx.live.serverError);
+    if (err) return notice(err);
     close();
   };
 
@@ -56,7 +61,7 @@ export function SkillsTab() {
                 opener.current = createBtn.current;
                 setEditing("chat");
               }}
-              className="h-10 shrink-0 rounded-control bg-ribbon px-4 text-body font-semibold text-on-ribbon transition-colors hover:bg-ribbon-hover"
+              className="caps h-10 shrink-0 rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-out hover:bg-ribbon-hover"
             >
               {tx.skills.create}
             </button>
@@ -67,7 +72,7 @@ export function SkillsTab() {
                 opener.current = manualBtn.current;
                 setEditing({ skill: null });
               }}
-              className="h-10 shrink-0 rounded-control border border-seam px-4 text-body text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+              className="caps h-10 shrink-0 rounded-pill border border-seam px-6 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon"
             >
               {tx.skills.writeSelf}
             </button>
@@ -91,12 +96,12 @@ export function SkillsTab() {
           <SkillRow
             key={s.id}
             skill={s}
-            onToggle={() => update((prev) => prev.map((x) => (x.id === s.id ? { ...x, enabled: !x.enabled } : x)))}
+            onToggle={canToggle ? () => toggle(s.id) : undefined}
             onEdit={(from) => {
               opener.current = from;
               setEditing({ skill: s });
             }}
-            onDelete={() => update((prev) => prev.filter((x) => x.id !== s.id))}
+            onDelete={() => void remove(s.id, tx.live.serverError).then((err) => err && notice(err))}
           />
         ))}
         {skills.length === 0 && (
@@ -119,7 +124,8 @@ function SkillRow({
   onDelete,
 }: {
   skill: Skill;
-  onToggle: () => void;
+  /** `undefined`: the backend has no on/off for a skill, no switch is shown */
+  onToggle?: () => void;
   onEdit: (from: HTMLElement | null) => void;
   onDelete: () => void;
 }) {
@@ -129,7 +135,7 @@ function SkillRow({
     <li className="flex items-start gap-3 border-b border-seam-soft py-3.5">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <h3 id={nameId} className={cn("font-semibold", skill.enabled ? "text-paper" : "text-paper-dim")}>
+          <h3 id={nameId} className={cn("display-caps text-body", skill.enabled ? "text-paper" : "text-paper-dim")}>
             {skill.name}
           </h3>
           {skill.command && <code className="num text-small text-paper-dim">/{skill.command}</code>}
@@ -144,7 +150,7 @@ function SkillRow({
         <p className="mt-1 line-clamp-2 text-paper-dim">{skill.text}</p>
       </div>
       <div className="-mt-1 flex shrink-0 items-center">
-        <Switch checked={skill.enabled} onChange={onToggle} labelledBy={nameId} />
+        {onToggle && <Switch checked={skill.enabled} onChange={onToggle} labelledBy={nameId} />}
         <RowMenu name={skill.name} onEdit={onEdit} onDelete={onDelete} />
       </div>
     </li>
@@ -159,16 +165,16 @@ function Switch({ checked, onChange, labelledBy }: { checked: boolean; onChange:
       aria-checked={checked}
       aria-labelledby={labelledBy}
       onClick={onChange}
-      className="inline-flex size-10 items-center justify-center rounded-control"
+      className="inline-flex size-10 items-center justify-center rounded-pill"
     >
       <span
         aria-hidden
-        className={cn("relative h-[22px] w-10 rounded-full border transition-colors", checked ? "border-paper/85 bg-paper/85" : "border-rule bg-seam")}
+        className={cn("relative h-[22px] w-10 rounded-pill border transition-colors duration-(--dur-s) ease-out", checked ? "border-ribbon bg-ribbon" : "border-seam bg-transparent")}
       >
         <span
           className={cn(
-            "absolute top-[2px] size-4 rounded-full transition-all",
-            checked ? "left-[20px] bg-cloth" : "left-[2px] bg-paper-dim",
+            "absolute top-[2px] size-4 rounded-pill transition-all duration-(--dur-s) ease-out",
+            checked ? "left-[20px] bg-on-ribbon" : "left-[2px] bg-paper-dim",
           )}
         />
       </span>
@@ -195,11 +201,11 @@ function RowMenu({ name, onEdit, onDelete }: { name: string; onEdit: (from: HTML
     };
   }, [open]);
 
-  const item = "flex min-h-10 w-full items-center rounded-option px-3 text-left text-body transition-colors hover:bg-cloth-hover";
+  const item = "caps flex min-h-10 w-full items-center rounded-option px-3 text-left transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover";
   return (
     <div ref={root} className="relative">
       <div ref={trigger} className="contents">
-      <IconButton label={tx.skills.more(name)} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <IconButton label={tx.skills.more(name)} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="rounded-pill">
         <MoreHorizontal />
       </IconButton>
       </div>
@@ -208,7 +214,7 @@ function RowMenu({ name, onEdit, onDelete }: { name: string; onEdit: (from: HTML
           role="menu"
           aria-label={tx.skills.actions(name)}
           onKeyDown={onMenuKey}
-          className="absolute top-full right-0 z-20 mt-1 w-44 rounded-[14px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
+          className="absolute top-full right-0 z-20 mt-1 w-44 rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
         >
           <li role="none">
             <button
@@ -243,15 +249,16 @@ function RowMenu({ name, onEdit, onDelete }: { name: string; onEdit: (from: HTML
 }
 
 const FIELD =
-  "block w-full rounded-control border border-seam bg-cloth px-3 text-body text-paper focus-visible:border-rule";
+  "block w-full rounded-control border border-seam bg-cloth px-3 text-body text-paper transition-colors duration-(--dur-s) ease-out focus-visible:border-ribbon";
 
-function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | null; isNew: boolean; onSave: (s: Skill) => void; onCancel: () => void }) {
+function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | null; isNew: boolean; onSave: (s: Skill) => void | Promise<void>; onCancel: () => void }) {
   const tx = useT();
   const uid = useId();
   const [name, setName] = useState(initial?.name ?? "");
   const [text, setText] = useState(initial?.text ?? "");
   const [bindings, setBindings] = useState<SkillBinding[]>(initial?.bindings ?? []);
-  const [callable, setCallable] = useState(initial ? !!initial.command : false);
+  // on the backend every skill is called by its name
+  const [callable, setCallable] = useState(API_MODE || (initial ? !!initial.command : false));
   const [errors, setErrors] = useState<{ name?: string; text?: string }>({});
   const nameRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -273,7 +280,8 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const errs: typeof errors = {};
-    if (!name.trim()) errs.name = tx.skills.nameError;
+    // on the backend the name is the `/command`: it must have letters or digits in it
+    if (!name.trim() || (API_MODE && !skillName(name))) errs.name = tx.skills.nameError;
     if (!text.trim()) errs.text = tx.skills.textError;
     setErrors(errs);
     if (errs.name) return nameRef.current?.focus();
@@ -283,7 +291,7 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
       name: name.trim(),
       text: text.trim(),
       bindings,
-      command: callable && slug ? slug : undefined,
+      command: callable && slug ? (API_MODE ? skillName(name) : slug) : undefined,
       enabled: initial?.enabled ?? true,
     });
   };
@@ -296,11 +304,11 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
       onSubmit={submit}
       noValidate
       aria-label={isNew ? tx.skills.newTitle : tx.skills.editEditTitle}
-      className="mt-5 rounded-[16px] border border-seam bg-cloth-raised p-4 md:p-5"
+      className="mt-5 rounded-[2px] border border-seam bg-cloth-raised p-4 md:p-5"
     >
-      <h3 className="mb-4 font-semibold text-paper">{isNew ? tx.skills.newTitle : tx.skills.editEditTitle}</h3>
+      <h3 className="display-caps mb-4 text-paper">{isNew ? tx.skills.newTitle : tx.skills.editEditTitle}</h3>
       <div>
-        <label htmlFor={`${uid}-name`} className="mb-1.5 block text-small text-paper-dim">
+        <label htmlFor={`${uid}-name`} className="caps mb-1.5 block text-paper-dim">
           {tx.skills.name}
         </label>
         <input
@@ -321,7 +329,7 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
       </div>
 
       <div className="mt-4">
-        <label htmlFor={`${uid}-text`} className="mb-1.5 block text-small text-paper-dim">
+        <label htmlFor={`${uid}-text`} className="caps mb-1.5 block text-paper-dim">
           {tx.skills.textLabel}
         </label>
         <textarea
@@ -343,7 +351,7 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
       </div>
 
       <fieldset className="mt-4">
-        <legend className="mb-1.5 text-small text-paper-dim">{tx.skills.bindTo}</legend>
+        <legend className="caps mb-1.5 text-paper-dim">{tx.skills.bindTo}</legend>
         <div className="flex flex-wrap gap-2">
           {(["notes", "cards", "cheat"] as SkillBinding[]).map((b) => {
             const on = bindings.includes(b);
@@ -354,8 +362,8 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
                 aria-pressed={on}
                 onClick={() => toggle(b)}
                 className={cn(
-                  "h-10 rounded-full border px-4 text-body transition-colors",
-                  on ? "border-paper bg-cloth-hover text-paper" : "border-seam text-paper-dim hover:border-rule hover:text-paper",
+                  "caps h-10 rounded-pill border px-5 transition-colors duration-(--dur-s) ease-out",
+                  on ? "border-ribbon bg-ribbon-soft text-paper" : "border-seam text-paper-dim hover:border-ribbon hover:text-paper",
                 )}
               >
                 {tx.skills.binding[b]}
@@ -365,6 +373,12 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
         </div>
       </fieldset>
 
+      {API_MODE ? (
+        <p className="mt-3 text-body text-paper">
+          {tx.skills.callable}
+          <code className="num ml-2 text-small text-paper-dim">{slug ? `/${skillName(name)}` : tx.skills.commandHint}</code>
+        </p>
+      ) : (
       <label className="mt-3 flex min-h-10 cursor-pointer items-center gap-3 text-body text-paper">
         <input
           type="checkbox"
@@ -379,18 +393,19 @@ function SkillEditor({ initial, isNew, onSave, onCancel }: { initial: Skill | nu
           )}
         </span>
       </label>
+      )}
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button
           type="submit"
-          className="h-10 rounded-control bg-ribbon px-4 text-body font-semibold text-on-ribbon transition-colors hover:bg-ribbon-hover"
+          className="caps h-10 rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-out hover:bg-ribbon-hover"
         >
           {tx.skills.save}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="h-10 rounded-control border border-seam px-4 text-body text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+          className="caps h-10 rounded-pill border border-seam px-6 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon"
         >
           {tx.skills.cancel}
         </button>

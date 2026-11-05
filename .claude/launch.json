@@ -1,0 +1,33 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "quack-mock-prod",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "next",
+        "start",
+        "frontend",
+        "-p",
+        "3100"
+      ],
+      "port": 3100
+    },
+    {
+      "name": "quack-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "next",
+        "dev",
+        "frontend",
+        "-p",
+        "3101"
+      ],
+      "port": 3101
+    }
+  ]
+}

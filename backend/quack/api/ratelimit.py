@@ -6,7 +6,6 @@ somehow has no TTL gets one on the next hit. Redis unavailable → a local in-pr
 with the same limit and window (conflict §2.3 п.3; fail-open is gone).
 
 Dependencies for the routers:
-- `enforce_auth_rate_limit`: scope `auth`, key = client IP (register, login);
 - `enforce_action_rate_limit`: scope `actions`, key = learner id, for every POST/PATCH/DELETE
   except the heartbeat;
 - `check_turn_rate_limit`: scope `turns`, called by the turn endpoint (together with `actions`).
@@ -112,23 +111,6 @@ async def check_rate_limit(
             status_code=429,
             details={"retry_after_sec": retry_after},
         )
-
-
-def _client_ip(request: Request) -> str:
-    if request.client is not None and request.client.host:
-        return request.client.host
-    return "unknown"
-
-
-async def enforce_auth_rate_limit(request: Request) -> None:
-    """`auth` scope: requests per client IP of `/v1/auth/register` and `/v1/auth/login`."""
-    resources = get_resources(request)
-    await check_rate_limit(
-        resources.redis,
-        "auth",
-        _client_ip(request),
-        resources.settings.auth_requests_per_ip_per_min,
-    )
 
 
 async def enforce_action_rate_limit(

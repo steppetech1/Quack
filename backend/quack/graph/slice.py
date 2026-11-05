@@ -11,21 +11,21 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 import orjson
 from redis.asyncio import Redis
 
-from quack.db.postgres import SessionFactory
+from quack.db import Db
 from quack.db.redis import projector_applied_channel
-from quack.events.reader import last_seq
 from quack.logging import get_logger
 
 log = get_logger(__name__)
 
 # Fallback polling interval when Redis is unavailable (Т-§17.3).
 POLL_INTERVAL_SEC = 0.1
+_LAST_SEQ = "SELECT seq FROM core.learners WHERE learner_id = %(learner_id)s"
 
 
 @dataclass(frozen=True)
@@ -39,10 +39,13 @@ class ConsistentSlice[T]:
 
 @dataclass(frozen=True)
 class SliceDeps:
-    session_factory: SessionFactory
+    """`db` gives the tail of the learner's journal when `min_seq` is None; a slice with a
+    `min_seq` does not need it."""
+
     redis: Redis | None
     applied_seq_reader: Callable[[UUID], Awaitable[int]]
     snapshot_read_retries: int = 3
+    db: Db | None = field(default=None, kw_only=True)
 
 
 async def _watermarked_read[T](
@@ -88,6 +91,13 @@ async def _wait_poll(learner_id: UUID, min_seq: int, deps: SliceDeps, deadline: 
         await asyncio.sleep(min(POLL_INTERVAL_SEC, max(0.0, deadline - time.monotonic())))
 
 
+async def _journal_tail(learner_id: UUID, deps: SliceDeps) -> int:
+    if deps.db is None:
+        raise RuntimeError("the slice waits for the journal: deps have no db")
+    row = await deps.db.fetch_one(_LAST_SEQ, {"learner_id": learner_id})
+    return int(row["seq"]) if row is not None else 0
+
+
 async def read_consistent_slice[T](
     learner_id: UUID,
     min_seq: int | None,
@@ -97,8 +107,7 @@ async def read_consistent_slice[T](
     deps: SliceDeps,
 ) -> ConsistentSlice[T]:
     if min_seq is None:
-        async with deps.session_factory() as session:
-            min_seq = await last_seq(session, learner_id)
+        min_seq = await _journal_tail(learner_id, deps)
     data, applied, stable = await _watermarked_read(learner_id, loader_fn, deps)
     if applied >= min_seq:
         return ConsistentSlice(data, applied, min_seq, False, stable)

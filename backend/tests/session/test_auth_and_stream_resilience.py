@@ -1,70 +1,48 @@
-"""Auth revocation by `auth.users.deleted_at` and SSE stream resilience (S-5.4, S-5.5)."""
+"""A request without a session and SSE stream resilience (S-5.4, S-5.5).
+Sign-in is a Phase 4 session (ТЗ Ф4 WP18.3, D-C-112): 401 is `UNAUTHENTICATED` (§4.5)."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI
 from redis.exceptions import RedisError
-from sqlalchemy import text
 
 from quack.api.resources import AppResources
 from quack.config import Settings
-from quack.db.postgres import SessionFactory
+from quack.db import Db
 from quack.session import stream
-from tests.session.helpers import make_token
-
-if TYPE_CHECKING:
-    from tests.session.fixtures import SeededDomain
+from tests.session.helpers import Learner, make_learner
+from tests.support.auth import learner_headers
 
 pytest_plugins = ["tests.session.fixtures"]
 
 
-async def test_deleted_auth_user_gets_401_without_tombstone(
-    client: httpx.AsyncClient, db: SessionFactory, settings: Settings
-) -> None:
-    learner = uuid4()
-    async with db() as session, session.begin():
-        await session.execute(
-            text(
-                "INSERT INTO auth.users (id, email, password_hash, display_name, deleted_at) "
-                "VALUES (:id, :email, 'x', 'Gone', now())"
-            ),
-            {"id": learner, "email": f"{learner}@example.com"},
-        )
-    headers = {"Authorization": f"Bearer {make_token(settings, learner)}"}
-    resp = await client.get("/v1/sessions/active", headers=headers)
-    assert resp.status_code == 401, resp.text
-    assert resp.json()["error"]["code"] == "UNAUTHORIZED"
-
-
-async def test_learner_without_auth_user_row_is_rejected(
+async def test_request_without_session_is_rejected(
     session_app: FastAPI, settings: Settings
 ) -> None:
-    """ТЗ Фазы 3 WP1.2, D-C-004: a valid token of a learner without an `auth.users` row is
-    401. A plain client is used: the `client` fixture creates user rows for its tokens."""
-    headers = {"Authorization": f"Bearer {make_token(settings, uuid4())}"}
+    """ТЗ Ф4 WP18.3: without a session cookie — 401. A plain client is used: the `client`
+    fixture signs marked requests in, the API itself never accepts the test mark."""
+    headers = learner_headers(uuid4())
     transport = httpx.ASGITransport(app=session_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as plain:
         resp = await plain.get("/v1/sessions/active", headers=headers)
     assert resp.status_code == 401, resp.text
-    assert resp.json()["error"]["code"] == "UNAUTHORIZED"
+    assert resp.json()["error"]["code"] == "UNAUTHENTICATED"
 
 
-async def _start_session(
-    client: httpx.AsyncClient, headers: dict[str, str], seeded: SeededDomain, key: str
-) -> UUID:
+async def _start_session(client: httpx.AsyncClient, who: Learner) -> UUID:
     resp = await client.post(
         "/v1/sessions",
         json={
-            "domain_id": str(seeded.domain_id),
-            "topic_id": str(seeded.topic_id),
-            "idempotency_key": key,
+            "domain_id": str(who.domain_id),
+            "intent": "learn",
+            "idempotency_key": str(uuid4()),
         },
-        headers=headers,
+        cookies=who.cookies,
     )
     assert resp.status_code == 201, resp.text
     return UUID(resp.json()["session_id"])
@@ -73,18 +51,19 @@ async def _start_session(
 async def test_events_stream_without_redis_is_empty_sse(
     session_app: FastAPI,
     client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
+    learner: Learner,
+    pg_db: Db,
+    settings: Settings,
 ) -> None:
-    session_id = await _start_session(client, auth_headers, seeded_domain, "resil-no-redis")
+    session_id = await _start_session(client, learner)
     res: AppResources = session_app.state.resources
     session_app.state.resources = replace(res, redis=None)
-    resp = await client.get(f"/v1/sessions/{session_id}/events", headers=auth_headers)
+    resp = await client.get(f"/v1/sessions/{session_id}/events", cookies=learner.cookies)
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"].startswith("text/event-stream")
     # ownership is still checked first
-    foreign = {"Authorization": f"Bearer {make_token(res_settings(session_app), uuid4())}"}
-    resp = await client.get(f"/v1/sessions/{session_id}/events", headers=foreign)
+    foreign = await make_learner(pg_db, settings)
+    resp = await client.get(f"/v1/sessions/{session_id}/events", cookies=foreign.cookies)
     assert resp.status_code == 404
 
 
@@ -113,9 +92,7 @@ class _BrokenRedis:
         return self.pubsub_obj
 
 
-async def test_relay_ends_cleanly_on_redis_error(
-    session_app: FastAPI, seeded_domain: SeededDomain
-) -> None:
+async def test_relay_ends_cleanly_on_redis_error(session_app: FastAPI) -> None:
     res: AppResources = session_app.state.resources
     broken = _BrokenRedis()
     resources = replace(res, redis=broken)  # type: ignore[arg-type]

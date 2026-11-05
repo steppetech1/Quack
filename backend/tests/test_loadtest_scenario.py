@@ -35,7 +35,7 @@ def test_learners_file_of_seed_learners(tmp_path: Path) -> None:
     learners = load_learners(path)
     assert [str(x.learner_id) for x in learners] == [r["learner_id"] for r in rows]
     assert isinstance(learners[0], Learner)
-    assert learners[0].headers == {"Authorization": "Bearer t"}
+    assert learners[0].headers == {"Cookie": "quack_session=t"}
 
 
 @pytest.mark.parametrize(

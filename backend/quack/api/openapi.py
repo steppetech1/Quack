@@ -19,8 +19,17 @@ from quack.api.errors import ErrorResponse
 COMPONENT_REF = "#/components/schemas/{model}"
 ERROR_REF = COMPONENT_REF.format(model=ErrorResponse.__name__)
 
-# Routes reachable without a token (WP1.2): register and login.
-PUBLIC_ROUTES = frozenset({("post", "/v1/auth/register"), ("post", "/v1/auth/login")})
+# Routes reachable without a session: the sign-in routes of ТЗ Ф4 WP18.
+PUBLIC_ROUTES = frozenset(
+    {
+        ("post", "/auth/link"),
+        ("get", "/auth/link/verify"),
+        ("get", "/auth/google/start"),
+        ("get", "/auth/google/callback"),
+        # WP22.1: the phone has no session yet; the pairing token is its credential.
+        ("post", "/companion/pair"),
+    }
+)
 # The heartbeat does not count against the `actions` limit (WP1.5, `quack.api.ratelimit`).
 RATE_LIMIT_EXEMPT = frozenset({("post", "/v1/sessions/{session_id}/heartbeat")})
 MUTATING_METHODS = frozenset({"post", "patch", "delete"})
@@ -47,7 +56,7 @@ SSE_EVENTS = {
 DEFAULT_VALIDATION_MODELS = ("HTTPValidationError", "ValidationError")
 
 ERROR_DESCRIPTIONS = {
-    "401": "UNAUTHORIZED: missing, invalid or revoked token",
+    "401": "UNAUTHENTICATED: no session, or it expired or was revoked",
     "404": "NOT_FOUND: the resource does not exist or belongs to another learner",
     "409": "IDEMPOTENCY_CONFLICT or TURN_LOCKED",
     "422": "VALIDATION_ERROR",
@@ -96,6 +105,11 @@ def _sse_response(description: str, events: str = "") -> dict[str, Any]:
     }
 
 
+def _mentions_default_model(response: dict[str, Any]) -> bool:
+    text = json.dumps(response)
+    return any(f"/{name}" in text for name in DEFAULT_VALIDATION_MODELS)
+
+
 def _document(schema: dict[str, Any]) -> dict[str, Any]:
     components = schema.setdefault("components", {}).setdefault("schemas", {})
     _, defs = models_json_schema([(ErrorResponse, "serialization")], ref_template=COMPONENT_REF)
@@ -113,6 +127,11 @@ def _document(schema: dict[str, Any]) -> dict[str, Any]:
                 )
             for status in _error_statuses(method, path, operation):
                 responses[status] = _error_response(status)
+            # Routes outside `/v1` (`/auth/*`, `/companion/pair`) keep FastAPI's 422 entry that
+            # points at the removed model; the handler answers them with `ErrorResponse` too, and
+            # a dangling `$ref` breaks the type generator of the frontend (D-C-210).
+            if "422" in responses and _mentions_default_model(responses["422"]):
+                responses["422"] = _error_response("422")
     return schema
 
 

@@ -1,17 +1,17 @@
-"""Fixtures of the e2e stand (ТЗ Фазы 3 WP10.1)."""
+"""Fixtures of the e2e stand (ТЗ Ф4 WP26.1): the stand runs on the database of Phase 4."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
 
 import pytest
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from quack.config import Settings
-from quack.db.postgres import SessionFactory
+from quack.db import Db
 from tests.e2e.system import System, build_system
 from tests.support.broken import BrokenRedis
 from tests.support.llm import ScriptedFailure
@@ -40,34 +40,37 @@ async def _running(stand: System) -> AsyncIterator[System]:
 @pytest.fixture
 async def system(
     settings: Settings,
-    pg_engine: AsyncEngine,
-    db: SessionFactory,
     neo4j: AsyncDriver,
     redis: Redis,
+    pg_db: Db,
+    p4_database: str,
 ) -> AsyncIterator[System]:
-    async with _running(await build_system(settings, pg_engine, db, neo4j, redis)) as stand:
+    async with _running(await build_system(settings, neo4j, redis, pg_db, p4_database)) as stand:
         yield stand
 
 
 @pytest.fixture
 async def system_for_walk(
     settings: Settings,
-    pg_engine: AsyncEngine,
-    db: SessionFactory,
     neo4j: AsyncDriver,
     redis: Redis,
+    pg_db: Db,
+    p4_database: str,
 ) -> AsyncIterator[System]:
     walk = settings.model_copy(update={"learner_actions_per_min": WALK_ACTIONS_PER_MIN})
-    async with _running(await build_system(walk, pg_engine, db, neo4j, redis)) as stand:
+    async with _running(await build_system(walk, neo4j, redis, pg_db, p4_database)) as stand:
         yield stand
 
 
 @pytest.fixture
 async def system_without_redis(
-    settings: Settings, pg_engine: AsyncEngine, db: SessionFactory, neo4j: AsyncDriver
+    settings: Settings,
+    neo4j: AsyncDriver,
+    pg_db: Db,
+    p4_database: str,
 ) -> AsyncIterator[System]:
     broken = settings.model_copy(update={"redis_url": DEAD_REDIS_URL})
-    stand = await build_system(broken, pg_engine, db, neo4j, BrokenRedis())
+    stand = await build_system(broken, neo4j, BrokenRedis(), pg_db, p4_database)
     async with _running(stand) as running:
         yield running
 
@@ -75,12 +78,45 @@ async def system_without_redis(
 @pytest.fixture
 async def system_without_llm(
     settings: Settings,
-    pg_engine: AsyncEngine,
-    db: SessionFactory,
     neo4j: AsyncDriver,
     redis: Redis,
+    pg_db: Db,
+    p4_database: str,
 ) -> AsyncIterator[System]:
-    stand = await build_system(settings, pg_engine, db, neo4j, redis)
+    stand = await build_system(settings, neo4j, redis, pg_db, p4_database)
     stand.llm.fail(ScriptedFailure("unavailable", times=ALWAYS))
     async with _running(stand) as running:
         yield running
+
+
+type StandFactory = Callable[..., AbstractAsyncContextManager[System]]
+
+
+@pytest.fixture
+def stand(
+    settings: Settings, neo4j: AsyncDriver, redis: Redis, pg_db: Db, p4_database: str
+) -> StandFactory:
+    """`async with stand(neo4j=..., redis=..., storage=..., deletions=..., email=...) as system`:
+    a running stand with some of its resources replaced (T-E11); the processes of Phase 4 keep
+    their own, working connections."""
+
+    @asynccontextmanager
+    async def make(
+        *,
+        neo4j_driver: Any = None,
+        redis_client: Any = redis,
+        settings_update: dict[str, Any] | None = None,
+        **resources: Any,
+    ) -> AsyncIterator[System]:
+        built = await build_system(
+            settings.model_copy(update=settings_update or {}),
+            neo4j if neo4j_driver is None else neo4j_driver,
+            redis_client,
+            pg_db,
+            p4_database,
+            **resources,
+        )
+        async with _running(built) as running:
+            yield running
+
+    return make

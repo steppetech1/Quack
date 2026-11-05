@@ -1,21 +1,30 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
-import { Caveat, Golos_Text, JetBrains_Mono, PT_Serif } from "next/font/google";
+import { Archivo, Caveat, JetBrains_Mono, Manrope } from "next/font/google";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 import { getDict, getLocale } from "@/lib/i18n/server";
 import { LocaleProvider } from "@/lib/i18n/provider";
 
-const golos = Golos_Text({
-  variable: "--font-golos",
+// Основной шрифт: текст и заголовки
+const manrope = Manrope({
+  variable: "--font-manrope",
   subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const jetbrains = JetBrains_Mono({
   variable: "--font-jetbrains",
   subsets: ["latin", "cyrillic"],
-  weight: ["400", "500"],
+  weight: ["400", "500", "700", "800"],
+});
+
+// Широкий гротеск (Archivo Expanded SemiBold) для заголовка первого экрана лендинга.
+// Только латиница: заголовок «Quack! — Learning Hub» одинаковый на обоих языках
+const archivo = Archivo({
+  variable: "--font-archivo",
+  subsets: ["latin"],
+  axes: ["wdth"],
 });
 
 const caveat = Caveat({
@@ -24,19 +33,13 @@ const caveat = Caveat({
   weight: ["400", "500", "600"],
 });
 
-const ptSerif = PT_Serif({
-  variable: "--font-pt-serif",
-  subsets: ["latin", "cyrillic"],
-  weight: ["700"],
-});
-
 export async function generateMetadata(): Promise<Metadata> {
   const t = getDict(await getLocale());
   return { title: "Quack!", description: t.meta.description };
 }
 
 export const viewport: Viewport = {
-  themeColor: "#1c1915",
+  themeColor: "#141311",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -45,9 +48,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${golos.variable} ${jetbrains.variable} ${ptSerif.variable} ${caveat.variable} h-full antialiased`}
+      className={`${manrope.variable} ${jetbrains.variable} ${caveat.variable} ${archivo.variable} h-full antialiased`}
     >
       <body className="h-full overflow-hidden">
+        {/* фильтр рваного края для утилиты text-striped */}
+        <svg aria-hidden="true" focusable="false" width="0" height="0" className="pointer-events-none absolute">
+          <filter id="quack-ragged" x="-2%" y="-10%" width="104%" height="120%" colorInterpolationFilters="sRGB">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9 0.06" numOctaves={2} seed={3} result="noise" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale={5} xChannelSelector="R" yChannelSelector="G" />
+          </filter>
+        </svg>
         <Suspense fallback={null}>
           <Localized>{children}</Localized>
         </Suspense>

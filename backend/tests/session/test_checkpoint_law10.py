@@ -6,36 +6,17 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
-import httpx
-from neo4j import AsyncDriver
-from redis.asyncio import Redis
-from sqlalchemy import text
-
 from quack.config import Settings
-from quack.db.postgres import SessionFactory
-from quack.events.models import StoredEvent
-from quack.events.reader import EVENT_COLUMNS, row_to_event
-from quack.jobs import kinds
-from quack.jobs.queue import claim_next_job
+from quack.events.log import StoredEvent
 from quack.session.checkpoint_render import (
-    RENDERER_VERSION,
     collapsed_turn_count,
     episode_lines,
     render_checkpoint,
     visible_replies,
 )
-from quack.session.schemas import TeacherOutput
-from quack.session.workers import handle_session_checkpoint
-from tests.support.dispatch import dispatch
-from tests.support.resources import build_job_context
-
-if TYPE_CHECKING:
-    from tests.session.fixtures import FakeLLMProvider, SeededDomain
-
-pytest_plugins = ["tests.session.fixtures"]
 
 LEARNER = UUID("00000000-0000-0000-0000-00000000000a")
 SESSION = UUID("00000000-0000-0000-0000-00000000000b")
@@ -54,19 +35,19 @@ class _Log:
         event = StoredEvent(
             learner_id=LEARNER,
             seq=seq,
-            event_id=UUID(int=seq),
+            id=seq,
             type=type_,
             schema_version=version,
             actor="test",
             session_id=SESSION,
-            turn_id=UUID(payload["turn_id"]) if "turn_id" in payload else None,
             domain_id=None,
             correlation_id=None,
-            causation_id=None,
+            causation_seq=None,
             idempotency_key=f"k{seq}",
             payload_hash="h",
             payload={"session_id": str(SESSION), **payload},
             occurred_at=datetime(2026, 11, 1, tzinfo=UTC),
+            source_refs=[],
         )
         self.events.append(event)
         return event
@@ -194,104 +175,3 @@ def test_visible_part_follows_the_checkpoint(settings: Settings) -> None:
     assert len(visible_replies(log.events, covered_up_to, settings)) == 60
     covered_up_to = 2 * 26 - 1  # 26 turns covered: the oldest 12 folded
     assert len(visible_replies(log.events, covered_up_to, settings)) == 2 * 18
-
-
-async def _three_turns(
-    client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
-    fake_llm: FakeLLMProvider,
-) -> UUID:
-    start = await client.post(
-        "/v1/sessions",
-        json={
-            "domain_id": str(seeded_domain.domain_id),
-            "topic_id": str(seeded_domain.topic_id),
-            "idempotency_key": "law10-start",
-        },
-        headers=auth_headers,
-    )
-    assert start.status_code == 201, start.text
-    session_id = UUID(start.json()["session_id"])
-    for n in range(3):
-        fake_llm.push("teacher", TeacherOutput(reply_text=f"Reply {n}", pedagogical_move="explain"))
-        resp = await client.post(
-            f"/v1/sessions/{session_id}/turns",
-            json={"text": f"Student {n}", "idempotency_key": f"law10-turn-{n}"},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200, resp.text
-    return session_id
-
-
-async def test_checkpoint_makes_no_llm_call(
-    client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
-    db: SessionFactory,
-    neo4j: AsyncDriver,
-    redis: Redis,
-    settings: Settings,
-    fake_llm: FakeLLMProvider,
-) -> None:
-    """T-C1: no model call during `session.checkpoint`; the kind has no LLM roles."""
-    assert kinds.KIND_LLM_ROLES["session.checkpoint"] == ()
-    session_id = await _three_turns(client, auth_headers, seeded_domain, fake_llm)
-    calls_before = len(fake_llm.calls)
-    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
-    async with db() as session, session.begin():
-        job = await claim_next_job(session, "law10", ["session.checkpoint"])
-    assert job is not None
-    ctx = build_job_context(settings, db, neo4j, redis, llm=fake_llm.gateway)
-    await handle_session_checkpoint(job, ctx)
-    assert len(fake_llm.calls) == calls_before
-    async with db() as session:
-        rows = (
-            await session.execute(
-                text(
-                    f"SELECT {EVENT_COLUMNS} FROM core.events WHERE learner_id = :l "
-                    "AND session_id = :s ORDER BY seq"
-                ),
-                {"l": seeded_domain.learner_id, "s": session_id},
-            )
-        ).all()
-        outbox = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FROM core.llm_outbox "
-                    "WHERE learner_id = :l AND role = 'checkpointer'"
-                ),
-                {"l": seeded_domain.learner_id},
-            )
-        ).scalar_one()
-    assert outbox == 0
-    events = [row_to_event(r) for r in rows]
-    (cp,) = [e for e in events if e.type == "session.checkpointed"]
-    assert cp.actor == RENDERER_VERSION
-    expected = render_checkpoint(events, 5, settings)
-    assert cp.payload == {"session_id": str(session_id), **asdict(expected)}
-
-
-async def test_checkpoint_job_has_no_required_seq(
-    client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-    seeded_domain: SeededDomain,
-    db: SessionFactory,
-    fake_llm: FakeLLMProvider,
-    settings: Settings,
-) -> None:
-    """T-C5: the enqueued `session.checkpoint` has `required_seq IS NULL`."""
-    await _three_turns(client, auth_headers, seeded_domain, fake_llm)
-    await dispatch(settings, db, seeded_domain.learner_id)  # §8.9 п.7 (WP11.4)
-    async with db() as session:
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT required_seq FROM ops.jobs "
-                    "WHERE learner_id = :l AND kind = 'session.checkpoint'"
-                ),
-                {"l": seeded_domain.learner_id},
-            )
-        ).all()
-    assert len(rows) == 1
-    assert rows[0].required_seq is None

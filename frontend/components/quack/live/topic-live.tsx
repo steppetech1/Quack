@@ -4,35 +4,48 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { topicState } from "@/lib/api/adapters";
-import { ApiError, get, post, qs, type S } from "@/lib/api/client";
+import { studyCardsFromApi } from "@/lib/api/cards";
+import { ApiError, del, get, idem, patch, post, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
-import { startSession } from "@/lib/api/sessions";
-import { useFmt, useT } from "@/lib/i18n/provider";
+import { type Intent, startSession } from "@/lib/api/sessions";
+import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { ArtifactHost, ExpandableCard, type WindowSpec } from "../artifact-window";
+import { DeckCard, DeckViewer, type DeckManage } from "../artifact-content";
 import { Crumbs, MemoryRing, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
-import { useErrorText } from "./domain-setup-live";
+import { useNotice } from "../soon";
+import { useErrorText } from "./error-text";
 import { Markdown, plainText } from "./markdown";
 
+type Block = { block_id: string; kind: string; content: string };
 type Loaded = {
-  detail: S["TopicDetailResponse"];
-  artifacts: S["ArtifactView"][];
-  cheat: S["ArtifactView"] | null;
+  topic: S["TopicView"];
+  /** notes of the topic as blocks (`GET /v1/topics/{id}/notes`) */
+  notes: S["ArtifactResponse"] | null;
+  cards: S["CardsResponse"] | null;
+  /** the cheat sheet belongs to the hub of the topic, not to the topic (`GET /v1/hubs/{id}/cheatsheet`) */
+  hubId: string | null;
+  cheat: S["CheatsheetResponse"] | null;
 };
 
-const pct = (x: number) => Math.round(x * 100);
+/** 404 on an optional part of the page means "nothing yet", not an error */
+const orNone = <T,>(p: Promise<T>) =>
+  p.catch((e) => {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  });
 const ACTION_BTN =
-  "inline-flex h-10 items-center justify-center rounded-control px-4 text-body font-semibold transition-colors disabled:opacity-50";
+  "caps inline-flex h-10 items-center justify-center rounded-pill px-6 transition-colors duration-(--dur-s) ease-out disabled:opacity-50";
 
 /** Topic page on backend data: state, skills, mix-ups, notes and the cheat sheet */
 export function TopicLive({ id }: { id: string }) {
   const tx = useT();
   const t = tx.live;
   const router = useRouter();
-  const { dayLabel } = useFmt();
   const errorText = useErrorText();
-  const { domains, appliedSeq } = useData();
+  const notice = useNotice();
+  const { domains, appliedSeq, setActive, loadGraph } = useData();
   const { focusDomain } = useShell();
   const [data, setData] = useState<Loaded | null>(null);
   /** The page for this topic is on screen: a failed live re-fetch keeps it instead of showing an error */
@@ -40,20 +53,27 @@ export function TopicLive({ id }: { id: string }) {
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // moment of the render: skills past their review time get the "rusty" pill
+  const [now] = useState(() => Date.now());
 
   useEffect(() => {
     let off = false;
     (async () => {
       try {
-        const detail = await get<S["TopicDetailResponse"]>(`/v1/topics/${id}`);
-        const [list, cheat] = await Promise.all([
-          get<S["ArtifactListResponse"]>(`/v1/artifacts${qs({ topic_id: id })}`),
-          get<S["ArtifactView"] | null>(`/v1/topics/${id}/cheatsheet`).catch(() => null),
+        const topic = await get<S["TopicView"]>(`/v1/topics/${id}`);
+        const hubs = await get<S["HubGoal"][]>(`/v1/domains/${topic.domain_id}/hubs`).catch(() => [] as S["HubGoal"][]);
+        const has = (h: S["HubGoal"]) => h.topics?.some((x) => x.topic_id === id);
+        // a chapter first; `domain_all` (every topic of the subject) only when the topic is in no chapter
+        const hubId = (hubs.find((h) => h.kind !== "domain_all" && has(h)) ?? hubs.find(has))?.hub_id ?? null;
+        const [notes, cards, cheat] = await Promise.all([
+          orNone(get<S["ArtifactResponse"]>(`/v1/topics/${id}/notes`)),
+          orNone(get<S["CardsResponse"]>(`/v1/topics/${id}/cards`)),
+          hubId ? orNone(get<S["CheatsheetResponse"]>(`/v1/hubs/${hubId}/cheatsheet`)) : Promise.resolve(null),
         ]);
         if (off) return;
-        if (shown.current !== id) focusDomain(detail.topic.domain_id);
+        if (shown.current !== id) focusDomain(topic.domain_id);
         shown.current = id;
-        setData({ detail, artifacts: list.artifacts.filter((a) => a.kind !== "cheatsheet"), cheat });
+        setData({ topic, notes, cards, hubId, cheat });
       } catch (e) {
         if (off || shown.current === id) return;
         if (e instanceof ApiError && (e.status === 404 || e.status === 422)) setMissing(true);
@@ -63,11 +83,11 @@ export function TopicLive({ id }: { id: string }) {
     return () => {
       off = true;
     };
-    // once per topic, and again when the backend projection moves (states, skills, a new cheat sheet)
+    // once per topic, and again when the backend projection moves (states, skills, new notes)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, appliedSeq]);
 
-  const domain = domains.find((d) => d.id === data?.detail.topic.domain_id);
+  const domain = domains.find((d) => d.id === data?.topic.domain_id);
   const domainTitle = domain?.title ?? "";
 
   if (missing || error) {
@@ -82,46 +102,105 @@ export function TopicLive({ id }: { id: string }) {
   }
   if (!data) return <div className="flex-1" aria-busy="true" />;
 
-  const { topic, skills, misconceptions } = data.detail;
-  const state = topicState(topic.display_state);
-  const activeMix = misconceptions.filter((m) => m.status !== "fixed" && m.status !== "archived");
-
-  const begin = async (mode: "learn" | "review") => {
+  const { topic } = data;
+  const skills = topic.skills ?? [];
+  const state = topicState(topic.display);
+  const level = Math.min(1, Math.max(0, (topic.display.display_level ?? 0) / 6));
+  const begin = async (intent: Intent) => {
     setBusy(true);
     try {
-      const s = await startSession({ domain_id: topic.domain_id, topic_id: topic.topic_id, mode });
+      const s = await startSession({ domain_id: topic.domain_id, topic_id: topic.topic_id, intent });
+      setActive(s);
       router.push(`/session/${s.session_id}`);
     } catch (e) {
-      setError(errorText(e));
+      // an action that failed must not take the page away: `error` is for the load of the page itself
+      notice(errorText(e));
       setBusy(false);
     }
   };
 
-  const refreshCheat = async () => {
+  const buildCheat = async () => {
+    if (!data.hubId) return;
     setBusy(true);
     try {
-      await post(`/v1/topics/${id}/cheatsheet/refresh`, { domain_id: topic.domain_id });
-      setError(null);
+      await post(`/v1/hubs/${data.hubId}/cheatsheet`, { idempotency_key: idem() });
+      notice(t.cheatQueued);
     } catch (e) {
-      setError(errorText(e));
+      notice(errorText(e));
     } finally {
       setBusy(false);
     }
   };
 
+  /** "I know this" and "not needed": one POST, the graph is re-read by the live stream or right away */
+  const mark = async (what: "known" | "hide") => {
+    setBusy(true);
+    try {
+      await post(`/v1/topics/${topic.topic_id}/${what}`);
+      notice(what === "known" ? t.knownDone : t.hiddenDone);
+      if (what === "hide") {
+        await loadGraph(topic.domain_id).catch(() => {});
+        router.push("/");
+      }
+    } catch (e) {
+      notice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Edit (`PATCH`) and delete (`DELETE`) answer with the whole deck: an edited card gets a new id, so the deck is replaced, not patched */
+  const manage: DeckManage = {
+    edit: async (cardId, prompt) => {
+      try {
+        const cards = await patch(`/v1/cards/${cardId}`, { prompt, idempotency_key: idem() });
+        setData((d) => (d ? { ...d, cards } : d));
+        return null;
+      } catch (e) {
+        return errorText(e);
+      }
+    },
+    remove: async (cardId) => {
+      try {
+        const cards = await del(`/v1/cards/${cardId}`, { idempotency_key: idem() });
+        setData((d) => (d ? { ...d, cards } : d));
+        return null;
+      } catch (e) {
+        return errorText(e);
+      }
+    },
+  };
+
+  // the documents of the page: notes (blocks), cards (prompts), the cheat sheet of the hub
+  type Doc = { key: string; title: string; kind: "note" | "cheatsheet"; text: string };
+  const joined = (blocks: Block[]) => blocks.map((b) => b.content).join("\n\n");
+  const docs: Doc[] = [];
+  if (data.cheat && data.cheat.blocks.length) docs.push({ key: data.cheat.artifact_id, title: tx.stubs.library.kinds.cheatsheet, kind: "cheatsheet", text: joined(data.cheat.blocks as Block[]) });
+  if (data.notes && data.notes.blocks.length) docs.push({ key: data.notes.artifact_id, title: tx.stubs.note.title, kind: "note", text: joined(data.notes.blocks as Block[]) });
+  // the cards are a deck: the stack on the page, the list and the review in its window (the same as on mocks)
+  const deck = data.cards ? studyCardsFromApi(data.cards) : [];
+
   const windows: Record<string, WindowSpec> = {};
-  const docs = [...(data.cheat ? [data.cheat] : []), ...data.artifacts];
-  for (const a of docs) {
-    windows[`a-${a.artifact_id}`] = {
-      title: a.title,
-      meta: `${a.kind === "cheatsheet" ? tx.stubs.library.kinds.cheatsheet : a.kind === "note" ? tx.stubs.library.kinds.note : a.kind} · ${dayLabel(a.updated_at.slice(0, 10))}`,
+  for (const d of docs) {
+    windows[`a-${d.key}`] = {
+      title: d.title,
+      meta: d.kind === "cheatsheet" ? tx.stubs.library.kinds.cheatsheet : tx.stubs.library.kinds.note,
       actions:
-        a.kind === "note" ? (
-          <Link href={`/notes/${a.artifact_id}`} className={TEXT_BTN}>
+        d.kind === "note" ? (
+          <Link href={`/notes/${topic.topic_id}`} className={TEXT_BTN}>
             {tx.topic.edit}
           </Link>
         ) : undefined,
-      body: <Markdown text={a.content_md} />,
+      body: <Markdown text={d.text} />,
+    };
+  }
+  // a deck that was emptied by deleting its cards keeps its window (it may be open), with a line saying so
+  if (data.cards) {
+    windows.cards = {
+      title: tx.topic.cards,
+      meta: tx.topic.cardsMeta(deck.length, topic.name),
+      // the key makes the viewer start afresh when the deck changes (ratings are kept per card)
+      body: <DeckViewer key={deck.map((c) => c.id).join()} cards={deck} manage={manage} />,
     };
   }
 
@@ -131,16 +210,13 @@ export function TopicLive({ id }: { id: string }) {
         <Crumbs domainTitle={domainTitle} />
 
         <header className="mt-2">
-          <h1 className="font-serif text-display font-bold tracking-[-0.01em] text-paper">{topic.name}</h1>
+          <h1 className="display-caps text-display text-paper">{topic.name}</h1>
         </header>
 
         <div className="mt-4 flex items-start gap-4">
-          <MemoryRing state={state} retention={topic.mastery} size={40} />
+          <MemoryRing state={state} retention={level} size={40} />
           <div className="min-w-0">
-            <p className="font-semibold text-paper">{tx.states[state].toLowerCase()}</p>
-            {topic.description && <p className="mt-0.5 text-paper-dim">{topic.description}</p>}
-            {activeMix[0] && <p className="mt-1.5 text-st-confused">{activeMix[0].name}</p>}
-            <p className="num mt-2 text-small text-paper-dim">{t.masteryLine(pct(topic.mastery), pct(topic.coverage))}</p>
+            <p className="display-caps text-paper">{tx.states[state].toLowerCase()}</p>
           </div>
         </div>
 
@@ -149,13 +225,13 @@ export function TopicLive({ id }: { id: string }) {
             type="button"
             disabled={busy}
             onClick={() => void begin("learn")}
-            className={cn(ACTION_BTN, state === "new" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-rule hover:bg-cloth-hover")}
+            className={cn(ACTION_BTN, state === "new" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.study}
           </button>
           <Link
             href={`/practice/${topic.topic_id}`}
-            className={cn(ACTION_BTN, state !== "new" && state !== "review" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-rule hover:bg-cloth-hover")}
+            className={cn(ACTION_BTN, state !== "new" && state !== "review" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.practice}
           </Link>
@@ -163,9 +239,18 @@ export function TopicLive({ id }: { id: string }) {
             type="button"
             disabled={busy}
             onClick={() => void begin("review")}
-            className={cn(ACTION_BTN, state === "review" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-rule hover:bg-cloth-hover")}
+            className={cn(ACTION_BTN, state === "review" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.review}
+          </button>
+        </div>
+
+        <div className="mt-2 flex flex-wrap gap-x-2">
+          <button type="button" disabled={busy} onClick={() => void mark("known")} className={cn(TEXT_BTN, "-ml-3")}>
+            {t.iKnowThis}
+          </button>
+          <button type="button" disabled={busy} onClick={() => void mark("hide")} className={TEXT_BTN}>
+            {t.hideTopic}
           </button>
         </div>
 
@@ -178,59 +263,39 @@ export function TopicLive({ id }: { id: string }) {
                 <li key={s.skill_id} className="flex min-h-12 items-center gap-3 border-b border-seam-soft py-2">
                   <div className="min-w-0 flex-1">
                     <p className="text-body text-paper">{s.name}</p>
-                    {s.description && <p className="text-small text-paper-dim">{s.description}</p>}
                   </div>
-                  {s.is_rusty && <span className={PILL}>{t.rusty}</span>}
-                  <span className="num shrink-0 text-small text-paper-dim">{pct(s.effective_mastery)}%</span>
+                  {(s.ret_due_at_ms ?? 0) > 0 && (s.ret_due_at_ms ?? 0) < now && <span className={PILL}>{t.rusty}</span>}
                 </li>
               ))}
             </ul>
           )}
         </PageSection>
 
-        {activeMix.length > 0 && (
-          <PageSection id="topic-mix" title={t.mixups} count={activeMix.length}>
-            <ul className="space-y-3">
-              {activeMix.map((m) => (
-                <li key={m.misconception_id}>
-                  <p className="text-body text-st-confused">{m.name}</p>
-                  {m.description && <p className="text-small text-paper-dim">{m.description}</p>}
-                  <p className="num text-small text-paper-dim">{t.seenTimes(m.occurrences)}</p>
-                </li>
-              ))}
-            </ul>
-          </PageSection>
-        )}
-
-        <PageSection
-          id="topic-artifacts"
-          title={tx.topic.artifacts}
-          action={
-            <Link href={`/notes/new?topic=${topic.topic_id}&domain=${topic.domain_id}`} className={TEXT_BTN}>
-              {tx.stubs.library.newNote}
-            </Link>
-          }
-        >
-          {docs.length === 0 ? (
-            <p className="text-paper-dim">{tx.topic.noNotes}</p>
+        <PageSection id="topic-artifacts" title={tx.topic.artifacts}>
+          {docs.length === 0 && deck.length === 0 ? (
+            // the learner has studied this topic (state isn't "new"), so empty means the background
+            // job hasn't finished yet, not "nothing happened" — the live stream re-fetches on its own
+            <p role="status" className="text-paper-dim">
+              {state === "new" ? tx.topic.noNotes : tx.topic.notesGenerating}
+            </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {docs.map((a) => (
-                <ExpandableCard key={a.artifact_id} artifact={`a-${a.artifact_id}`}>
-                  <span className="block px-4 pt-3 font-semibold text-paper">{a.title}</span>
+              {docs.map((d) => (
+                <ExpandableCard key={d.key} artifact={`a-${d.key}`}>
+                  <span className="display-caps block px-4 pt-3 text-paper">{d.title}</span>
                   <span aria-hidden className="mt-1 block h-[72px] overflow-hidden px-4 text-small leading-relaxed text-paper-dim [mask-image:linear-gradient(to_bottom,#000_55%,transparent)]">
-                    {plainText(a.content_md)}
-                  </span>
-                  <span className="num block px-4 pb-3 text-small text-paper-dim">
-                    {a.kind === "cheatsheet" ? tx.stubs.library.kinds.cheatsheet : tx.stubs.library.kinds.note} · {dayLabel(a.updated_at.slice(0, 10))}
+                    {plainText(d.text)}
                   </span>
                 </ExpandableCard>
               ))}
+              {deck.length > 0 && <DeckCard cards={deck} />}
             </div>
           )}
-          <button type="button" disabled={busy} onClick={() => void refreshCheat()} className={cn(TEXT_BTN, "mt-3 -ml-3")}>
-            {data.cheat ? t.refreshCheat : t.buildCheat}
-          </button>
+          {data.hubId && (
+            <button type="button" disabled={busy} onClick={() => void buildCheat()} className={cn(TEXT_BTN, "mt-3 -ml-3")}>
+              {data.cheat ? t.refreshCheat : t.buildCheat}
+            </button>
+          )}
         </PageSection>
       </PageFrame>
     </ArtifactHost>

@@ -5,13 +5,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
-import { MOCK_TODAY } from "@/lib/mock";
+import { todayIso } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { Board } from "./board/board";
 
 const clean = (s: string) => s.replace(/­/g, "");
-const BACK_CLS = "inline-flex size-10 shrink-0 items-center justify-center rounded-control text-paper-dim transition-colors hover:bg-cloth-hover hover:text-paper [&_svg]:size-[18px]";
+const BACK_CLS = "inline-flex size-10 shrink-0 items-center justify-center rounded-pill text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper [&_svg]:size-[18px]";
 const LINK_CLS = "relative text-paper-dim underline decoration-seam underline-offset-4 transition-colors after:absolute after:-inset-y-3 after:inset-x-0 hover:text-paper hover:decoration-paper-dim";
 
 /** Доска существующего канваса: на весь экран, без боковых панелей */
@@ -36,8 +36,8 @@ export function CanvasView({ id }: { id: string }) {
             <ArrowLeft aria-hidden />
           </Link>
           <div className="min-w-0 pr-3 pl-1">
-            <h1 className="truncate font-serif text-body leading-tight font-bold text-paper">{canvas.title}</h1>
-            <p className="num mt-0.5 hidden items-center gap-x-1.5 truncate text-[12px] whitespace-nowrap text-paper-dim sm:flex">
+            <h1 className="display-caps truncate text-body leading-tight text-paper">{canvas.title}</h1>
+            <p className="caps mt-0.5 hidden items-center gap-x-1.5 truncate [--caps-size:0.625rem] whitespace-nowrap text-paper-dim sm:flex">
               <span>{fullDate(canvas.date)}</span>
               <span aria-hidden>·</span>
               <span className="flex gap-x-1">
@@ -85,10 +85,10 @@ export function NewCanvasView() {
               aria-label={tx.canvases.nameLabel}
               placeholder={tx.canvases.untitled}
               maxLength={80}
-              className="h-6 w-full min-w-0 bg-transparent font-serif text-body font-bold text-paper outline-none placeholder:text-paper-dim focus-visible:outline-2 focus-visible:outline-ribbon"
+              className="h-6 w-full min-w-0 bg-transparent font-display text-body uppercase tracking-[0.02em] text-paper outline-none placeholder:text-paper-dim focus-visible:outline-2 focus-visible:outline-ribbon"
             />
-            <p className="num mt-0.5 hidden truncate text-[12px] text-paper-dim sm:block">
-              {tx.canvases.draft(fullDate(MOCK_TODAY))}
+            <p className="caps mt-0.5 hidden truncate [--caps-size:0.625rem] text-paper-dim sm:block">
+              {tx.canvases.draft(fullDate(todayIso()))}
             </p>
           </div>
         </>
