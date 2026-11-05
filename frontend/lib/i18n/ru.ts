@@ -257,8 +257,9 @@ export const ru: Dict = {
     title: "QUACK!",
     tagline: "Больше, чем обычная подготовка к учёбе",
     cta: "Начать",
-    scroll: "Листай вниз",
-    hero: { brand: "Quack!", title: "Learning Hub", duck: "Тыкни утку" },
+    scroll: "Scroll down",
+    // заголовок первого экрана и подпись у стрелки — по-английски и в русском интерфейсе (так решено для лендинга)
+    hero: { title: "Quack! Learn efficiently, not longer.", sub: "It finds the edge of your understanding and works exactly there.", duck: "Тыкни утку" },
     story: {
       efficiency: {
         lines: ["Same hours.", "Real understanding."],
