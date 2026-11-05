@@ -388,7 +388,10 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const pace_warnings = overdue
       ? [{ hub_id: id("h-" + overdue.key), ready: overdue.topics.filter((t) => t.state === STATE.solid).length, not_ready: overdue.topics.filter((t) => t.state !== STATE.solid).length, forecast: 3 }]
       : [];
-    return json(res, 200, { items, minutes: items.length * 10, grade_hub_ids: [], pace_warnings });
+    // hubs whose date is before today and that have no mark yet (the offer to enter it)
+    const startOfDay = new Date().setHours(0, 0, 0, 0);
+    const grade_hub_ids = d.hubs.filter((h) => h.deadlineMs && h.deadlineMs < startOfDay && !(S.graded ??= new Set()).has(h.key)).map((h) => id("h-" + h.key));
+    return json(res, 200, { items, minutes: items.length * 10, grade_hub_ids, pace_warnings });
   }
   if ((g = p.match(/^\/v1\/domains\/([^/]+)\/(graph|hubs)$/))) {
     const d = domainById(g[1]);
@@ -419,8 +422,10 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     };
     const skills = hit.t.skills?.length ? hit.t.skills : [hit.t.name];
     const withAnswers = process.env.STUB_CARD_ANSWERS === "1";
-    const cards = skills.flatMap((sk, i) => [KINDS[i % 4], KINDS[(i + 2) % 4]].map((kind, j) => ({ card_id: id(`c-${hit.t.key}-${i}-${j}`), kind, prompt: ask[kind](sk), owner: "system", ...(withAnswers ? { answer: hit.t.about || hit.t.simple || hit.t.line } : {}) })));
-    return json(res, 200, { artifact_id: id("a-cards-" + hit.t.key), topic_id: g[1], version: 1, cards });
+    const fresh = skills.flatMap((sk, i) => [KINDS[i % 4], KINDS[(i + 2) % 4]].map((kind, j) => ({ card_id: id(`c-${hit.t.key}-${i}-${j}`), kind, prompt: ask[kind](sk), owner: "system", ...(withAnswers ? { answer: hit.t.about || hit.t.simple || hit.t.line } : {}) })));
+    // the deck is kept once it is built, so that an edit or a delete (PATCH/DELETE /v1/cards/:id) sticks
+    const deck = (S.decks ??= {})[hit.t.key] ?? ((S.decks[hit.t.key] = { artifact_id: id("a-cards-" + hit.t.key), topic_id: g[1], version: 1, cards: fresh }));
+    return json(res, 200, deck);
   }
   if ((g = p.match(/^\/v1\/hubs\/([^/]+)\/cheatsheet$/))) {
     const hit = hubById(g[1]);
@@ -468,17 +473,33 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
       return json(res, 200, { skills: S.learnerSkills.map(view) });
     }
   }
+  // one card of a deck: new text (the card gets a new id and `owner: learner`, like the backend's successor task) or delete; both answer with the deck
+  if ((g = p.match(/^\/v1\/cards\/([^/]+)$/)) && (m === "PATCH" || m === "DELETE")) {
+    const deck = Object.values(S.decks ?? {}).find((d) => d.cards.some((c) => c.card_id === g[1]));
+    if (!deck) return err(res, "NOT_FOUND", 404, "no such card");
+    const i = deck.cards.findIndex((c) => c.card_id === g[1]);
+    if (m === "PATCH") {
+      if (!String(body.prompt ?? "").trim()) return err(res, "VALIDATION_ERROR", 422, "the text of the card is empty");
+      deck.cards[i] = { ...deck.cards[i], card_id: id(`card-edit-${g[1]}-${body.idempotency_key}`), prompt: String(body.prompt), owner: "learner" };
+    } else deck.cards.splice(i, 1);
+    deck.version += 1;
+    return json(res, 200, deck);
+  }
   // "I know this" / "not needed": 202 with the seq of the event (the stub keeps no state for them)
   if (m === "POST" && (g = p.match(/^\/v1\/topics\/([^/]+)\/(known|hide)$/))) {
     S.seq += 1;
     for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
     return json(res, 202, { seq: S.seq });
   }
-  // a chapter: deadline (PATCH) and prep mode (POST), both 202 with the seq of the event
-  if ((g = p.match(/^\/v1\/hubs\/([^/]+)(?:\/(prep-mode))?$/)) && (m === "PATCH" || (m === "POST" && g[2]))) {
+  // a chapter: deadline (PATCH), prep mode and the mark after the deadline (POST), all 202 with the seq of the event
+  if ((g = p.match(/^\/v1\/hubs\/([^/]+)(?:\/(prep-mode|grade))?$/)) && (m === "PATCH" || (m === "POST" && g[2]))) {
     const hit = hubById(g[1]);
     if (!hit || !hit.d.hubs.includes(hit.h)) return err(res, "NOT_FOUND", 404, "no such chapter");
     if (m === "PATCH") hit.h.deadlineMs = body.deadline_at_ms ?? null;
+    if (g[2] === "grade") {
+      if (!body.grade || !body.scale || String(body.grade).length > 40 || String(body.scale).length > 40) return err(res, "VALIDATION_ERROR", 422, "grade and scale: 1-40 characters");
+      (S.graded ??= new Set()).add(hit.h.key);
+    }
     S.seq += 1;
     for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
     return json(res, 202, { seq: S.seq });

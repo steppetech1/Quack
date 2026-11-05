@@ -416,8 +416,22 @@ _STYLE = (
     "section { margin: 0 0 2.5mm; break-inside: avoid; } "
     "section[data-owner='learner'] { border-left: 1mm solid #888; padding-left: 2mm; } "
     "p, ul, ol { margin: 0 0 1.5mm; } ul, ol { padding-left: 5mm; } "
-    "code { font-family: monospace; } .math { font-style: italic; }"
+    "code { font-family: monospace; } "
+    ".quack-math { font-style: italic; } .quack-math[data-display='true'] { display: block; "
+    "margin: 1mm 0; text-align: center; } .katex { font-style: normal; }"
 )
+# D-C-250: a formula is `$$…$$` (display, may run over lines) or `$…$` (inline: the first
+# character after the opening and the last before the closing are not blank, so «5$ or 6$» is
+# money, not a formula; `\$` is a dollar sign). It is cut out before the markdown forms and put
+# back as an element that compute typesets with KaTeX (`/v1/render/pdf`).
+_MATH = re.compile(
+    r"(?<!\\)\$\$(?P<display>.+?)(?<!\\)\$\$"
+    r"|(?<![\\$])\$(?P<inline>[^\s$](?:[^$\n]*?[^\s$\\])?)\$(?!\d)",
+    re.DOTALL,
+)
+_MARK_OPEN, _MARK_CLOSE = chr(0xE000), chr(0xE001)  # private-use characters: no text holds them
+_MARK = re.compile(f"{_MARK_OPEN}(\\d+){_MARK_CLOSE}")
+_ESCAPED_DOLLAR = re.compile(r"\\\$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 _CODE = re.compile(r"`([^`]+)`")
@@ -433,9 +447,31 @@ def _inline(text: str) -> str:
     return _ITALIC.sub(r"<em>\1</em>", out)
 
 
+def _formula(found: re.Match[str]) -> str:
+    tex = found["display"]
+    display = tex is not None
+    tex = (tex if display else found["inline"]).strip()
+    return (
+        f'<span class="quack-math" data-display="{str(display).lower()}">'
+        f"{html.escape(tex, quote=False)}</span>"
+    )
+
+
 def _markdown(text: str) -> str:
     """The few Markdown forms of a cheat sheet — paragraphs, headings, lists, bold, italic and
-    code; everything is escaped first. Formulas (`$…$`) stay as TeX for the typesetter."""
+    code; everything is escaped first. A formula (`$…$`, `$$…$$`) is cut out before that and put
+    back as an element for KaTeX, so no markdown form reaches into its TeX (D-C-250)."""
+    formulas: list[str] = []
+
+    def cut(found: re.Match[str]) -> str:
+        formulas.append(_formula(found))
+        return f"{_MARK_OPEN}{len(formulas) - 1}{_MARK_CLOSE}"
+
+    plain = _ESCAPED_DOLLAR.sub("$", _MATH.sub(cut, text))
+    return _MARK.sub(lambda m: formulas[int(m[1])], _blocks(plain))
+
+
+def _blocks(text: str) -> str:
     parts: list[str] = []
     for chunk in re.split(r"\n\s*\n", text.strip()):
         lines = [line for line in chunk.splitlines() if line.strip()]

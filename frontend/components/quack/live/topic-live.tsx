@@ -5,14 +5,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { topicState } from "@/lib/api/adapters";
 import { studyCardsFromApi } from "@/lib/api/cards";
-import { ApiError, get, idem, post, type S } from "@/lib/api/client";
+import { ApiError, del, get, idem, patch, post, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { type Intent, startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { ArtifactHost, ExpandableCard, type WindowSpec } from "../artifact-window";
-import { DeckCard, DeckViewer } from "../artifact-content";
+import { DeckCard, DeckViewer, type DeckManage } from "../artifact-content";
 import { Crumbs, MemoryRing, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
 import { useNotice } from "../soon";
 import { useErrorText } from "./error-text";
@@ -149,6 +149,28 @@ export function TopicLive({ id }: { id: string }) {
     }
   };
 
+  /** Edit (`PATCH`) and delete (`DELETE`) answer with the whole deck: an edited card gets a new id, so the deck is replaced, not patched */
+  const manage: DeckManage = {
+    edit: async (cardId, prompt) => {
+      try {
+        const cards = await patch(`/v1/cards/${cardId}`, { prompt, idempotency_key: idem() });
+        setData((d) => (d ? { ...d, cards } : d));
+        return null;
+      } catch (e) {
+        return errorText(e);
+      }
+    },
+    remove: async (cardId) => {
+      try {
+        const cards = await del(`/v1/cards/${cardId}`, { idempotency_key: idem() });
+        setData((d) => (d ? { ...d, cards } : d));
+        return null;
+      } catch (e) {
+        return errorText(e);
+      }
+    },
+  };
+
   // the documents of the page: notes (blocks), cards (prompts), the cheat sheet of the hub
   type Doc = { key: string; title: string; kind: "note" | "cheatsheet"; text: string };
   const joined = (blocks: Block[]) => blocks.map((b) => b.content).join("\n\n");
@@ -172,8 +194,14 @@ export function TopicLive({ id }: { id: string }) {
       body: <Markdown text={d.text} />,
     };
   }
-  if (deck.length) {
-    windows.cards = { title: tx.topic.cards, meta: tx.topic.cardsMeta(deck.length, topic.name), body: <DeckViewer cards={deck} /> };
+  // a deck that was emptied by deleting its cards keeps its window (it may be open), with a line saying so
+  if (data.cards) {
+    windows.cards = {
+      title: tx.topic.cards,
+      meta: tx.topic.cardsMeta(deck.length, topic.name),
+      // the key makes the viewer start afresh when the deck changes (ratings are kept per card)
+      body: <DeckViewer key={deck.map((c) => c.id).join()} cards={deck} manage={manage} />,
+    };
   }
 
   return (

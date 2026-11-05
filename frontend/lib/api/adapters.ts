@@ -1,5 +1,6 @@
 import type { Domain, Hub, Session, TodayItem, Topic, TopicState } from "@/lib/mock/types";
 import { type GraphHub, type GraphModel, type GraphTopic, type TodayRec } from "@/lib/graph/types";
+import { localIso } from "@/lib/format";
 import type { S } from "./client";
 
 /** Backend → the shapes the UI was built on (lib/mock/types.ts). The UI itself does not change. */
@@ -105,7 +106,7 @@ export function sessionFromApi(s: S["SessionView"], topics: Topic[], labels: Ses
   return {
     id: s.session_id,
     href: `/session/${s.session_id}`,
-    date: s.started_at.slice(0, 10),
+    date: localIso(Date.parse(s.started_at) || Date.now()),
     title: topics.find((t) => t.id === s.topic_id)?.title ?? mode,
     topics: s.status === "active" ? [labels.activeSession] : [mode],
   };
@@ -131,7 +132,7 @@ export function domainFromApi(
           num: roman(i + 1),
           title: h.name,
           about: "",
-          deadline: h.deadline_at_ms ? { label: h.name, date: new Date(h.deadline_at_ms).toISOString().slice(0, 10) } : undefined,
+          deadline: h.deadline_at_ms ? { label: h.name, date: localIso(h.deadline_at_ms) } : undefined,
         }))
     : topics.length
       ? [{ id: allTopicsHubId(summary.domain_id), num: "I", title: hubTitle, about: "" }]
