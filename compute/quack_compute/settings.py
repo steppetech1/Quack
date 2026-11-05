@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,10 @@ class ComputeSettings:
     # one sweep interval is left over from a finished job.
     tmp_sweep_interval_s: int = 3600
     tmp_max_age_s: int = 3600
+    # WP23.5, Т-§17.6: the pinned KaTeX (js, css, woff2 fonts) that typesets the formulas of a
+    # printed page; a copy of `deploy/static/viz/katex/<version>/` made into the image, the
+    # version is the one of `SHA256SUMS`. Phase 4 decision D-C-250.
+    katex_dir: str = str(Path(__file__).resolve().parent / "katex" / "0.16.11")
     # WP22.3 п.1, sheet contour search — the documents give no numbers; Phase 4 decision D-C-110:
     # blur kernel, Canny thresholds, polygon precision as a share of the contour perimeter and
     # the least area of the sheet as a share of the photo.
