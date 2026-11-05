@@ -1024,6 +1024,7 @@ export interface paths {
          * @description WP21.6: one segment of speech (WAV) with its start and end by the device clock; the
          *     audio is not stored (П-14.1). The companion has no voice (T-CP1: 403). A session of another
          *     learner is 404; compressed audio is 415; the same segment again gives the same answer.
+         *     Larger than `upload_max_mb` is 413 before the body is read (Т-§19.8, as photos).
          */
         post: operations["upload_voice_v1_sessions__session_id__voice_post"];
         delete?: never;
