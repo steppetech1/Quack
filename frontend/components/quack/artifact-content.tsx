@@ -285,7 +285,10 @@ const SPACE = (
   </Keycap>
 );
 
-export function DeckViewer({ cards }: { cards: StudyCard[] }) {
+/** Backend decks only: change the text of a card or delete it. Each resolves with the text of the error, or `null` when done */
+export type DeckManage = { edit: (id: string, prompt: string) => Promise<string | null>; remove: (id: string) => Promise<string | null> };
+
+export function DeckViewer({ cards, manage }: { cards: StudyCard[]; manage?: DeckManage }) {
   const t = useT();
   const [i, setI] = useState(0);
   const [started, setStarted] = useState(false);
@@ -294,6 +297,11 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
   const [done, setDone] = useState(false);
   /** The rating the arrows are on once the card is turned over ("got it" first: the usual answer) */
   const [sel, setSel] = useState(2);
+  /** The card on the list that is being edited (its text) or asked about deleting; one at a time */
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [asking, setAsking] = useState<string | null>(null);
+  const [manageBusy, setManageBusy] = useState(false);
+  const [manageError, setManageError] = useState<string | null>(null);
   const rateRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const revealRef = useRef<HTMLButtonElement>(null);
   const last = cards.length - 1;
@@ -401,30 +409,100 @@ export function DeckViewer({ cards }: { cards: StudyCard[] }) {
     );
   }
 
+  const manageRun = async (job: () => Promise<string | null>) => {
+    setManageBusy(true);
+    setManageError(null);
+    const err = await job();
+    setManageBusy(false);
+    if (err) setManageError(err);
+    else {
+      setEditing(null);
+      setAsking(null);
+    }
+  };
+
   // First the list of the deck and "Start"
   if (!started) {
     return (
       <div className="mx-auto max-w-[640px]">
-        <p className="text-paper-dim">{t.artifacts.deckIntro(cards.length)}</p>
+        <p className="text-paper-dim">{cards.length ? t.artifacts.deckIntro(cards.length) : t.artifacts.deckEmpty}</p>
         <ol className="mt-5 border-t border-seam-soft">
           {cards.map((c, k) => (
-            <li key={c.id} className="flex items-baseline gap-3 border-b border-seam-soft py-3">
-              <span className="num w-6 shrink-0 text-small text-paper-dim">{k + 1}</span>
-              <span className="min-w-0 flex-1 text-paper">
-                <Inline text={c.front} />
-              </span>
-              <span className={PILL}>{t.artifacts.cardKind[c.kind]}</span>
+            <li key={c.id} className="border-b border-seam-soft py-3">
+              {manage && editing?.id === c.id ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (editing.text.trim()) void manageRun(() => manage.edit(c.id, editing.text.trim()));
+                  }}
+                >
+                  <label className="caps mb-1.5 block text-paper-dim" htmlFor={`card-${c.id}`}>
+                    {t.artifacts.cardEditLabel}
+                  </label>
+                  <textarea
+                    id={`card-${c.id}`}
+                    autoFocus
+                    rows={3}
+                    value={editing.text}
+                    onChange={(e) => setEditing({ id: c.id, text: e.target.value })}
+                    className="block w-full rounded-control border border-seam bg-cloth-deep px-3 py-2 text-body text-paper outline-none focus-visible:border-ribbon"
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button type="submit" disabled={manageBusy || !editing.text.trim()} className="caps h-10 rounded-pill bg-ribbon px-5 text-on-ribbon transition-colors duration-(--dur-s) ease-out hover:bg-ribbon-hover disabled:opacity-50">
+                      {t.artifacts.cardSave}
+                    </button>
+                    <button type="button" onClick={() => setEditing(null)} className={TEXT_BTN}>
+                      {t.artifacts.cardCancel}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="flex items-baseline gap-3">
+                  <span className="num w-6 shrink-0 text-small text-paper-dim">{k + 1}</span>
+                  <span className="min-w-0 flex-1 text-paper">
+                    <Inline text={c.front} />
+                  </span>
+                  {c.mine && <span className={PILL}>{t.artifacts.cardMine}</span>}
+                  <span className={PILL}>{t.artifacts.cardKind[c.kind]}</span>
+                </div>
+              )}
+              {manage && editing?.id !== c.id &&
+                (asking === c.id ? (
+                  <div className="mt-1 flex flex-wrap items-center gap-2 pl-9">
+                    <span className="text-small text-paper-dim">{t.artifacts.cardDeleteAsk}</span>
+                    <button type="button" disabled={manageBusy} onClick={() => void manageRun(() => manage.remove(c.id))} className={cn(TEXT_BTN, "text-st-confused")}>
+                      {t.artifacts.cardDelete}
+                    </button>
+                    <button type="button" onClick={() => setAsking(null)} className={TEXT_BTN}>
+                      {t.artifacts.cardCancel}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-1 flex gap-1 pl-9">
+                    <button type="button" onClick={() => { setAsking(null); setManageError(null); setEditing({ id: c.id, text: c.front }); }} className={TEXT_BTN}>
+                      {t.artifacts.cardEdit}
+                    </button>
+                    <button type="button" onClick={() => { setEditing(null); setManageError(null); setAsking(c.id); }} className={TEXT_BTN}>
+                      {t.artifacts.cardDelete}
+                    </button>
+                  </div>
+                ))}
             </li>
           ))}
         </ol>
-        <button
+        {manageError && (
+          <p role="alert" className="mt-3 text-small text-st-confused">
+            {manageError}
+          </p>
+        )}
+        {cards.length > 0 && (<button
           type="button"
           autoFocus
           onClick={() => setStarted(true)}
           className="caps mt-6 inline-flex h-11 items-center rounded-pill bg-ribbon px-8 text-on-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-ribbon-hover"
         >
           {t.artifacts.start}
-        </button>
+        </button>)}
       </div>
     );
   }

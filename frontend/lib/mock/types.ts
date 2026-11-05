@@ -91,7 +91,7 @@ export type NoteBlock = {
 
 export type CardKind = "definition" | "sign" | "distinction" | "myth";
 
-export type StudyCard = { id: string; kind: CardKind; front: string; back: string };
+export type StudyCard = { id: string; kind: CardKind; front: string; back: string; /** the learner edited it: the system never rewrites such a card (backend `owner = learner`) */ mine?: boolean };
 
 export type CanvasSketch = "ratio" | "plot" | "estimate";
 
