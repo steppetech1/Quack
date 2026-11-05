@@ -7,7 +7,7 @@ import { NodeCard } from "./node-card";
 import { Headline, Rise, useInView } from "./reveal";
 import { DuckStage } from "./scene-duck";
 import { approach, cellSize, rand, sceneForm } from "./scene-utils";
-import { storyStore } from "./story";
+import { storyStore, useArmed } from "./story";
 
 const NODES = 5;
 
@@ -27,8 +27,11 @@ export function EfficiencyScene({ scrollRef, slot }: { scrollRef: RefObject<HTML
   const [hot, setHot] = useState(-1);
   const hotRef = useRef(-1);
   const nodesText = t.nodes;
+  // холсты, WebGL с уткой и физика поднимаются по очереди, когда браузер свободен (см. useArmed)
+  const armed = useArmed(1);
 
   useEffect(() => {
+    if (!armed) return;
     const sec = secRef.current;
     const cv = cvRef.current;
     const ctx = cv?.getContext("2d");
@@ -268,7 +271,7 @@ export function EfficiencyScene({ scrollRef, slot }: { scrollRef: RefObject<HTML
       evt.removeEventListener("pointerleave", onLeave);
       stage.dispose();
     };
-  }, [scrollRef, slot]);
+  }, [scrollRef, slot, armed]);
 
   const card = hot >= 0 ? nodesText[hot] : null;
 
