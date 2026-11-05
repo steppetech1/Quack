@@ -34,10 +34,11 @@ export function Hero({ scrollRef, pinned = false }: { scrollRef: RefObject<HTMLE
   return (
     <section id="top" className={`flex flex-col items-center justify-center overflow-clip px-4 pt-14 pb-12 ${pinned ? "pointer-events-none absolute inset-0" : "relative h-full shrink-0"}`}>
       {/* сразу под шапкой: утка остаётся по центру экрана, между ними — воздух с растениями.
-          Archivo Expanded SemiBold прописными, цвет между янтарём утки и цветом растений, лёгкое свечение.
-          На телефоне — в две строки */}
-      <h1 ref={titleRef} className="absolute inset-x-4 top-[calc(3.5rem+clamp(0.5rem,4vh,2.75rem))] z-10 text-center font-[family-name:var(--font-archivo)] text-[clamp(1rem,2vw,1.85rem)] font-semibold uppercase leading-[1.1] tracking-[0.02em] text-[#daa05f] [font-stretch:125%] [text-shadow:0_0_12px_#daa05f59]">
-        {t.hero.brand} –<br className="sm:hidden" /> {t.hero.title}
+          Archivo Expanded, как есть (без прописных): первая строка — про эффективность, вторая — про границу понимания,
+          тише и светлее. Цвет первой между янтарём утки и цветом растений, лёгкое свечение */}
+      <h1 ref={titleRef} className="absolute inset-x-4 top-[calc(3.5rem+clamp(0.5rem,4vh,2.75rem))] z-10 mx-auto max-w-[52rem] text-center font-[family-name:var(--font-archivo)] font-semibold leading-[1.2] [font-stretch:125%]">
+        <span className="block text-[clamp(1.125rem,2.1vw,1.85rem)] text-[#daa05f] [text-shadow:0_0_12px_#daa05f59]">{t.hero.title}</span>
+        <span className="mt-1.5 block text-[clamp(0.875rem,1.3vw,1.2rem)] font-medium text-[#bba995]">{t.hero.sub}</span>
       </h1>
 
       <div className="pointer-events-auto flex w-full justify-center">

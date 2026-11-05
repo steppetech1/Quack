@@ -257,7 +257,7 @@ export const ru: Dict = {
     tagline: "Больше, чем обычная подготовка к учёбе",
     cta: "Начать",
     scroll: "Листай вниз",
-    hero: { brand: "Quack!", title: "Learning Hub", duck: "Тыкни утку" },
+    hero: { title: "Quack! Учись эффективнее, а не дольше.", sub: "Находит границу твоего понимания и работает именно на ней.", duck: "Тыкни утку" },
     story: {
       efficiency: {
         lines: ["Same hours.", "Real understanding."],

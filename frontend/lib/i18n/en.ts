@@ -256,7 +256,7 @@ export const en = {
     tagline: "Something more than usual study preparation",
     cta: "Get started",
     scroll: "Scroll down",
-    hero: { brand: "Quack!", title: "Learning Hub", duck: "Poke the duck" },
+    hero: { title: "Quack! Learn efficiently, not longer.", sub: "It finds the edge of your understanding and works exactly there.", duck: "Poke the duck" },
     story: {
       efficiency: {
         lines: ["Same hours.", "Real understanding."],
