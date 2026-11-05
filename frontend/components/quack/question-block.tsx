@@ -54,10 +54,10 @@ export function QuestionBlock({
       id={id}
       onSubmit={submit}
       aria-labelledby={`${uid}-q`}
-      className="scroll-mt-6 rounded-[16px] border border-seam bg-cloth-raised p-4 sm:p-5"
+      className="scroll-mt-6 rounded-[2px] border border-seam bg-cloth-raised p-4 sm:p-5"
     >
       <p id={`${uid}-q`} className="flex gap-3 text-paper">
-        <span className="num shrink-0 pt-0.5 text-small text-paper-dim">{tx.question.num(num)}</span>
+        <span className="caps shrink-0 pt-1 text-paper-dim">{tx.question.num(num)}</span>
         <span>
           <Inline text={prompt} />
         </span>
@@ -74,9 +74,9 @@ export function QuestionBlock({
               <label
                 key={o.id}
                 className={cn(
-                  "relative flex min-h-11 cursor-pointer items-center gap-3 rounded-control border px-3.5 py-2.5 transition-colors has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ribbon",
+                  "relative flex min-h-11 cursor-pointer items-center gap-3 rounded-control border px-3.5 py-2.5 transition-colors duration-(--dur-s) ease-(--ease-out) has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ribbon",
                   idk ? "border-dashed" : "",
-                  isChosen ? "border-paper-dim bg-cloth-hover" : locked ? "border-seam-soft" : "border-seam hover:border-rule",
+                  isChosen ? "border-ribbon bg-cloth-hover" : locked ? "border-seam-soft" : "border-seam hover:border-ribbon/60",
                   verdict === "right" && "border-st-solid",
                   verdict === "wrong" && !idk && "border-st-confused",
                   locked && "cursor-default",
@@ -101,8 +101,8 @@ export function QuestionBlock({
                 <span className={cn(idk || (locked && !isChosen && !verdict) ? "text-paper-dim" : "text-paper")}>
                   <Inline text={o.text} />
                 </span>
-                {verdict === "right" && <span className="ml-auto text-small text-st-solid">{tx.question.right}</span>}
-                {verdict === "wrong" && !idk && <span className="ml-auto text-small text-st-confused">{tx.question.yours}</span>}
+                {verdict === "right" && <span className="caps ml-auto [--caps-size:0.625rem] text-st-solid">{tx.question.right}</span>}
+                {verdict === "wrong" && !idk && <span className="caps ml-auto [--caps-size:0.625rem] text-st-confused">{tx.question.yours}</span>}
               </label>
             );
           })}
@@ -110,7 +110,7 @@ export function QuestionBlock({
       </fieldset>
 
       <fieldset className="mt-4" disabled={locked}>
-        <legend className="mb-2 text-small text-paper-dim">{tx.question.howSure}</legend>
+        <legend className="caps mb-2 text-paper-dim">{tx.question.howSure}</legend>
         <div className="flex flex-wrap gap-1.5">
           {tx.question.confidence.map((c, i) => {
             const on = (answer?.confidence ?? confidence) === i;
@@ -121,12 +121,12 @@ export function QuestionBlock({
                 aria-pressed={on}
                 onClick={() => setConfidence(on ? null : i)}
                 className={cn(
-                  "h-10 flex-1 basis-[calc(50%-0.375rem)] rounded-control border px-3 text-small whitespace-nowrap transition-colors disabled:cursor-default sm:basis-0",
+                  "caps h-10 flex-1 basis-[calc(50%-0.375rem)] rounded-pill border px-3 [--caps-size:0.625rem] whitespace-nowrap transition-colors duration-(--dur-s) ease-(--ease-out) disabled:cursor-default sm:basis-0",
                   on
-                    ? "border-paper-dim bg-cloth-hover text-paper"
+                    ? "border-ribbon bg-cloth-hover text-paper"
                     : locked
                       ? "border-seam-soft text-paper-dim"
-                      : "border-seam text-paper-dim hover:border-rule hover:text-paper",
+                      : "border-seam text-paper-dim hover:border-ribbon/60 hover:text-paper",
                 )}
               >
                 {c}
@@ -146,7 +146,7 @@ export function QuestionBlock({
               setThoughtOpen((v) => !v);
               keepInView();
             }}
-            className="flex min-h-10 items-center gap-2 rounded-control pr-2 text-small text-paper-dim transition-colors hover:text-paper"
+            className="caps flex min-h-10 items-center gap-2 rounded-pill pr-2 text-paper-dim transition-colors duration-(--dur-s) ease-(--ease-out) hover:text-paper"
           >
             {tx.question.explain}
             <ChevronDown aria-hidden className={cn("size-3.5 transition-transform", thoughtOpen && "rotate-180")} />
@@ -159,7 +159,7 @@ export function QuestionBlock({
               value={thought}
               onChange={(e) => setThought(e.target.value)}
               placeholder={tx.question.thoughtPlaceholder}
-              className="mt-1 block w-full resize-none rounded-control border border-seam bg-cloth-deep px-3 py-2.5 text-body text-paper outline-none focus-visible:border-rule"
+              className="mt-1 block w-full resize-none rounded-control border border-seam bg-cloth-deep px-3 py-2.5 text-body text-paper outline-none focus-visible:border-ribbon"
             />
           )}
         </div>
@@ -173,11 +173,11 @@ export function QuestionBlock({
 
       {!locked && (
         <div className="mt-4 flex items-center justify-end gap-3">
-          {!option && <span className="text-small text-paper-dim">{tx.question.pick}</span>}
+          {!option && <span className="caps text-paper-dim">{tx.question.pick}</span>}
           <button
             type="submit"
             disabled={!option}
-            className="h-10 rounded-control bg-ribbon px-5 font-semibold text-on-ribbon transition-colors hover:bg-ribbon-hover disabled:bg-cloth-hover disabled:text-paper-dim"
+            className="caps h-10 rounded-pill bg-ribbon px-6 text-on-ribbon transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-ribbon-hover disabled:bg-cloth-hover disabled:text-paper-dim"
           >
             {tx.question.submit}
           </button>

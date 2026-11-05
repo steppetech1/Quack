@@ -58,6 +58,13 @@ REFERENCE_SOURCES: tuple[ReferenceSource, ...] = (
         "SELECT 1 AS found FROM content.artifact_versions "
         "WHERE learner_id = %(learner_id)s AND strpos(content::text, %(key)s) > 0 LIMIT 1",
     ),
+    # A drawing cut out of a photo is named only by the document of the board
+    # (`learner.drawings[].object_key`), by no event and no column (D-A-248).
+    ReferenceSource(
+        "canvas_drawings",
+        "SELECT 1 AS found FROM content.canvas_boards "
+        "WHERE learner_id = %(learner_id)s AND strpos(doc::text, %(key)s) > 0 LIMIT 1",
+    ),
 )
 # Canvas chunks are named by no column: they are found by the prefix of the canvas, and the
 # canvas is kept when it has a row.

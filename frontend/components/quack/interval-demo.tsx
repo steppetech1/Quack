@@ -12,7 +12,7 @@ export function IntervalDemo() {
   const x = (v: number) => 30 + (v + 3) * 50; // −3…9 → 30…630
   const ticks = [-3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
   return (
-    <figure className="rounded-[16px] border border-seam bg-cloth-deep p-4">
+    <figure className="rounded-[2px] border border-seam bg-cloth-deep p-4">
       <svg viewBox="0 0 660 110" className="w-full" role="img" aria-label={tx.session.demoAria}>
         <line x1="20" x2="640" y1="62" y2="62" stroke="var(--rule)" strokeWidth="1" />
         {ticks.map((t) => (

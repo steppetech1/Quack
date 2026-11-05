@@ -68,7 +68,7 @@ export function CanvasThumb({ canvas, className }: { canvas: Canvas; className?:
     <div
       aria-hidden
       className={cn(
-        "relative max-h-[156px] min-h-[84px] overflow-hidden rounded-[14px] bg-cloth-raised px-3 pt-2.5 pb-2 transition-colors group-hover:bg-cloth-hover",
+        "relative max-h-[156px] min-h-[84px] overflow-hidden rounded-[2px] border border-seam-soft bg-cloth-raised px-3 pt-2.5 pb-2 transition-colors group-hover:bg-cloth-hover",
         className,
       )}
     >

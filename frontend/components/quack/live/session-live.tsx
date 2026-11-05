@@ -4,23 +4,27 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
-import { saveSummary, startSession } from "@/lib/api/sessions";
+import { startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
+import { skillInvocation } from "@/lib/skills";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { Composer } from "../composer";
 import { RichText } from "../rich-text";
-import { useErrorText } from "./domain-setup-live";
+import { PRIMARY_BTN, AREA } from "../stubs/stub-parts";
+import { firstTurnKey } from "./domain-setup-live";
+import { useErrorText } from "./error-text";
 
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
 
-type Line = { id: string; role: "student" | "teacher"; text: string; degraded?: string | null };
-type Task = { task_id: string; kind: string; prompt_text: string };
-type Verdict = { task_id: string; is_correct: boolean; score: number; feedback: string };
+type Line = { id: string; role: "student" | "teacher"; text: string; degraded?: string | null; interrupted?: boolean };
+/** An interactive element of a turn (task, question…): comes as an `element` frame and is answered with an `element_response` action */
+type Elem = { blockId: string; element: S["Element"]; turnSeq: number | null; answered: boolean };
+type Outcome = "correct" | "incorrect" | "partial" | "unclear";
 
-/** The first message of a session started from an input box waits here while the page switches to the real id */
-const firstTurnKey = (id: string) => `quack.firstTurn.${id}`;
+/** Elements the learner answers with text; the rest of the kinds are shown as a card with their title */
+const ANSWERABLE = new Set(["task", "short_answer", "free_answer", "choice", "prediction", "why_choice"]);
 
 /** /session/new: create the session in the current subject, then open it */
 export function NewSessionLive() {
@@ -35,24 +39,15 @@ export function NewSessionLive() {
   useEffect(() => {
     if (started.current || !domain.id) return;
     started.current = true;
-    startSession({ domain_id: domain.id, topic_id: pendingTopic, goal: pending })
+    startSession({ domain_id: domain.id, topic_id: pendingTopic, intent: "free" })
       .then((s) => {
+        // the typed message is the first action of the session, not a "goal": the session page sends it
         if (pending) {
           try {
             sessionStorage.setItem(firstTurnKey(s.session_id), pending);
           } catch {}
         }
-        setActive({
-          session_id: s.session_id,
-          domain_id: s.domain_id,
-          topic_id: s.topic_id,
-          mode: s.mode,
-          status: s.status,
-          started_at: new Date().toISOString(),
-          last_activity_at: new Date().toISOString(),
-          last_turn_index: -1,
-          last_checkpoint_turn: -1,
-        });
+        setActive(s);
         router.replace(`/session/${s.session_id}`);
       })
       .catch((e) => setError(errorText(e)));
@@ -61,7 +56,7 @@ export function NewSessionLive() {
   return (
     <div className="flex min-h-0 flex-1 flex-col px-4 pt-4 md:px-7 md:pt-6">
       <header className={MEASURE}>
-        <h1 className="font-serif text-display font-bold tracking-[-0.01em] text-paper">{tx.session.newTitle}</h1>
+        <h1 className="display-caps text-display text-paper">{tx.session.newTitle}</h1>
         <p role={error ? "alert" : "status"} className={cn("mt-1.5", error ? "text-st-confused" : "text-paper-dim")}>
           {error ?? tx.session.newThinking}
         </p>
@@ -70,7 +65,7 @@ export function NewSessionLive() {
   );
 }
 
-/** A real session: history, streaming teacher turns, tasks, finish */
+/** A real session: history, streaming teacher turns (`POST …/actions`), elements, end */
 export function SessionLive({ id }: { id: string }) {
   const tx = useT();
   const t = tx.live;
@@ -80,11 +75,11 @@ export function SessionLive({ id }: { id: string }) {
   const { focusDomain } = useShell();
   const [detail, setDetail] = useState<S["SessionDetail"] | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  const [elems, setElems] = useState<Elem[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
-  /** `status: thinking` arrives after `turn_started`, before the first token */
+  /** `status: thinking` arrives after the action is recorded, before the first token */
   const [thinking, setThinking] = useState(false);
-  const [task, setTask] = useState<Task | null>(null);
-  const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [verdict, setVerdict] = useState<Outcome | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -93,42 +88,52 @@ export function SessionLive({ id }: { id: string }) {
 
   const scrollDown = () => requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
 
-  const send = useCallback(
-    async (text: string) => {
-      if (!text.trim() || busy) return;
+  /** One action of the learner; the answer of the teacher streams back as frames (ТЗ Ф4 §4.7) */
+  const act = useCallback(
+    async (body: Record<string, unknown>, studentText?: string) => {
+      if (busy) return;
       setBusy(true);
       setError(null);
       setVerdict(null);
-      const studentId = `s-${Date.now()}`;
-      setLines((l) => [...l, { id: studentId, role: "student", text }]);
+      const lineId = `s-${Date.now()}`;
+      if (studentText) setLines((l) => [...l, { id: lineId, role: "student", text: studentText }]);
       setStreaming("");
       scrollDown();
       let reply = "";
       let degraded: string | null = null;
-      let turnId = studentId;
+      let committed: number | null = null;
+      const fresh: Elem[] = [];
       try {
         await sse(
           "POST",
-          `/v1/sessions/${id}/turns`,
-          { text, related_task_id: task?.task_id ?? null, idempotency_key: idem() },
+          `/v1/sessions/${id}/actions`,
+          // the body is one of the actions of the contract (message, intent, element_response…); the shape is checked by the backend
+          { ...body, idempotency_key: idem() } as never,
           ({ event, data }) => {
-            if (event === "turn_started") turnId = String(data.turn_id);
+            if (event === "action_recorded") {
+              const v = data.verdict as { outcome?: Outcome } | null | undefined;
+              if (v?.outcome) setVerdict(v.outcome);
+            } else if (event === "verdict") setVerdict(data.outcome as Outcome);
             else if (event === "status") setThinking(data.state === "thinking");
             else if (event === "token") {
-              reply += String(data.delta ?? "");
+              reply += String(data.text ?? "");
               setStreaming(reply);
-            } else if (event === "task_evaluated") {
-              setVerdict(data as unknown as Verdict);
-              setTask(null);
-            } else if (event === "task_assigned") setTask(data as unknown as Task);
-            else if (event === "turn_completed") degraded = (data.degraded_mode as string | null) ?? null;
-            else if (event === "error") throw new ApiError(500, String(data.code ?? "ERROR"), String(data.message ?? ""));
+            } else if (event === "reset") {
+              reply = "";
+              setStreaming("");
+            } else if (event === "element") fresh.push({ blockId: String(data.block_id), element: data.element as S["Element"], turnSeq: null, answered: false });
+            else if (event === "turn_committed") {
+              committed = typeof data.seq === "number" ? data.seq : null;
+              degraded = (data.degraded_mode as string | null) ?? null;
+            } else if (event === "error") throw new ApiError(500, String(data.code ?? "ERROR"), String(data.message ?? ""));
           },
         );
-        setLines((l) => [...l, { id: `t-${turnId}`, role: "teacher", text: reply, degraded }]);
+        if (reply) setLines((l) => [...l, { id: `t-${committed ?? Date.now()}`, role: "teacher", text: reply, degraded }]);
+        if (fresh.length) setElems((e) => [...e.map((x) => ({ ...x })), ...fresh.map((x) => ({ ...x, turnSeq: committed }))]);
       } catch (e) {
         setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e));
-        if (reply) setLines((l) => [...l, { id: `t-${turnId}`, role: "teacher", text: reply }]);
+        // what was already shown stays on screen, marked: this part is not committed and is gone after a reload
+        if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply, interrupted: true }]);
       } finally {
         setStreaming(null);
         setThinking(false);
@@ -136,10 +141,18 @@ export function SessionLive({ id }: { id: string }) {
         scrollDown();
       }
     },
-    [busy, id, task, t.turnLocked, errorText],
+    [busy, id, t.turnLocked, errorText],
   );
 
-  // History
+  const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
+
+  const respond = (el: Elem, response: string) => {
+    if (!response.trim() || el.turnSeq === null) return;
+    setElems((all) => all.map((x) => (x.blockId === el.blockId ? { ...x, answered: true } : x)));
+    return act({ kind: "element_response", turn_seq: el.turnSeq, element_id: el.element.element_id, response }, response);
+  };
+
+  // History: the feed of the session; text lives in `message.sent` (student) and `turn.committed` (teacher)
   useEffect(() => {
     let off = false;
     get<S["SessionDetail"]>(`/v1/sessions/${id}`)
@@ -149,7 +162,13 @@ export function SessionLive({ id }: { id: string }) {
         focusDomain(d.domain_id);
         // a session opened from a topic page becomes the active one in the sessions panel
         if (d.status === "active") setActive(d);
-        setLines(d.turns.map((x) => ({ id: x.turn_id, role: x.role, text: x.text, degraded: x.degraded_mode })));
+        const past: Line[] = [];
+        for (const ev of d.events) {
+          const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
+          if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
+          else if (ev.type === "turn.committed" && text) past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null });
+        }
+        setLines(past);
         scrollDown();
       })
       .catch((e) => {
@@ -164,17 +183,21 @@ export function SessionLive({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // The message typed in the input box before the session existed
+  // The message typed in the input box before the session existed; or, for a fresh learn/practice/review session, its intent
   useEffect(() => {
-    if (!detail || sentFirst.current) return;
+    if (!detail || sentFirst.current || detail.status !== "active") return;
     sentFirst.current = true;
     let first: string | null = null;
     try {
       first = sessionStorage.getItem(firstTurnKey(id));
       sessionStorage.removeItem(firstTurnKey(id));
     } catch {}
-    if (first && detail.status === "active") void send(first);
-  }, [detail, id, send]);
+    if (first) void send(first);
+    // a fresh session already has `session.started` in its log: "fresh" means nobody has spoken yet
+    else if (detail.intent && detail.intent !== "free" && !detail.events.some((e) => e.type === "message.sent" || e.type === "turn.committed")) {
+      void act({ kind: "intent", intent: detail.intent, topic_id: detail.topic_id, hub_id: detail.hub_id });
+    }
+  }, [detail, id, send, act]);
 
   // Presence: the backend closes sessions without a heartbeat
   const live = detail?.status === "active";
@@ -187,8 +210,7 @@ export function SessionLive({ id }: { id: string }) {
   const finish = async () => {
     setBusy(true);
     try {
-      const res = await post(`/v1/sessions/${id}/finish`, { idempotency_key: idem() });
-      saveSummary(id, res);
+      await post(`/v1/sessions/${id}/end`);
       setActive(null);
       void reload();
       router.push(`/session/${id}/summary`);
@@ -215,20 +237,23 @@ export function SessionLive({ id }: { id: string }) {
     );
   }
 
+  const intent = detail.intent ?? "free";
+  const modeLabel = t.modes[intent as keyof typeof t.modes] ?? intent;
   const domain = domains.find((d) => d.id === detail.domain_id);
   const topic = domain?.topics.find((x) => x.id === detail.topic_id);
-  const title = topic?.title ?? t.modes[detail.mode as keyof typeof t.modes] ?? tx.session.newTitle;
+  const title = topic?.title ?? modeLabel ?? tx.session.newTitle;
+  const open = elems.filter((e) => !e.answered);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
         <header className={cn("flex items-start justify-between gap-3", MEASURE)}>
           <div className="min-w-0">
-            <h1 className="line-clamp-2 font-serif text-display font-bold tracking-[-0.01em] text-paper">{title}</h1>
+            <h1 className="line-clamp-2 display-caps text-display text-paper">{title}</h1>
             <p className="mt-1.5 text-paper-dim">
               {domain?.title}
               {domain && " · "}
-              {t.modes[detail.mode as keyof typeof t.modes] ?? detail.mode}
+              {modeLabel}
               {!live && ` · ${t.sessionClosed}`}
             </p>
           </div>
@@ -237,7 +262,7 @@ export function SessionLive({ id }: { id: string }) {
               type="button"
               disabled={busy}
               onClick={() => void finish()}
-              className="inline-flex h-10 shrink-0 items-center rounded-control border border-seam px-4 text-body font-semibold text-paper transition-colors hover:border-rule hover:bg-cloth-hover disabled:opacity-50"
+              className="caps inline-flex h-10 shrink-0 items-center rounded-pill border border-seam px-6 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon disabled:opacity-50"
             >
               {tx.stubs.summary.finish}
             </button>
@@ -253,6 +278,7 @@ export function SessionLive({ id }: { id: string }) {
               <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper">
                 <RichText text={l.text} />
                 {l.degraded && <p className="mt-2 text-small text-paper-dim">{t.degraded}</p>}
+                {l.interrupted && <p className="mt-2 text-small text-paper-dim">{t.interrupted}</p>}
               </article>
             ),
           )}
@@ -268,20 +294,14 @@ export function SessionLive({ id }: { id: string }) {
               )}
             </article>
           )}
-          {verdict && (
-            <p role="status" className={cn("text-body", verdict.is_correct ? "text-st-solid" : "text-st-confused")}>
-              {verdict.feedback || (verdict.is_correct ? tx.stubs.practice.correct : tx.live.notQuite)}
+          {verdict && (verdict === "correct" || verdict === "incorrect") && (
+            <p role="status" className={cn("text-body", verdict === "correct" ? "text-st-solid" : "text-st-confused")}>
+              {verdict === "correct" ? tx.stubs.practice.correct : tx.live.notQuite}
             </p>
           )}
-          {task && (
-            <section aria-label={t.taskFromTeacher} className="rounded-[16px] border border-seam p-4">
-              <p className="num text-small text-paper-dim">{t.taskFromTeacher}</p>
-              <div className="mt-2 text-paper">
-                <RichText text={task.prompt_text} />
-              </div>
-              <p className="mt-2 text-small text-paper-dim">{t.answerBelow}</p>
-            </section>
-          )}
+          {live &&
+            streaming === null &&
+            open.map((el) => <ElementCard key={el.blockId} el={el} disabled={busy} onRespond={(r) => void respond(el, r)} />)}
           {error && (
             <p role="alert" className="text-small text-st-confused">
               {error}
@@ -294,7 +314,7 @@ export function SessionLive({ id }: { id: string }) {
         <div className="px-4 pb-4 md:px-7 md:pb-5">
           <Composer
             label={tx.session.composerLabel}
-            placeholder={task ? t.answerPlaceholder : tx.session.replyPlaceholder}
+            placeholder={tx.session.replyPlaceholder}
             submitText={tx.session.send}
             onSend={(text) => void send(text)}
           />
@@ -304,11 +324,47 @@ export function SessionLive({ id }: { id: string }) {
   );
 }
 
+/** A task or a question of the teacher: its prompt and a box for the answer. Other element kinds show only what they carry */
+function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean; onRespond: (text: string) => void }) {
+  const tx = useT();
+  const [text, setText] = useState("");
+  const e = el.element as { kind: string; prompt?: string };
+  const answerable = ANSWERABLE.has(e.kind) && el.turnSeq !== null;
+  return (
+    <section aria-label={tx.live.taskFromTeacher} className="rounded-[2px] border border-seam p-4">
+      <p className="caps text-paper-dim">{e.kind === "task" ? tx.live.taskFromTeacher : e.kind.replace(/_/g, " ")}</p>
+      {e.prompt && (
+        <div className="mt-2 text-paper">
+          <RichText text={e.prompt} />
+        </div>
+      )}
+      {answerable && (
+        <form
+          className="mt-3"
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            onRespond(text);
+            setText("");
+          }}
+        >
+          <label className="sr-only" htmlFor={`el-${el.blockId}`}>
+            {tx.live.elementAnswer}
+          </label>
+          <textarea id={`el-${el.blockId}`} value={text} onChange={(ev) => setText(ev.target.value)} placeholder={tx.live.answerPlaceholder} className={cn(AREA, "min-h-16")} />
+          <button type="submit" disabled={disabled || !text.trim()} className={cn(PRIMARY_BTN, "mt-3")}>
+            {tx.live.elementSend}
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
+
 function StudentLine({ text }: { text: string }) {
   const tx = useT();
   return (
     <p className="flex gap-3 border-y border-seam-soft py-3 whitespace-pre-wrap text-paper">
-      <span className="num shrink-0 pt-0.5 text-small text-paper-dim">{tx.session.you}</span>
+      <span className="caps shrink-0 pt-1 text-paper-dim">{tx.session.you}</span>
       <span>{text}</span>
     </p>
   );
@@ -318,7 +374,7 @@ function Dots() {
   return (
     <span aria-hidden className="inline-flex gap-0.5">
       {[0, 1, 2].map((i) => (
-        <span key={i} className="size-1 animate-pulse rounded-full bg-paper-dim" style={{ animationDelay: `${i * 180}ms` }} />
+        <span key={i} className="size-1 animate-pulse rounded-pill bg-paper-dim" style={{ animationDelay: `${i * 180}ms` }} />
       ))}
     </span>
   );

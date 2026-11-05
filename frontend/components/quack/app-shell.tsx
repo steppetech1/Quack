@@ -1,18 +1,21 @@
 "use client";
 
-import { History, Menu, X } from "lucide-react";
+import { History, PanelLeft, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, Suspense, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { GraphMode } from "@/lib/graph-layout";
 import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useT } from "@/lib/i18n/provider";
-import { MOCK_TODAY } from "@/lib/mock";
+import { todayIso } from "@/lib/format";
 import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
+import { MenuToggle } from "./menu-toggle";
+import { SiteMenu } from "./site-menu";
+import { IndicatorPills } from "./graph/indicator-pills";
 import { SessionsPanel } from "./sessions-panel";
 import { SoonProvider } from "./soon";
 
@@ -32,6 +35,10 @@ type Shell = {
   closeDrawer: () => void;
   /** Сделать домен текущим без перехода (страница темы или сессии реального домена) */
   focusDomain: (id: string) => void;
+  /** Полноэкранное меню: открыть из кнопки-триггера (откуда берём место и куда вернуть фокус) или закрыть */
+  menuOpen: boolean;
+  openMenu: (trigger: HTMLElement | null) => void;
+  closeMenu: () => void;
 };
 
 const ShellContext = createContext<Shell | null>(null);
@@ -71,14 +78,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const inSession = /^\/(session|topic|hub|canvas)\//.test(pathname);
   // Доска канваса занимает весь экран: ни панели доменов, ни панели сессий
   const fullscreen = pathname.startsWith("/canvas/");
+  // Живой режим: пока данные грузятся (или «/» без предметов — сейчас уведёт на создание) — пустой центр; ошибка — плашка
+  const busy = API_MODE && (!data.ready || (!data.error && data.domains.length === 0 && pathname === "/"));
+  const failed = API_MODE && !busy && !!data.error;
 
   const [domainId, setDomainId] = useState(domains[0].id);
   const [pending, setPending] = useState<string | null>(null);
   const [pendingTopic, setPendingTopic] = useState<string | null>(null);
   // null — решает ширина экрана: на узком десктопе панель свёрнута
   const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
+  // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
+  const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
   const [drawer, setDrawer] = useState<"domains" | "sessions" | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ left: number; top: number } | null>(null);
+  const menuOpener = useRef<HTMLElement | null>(null);
+  const barToggle = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const closeBtn = useRef<HTMLButtonElement | null>(null);
   const openDrawer = (side: "domains" | "sessions", el: HTMLElement) => {
@@ -127,6 +143,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const openMenu = useCallback((el: HTMLElement | null) => {
+    menuOpener.current = el;
+    const r = el?.getBoundingClientRect();
+    setMenuAnchor(r ? { left: r.left, top: r.top } : null);
+    setMenuOpen(true);
+  }, []);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+
+  // любой переход (в том числе «назад») закрывает меню
+  const [menuPath, setMenuPath] = useState(pathname);
+  if (menuPath !== pathname) {
+    setMenuPath(pathname);
+    setMenuOpen(false);
+  }
+
   const selectDomain = (id: string) => {
     setDomainId(id);
     setGraphMode({ kind: "overview" });
@@ -151,7 +182,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sessions: Session[] =
     // С бэкендом новая сессия появляется в списке сама, как только создана
     pending && !API_MODE && domain.id === SESSION_DOMAIN
-      ? [{ id: "new", href: "/session/new", date: MOCK_TODAY, title: pending, topics: [] }, ...domain.sessions]
+      ? [{ id: "new", href: "/session/new", date: todayIso(), title: pending, topics: [] }, ...domain.sessions]
       : domain.sessions;
 
   const toggleSessions = () =>
@@ -172,59 +203,82 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId, menuOpen, openMenu, closeMenu }}>
         <a
           href="#main"
           onClick={(e) => {
             e.preventDefault();
             document.getElementById("main")?.focus();
           }}
-          className="fixed top-2 left-2 z-[60] -translate-y-16 rounded-control border border-seam bg-cloth-raised px-4 py-2.5 text-body font-semibold text-paper focus:translate-y-0"
+          className="caps fixed top-2 left-2 z-[60] -translate-y-16 rounded-pill border border-seam bg-cloth-raised px-4 py-2.5 text-paper focus:translate-y-0"
         >
           {t.shell.skip}
         </a>
-        <div inert={!!drawer} className="flex h-dvh">
+        <div inert={!!drawer || menuOpen} className="flex h-dvh">
           {!fullscreen && (
-            <aside aria-label={t.shell.subjects} className="hidden w-62 shrink-0 border-r border-seam-soft md:block">
-              <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
+            <aside
+              aria-label={t.shell.subjects}
+              className={cn("hidden shrink-0 border-r border-seam-soft transition-[width] duration-300 ease-out md:block", domainsCollapsed ? "w-14" : "w-62")}
+            >
+              <DomainSidebar
+                domains={domains}
+                activeId={activeId}
+                onSelect={selectDomain}
+                collapsed={domainsCollapsed}
+                onToggle={() => setDomainsCollapsed((v) => !v)}
+              />
             </aside>
           )}
 
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
+            {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
-              <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
-                <Menu />
-              </IconButton>
-              <p className="font-serif text-body font-bold">Quack!</p>
-              {!inSettings && <IconButton label={t.shell.sessions} className="ml-auto" onClick={(e) => openDrawer("sessions", e.currentTarget)}>
+              {pathname !== "/" && (
+                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
+                  <PanelLeft />
+                </IconButton>
+              )}
+              <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
+              {/* на телефоне кнопка меню в верхней полосе */}
+              <div ref={barToggle} data-menu-anchor className="ml-auto">
+                <MenuToggle
+                  open={menuOpen}
+                  onClick={() => (menuOpen ? closeMenu() : openMenu(barToggle.current?.querySelector("button") ?? null))}
+                  labelOpen={t.menu.open}
+                  labelClose={t.menu.close}
+                />
+              </div>
+              {!inSettings && <IconButton label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
                 <History />
               </IconButton>}
             </div>}
-            {API_MODE && (!data.ready || (!data.error && data.domains.length === 0 && pathname === "/")) ? (
+            {busy ? (
               <div className="flex-1" aria-busy="true" />
-            ) : API_MODE && data.error ? (
+            ) : failed ? (
               <div role="alert" className="m-auto max-w-md px-6 text-center">
                 <p className="text-body text-paper">{data.error}</p>
                 <button
                   type="button"
                   onClick={() => void data.reload()}
-                  className="mt-4 inline-flex h-10 items-center rounded-control border border-seam px-4 text-body font-semibold text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
+                  className="caps mt-4 inline-flex h-10 items-center rounded-pill border border-seam px-5 text-paper transition-colors hover:border-rule hover:bg-cloth-hover"
                 >
                   {t.live.retry}
                 </button>
               </div>
-            ) : (
-              children
-            )}
+            ) : null}
+            {/* Страницу рендерим всегда (и на сервере — иначе Next не может проверить instant-навигацию),
+                пока данных нет — просто прячем; обёртка постоянная, страница не пересоздаётся */}
+            <div className={busy || failed ? "hidden" : "contents"}>{children}</div>
           </main>
 
           {!inSettings && !fullscreen && <aside
             aria-label={t.shell.sessions}
             className={cn(
-              "hidden shrink-0 border-l border-seam-soft transition-[width] duration-300 ease-out md:block",
+              "relative hidden shrink-0 border-l border-seam-soft transition-[width] duration-300 ease-out md:block",
               sessionsPref === null ? "w-14 xl:w-73" : sessionsPref ? "w-14" : "w-73",
             )}
           >
+            <IndicatorPills />
             {sessionsPref === null ? (
               <>
                 <div className="h-full xl:hidden">{panel(true, toggleSessions)}</div>
@@ -241,7 +295,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           aria-hidden
           onClick={() => setDrawer(null)}
           className={cn(
-            "fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 md:hidden",
+            "fixed inset-0 z-40 bg-cloth-deep/70 transition-opacity duration-300 md:hidden",
             drawer ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         />
@@ -265,13 +319,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <X />
               </IconButton>
               {side === "domains" ? (
-                <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
+                <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} withMenu={false} />
               ) : (
                 panel()
               )}
             </div>
           );
         })}
+
+        <SiteMenu open={menuOpen && !fullscreen} onClose={closeMenu} anchor={menuAnchor} returnFocusRef={menuOpener} />
       </ShellContext.Provider>
     </SoonProvider>
   );

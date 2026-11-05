@@ -23,6 +23,16 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-B-222. Q-A-4 (A → B): `target_seq` самооценки, `sourceSeq` свидетельства, порог `calibrated`
+- Класс: B
+- WP / место: WP5.3 (A), WP13.1, WP12.1; `quack/session/actions.py` (`ConfidenceAction`, `ActionRecordedFrame`), `quack/session/extraction.py`, `quack/graph/evidence_validation.py`
+- Контекст: A спросил (PHASE4_NOTES, Q-A-4): (1) на какое событие указывает `confidence.reported.target_seq`; (2) равен ли `Evidence.sourceSeq` `seq` ответа на элемент; (3) порог `calibrated` — `Т-§9.5` его не задаёт
+- Решение: (1) `target_seq` — `seq` действия ученика, к которому относится самооценка: `answer.submitted` или `element.responded`; клиент берёт его из кадра `action_recorded {seq}` ответа (кадр приходит сразу после записи действия). На `turn.committed` он не указывает. (2) Да: `sourceSeq` свидетельства — `seq` действий ученика из эпизода, на которые сослался извлекатель (`ExtractorEntry.events`, проверка `evidence_validation`: каждый `seq` обязан быть в эпизоде); для ответа на элемент это `seq` его `element.responded`. Сопоставление самооценки со свидетельством — по равенству `target_seq` и `sourceSeq`. (3) Порога нет: оставить точный ноль, как в D-A-170 п.2; допуск вводить, только если появится значение в `Т-§9.5` (поле `Settings` — тогда в блок A).
+- Почему: `Т-§9.5` (надёжность уверенности: самооценки сравниваются с исходами свидетельств), `Т-§7.4` (`sourceSeq` — действие, из которого сделано свидетельство), код `actions.py` / `evidence_validation.py`
+- Обратимость: решение только фиксирует чтение; кода не меняет
+- Тесты: нет (код не менялся)
+- Требует подтверждения владельцем: нет
+
 ### D-B-221. Красные места сквозных тестов T-E1/T-E7/T-E9/T-E11 (#279)
 - Класс: B
 - WP / место: WP13, WP14.4, WP16.8, WP26.1; `quack/practice/repo.py` (`session_events_of_action`), `quack/session/turn_source.py` (`assemble`, `_search`), `quack/session/tools.py`, `quack/session/sessions.py` (`StartSession.today_item`), `quack/practice/today_plan.py`

@@ -4,27 +4,23 @@
 
 from __future__ import annotations
 
+import base64
 import json
-import time
 from collections.abc import Callable
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import httpx2
 import pytest
-from joserfc import jwt
-from joserfc.jwk import KeySet, RSAKey
+from joserfc.jwk import RSAKey
 from pydantic import SecretStr
 
 from quack.api.email import EmailUnavailable, ResendEmailSender, create_email_sender
 from quack.auth.google import AuthlibGoogleOIDC, GoogleIdentity, OidcFailed
 from quack.config import Settings
+from tests.support.google_idp import CLIENT_ID, CLIENT_SECRET, TOKEN_URL, Google
 
 LINK = "https://api.qvack.online/auth/link/verify?token=abc"
-CLIENT_ID = "client-id.apps.googleusercontent.com"
-TOKEN_URL = "https://oauth2.googleapis.com/token"
-CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
-ISSUER = "https://accounts.google.com"
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -100,52 +96,6 @@ def test_factory_builds_resend_from_settings(settings: Settings) -> None:
 # --- WP18.2: Google -------------------------------------------------------------------------
 
 
-class Google:
-    """A scripted Google: its signing key, the token endpoint and the certificates."""
-
-    def __init__(self) -> None:
-        self.key = RSAKey.generate_key(2048, auto_kid=True)
-        self.code_claims: dict[str, dict[str, object]] = {}
-        self.token_status = 200
-        self.requests: list[httpx2.Request] = []
-
-    def claims(self, **override: object) -> dict[str, object]:
-        base: dict[str, object] = {
-            "iss": ISSUER,
-            "aud": CLIENT_ID,
-            "sub": "1234567890",
-            "iat": int(time.time()) - 5,
-            "exp": int(time.time()) + 300,
-            "email": "Gina@Example.com",
-            "email_verified": True,
-        }
-        return {**base, **override}
-
-    def id_token(self, claims: dict[str, object], key: RSAKey | None = None) -> str:
-        signer = key or self.key
-        return jwt.encode({"alg": "RS256", "kid": signer.kid}, claims, signer)
-
-    def handler(self, request: httpx2.Request) -> httpx2.Response:
-        self.requests.append(request)
-        if str(request.url) == CERTS_URL:
-            return httpx2.Response(200, json=KeySet([self.key]).as_dict(private=False))
-        if str(request.url) == TOKEN_URL:
-            if self.token_status != 200:
-                return httpx2.Response(self.token_status, json={"error": "invalid_grant"})
-            form = parse_qs(request.content.decode())
-            claims = self.code_claims[form["code"][0]]
-            return httpx2.Response(
-                200,
-                json={
-                    "access_token": "ya29.token",
-                    "token_type": "Bearer",
-                    "expires_in": 3599,
-                    "id_token": self.id_token(claims),
-                },
-            )
-        return httpx2.Response(404)
-
-
 @pytest.fixture
 def google() -> Google:
     return Google()
@@ -156,7 +106,7 @@ def oidc_settings(settings: Settings) -> Settings:
     return settings.model_copy(
         update={
             "google_oidc_client_id": SecretStr(CLIENT_ID),
-            "google_oidc_client_secret": SecretStr("client-secret"),
+            "google_oidc_client_secret": SecretStr(CLIENT_SECRET),
             "google_oidc_redirect_url": "https://api.qvack.online/auth/google/callback",
         }
     )
@@ -187,7 +137,12 @@ async def test_identity_of_a_verified_address(google: Google, oidc: AuthlibGoogl
     token_request = next(r for r in google.requests if str(r.url) == TOKEN_URL)
     form = parse_qs(token_request.content.decode())
     assert form["grant_type"] == ["authorization_code"]
+    assert form["code"] == ["good"]
     assert form["redirect_uri"] == ["https://api.qvack.online/auth/google/callback"]
+    # The client authenticates itself with the secret (basic auth or the form of the request).
+    authorization = token_request.headers.get("authorization", "")
+    assert form.get("client_secret") == [CLIENT_SECRET] or authorization.startswith("Basic ")
+    assert form.get("client_id", [CLIENT_ID]) == [CLIENT_ID]
 
 
 async def test_identity_keeps_the_unverified_flag(google: Google, oidc: AuthlibGoogleOIDC) -> None:
@@ -257,3 +212,22 @@ async def test_identity_when_google_is_unreachable(oidc_settings: Settings) -> N
     down = AuthlibGoogleOIDC(oidc_settings, transport=httpx2.MockTransport(handler))
     with pytest.raises(OidcFailed):
         await down.identity(code="x")
+
+
+async def test_identity_refuses_an_unsigned_token(google: Google, oidc_settings: Settings) -> None:
+    """`alg: none` is the old way to forge an id token: only RS256 of Google's keys passes."""
+
+    def segment(data: dict[str, object]) -> str:
+        raw = json.dumps(data).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    unsigned = f"{segment({'alg': 'none'})}.{segment(google.claims())}."
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if str(request.url) == TOKEN_URL:
+            return httpx2.Response(200, json={"access_token": "t", "id_token": unsigned})
+        return google.handler(request)
+
+    forged = AuthlibGoogleOIDC(oidc_settings, transport=httpx2.MockTransport(handler))
+    with pytest.raises(OidcFailed):
+        await forged.identity(code="x")

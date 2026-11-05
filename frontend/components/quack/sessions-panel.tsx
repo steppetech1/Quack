@@ -31,7 +31,7 @@ export function SessionsPanel({
         <IconButton label={t.shell.expandSessions} onClick={onToggle}>
           <PanelRightOpen />
         </IconButton>
-        <p className="num text-small text-paper-dim [writing-mode:vertical-rl]">
+        <p className="caps text-paper-dim [writing-mode:vertical-rl]">
           {t.shell.sessionsCount(sessions.length)}
         </p>
       </div>
@@ -40,8 +40,8 @@ export function SessionsPanel({
 
   return (
     <section aria-labelledby="sessions-h" className="flex h-full flex-col bg-cloth-deep">
-      <div className="flex items-center justify-between py-3 pr-2 pl-5">
-        <h2 id="sessions-h" className="font-semibold text-paper">
+      <div className="flex items-center justify-between border-b border-seam-soft py-3 pr-2 pl-5">
+        <h2 id="sessions-h" className="caps text-paper">
           {t.shell.sessions}
         </h2>
         {onToggle && (
@@ -51,18 +51,18 @@ export function SessionsPanel({
         )}
       </div>
       {sessions.length === 0 ? (
-        <p className="px-5 text-small text-paper-dim">{t.shell.noSessions}</p>
+        <p className="px-5 pt-4 text-small text-paper-dim">{t.shell.noSessions}</p>
       ) : (
-        <ul className="flex flex-col gap-0.5 overflow-y-auto px-2 pb-3">
+        <ul className="flex flex-col gap-0.5 overflow-y-auto px-2 py-3">
           {sessions.map((s) => {
             const active = !!s.href && s.href === activeHref;
             const cls = cn(
-              "block w-full rounded-control px-3 py-2.5 text-left transition-colors hover:bg-cloth-hover",
-              active && "bg-cloth-raised",
+              "block w-full rounded-[2px] border border-transparent px-3 py-2.5 text-left transition-colors duration-[var(--dur-s)] ease-out hover:bg-cloth-hover",
+              active && "border-seam bg-cloth-raised",
             );
             const body = (
               <>
-                <span className="num block text-small text-paper-dim">{dayLabel(s.date)}</span>
+                <span className="caps block text-paper-dim">{dayLabel(s.date)}</span>
                 <span className="mt-0.5 line-clamp-2 block text-paper">{s.title}</span>
                 {s.topics.length > 0 && (
                   <span className="mt-0.5 line-clamp-2 block text-small text-paper-dim">{s.topics.join(" · ")}</span>

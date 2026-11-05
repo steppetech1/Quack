@@ -2,11 +2,14 @@
 
 Head (`p1_head`, before any body character is shown): honest verdict — `verdict_stance =
 code` only when the turn answers an answer with a code-class verdict; the turn is marked —
-`targetSkills` is not empty and every label exists. Markup (`p3_markup`): exposures and
+`targetSkills` is not empty (a domain with no skills yet has none to name, so it may be empty
+there) and every label exists. Markup (`p3_markup`): exposures and
 `targetsMisconception` reference existing labels. A violation returns the turn to the model
 with its reasons (WP13.2 `guard`, up to `guard_max_retries`); what happens after the retries
 is the caller's: `settle_stance` lowers `code` to `formative` [РЕШЕНИЕ Ф4 WP13.5], an
-unmarked turn is shown and logged. «Do not jump the boundary» (head): every prerequisite of a
+unmarked turn is shown and logged: `drop_unknown_head_labels` and `drop_unknown_markup_labels`
+take the labels that do not exist out of what is committed, so the write of the turn does not
+fail on them. «Do not jump the boundary» (head): every prerequisite of a
 target skill by `REQUIRES` with `confidence >= requires_min_confidence` has a showing or
 evidence (the slice of seam S4 reads them with the session overlay) or is a target of this
 turn too (D-B-153); after the retries the turn is shown and the case logged. Unsure links
@@ -67,7 +70,8 @@ def head_violations(
                 "verdict_stance code needs a code-class verdict of the answered answer",
             )
         )
-    if not head.target_skills and head.intent != "split_topic":  # the topic is the object
+    # the topic is the object of a split; a domain with no skills has nothing to target
+    if not head.target_skills and head.intent != "split_topic" and skill_labels:
         violations.append(GuardViolation("no_target_skills", "targetSkills is empty"))
     violations.extend(_unknown("unknown_skill_label", head.target_skills, skill_labels))
     if boundary is not None:
@@ -120,6 +124,32 @@ def markup_violations(
     return violations
 
 
+def drop_unknown_head_labels(head: TurnHead, skill_labels: Collection[str]) -> TurnHead:
+    """After the retries: target skills that are not in the label table are dropped (the turn
+    stays shown and logged, but unmarked by them), so `turn_batch` has nothing to reject."""
+    known = [s for s in head.target_skills if s in skill_labels]
+    if len(known) == len(head.target_skills):
+        return head
+    return head.model_copy(update={"target_skills": known})
+
+
+def drop_unknown_markup_labels(
+    markup: TurnMarkup, *, skill_labels: Collection[str], misconception_labels: Collection[str]
+) -> TurnMarkup:
+    """After the retries: exposures of unknown skills and an unknown `targetsMisconception`
+    are dropped, as for the head."""
+    update: dict[str, object] = {}
+    exposures = [e for e in markup.exposures if e.skill in skill_labels]
+    if len(exposures) != len(markup.exposures):
+        update["exposures"] = exposures
+    if (
+        markup.targets_misconception is not None
+        and markup.targets_misconception not in misconception_labels
+    ):
+        update["targets_misconception"] = None
+    return markup.model_copy(update=update) if update else markup
+
+
 def settle_stance(head: TurnHead, answered_verdict: Verdict | None) -> TurnHead:
     """After the retries: `code` without a code verdict becomes `formative`; code never
     raises the stance."""
@@ -138,4 +168,5 @@ def _unknown(
     missing = [label for label in labels if label not in known]
     if not missing:
         return []
-    return [GuardViolation(reason, f"unknown labels: {', '.join(dict.fromkeys(missing))}")]
+    hint = "" if known else "; there are no such labels in this domain yet, leave the list empty"
+    return [GuardViolation(reason, f"unknown labels: {', '.join(dict.fromkeys(missing))}{hint}")]

@@ -17,6 +17,7 @@ from quack.jobs.kinds import JOB_KINDS
 from quack.jobs.runner import JOB_HANDLERS, JobContext, JobHandler
 from quack.llm.gateway import LLMGateway
 from quack.llm.responses_client import ResponsesClient
+from quack.llm.tracing import create_tracer
 from quack.storage.deletions import create_deletion_journal
 from quack.storage.objects import create_object_store
 
@@ -42,6 +43,9 @@ HANDLER_MODULES: tuple[str, ...] = (
     "quack.agents.illustration",
     "quack.ops.material_parse",
     "quack.jobs.embedding_p4",
+    "quack.artifacts.agent_artifact",
+    "quack.artifacts.data_export",
+    "quack.canvas.jobs",
 )
 
 
@@ -56,7 +60,7 @@ async def create_job_context(settings: Settings) -> JobContext:
         db=db,
         neo4j=neo4j,
         redis=redis,
-        llm=LLMGateway(provider, settings, db=db),
+        llm=LLMGateway(provider, settings, db=db, tracer=create_tracer(settings)),
         compute=create_compute_client(settings),
         storage=create_object_store(settings),
         embeddings=create_embedding_client(settings),

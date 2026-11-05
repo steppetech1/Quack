@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from quack.config import Settings
 from quack.graph.projection.skill_fold import FoldEvidence, FoldExposure, FoldParams, fold_skill
 
 P = FoldParams()
@@ -313,3 +314,19 @@ def test_hub_required_levels_default() -> None:
     batch = BatchSlice("l", graph)
     fold_dirty_topics(batch, {"t"}, TopicParams(control_type_levels=levels))
     assert (batch.node("Topic", "t") or {})["displayState"] == "in_progress"  # 3 of 3, 4
+
+
+def test_derived_evidence_factors_come_from_settings() -> None:
+    """Т-§7.9: ×0.5 for an indirect and ×0.6 for a transfer evidence are the starting values of
+    `Settings`; the fold reads them from there (rules@3 parameters, no number in the code)."""
+    assert FoldParams.from_settings(Settings()).derived_factor == {
+        "direct": 1.0,
+        "indirect": 0.5,
+        "transfer": 0.6,
+    }
+    tuned = Settings(derived_indirect_factor=0.25, derived_transfer_factor=0.3)
+    assert FoldParams.from_settings(tuned).derived_factor == {
+        "direct": 1.0,
+        "indirect": 0.25,
+        "transfer": 0.3,
+    }

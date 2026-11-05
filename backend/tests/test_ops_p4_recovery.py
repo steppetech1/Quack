@@ -21,6 +21,7 @@ from quack.storage.keys import (
     export_key,
     material_original_key,
     material_page_key,
+    photo_drawing_key,
     photo_original_key,
     viz_key,
 )
@@ -92,6 +93,14 @@ async def _insert_reference(db: Db, learner: UUID, source: str) -> str:
             "'learner')",
             {"a": material, "l": learner, "k": key},
         )
+    elif source == "canvas_drawings":
+        key = photo_drawing_key(learner, material, 1)
+        await db.execute(
+            "INSERT INTO content.canvas_boards (canvas_id, learner_id, session_id, doc) "
+            "VALUES (%(c)s, %(l)s, %(s)s, jsonb_build_object('learner', jsonb_build_object("
+            "'drawings', jsonb_build_array(jsonb_build_object('object_key', %(k)s::text)))))",
+            {"c": canvas, "l": learner, "s": session, "k": key},
+        )
     elif source == "canvas_boards":
         key = canvas_chunk_key(learner, session, canvas, 0)
         await db.execute(
@@ -113,6 +122,7 @@ def test_every_reference_source_has_a_test_case() -> None:
         "exports",
         "events",
         "artifact_versions",
+        "canvas_drawings",
         "canvas_boards",
     } == SOURCE_NAMES
     assert len(SOURCE_NAMES) == len(REFERENCE_SOURCES) + 1
@@ -135,6 +145,30 @@ async def test_a_live_file_named_by_any_source_is_never_deleted(
     assert report.orphans == [lost]
     assert key in store.objects
     assert (lost in store.objects) is (not apply)
+
+
+async def test_an_illustration_named_only_by_agent_completed_is_kept(pg_db: Db) -> None:
+    """`illustrations/` has no column and no key helper in `storage/keys.py`: the file is named
+    only by `agent.completed.result_ref`, which the `events` source finds (D-C-241, Q-C-1)."""
+    learner = await create_learner(pg_db)
+    store = InMemoryObjectStore()
+    kept = f"learners/{learner}/illustrations/{uuid4()}-01J0.png"
+    lost = f"learners/{learner}/illustrations/{uuid4()}-01J1.png"
+    await pg_db.execute(
+        "INSERT INTO core.events (learner_id, seq, type, schema_version, actor, "
+        "idempotency_key, payload_hash, occurred_at, payload) "
+        "VALUES (%(l)s, 1, 'agent.completed', 1, 'system', 'k-ill', 'h', now(), "
+        "jsonb_build_object('ok', true, 'result_ref', %(k)s::text))",
+        {"l": learner, "k": kept},
+    )
+    await _put(store, kept)
+    await _put(store, lost)
+
+    report = await orphan_objects(pg_db, store, LONG_AGO, apply=True)
+
+    assert report.orphans == [lost]
+    assert kept in store.objects
+    assert lost not in store.objects
 
 
 async def test_orphan_objects_lists_what_postgres_does_not_know(pg_db: Db) -> None:

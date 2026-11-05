@@ -17,13 +17,19 @@ export function TopicList({ domain, openId }: { domain: Domain; openId: string |
       <li key={t.id} id={`topic-${t.id}`} className="scroll-mt-4 border-b border-seam-soft last:border-0">
         <Link
           href={`/topic/${t.id}`}
-          className={cn("-mx-2 flex min-h-11 items-center gap-3 rounded-option px-2 py-2", open && "bg-cloth-raised")}
+          className={cn("-mx-2 flex min-h-11 items-center gap-3 rounded-[2px] px-2 py-2", open && "bg-cloth-raised")}
         >
           <StateDot state={t.state} />
           <span className="min-w-0 flex-1 truncate text-paper">{t.title}</span>
-          <span className={cn("shrink-0 text-small", t.state === "confused" ? "text-st-confused" : "text-paper-dim")}>
-            {t9.states[t.state].toLowerCase()}
+          <span
+            className={cn(
+              "caps hidden shrink-0 sm:inline",
+              t.state === "confused" ? "text-st-confused" : "text-paper-dim",
+            )}
+          >
+            {t9.states[t.state]}
           </span>
+          <span className="sr-only sm:hidden">{t9.states[t.state]}</span>
         </Link>
       </li>
     );
@@ -34,18 +40,18 @@ export function TopicList({ domain, openId }: { domain: Domain; openId: string |
       {domain.hubs.map((h) => (
         <section key={h.id} aria-labelledby={`hub-${h.id}`} >
           <div className="flex items-baseline justify-between gap-3 border-b border-seam-soft pb-1.5">
-            <h2 id={`hub-${h.id}`} className="font-serif font-bold text-paper">
+            <h2 id={`hub-${h.id}`} className="display-caps text-paper">
               <Link href={`/hub/${h.id}`} className="inline-flex min-h-10 items-center">
-                <span className="num font-normal text-paper-dim">§ {h.num}</span>&nbsp;{h.title}
+                <span className="num text-paper-dim">§ {h.num}</span>&nbsp;{h.title}
               </Link>
             </h2>
             {h.deadline && (
-              <span className="num flex items-center gap-1 text-small text-ribbon">
-                <Duck className="h-3.5 w-4" />
+              <span className="caps flex items-center gap-1 text-ribbon">
+                <Duck className="h-3.5 w-4" striped={false} />
                 {t9.topicList.due} {fullDate(h.deadline.date)}
               </span>
             )}
-            {h.suggested && <span className="text-small text-paper-dim">{t9.topicList.suggested}</span>}
+            {h.suggested && <span className="caps text-paper-dim">{t9.topicList.suggested}</span>}
           </div>
           <ul>
             {domain.topics
@@ -57,7 +63,7 @@ export function TopicList({ domain, openId }: { domain: Domain; openId: string |
       {free.length > 0 && (
         <section aria-labelledby="hub-none">
           <div className="flex items-baseline justify-between gap-3 border-b border-seam-soft pb-1.5">
-            <h2 id="hub-none" className="inline-flex min-h-10 items-center font-serif font-bold text-paper">
+            <h2 id="hub-none" className="display-caps inline-flex min-h-10 items-center text-paper">
               {t9.graph.noChapter}
             </h2>
           </div>
