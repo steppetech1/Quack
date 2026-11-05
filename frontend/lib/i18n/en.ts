@@ -7,6 +7,7 @@ export const en = {
     tomorrow: "tomorrow",
     yesterday: "yesterday",
     inDays: (n: number) => `in ${n} ${plural2(n, "day", "days")}`,
+    daysAgo: (n: number) => `${n} ${plural2(n, "day", "days")} ago`,
   },
   states: {
     solid: "You solve it yourself",
