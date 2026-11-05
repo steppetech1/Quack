@@ -5,7 +5,7 @@ import { useT } from "@/lib/i18n/provider";
 import { onAnchor } from "./scenes/story";
 
 const LINK =
-  "inline-flex min-h-10 items-center rounded-[6px] font-mono text-[0.9375rem] text-[#bba995] outline-none transition-colors duration-(--dur-s) hover:text-[#f6eadc] focus-visible:ring-2 focus-visible:ring-[#ff8a2a]/60";
+  "inline-flex min-h-10 items-center rounded-[6px] font-mono text-[0.9375rem] text-[#bba995] outline-none transition-colors duration-(--dur-s) hover:text-[#daa05f] focus-visible:ring-2 focus-visible:ring-[#daa05f]/60";
 
 /** Подвал лендинга: призыв, логотип с подписью, колонки ссылок и копирайт */
 export function LandingFooter() {
@@ -20,7 +20,7 @@ export function LandingFooter() {
           </p>
           <Link
             href="/signup"
-            className="inline-flex h-16 items-center justify-center rounded-pill bg-[#ff8a2a] px-10 text-[1.375rem] font-bold leading-none tracking-[-0.03em] text-[#1a0a02] shadow-[0_0_40px_#ff7a1a55] outline-none transition-[background-color,transform] duration-(--dur-s) ease-(--ease-out) hover:bg-[#ff9d4d] focus-visible:ring-4 focus-visible:ring-[#ff8a2a]/50 active:translate-y-px"
+            className="inline-flex h-16 items-center justify-center rounded-pill bg-[#daa05f] px-10 text-[1.375rem] font-bold leading-none tracking-[-0.03em] text-[#1a0a02] shadow-[0_0_40px_#daa05f40] outline-none transition-[background-color,transform] duration-(--dur-s) ease-(--ease-out) hover:bg-[#e6b676] focus-visible:ring-4 focus-visible:ring-[#daa05f]/50 active:translate-y-px"
           >
             {t.cta}
           </Link>
@@ -29,7 +29,7 @@ export function LandingFooter() {
         <div className="mt-16 grid gap-10 border-t border-[#f1e4d6]/10 pt-10 sm:grid-cols-[1.4fr_1fr_1fr]">
           <div>
             <p className="text-[1.5rem] font-extrabold tracking-[-0.06em] text-[#f6eadc]">
-              Qvack<span className="text-[#ff8a2a]">!</span>
+              Qvack<span className="text-[#daa05f]">!</span>
             </p>
             <p className="mt-2 text-[0.875rem] text-[#8d8273]">{t.footer.note}</p>
           </div>
