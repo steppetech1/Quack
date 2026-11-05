@@ -681,6 +681,7 @@ export const en = {
 
     refreshCheat: "Update the cheat sheet",
     buildCheat: "Build a cheat sheet",
+    cheatQueued: "The cheat sheet is being built. It will show up here when it is ready.",
     turnLocked: "The teacher is still answering the last message. Wait a second.",
     consentRequired: "Accept the terms first, then a session can start.",
     linkSend: "Email me a link",

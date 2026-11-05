@@ -14,6 +14,7 @@ import { useShell } from "../app-shell";
 import { ArtifactHost, ExpandableCard, type WindowSpec } from "../artifact-window";
 import { DeckCard, DeckViewer } from "../artifact-content";
 import { Crumbs, MemoryRing, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
+import { useNotice } from "../soon";
 import { useErrorText } from "./error-text";
 import { Markdown, plainText } from "./markdown";
 
@@ -43,6 +44,7 @@ export function TopicLive({ id }: { id: string }) {
   const t = tx.live;
   const router = useRouter();
   const errorText = useErrorText();
+  const notice = useNotice();
   const { domains, appliedSeq, setActive } = useData();
   const { focusDomain } = useShell();
   const [data, setData] = useState<Loaded | null>(null);
@@ -111,7 +113,8 @@ export function TopicLive({ id }: { id: string }) {
       setActive(s);
       router.push(`/session/${s.session_id}`);
     } catch (e) {
-      setError(errorText(e));
+      // an action that failed must not take the page away: `error` is for the load of the page itself
+      notice(errorText(e));
       setBusy(false);
     }
   };
@@ -121,9 +124,9 @@ export function TopicLive({ id }: { id: string }) {
     setBusy(true);
     try {
       await post(`/v1/hubs/${data.hubId}/cheatsheet`, { idempotency_key: idem() });
-      setError(null);
+      notice(t.cheatQueued);
     } catch (e) {
-      setError(errorText(e));
+      notice(errorText(e));
     } finally {
       setBusy(false);
     }
