@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import Any
 from uuid import UUID, uuid4
@@ -118,7 +119,8 @@ class Stand:
         )  # fmt: skip
 
     def renders(self) -> list[str]:
-        return [r.content.decode() for r in self.scenario.requests if r.url.path == PDF]
+        """The HTML of each `/v1/render/pdf` request (the body is JSON: quotes are escaped)."""
+        return [json.loads(r.content)["html"] for r in self.scenario.requests if r.url.path == PDF]
 
     async def generate(
         self, learner: UUID, hub: UUID, *, key: str = "request-1", settings: Settings | None = None
@@ -153,7 +155,7 @@ async def test_cheatsheet_one_page(stand: Stand, pg_db: Db) -> None:
     )
     assert "took 2 pages" in stand.writer.prompts[2]
     sheet = await get_artifact(pg_db, learner_id=learner, kind="cheatsheet", owner_id=hub)
-    assert [b.content for b in sheet.blocks] == ["Formulas, draft 3"]
+    assert [b.content for b in sheet.blocks] == ["Formulas, draft 3: $x^2$"]
 
 
 async def test_cheatsheet_stops_after_fit_rounds(stand: Stand, pg_db: Db) -> None:
@@ -247,7 +249,7 @@ async def test_every_fit_round_sends_the_formulas_typeset_not_as_tex(
     hub, _ = await create_hub(pg_db, learner)
     stand.scenario.push_for(PDF, *_pages(3, 2, 1))
     await stand.generate(learner, hub)
-    sent = stand.renders()
+    sent = [json.loads(body)["html"] for body in stand.renders()]
     assert len(sent) == 3
     for document in sent:
         assert '<span class="quack-math" data-display="false">x^2</span>' in document
