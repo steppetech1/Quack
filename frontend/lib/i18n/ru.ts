@@ -256,8 +256,9 @@ export const ru: Dict = {
     title: "QVACK!",
     tagline: "Больше, чем обычная подготовка к учёбе",
     cta: "Начать",
-    scroll: "Листай вниз",
-    hero: { title: "Quack! Учись эффективнее, а не дольше.", sub: "Находит границу твоего понимания и работает именно на ней.", duck: "Тыкни утку" },
+    scroll: "Scroll down",
+    // заголовок первого экрана и подпись у стрелки — по-английски и в русском интерфейсе (так решено для лендинга)
+    hero: { title: "Quack! Learn efficiently, not longer.", sub: "It finds the edge of your understanding and works exactly there.", duck: "Тыкни утку" },
     story: {
       efficiency: {
         lines: ["Same hours.", "Real understanding."],
