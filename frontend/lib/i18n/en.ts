@@ -748,6 +748,8 @@ export const en = {
     notesEdit: "Edit",
     elementAnswer: "Your answer",
     elementSend: "Send",
+    vizPreparing: "The visualization is still being built. Reload once the teacher's reply finishes.",
+    vizPlotUnsupported: "This is a simple plot of a function — the app can't draw those yet.",
     sessionMissing: "No such session.",
     modes: { learn: "Learning", practice: "Practice", review: "Review", free: "Chat" },
     sessionClosed: "finished",

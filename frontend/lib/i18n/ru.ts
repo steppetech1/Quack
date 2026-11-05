@@ -749,6 +749,8 @@ export const ru: Dict = {
     notesEdit: "Править",
     elementAnswer: "Твой ответ",
     elementSend: "Отправить",
+    vizPreparing: "Визуализация ещё строится. Обнови страницу, когда ответ учителя закончится.",
+    vizPlotUnsupported: "Это простой график функции — рисовать такие пока не умеем.",
     sessionMissing: "Такой сессии нет.",
     modes: { learn: "Изучение", practice: "Практика", review: "Повторение", free: "Разговор" },
     sessionClosed: "закончена",
