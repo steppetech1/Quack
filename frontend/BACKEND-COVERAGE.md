@@ -1,6 +1,6 @@
 # Фронт и бэк: что подключено
 
-Состояние на 2026-11-05. Фронт теперь на контракте **Фазы 4** (65 путей `lib/api/openapi.json`, снимок из `backend/openapi.json` ветки `phase-4`), не Фазы 3: вход — `quack_session` cookie вместо JWT, ход сессии — `POST /v1/sessions/{id}/actions` вместо `/turns`, новый предмет — `POST /v1/domains/classify` вместо `structure/propose`.
+Состояние на 2026-11-05 (с пометками о PR, ещё не слитых: #319, #322, #324). Фронт теперь на контракте **Фазы 4** (65 путей `lib/api/openapi.json`, снимок из `backend/openapi.json` ветки `phase-4`), не Фазы 3: вход — `quack_session` cookie вместо JWT, ход сессии — `POST /v1/sessions/{id}/actions` вместо `/turns`, новый предмет — `POST /v1/domains/classify` вместо `structure/propose`.
 
 ## Как запустить
 
@@ -29,6 +29,7 @@
 
 ## Как устроено во фронте
 
+- Относительные даты («через 3 дня», «вчера») считаются от настоящего «сегодня» в часовом поясе пользователя (`todayIso()`, `localIso()` в `lib/format.ts`); на моках «сегодня» — фиксированный день `MOCK_TODAY` (PR #319, до слияния они везде считались от него).
 - `lib/api/client.ts` — запросы, cookie-сессия, ошибки, SSE через `fetch`. `post`, `patch`, `del` и `sse` типизированы по контракту.
 - `lib/api/schema.d.ts` — типы из `lib/api/openapi.json` (`npm run api:types` после обновления снимка).
 - `lib/api/adapters.ts` — бэк → типы интерфейса (`lib/mock/types.ts`, `lib/graph/types.ts`).
@@ -47,7 +48,12 @@
 | Граф предмета, главы | `GET /v1/domains/{id}/graph`, `GET /v1/domains/{id}/hubs` |
 | **«Сегодня» под графом** | `GET /v1/domains/{id}/today` (`items` → карточки с действием по `reasons`, `pace_warnings` → карточка без действия); **новое** — раньше тут была клиентская догадка по `nearest_due_at_ms` из графа, теперь реальные рекомендации бэка |
 | Страница темы: навыки, заметки (блоки), карточки для повторения | `GET /v1/topics/{id}`, `GET/POST /v1/topics/{id}/notes`, `PUT/DELETE /v1/artifacts/{id}/blocks/{id}`, `GET /v1/topics/{id}/cards` |
-| Шпаргалка главы | `GET/POST /v1/hubs/{id}/cheatsheet` |
+| Шпаргалка главы | `GET/POST /v1/hubs/{id}/cheatsheet` (страница главы и страница темы) |
+| Страница главы: материалы, режим подготовки, дедлайн | `GET /v1/domains/{id}/materials` (список), `POST /v1/hubs/{id}/prep-mode` (только включение), `PATCH /v1/hubs/{id}` (`deadline_at_ms`: сменить или убрать); хук `components/quack/live/use-hub-api.ts` |
+| Оценка после дедлайна (PR #322, до слияния не подключено) | `grade_hub_ids` из `GET /v1/domains/{id}/today` и `POST /v1/hubs/{id}/grade`; блок «Как прошло?» на странице главы, «Не сейчас» хранится в `localStorage` (у бэка нет события отказа) |
+| Страница темы: «Я это уже знаю», «Эта тема мне не нужна» | `POST /v1/topics/{id}/known`, `POST /v1/topics/{id}/hide` (после «не нужна» граф перечитывается) |
+| Карточки: правка и удаление (PR #324, до слияния не подключено) | `PATCH /v1/cards/{id}` (текст лицевой стороны), `DELETE /v1/cards/{id}`; оба отвечают всей колодой, у правленой карточки новый id |
+| Skills пользователя | `GET/POST/PATCH/DELETE /v1/learner-skills` (вкладка «Skills», меню `/` в поле ввода); вызов `/имя` в сообщении сессии уходит как `skill_invocation`. У бэка нет выключателя и отдельного имени: имя и есть команда (`[\w-]{1,40}`), один скилл на тип артефакта, поэтому в режиме API переключатель скрыт, а «вызывать через /» всегда включено |
 | Поиск | `GET /v1/search` |
 | Сессия: история, ход (SSE), присутствие, конец, итог | `POST/GET /v1/sessions`, `GET /v1/sessions/active`, `GET /v1/sessions/{id}`, `POST …/actions`, `POST …/heartbeat`, `POST …/end`, `GET …/summary` |
 | Панель сессий справа | `GET /v1/sessions` |
@@ -59,13 +65,15 @@
 
 Контракт даёт 65 путей, из них не вызывается ни один из этих (все — реальные модули бэка, большинство «влит» по `STATUS.md` §4):
 
-- **Материалы** — `POST /v1/domains/{id}/materials`, `GET /v1/materials/{id}`: загрузка лекций, нет экрана.
+- **Материалы** — подключён только список на странице главы (`GET /v1/domains/{id}/materials`). Не вызываются `POST /v1/domains/{id}/materials` (загрузка лекций: на странице главы и в поле ввода нет прикрепления) и `GET /v1/materials/{id}` (состояние разбора).
 - **Канвас, что ещё не подключено** — распознавание строк и пометки учителя (`line_ready`, `mark`, `hint`), `POST /v1/canvases/{id}/photos`, `.../pairing`, `.../lines/{id}/correct`, блоки задач (`task_id`, слой учителя). Формулы, тексты и картинки на доске остаются в браузере (у бэка для них нет позиции), название тоже (в `CanvasView` нет поля). Подключено: создание в сессии, список, `GET /v1/canvases/{id}`, чат с учителем (`message` с `canvas_refs`), штрихи по `WS /v1/canvases/{id}/ws` (пачки с подтверждением и повтором) и их возврат из `/replay`. Сокет ходит напрямую к API: в проде нужен `NEXT_PUBLIC_QUACK_WS` (например `wss://api.qvack.online`); чанки replay браузер читает по подписанным ссылкам хранилища, ему нужен CORS для origin фронта.
 - **Компаньон** — `POST /auth/link` (companion scope), фото через телефон.
-- **Режим подготовки и оценка после дедлайна** — `POST /v1/hubs/{id}/prep-mode`, `POST /v1/hubs/{id}/grade`; заодно `minutes` и `grade_hub_ids` из `TodayView` не показаны — только `items` и `pace_warnings`.
-- **Правки темы** — `POST /v1/topics/{id}/hide|known|merge`, `GET /v1/topics/{id}/why`, `POST /v1/disputes`, `POST /v1/verdicts/{seq}/typo`, `POST /v1/episodes/{seq}/reassign`: «я это знаю», разделение темы, оспаривание вердикта — нет кнопок.
-- **Skills пользователя** — подключены: `GET/POST/PATCH/DELETE /v1/learner-skills` (вкладка «Skills», меню `/` в поле ввода), вызов `/имя` в сообщении сессии уходит как `skill_invocation`. У бэка нет выключателя и отдельного имени: имя и есть команда (`[\w-]{1,40}`), один скилл на тип артефакта, поэтому в режиме API переключатель скрыт, а «вызывать через /» всегда включено. Не вызывается `GET /v1/system-templates`; помощник «Создать скилл» остаётся на моках.
-- **Отдельная карточка** — `GET/PATCH/DELETE /v1/cards/{id}` (список карточек подключён, одиночная операция — нет).
+- **Режим подготовки и «Сегодня», что осталось** — `POST /v1/hubs/{id}/prep-mode {enabled: false}` (выключить режим: кнопки нет), `minutes` из `TodayView` не показан (только `items`, `pace_warnings`, `grade_hub_ids`). Оценку, введённую после дедлайна, прочитать нельзя: у бэка нет `GET` (issue #323 — и про то, что вес дедлайна после `grade.reported` не снимается).
+- **Правки темы, что осталось** — `POST /v1/topics/{id}/merge`, `GET /v1/topics/{id}/why`, `POST /v1/disputes`, `POST /v1/verdicts/{seq}/typo`, `POST /v1/episodes/{seq}/reassign`: разделение темы, «почему эта тема здесь», оспаривание вердикта — нет кнопок (пункты «переименовать / слить / перенести» меню страницы темы на моках).
+- **Skills, что осталось** — `GET /v1/system-templates` не вызывается; помощник «Создать скилл» остаётся на моках; чат канваса не передаёт `skill_invocation`; скиллы, сохранённые раньше в `localStorage`, не переносятся на бэк.
+- **Карточки, ответы на них** — оценки в окне колоды остаются в браузере и пропадают, до модели ученика они не доходят. Бэк принимает ответ на карточку только как действие `answer` с `source: "card"` внутри активной сессии, а текста ответа карточки API не отдаёт (в ответе только `prompt`), поэтому «Показать ответ» в режиме API пустой. Вопрос к потоку B — issue #325.
+- **Блоки конспекта и шпаргалка, что осталось** — `POST /v1/artifacts/{id}/blocks/{block_id}/accept` (принять «дополнение» к блоку), `POST /v1/hubs/{id}/cheatsheet/review`.
+- **Экспорт и данные** — `GET /v1/topics/{id}/export/anki|obsidian`, `GET /v1/learner/exports/{id}`: кнопка «Экспорт» в «Данные и аккаунт» показывает «скоро»; `PATCH /v1/learner/settings` не вызывается (настройки идут через `PATCH /v1/learner/preferences`).
 - **Визуализации** — `GET /v1/viz/{id}`.
 - **Голос в сессии** — `POST /v1/sessions/{id}/voice`.
 - **Видимость фоновых задач** — `GET /v1/sessions/{id}/jobs`.
