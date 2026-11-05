@@ -57,7 +57,7 @@ const VIDEO_STICKERS: Sticker[] = [
   [Hourglass, 2, -10],
   [Meh, 2.25, 4],
 ];
-const QVACK_STICKERS: Sticker[] = [
+const QUACK_STICKERS: Sticker[] = [
   [ThumbsUp, 3.5, -6],
   [Laugh, 2.5, 7],
   [Sparkles, 2.25, -8],
@@ -114,7 +114,7 @@ function Card({ entry, stickers, side }: { entry: Entry; stickers: Sticker[]; si
 }
 
 /**
- * Второй экран лендинга: как обычно готовятся (две карточки с дизлайками) и как это делает Qvack!.
+ * Второй экран лендинга: как обычно готовятся (две карточки с дизлайками) и как это делает Quack!.
  * На десктопе блок «залипает», а скролл по очереди проявляет карточки: слева лекции, справа видео, в центре наша —
  * при её появлении боковые затемняются и уезжают в стороны. На узком экране карточки идут столбиком и проявляются по мере прокрутки.
  */
@@ -128,7 +128,7 @@ export function Compare({ scrollRef }: { scrollRef: RefObject<HTMLElement | null
     const section = sectionRef.current;
     const stage = stageRef.current;
     if (!root || !section || !stage) return;
-    // три ячейки по порядку: лекции, видео, Qvack!
+    // три ячейки по порядку: лекции, видео, Quack!
     const cells = Array.from(stage.children) as HTMLElement[];
 
     const wide = window.matchMedia("(min-width: 1024px)");
@@ -199,7 +199,7 @@ export function Compare({ scrollRef }: { scrollRef: RefObject<HTMLElement | null
           <Card entry={c.video} stickers={VIDEO_STICKERS} side="right" />
         </div>
         <div className="mt-14 lg:absolute lg:left-1/2 lg:top-[58%] lg:z-10 lg:mt-0 lg:w-[41%] lg:-translate-x-1/2 lg:-translate-y-1/2">
-          <Card entry={c.qvack} stickers={QVACK_STICKERS} side="center" />
+          <Card entry={c.quack} stickers={QUACK_STICKERS} side="center" />
         </div>
       </div>
     </section>

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 type Mark = "yes" | "no" | "part";
 
-/** По строкам таблицы: слайды, ютуб, обычный ИИ-чат, Qvack! (порядок как в cols и rows словаря) */
+/** По строкам таблицы: слайды, ютуб, обычный ИИ-чат, Quack! (порядок как в cols и rows словаря) */
 const MARKS: Mark[][] = [
   ["yes", "no", "part", "yes"],
   ["no", "no", "part", "yes"],
@@ -26,11 +26,11 @@ function MarkIcon({ mark, ours, label }: { mark: Mark; ours: boolean; label: str
   );
 }
 
-/** Блок 1: чем Qvack! отличается от привычных способов готовиться — таблица «да / нет / частично» */
+/** Блок 1: чем Quack! отличается от привычных способов готовиться — таблица «да / нет / частично» */
 export function Pluses() {
   const t = useT().landing;
   const p = t.pluses;
-  const cols = [p.cols.slides, p.cols.video, p.cols.chat, p.cols.qvack];
+  const cols = [p.cols.slides, p.cols.video, p.cols.chat, p.cols.quack];
 
   return (
     <section id="pluses" className="relative scroll-mt-14 text-[#f1e4d6]">

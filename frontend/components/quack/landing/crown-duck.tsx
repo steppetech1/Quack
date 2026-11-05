@@ -1,7 +1,7 @@
 import { Duck } from "../duck";
 import { cn } from "@/lib/utils";
 
-/** Маленькая утка Qvack! в короне: сидит на верхней кромке карточки. Корона лежит поверх головы утки (центр головы — 78,32 во viewBox 120×96) */
+/** Маленькая утка Quack! в короне: сидит на верхней кромке карточки. Корона лежит поверх головы утки (центр головы — 78,32 во viewBox 120×96) */
 export function CrownDuck({ className }: { className?: string }) {
   return (
     <div className={cn("relative aspect-[120/96]", className)}>

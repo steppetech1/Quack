@@ -58,7 +58,7 @@ export function DomainSidebar({
             />
           </div>
         ) : null}
-        <p className="display-caps flex-1 text-[1.375rem] text-paper">Qvack!</p>
+        <p className="display-caps flex-1 text-[1.375rem] text-paper">Quack!</p>
         {onToggle && (
           <IconButton label={t.shell.collapseSubjects} onClick={onToggle}>
             <PanelLeftClose />
