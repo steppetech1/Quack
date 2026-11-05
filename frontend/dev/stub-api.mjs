@@ -422,8 +422,10 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     };
     const skills = hit.t.skills?.length ? hit.t.skills : [hit.t.name];
     const withAnswers = process.env.STUB_CARD_ANSWERS === "1";
-    const cards = skills.flatMap((sk, i) => [KINDS[i % 4], KINDS[(i + 2) % 4]].map((kind, j) => ({ card_id: id(`c-${hit.t.key}-${i}-${j}`), kind, prompt: ask[kind](sk), owner: "system", ...(withAnswers ? { answer: hit.t.about || hit.t.simple || hit.t.line } : {}) })));
-    return json(res, 200, { artifact_id: id("a-cards-" + hit.t.key), topic_id: g[1], version: 1, cards });
+    const fresh = skills.flatMap((sk, i) => [KINDS[i % 4], KINDS[(i + 2) % 4]].map((kind, j) => ({ card_id: id(`c-${hit.t.key}-${i}-${j}`), kind, prompt: ask[kind](sk), owner: "system", ...(withAnswers ? { answer: hit.t.about || hit.t.simple || hit.t.line } : {}) })));
+    // the deck is kept once it is built, so that an edit or a delete (PATCH/DELETE /v1/cards/:id) sticks
+    const deck = (S.decks ??= {})[hit.t.key] ?? ((S.decks[hit.t.key] = { artifact_id: id("a-cards-" + hit.t.key), topic_id: g[1], version: 1, cards: fresh }));
+    return json(res, 200, deck);
   }
   if ((g = p.match(/^\/v1\/hubs\/([^/]+)\/cheatsheet$/))) {
     const hit = hubById(g[1]);
@@ -470,6 +472,18 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
       S.learnerSkills = list.filter((x) => x !== k);
       return json(res, 200, { skills: S.learnerSkills.map(view) });
     }
+  }
+  // one card of a deck: new text (the card gets a new id and `owner: learner`, like the backend's successor task) or delete; both answer with the deck
+  if ((g = p.match(/^\/v1\/cards\/([^/]+)$/)) && (m === "PATCH" || m === "DELETE")) {
+    const deck = Object.values(S.decks ?? {}).find((d) => d.cards.some((c) => c.card_id === g[1]));
+    if (!deck) return err(res, "NOT_FOUND", 404, "no such card");
+    const i = deck.cards.findIndex((c) => c.card_id === g[1]);
+    if (m === "PATCH") {
+      if (!String(body.prompt ?? "").trim()) return err(res, "VALIDATION_ERROR", 422, "the text of the card is empty");
+      deck.cards[i] = { ...deck.cards[i], card_id: id(`card-edit-${g[1]}-${body.idempotency_key}`), prompt: String(body.prompt), owner: "learner" };
+    } else deck.cards.splice(i, 1);
+    deck.version += 1;
+    return json(res, 200, deck);
   }
   // "I know this" / "not needed": 202 with the seq of the event (the stub keeps no state for them)
   if (m === "POST" && (g = p.match(/^\/v1\/topics\/([^/]+)\/(known|hide)$/))) {
