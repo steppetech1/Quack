@@ -8,6 +8,7 @@ export const ru: Dict = {
     tomorrow: "завтра",
     yesterday: "вчера",
     inDays: (n: number) => `через ${n} ${plural(n, "день", "дня", "дней")}`,
+    daysAgo: (n: number) => `${n} ${plural(n, "день", "дня", "дней")} назад`,
   },
   states: {
     solid: "Решаешь сам",

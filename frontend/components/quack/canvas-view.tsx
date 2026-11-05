@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
-import { MOCK_TODAY } from "@/lib/mock";
+import { todayIso } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { Board } from "./board/board";
@@ -88,7 +88,7 @@ export function NewCanvasView() {
               className="h-6 w-full min-w-0 bg-transparent font-display text-body uppercase tracking-[0.02em] text-paper outline-none placeholder:text-paper-dim focus-visible:outline-2 focus-visible:outline-ribbon"
             />
             <p className="caps mt-0.5 hidden truncate [--caps-size:0.625rem] text-paper-dim sm:block">
-              {tx.canvases.draft(fullDate(MOCK_TODAY))}
+              {tx.canvases.draft(fullDate(todayIso()))}
             </p>
           </div>
         </>
