@@ -106,15 +106,16 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   const loadGraph = useCallback(async (domainId: string) => {
     try {
-      // chapters and "today" ride along with the graph; a failed "today" just leaves the strip empty
+      // chapters and "today" ride along with the graph. A failed read of either keeps what is on screen: an empty
+      // chapter list from one failed request would fold the graph into a single chapter until the next refresh
       const [g, h, today] = await Promise.all([
         get<S["DomainGraphResponse"]>(`/v1/domains/${domainId}/graph`),
-        get<ApiHub[]>(`/v1/domains/${domainId}/hubs`).catch(() => [] as ApiHub[]),
+        get<ApiHub[]>(`/v1/domains/${domainId}/hubs`).catch(() => undefined),
         get<S["TodayView"]>(`/v1/domains/${domainId}/today`).catch(() => undefined),
       ]);
       loaded.current.add(domainId);
       setGraphs((m) => ({ ...m, [domainId]: g }));
-      setHubs((m) => ({ ...m, [domainId]: h }));
+      if (h) setHubs((m) => ({ ...m, [domainId]: h }));
       if (today) setTodays((m) => ({ ...m, [domainId]: today }));
     } catch (e) {
       // a subject without sessions or materials has no graph yet

@@ -2,7 +2,7 @@
 
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { API_MODE } from "@/lib/api/client";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
@@ -12,6 +12,9 @@ import { ArtifactHost, type WindowSpec } from "./artifact-window";
 import { CheatCard, CheatSheetContent } from "./artifact-content";
 import { Duck } from "./duck";
 import { ActionButton, Crumbs, HubRing, MaterialsList, MemoryRing, MomentsList, MoreMenu, PageFrame, PageSection, TEXT_BTN } from "./page-parts";
+import { ExpandableCard } from "./artifact-window";
+import { Markdown, plainText } from "./live/markdown";
+import { useHubApi } from "./live/use-hub-api";
 import { NumText } from "./num-text";
 import { useStartSession } from "./live/use-start-session";
 import { useSoon } from "./soon";
@@ -27,6 +30,8 @@ export function HubPage({ id }: { id: string }) {
   const { domain } = useShell();
   const soon = useSoon();
   const { start, busy } = useStartSession();
+  const api = useHubApi(id, domain.id, API_MODE);
+  const [editingDeadline, setEditingDeadline] = useState(false);
   // "all" is the hub over the whole subject: not a node on the graph, reached from the pill next to it
   const hub = useMemo(() => (id === "all" ? { id, num: "·", title: domain.title, about: "" } : domain.hubs.find((h) => h.id === id)), [id, domain]);
 
@@ -63,6 +68,9 @@ export function HubPage({ id }: { id: string }) {
       .map((m) => ({ ...m, href: m.sessionId ? domain.sessions.find((s) => s.id === m.sessionId)?.href : undefined, topicTitle: m.topicTitles.join(", ") }));
     return { ordered, materials: [...materials.values()], timeline };
   }, [domain, hub, getTopicDetails]);
+  const materialItems: Material[] = api.real
+    ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(m.created_at.slice(0, 10)), kind: "pdf" as const }))
+    : data?.materials ?? [];
 
   if (!hub || !data) {
     return (
@@ -78,6 +86,8 @@ export function HubPage({ id }: { id: string }) {
   const started = ordered.filter((t) => t.state !== "new").length;
   const progress = ordered.length ? started / ordered.length : 0;
   const cheat = cheatSheets[hub.id];
+  const apiCheat = api.real && api.cheat && api.cheat.blocks.length ? api.cheat : null;
+  const apiCheatText = apiCheat ? (apiCheat.blocks as { content: string }[]).map((b) => b.content).join("\n\n") : "";
   const deadline = hub.deadline;
   const suggested = hub.suggested;
   // ровно одна жёлтая кнопка: подготовка к дедлайну, иначе «Вперемешку»; в предложенной главе — «Начать главу»
@@ -85,7 +95,9 @@ export function HubPage({ id }: { id: string }) {
 
   const cheatTitle = deadline ? tx.hub.cheatDeadline : tx.hub.cheat;
   const windows: Record<string, WindowSpec> = {};
-  if (cheat) {
+  if (apiCheat) {
+    windows.cheatsheet = { title: cheatTitle, meta: tx.hub.cheatMeta, body: <Markdown text={apiCheatText} /> };
+  } else if (cheat) {
     windows.cheatsheet = {
       title: cheatTitle,
       meta: tx.hub.cheatMeta,
@@ -139,10 +151,19 @@ export function HubPage({ id }: { id: string }) {
         <MoreMenu
           items={[
             { label: tx.hub.editTopics, soon: tx.hub.editTopicsSoon(title) },
-            { label: tx.hub.editDeadline, soon: tx.hub.editDeadlineSoon },
+            { label: tx.hub.editDeadline, soon: tx.hub.editDeadlineSoon, onSelect: api.real ? () => setEditingDeadline(true) : undefined },
           ]}
         />
       </header>
+
+      {editingDeadline && api.real && (
+        <DeadlineEditor
+          initial={deadline?.date}
+          busy={api.busy}
+          onSave={(ms) => void api.setDeadline(ms).then(() => setEditingDeadline(false))}
+          onCancel={() => setEditingDeadline(false)}
+        />
+      )}
 
       <p className="mt-4 max-w-[62ch] text-body leading-relaxed text-paper">{hub.about}</p>
 
@@ -162,7 +183,7 @@ export function HubPage({ id }: { id: string }) {
               )}
             </div>
           </div>
-          <button type="button" onClick={() => soon(tx.hub.prepSoon)} className={cn(PRIMARY_BTN, "mt-3 max-sm:w-full")}>
+          <button type="button" disabled={api.busy} onClick={() => (api.real ? void api.prep() : soon(tx.hub.prepSoon))} className={cn(PRIMARY_BTN, "mt-3 max-sm:w-full")}>
             {tx.hub.prep}
           </button>
         </div>
@@ -216,12 +237,19 @@ export function HubPage({ id }: { id: string }) {
       </PageSection>
 
       <PageSection id="hub-cheat" title={tx.hub.cheat}>
-        {cheat ? (
+        {apiCheat ? (
+          <ExpandableCard artifact="cheatsheet">
+            <span className="display-caps block px-4 pt-3 text-paper">{cheatTitle}</span>
+            <span aria-hidden className="mt-1 block h-[72px] overflow-hidden px-4 text-small leading-relaxed text-paper-dim [mask-image:linear-gradient(to_bottom,#000_55%,transparent)]">
+              {plainText(apiCheatText)}
+            </span>
+          </ExpandableCard>
+        ) : cheat ? (
           <CheatCard cheat={cheat} title={cheatTitle} />
         ) : (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <p className="text-paper-dim">{tx.hub.cheatLater}</p>
-            <button type="button" onClick={() => soon(tx.hub.buildSoon)} className={cn(TEXT_BTN, "-ml-3 sm:ml-0")}>
+            <button type="button" disabled={api.busy} onClick={() => (api.real ? void api.buildCheat() : soon(tx.hub.buildSoon))} className={cn(TEXT_BTN, "-ml-3 sm:ml-0")}>
               {tx.hub.buildNow}
             </button>
           </div>
@@ -229,7 +257,7 @@ export function HubPage({ id }: { id: string }) {
       </PageSection>
 
       <PageSection id="hub-materials" title={tx.hub.materials}>
-        <MaterialsList items={data.materials} />
+        <MaterialsList items={materialItems} />
       </PageSection>
 
       <PageSection id="hub-sessions" title={tx.hub.inSessions}>
@@ -237,5 +265,41 @@ export function HubPage({ id }: { id: string }) {
       </PageSection>
     </PageFrame>
     </ArtifactHost>
+  );
+}
+
+/** Date of the chapter's deadline (to the end of that day, local time), or none */
+function DeadlineEditor({ initial, busy, onSave, onCancel }: { initial?: string; busy: boolean; onSave: (ms: number | null) => void; onCancel: () => void }) {
+  const t = useT().live;
+  const [date, setDate] = useState(initial ?? "");
+  return (
+    <form
+      className="mt-4 flex flex-wrap items-end gap-3 border-t border-seam-soft pt-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (date) onSave(new Date(`${date}T23:59:59`).getTime());
+      }}
+    >
+      <label className="flex flex-col gap-1.5">
+        <span className="caps text-paper-dim">{t.deadlineLabel}</span>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="h-10 rounded-control border border-seam bg-cloth-deep px-3 text-body text-paper outline-none focus-visible:border-ribbon"
+        />
+      </label>
+      <button type="submit" disabled={busy || !date} className={PRIMARY_BTN + " disabled:opacity-50"}>
+        {t.deadlineSave}
+      </button>
+      {initial && (
+        <button type="button" disabled={busy} onClick={() => onSave(null)} className={TEXT_BTN}>
+          {t.deadlineRemove}
+        </button>
+      )}
+      <button type="button" onClick={onCancel} className={TEXT_BTN}>
+        {t.deadlineCancel}
+      </button>
+    </form>
   );
 }
