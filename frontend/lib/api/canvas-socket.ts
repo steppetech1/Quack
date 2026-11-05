@@ -4,6 +4,14 @@ export type SyncState = "saved" | "saving" | "offline";
 
 type StrokeOut = { stroke_id: string; points: [number, number, number, number][] };
 type Batch = { type: "stroke_batch"; batch_no: number; strokes: StrokeOut[]; erasures: { stroke_ids: string[]; at_ms: number }[] };
+type LineReady = {
+  type: "line_ready";
+  line_id: string;
+  stroke_ids: string[];
+  bbox: [number, number, number, number];
+  started_at: number;
+  ended_at: number;
+};
 
 /** Batches go out every `stroke_batch_ms` of the backend (300) */
 const BATCH_MS = 300;
@@ -12,6 +20,8 @@ const RETRY_MAX_MS = 15000;
 /** The board's points carry no time: spaced like a 120 Hz pen, so a replay plays the stroke at the speed it was drawn */
 const POINT_MS = 8;
 const PRESSURE = 0.5;
+/** A line is "done" after this long without a new stroke (backend default of `line_pause_ms`, Т-§15.2) */
+const LINE_PAUSE_MS = 1200;
 
 /**
  * Where the WebSocket is. `NEXT_PUBLIC_QUACK_WS` (for example `wss://api.qvack.online`) when the API has its own host;
@@ -39,6 +49,17 @@ export class CanvasSocket {
   private erasures: string[] = [];
   private unacked = new Map<number, Batch>();
   private state: SyncState = "saved";
+  private line: {
+    lineId: string;
+    strokeIds: string[];
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+    startedAt: number;
+    endedAt: number;
+  } | null = null;
+  private lineTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly canvasId: string,
@@ -47,15 +68,47 @@ export class CanvasSocket {
     this.connect();
   }
 
+  /**
+   * Raw ink only acks that a stroke is stored; the teacher reads recognized lines
+   * (`canvas.line_committed`), which only exist once the server has grouped the strokes
+   * of a line and run recognition on it — triggered by `line_ready` (Т-§15.3). A line is
+   * one or more strokes with no gap over `LINE_PAUSE_MS` between them.
+   */
   stroke(id: string, pts: Pt[]) {
     const t0 = Date.now();
     this.strokes.push({ stroke_id: id, points: pts.map(([x, y], i) => [x, y, t0 + i * POINT_MS, PRESSURE]) });
     this.schedule();
+
+    const endedAt = t0 + (pts.length - 1) * POINT_MS;
+    const xs = pts.map(([x]) => x);
+    const ys = pts.map(([, y]) => y);
+    if (!this.line) {
+      this.line = {
+        lineId: `L-${t0}-${Math.random().toString(36).slice(2, 8)}`,
+        strokeIds: [id],
+        minX: Math.min(...xs),
+        minY: Math.min(...ys),
+        maxX: Math.max(...xs),
+        maxY: Math.max(...ys),
+        startedAt: t0,
+        endedAt,
+      };
+    } else {
+      this.line.strokeIds.push(id);
+      this.line.minX = Math.min(this.line.minX, ...xs);
+      this.line.minY = Math.min(this.line.minY, ...ys);
+      this.line.maxX = Math.max(this.line.maxX, ...xs);
+      this.line.maxY = Math.max(this.line.maxY, ...ys);
+      this.line.endedAt = endedAt;
+    }
+    if (this.lineTimer) clearTimeout(this.lineTimer);
+    this.lineTimer = setTimeout(() => this.flushLine(), LINE_PAUSE_MS);
   }
 
   erase(ids: string[]) {
     this.erasures.push(...ids);
     this.schedule();
+    if (this.line) this.line.strokeIds = this.line.strokeIds.filter((id) => !ids.includes(id));
   }
 
   /** Sends what is collected now and leaves; the server writes what it has on close */
@@ -63,8 +116,26 @@ export class CanvasSocket {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.lineTimer) clearTimeout(this.lineTimer);
+    this.flushLine();
     this.flush();
     this.ws?.close();
+  }
+
+  private flushLine() {
+    this.lineTimer = null;
+    const line = this.line;
+    this.line = null;
+    if (!line || !line.strokeIds.length) return;
+    const msg: LineReady = {
+      type: "line_ready",
+      line_id: line.lineId,
+      stroke_ids: line.strokeIds,
+      bbox: [line.minX, line.minY, line.maxX, line.maxY],
+      started_at: line.startedAt,
+      ended_at: line.endedAt,
+    };
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 
   private schedule() {

@@ -253,7 +253,7 @@ export const ru: Dict = {
     noAnswer: "Ответа на этой карточке нет. Скажи его своими словами, сверься с конспектом и оцени, как вспомнилось.",
   },
   landing: {
-    title: "QVACK!",
+    title: "QUACK!",
     tagline: "Больше, чем обычная подготовка к учёбе",
     cta: "Начать",
     scroll: "Scroll down",
@@ -325,18 +325,18 @@ export const ru: Dict = {
         text: "Их огромная куча, и ни одно не снято под тебя.",
         points: ["Сначала надо найти подходящее", "И даже оно сядет не идеально"],
       },
-      qvack: {
-        title: "Qvack!",
+      quack: {
+        title: "Quack!",
         text: "Объяснения, темы и подход собираются под тебя.",
         points: ["Сторонние источники не нужны: учитель объяснит всё, что нужно", "Повторять тоже здесь, другой продукт не нужен"],
       },
     },
-    nav: { label: "Главное меню", why: "Почему Qvack!", pluses: "Плюсы", features: "Возможности", login: "Войти", cta: "Начать" },
+    nav: { label: "Главное меню", why: "Почему Quack!", pluses: "Плюсы", features: "Возможности", login: "Войти", cta: "Начать" },
     pluses: {
       eyebrow: "В сравнении с привычным",
       title: "Та же цель, меньше поисков",
-      intro: "Слайды, видео и обычные ИИ-чаты помогают, но склеивать всё приходится тебе. Qvack! делает это за тебя, и настраивать ничего не нужно.",
-      cols: { slides: "Слайды", video: "Ютуб", chat: "ИИ-чат", qvack: "Qvack!" },
+      intro: "Слайды, видео и обычные ИИ-чаты помогают, но склеивать всё приходится тебе. Quack! делает это за тебя, и настраивать ничего не нужно.",
+      cols: { slides: "Слайды", video: "Ютуб", chat: "ИИ-чат", quack: "Quack!" },
       rows: [
         "Работает с твоим материалом и нотацией",
         "Подстраивается под твой способ учиться",
@@ -360,14 +360,14 @@ export const ru: Dict = {
     footer: {
       product: "Продукт",
       account: "Аккаунт",
-      note: "Qvack — объясни утке",
+      note: "Quack — объясни утке",
       rights: "Все права защищены",
     },
   },
   meta: {
-    description: "Учись на своём материале. Qvack! помнит, где ты ошибаешься и что уже понял.",
-    title: (part: string) => `${part} — Qvack!`,
-    canvasesTitle: (domain: string) => `Канвасы · ${domain} — Qvack!`,
+    description: "Учись на своём материале. Quack! помнит, где ты ошибаешься и что уже понял.",
+    title: (part: string) => `${part} — Quack!`,
+    canvasesTitle: (domain: string) => `Канвасы · ${domain} — Quack!`,
     newSession: "Новая сессия",
     newCanvas: "Новый канвас",
     settings: "Настройки",
@@ -750,6 +750,8 @@ export const ru: Dict = {
     notesEdit: "Править",
     elementAnswer: "Твой ответ",
     elementSend: "Отправить",
+    vizPreparing: "Визуализация ещё строится. Обнови страницу, когда ответ учителя закончится.",
+    vizPlotUnsupported: "Это простой график функции — рисовать такие пока не умеем.",
     sessionMissing: "Такой сессии нет.",
     modes: { learn: "Изучение", practice: "Практика", review: "Повторение", free: "Разговор" },
     sessionClosed: "закончена",
@@ -916,6 +918,6 @@ export const ru: Dict = {
       settings: "Настройки",
     },
     language: "Язык",
-    footerHint: "Qvack — объясни утке",
+    footerHint: "Quack — объясни утке",
   },
 };

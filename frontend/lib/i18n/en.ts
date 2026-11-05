@@ -252,7 +252,7 @@ export const en = {
     noAnswer: "The answer is not stored on this card. Say it in your own words, check it against your notes, then rate how it went.",
   },
   landing: {
-    title: "QVACK!",
+    title: "QUACK!",
     tagline: "Something more than usual study preparation",
     cta: "Get started",
     scroll: "Scroll down",
@@ -323,18 +323,18 @@ export const en = {
         text: "There are tons of them, and none were made for you.",
         points: ["First you have to find one that fits", "Even then it's never quite right"],
       },
-      qvack: {
-        title: "Qvack!",
+      quack: {
+        title: "Quack!",
         text: "Explanations, topics and approach are built around you.",
         points: ["No outside sources: the teacher explains whatever you need", "Review lives here too, no other app needed"],
       },
     },
-    nav: { label: "Main", why: "Why Qvack!", pluses: "Advantages", features: "Features", login: "Log in", cta: "Get started" },
+    nav: { label: "Main", why: "Why Quack!", pluses: "Advantages", features: "Features", login: "Log in", cta: "Get started" },
     pluses: {
       eyebrow: "Compared to the usual",
       title: "Same goal, less hunting",
-      intro: "Slides, videos and plain AI chats help, but you do the stitching. Qvack! does it for you, with no setup.",
-      cols: { slides: "Slides", video: "YouTube", chat: "AI chat", qvack: "Qvack!" },
+      intro: "Slides, videos and plain AI chats help, but you do the stitching. Quack! does it for you, with no setup.",
+      cols: { slides: "Slides", video: "YouTube", chat: "AI chat", quack: "Quack!" },
       rows: [
         "Uses your own material and notation",
         "Fits the way you learn",
@@ -358,14 +358,14 @@ export const en = {
     footer: {
       product: "Product",
       account: "Account",
-      note: "Qvack — explain it to the duck",
+      note: "Quack — explain it to the duck",
       rights: "All rights reserved",
     },
   },
   meta: {
-    description: "Study from your own material. Qvack! remembers where you slip up and what you've already got.",
-    title: (part: string) => `${part} — Qvack!`,
-    canvasesTitle: (domain: string) => `Canvases · ${domain} — Qvack!`,
+    description: "Study from your own material. Quack! remembers where you slip up and what you've already got.",
+    title: (part: string) => `${part} — Quack!`,
+    canvasesTitle: (domain: string) => `Canvases · ${domain} — Quack!`,
     newSession: "New session",
     newCanvas: "New canvas",
     settings: "Settings",
@@ -748,6 +748,8 @@ export const en = {
     notesEdit: "Edit",
     elementAnswer: "Your answer",
     elementSend: "Send",
+    vizPreparing: "The visualization is still being built. Reload once the teacher's reply finishes.",
+    vizPlotUnsupported: "This is a simple plot of a function — the app can't draw those yet.",
     sessionMissing: "No such session.",
     modes: { learn: "Learning", practice: "Practice", review: "Review", free: "Chat" },
     sessionClosed: "finished",
@@ -914,6 +916,6 @@ export const en = {
       settings: "Settings",
     },
     language: "Language",
-    footerHint: "Qvack — explain it to the duck",
+    footerHint: "Quack — explain it to the duck",
   },
 };

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
+import { apiUrl, ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
@@ -163,12 +163,23 @@ export function SessionLive({ id }: { id: string }) {
         // a session opened from a topic page becomes the active one in the sessions panel
         if (d.status === "active") setActive(d);
         const past: Line[] = [];
+        const pastElems: Elem[] = [];
         for (const ev of d.events) {
           const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
           if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
-          else if (ev.type === "turn.committed" && text) past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null });
+          else if (ev.type === "turn.committed" && text) {
+            past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null });
+            // committed elements carry `request_id` (resolved from the live frame's `R…` label, ТЗ §12.3): the only
+            // point a `visualization` element becomes renderable, so history is where it actually shows up
+            const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
+            for (const el of markup?.elements ?? []) {
+              const e = el as { element_id?: string; kind?: string };
+              if (e.kind) pastElems.push({ blockId: `e-${ev.seq}-${e.element_id}`, element: e as S["Element"], turnSeq: ev.seq, answered: false });
+            }
+          }
         }
         setLines(past);
+        if (pastElems.length) setElems((cur) => [...pastElems, ...cur]);
         scrollDown();
       })
       .catch((e) => {
@@ -328,8 +339,9 @@ export function SessionLive({ id }: { id: string }) {
 function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean; onRespond: (text: string) => void }) {
   const tx = useT();
   const [text, setText] = useState("");
-  const e = el.element as { kind: string; prompt?: string };
+  const e = el.element as { kind: string; prompt?: string; request?: string | null; request_id?: string | null; plot?: unknown };
   const answerable = ANSWERABLE.has(e.kind) && el.turnSeq !== null;
+  const viz = e.kind === "visualization" ? e : null;
   return (
     <section aria-label={tx.live.taskFromTeacher} className="rounded-[2px] border border-seam p-4">
       <p className="caps text-paper-dim">{e.kind === "task" ? tx.live.taskFromTeacher : e.kind.replace(/_/g, " ")}</p>
@@ -338,6 +350,19 @@ function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean;
           <RichText text={e.prompt} />
         </div>
       )}
+      {viz &&
+        // `request_id` is resolved only once the turn is committed (ТЗ §12.3): a live `element` frame still
+        // carries the raw `request` label and has nothing fetchable yet (Д-B-178 serves by `request_id`)
+        (viz.request_id ? (
+          <iframe
+            src={apiUrl(`/v1/viz/${viz.request_id}`)}
+            sandbox="allow-scripts"
+            title={tx.live.taskFromTeacher}
+            className="mt-2 h-80 w-full rounded-[2px] border border-seam-soft bg-paper"
+          />
+        ) : (
+          <p className="mt-2 text-small text-paper-dim">{viz.plot ? tx.live.vizPlotUnsupported : tx.live.vizPreparing}</p>
+        ))}
       {answerable && (
         <form
           className="mt-3"

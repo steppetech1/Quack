@@ -40,7 +40,7 @@ export function LandingNav({ scrollRef }: { scrollRef: RefObject<HTMLElement | n
           onClick={onAnchor("top")}
           className="inline-flex h-10 items-center rounded-pill px-1 font-mono text-[1.375rem] font-extrabold tracking-[-0.06em] text-[#f6eadc] outline-none focus-visible:ring-2 focus-visible:ring-[#daa05f]/60"
         >
-          Qvack<span className="text-[#daa05f]">!</span>
+          Quack<span className="text-[#daa05f]">!</span>
         </a>
         <div className="hidden items-center md:flex">
           <a href="#efficiency" onClick={onAnchor("efficiency")} className={LINK}>
