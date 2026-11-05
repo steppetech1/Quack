@@ -47,7 +47,6 @@ export function Hero({ scrollRef, pinned = false }: { scrollRef: RefObject<HTMLE
       <button
         ref={chevronRef}
         type="button"
-        aria-label={t.scroll}
         onClick={(e) => {
           const root = scrollRef.current;
           if (root?.dataset.pinned === "true") {
@@ -57,8 +56,10 @@ export function Hero({ scrollRef, pinned = false }: { scrollRef: RefObject<HTMLE
           const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
           e.currentTarget.closest("section")?.nextElementSibling?.scrollIntoView({ behavior: reduced ? "auto" : "smooth" });
         }}
-        className="pointer-events-auto absolute bottom-3 left-1/2 flex size-12 -translate-x-1/2 items-center justify-center rounded-pill text-[#bba995] outline-none transition-colors duration-(--dur-s) hover:text-[#f6eadc] focus-visible:ring-2 focus-visible:ring-[#ff8a2a]/60"
+        className="pointer-events-auto absolute bottom-3 left-1/2 flex min-h-12 -translate-x-1/2 flex-col items-center justify-center gap-0.5 rounded-pill px-5 text-[#bba995] outline-none transition-colors duration-(--dur-s) hover:text-[#f6eadc] focus-visible:ring-2 focus-visible:ring-[#ff8a2a]/60"
       >
+        {/* подпись видна всегда: она же имя кнопки для скринридера */}
+        <span className="font-mono text-[0.75rem] uppercase tracking-[0.18em]">{t.scroll}</span>
         <ChevronDown aria-hidden className="size-6 motion-safe:animate-bounce" />
       </button>
     </section>
