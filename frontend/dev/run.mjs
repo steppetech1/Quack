@@ -15,6 +15,8 @@ if (mode === "stub") {
   env.QUACK_API_URL = `http://localhost:${stubPort}`;
   // the canvas WebSocket goes straight to the API (the `/api` proxy of Next does not carry upgrades)
   env.NEXT_PUBLIC_QUACK_WS ??= `ws://localhost:${stubPort}`;
+  // the stub never asks for a login and sets no cookie: `/` stays the app (proxy.ts sends guests to the landing)
+  env.QUACK_GUEST_LANDING = "0";
   procs.push(spawn(process.execPath, ["dev/stub-api.mjs"], { stdio: "inherit", env }));
 } else if (mode === "real") {
   env.NEXT_PUBLIC_QUACK_API = "1";
