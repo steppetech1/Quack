@@ -64,7 +64,7 @@
 - **Компаньон** — `POST /auth/link` (companion scope), фото через телефон.
 - **Режим подготовки и оценка после дедлайна** — `POST /v1/hubs/{id}/prep-mode`, `POST /v1/hubs/{id}/grade`; заодно `minutes` и `grade_hub_ids` из `TodayView` не показаны — только `items` и `pace_warnings`.
 - **Правки темы** — `POST /v1/topics/{id}/hide|known|merge`, `GET /v1/topics/{id}/why`, `POST /v1/disputes`, `POST /v1/verdicts/{seq}/typo`, `POST /v1/episodes/{seq}/reassign`: «я это знаю», разделение темы, оспаривание вердикта — нет кнопок.
-- **Skills пользователя** — хранятся в `localStorage`; `GET/POST/PATCH/DELETE /v1/learner-skills`, `GET /v1/system-templates` не вызываются.
+- **Skills пользователя** — подключены: `GET/POST/PATCH/DELETE /v1/learner-skills` (вкладка «Skills», меню `/` в поле ввода), вызов `/имя` в сообщении сессии уходит как `skill_invocation`. У бэка нет выключателя и отдельного имени: имя и есть команда (`[\w-]{1,40}`), один скилл на тип артефакта, поэтому в режиме API переключатель скрыт, а «вызывать через /» всегда включено. Не вызывается `GET /v1/system-templates`; помощник «Создать скилл» остаётся на моках.
 - **Отдельная карточка** — `GET/PATCH/DELETE /v1/cards/{id}` (список карточек подключён, одиночная операция — нет).
 - **Визуализации** — `GET /v1/viz/{id}`.
 - **Голос в сессии** — `POST /v1/sessions/{id}/voice`.

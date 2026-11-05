@@ -6,6 +6,7 @@ import { ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
+import { skillInvocation } from "@/lib/skills";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { Composer } from "../composer";
@@ -143,7 +144,7 @@ export function SessionLive({ id }: { id: string }) {
     [busy, id, t.turnLocked, errorText],
   );
 
-  const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text }, text) : undefined), [act]);
+  const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
 
   const respond = (el: Elem, response: string) => {
     if (!response.trim() || el.turnSeq === null) return;
