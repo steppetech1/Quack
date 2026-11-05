@@ -20,5 +20,6 @@ export function studyCardsFromApi(res: S["CardsResponse"]): StudyCard[] {
     kind: KIND[String(c.kind)] ?? "definition",
     front: String(c.prompt ?? ""),
     back: typeof c.answer === "string" ? c.answer : "",
+    mine: c.owner === "learner",
   }));
 }

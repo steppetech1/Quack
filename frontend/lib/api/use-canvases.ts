@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { localIso } from "@/lib/format";
 import { useT } from "@/lib/i18n/provider";
 import type { Canvas } from "@/lib/mock/types";
 import { API_MODE } from "./client";
@@ -12,7 +13,7 @@ function toListItem(c: CanvasView, domainId: string, untitled: string): Canvas {
     id: c.canvas_id,
     domainId,
     title: readCanvasTitle(c.canvas_id) || untitled,
-    date: c.updated_at.slice(0, 10),
+    date: localIso(Date.parse(c.updated_at) || Date.now()),
     topics: [],
     sessionId: c.session_id ?? undefined,
     solved: "no",
