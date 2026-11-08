@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { topicState } from "@/lib/api/adapters";
-import { studyCardsFromApi } from "@/lib/api/cards";
+import { answerCard, studyCardsFromApi } from "@/lib/api/cards";
 import { ApiError, del, download, get, idem, patch, post, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { type Intent, startSession } from "@/lib/api/sessions";
@@ -12,7 +12,7 @@ import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { ArtifactHost, ExpandableCard, type WindowSpec } from "../artifact-window";
-import { DeckCard, DeckViewer, type DeckManage } from "../artifact-content";
+import { DeckCard, DeckViewer, type DeckAnswers, type DeckManage } from "../artifact-content";
 import { Crumbs, MemoryRing, MoreMenu, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
 import { useNotice } from "../soon";
 import { useErrorText } from "./error-text";
@@ -45,7 +45,7 @@ export function TopicLive({ id }: { id: string }) {
   const router = useRouter();
   const errorText = useErrorText();
   const notice = useNotice();
-  const { domains, appliedSeq, setActive, loadGraph } = useData();
+  const { domains, appliedSeq, active, setActive, loadGraph } = useData();
   const { focusDomain } = useShell();
   const [data, setData] = useState<Loaded | null>(null);
   /** The page for this topic is on screen: a failed live re-fetch keeps it instead of showing an error */
@@ -94,6 +94,12 @@ export function TopicLive({ id }: { id: string }) {
     // once per topic, and again when the backend projection moves (states, skills, new notes)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, appliedSeq]);
+
+  // the active session as the deck answers see it at the moment of sending, not at the render that built the deck
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   const domain = domains.find((d) => d.id === data?.topic.domain_id);
   const domainTitle = domain?.title ?? "";
@@ -259,6 +265,29 @@ export function TopicLive({ id }: { id: string }) {
     },
   };
 
+  /**
+   * A rated card is the `answer` action of a session (`source: "card"`), and the backend takes it only in an active one: the
+   * active session of this subject, else a "review" session on this topic (it closes the active session of another subject).
+   * A failure comes back as text: the deck keeps its ratings and offers to try again.
+   */
+  const answers: DeckAnswers = {
+    submit: async (cardId, remembered, text) => {
+      try {
+        let cur = activeRef.current;
+        if (!cur || cur.status !== "active" || cur.domain_id !== topic.domain_id) {
+          cur = await startSession({ domain_id: topic.domain_id, topic_id: topic.topic_id, intent: "review" });
+          // the ref first: the next card of the queue may go before the next render
+          activeRef.current = cur;
+          setActive(cur);
+        }
+        await answerCard(cur.session_id, { id: cardId, remembered, text });
+        return null;
+      } catch (e) {
+        return e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e);
+      }
+    },
+  };
+
   // the documents of the page: notes (blocks), cards (prompts), the cheat sheet of the hub
   type Doc = { key: string; title: string; kind: "note" | "cheatsheet"; text: string };
   const joined = (blocks: Block[]) => blocks.map((b) => b.content).join("\n\n");
@@ -288,7 +317,7 @@ export function TopicLive({ id }: { id: string }) {
       title: tx.topic.cards,
       meta: tx.topic.cardsMeta(deck.length, topic.name),
       // the key makes the viewer start afresh when the deck changes (ratings are kept per card)
-      body: <DeckViewer key={deck.map((c) => c.id).join()} cards={deck} manage={manage} />,
+      body: <DeckViewer key={deck.map((c) => c.id).join()} cards={deck} manage={manage} answers={answers} />,
     };
   }
 
