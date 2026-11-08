@@ -171,3 +171,29 @@ export async function sse(
     }
   }
 }
+
+/** A file from the backend (an export) saved through the browser; the name comes from `Content-Disposition`.
+ * Fetched, not linked: a failure (no cards yet → 404) must be a message, not a JSON file in the downloads. */
+export async function download(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(BASE + path);
+  if (!res.ok) throw await toError(res);
+  const head = res.headers.get("Content-Disposition") ?? "";
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(head)?.[1];
+  const plain = /filename="([^"]+)"/i.exec(head)?.[1];
+  let name = plain ?? fallbackName;
+  if (utf8) {
+    try {
+      name = decodeURIComponent(utf8);
+    } catch {
+      // keep the ASCII name
+    }
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}

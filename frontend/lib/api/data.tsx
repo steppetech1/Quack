@@ -149,6 +149,22 @@ function ApiData({ children }: { children: React.ReactNode }) {
     void reload();
   }, [reload]);
 
+  // The backend counts "today", due dates and pace in the learner's time zone and falls back to UTC until it is told:
+  // send the browser's once (and again if the learner travels)
+  const meId = me?.learner_id;
+  const savedZone = typeof me?.settings?.timezone === "string" ? me.settings.timezone : null;
+  useEffect(() => {
+    if (!meId) return;
+    let zone: string | undefined;
+    try {
+      zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {}
+    if (!zone || zone === savedZone) return;
+    void patch("/v1/learner/settings", { timezone: zone })
+      .then((r) => setMe((m) => (m ? { ...m, settings: r.settings } : m)))
+      .catch(() => {});
+  }, [meId, savedZone]);
+
   // Live updates: the stream says only "the projection moved", the data comes with ordinary GETs
   useEffect(() => {
     if (!ready || !me) return;
