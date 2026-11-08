@@ -22,6 +22,8 @@ const POINT_MS = 8;
 const PRESSURE = 0.5;
 /** A line is "done" after this long without a new stroke (backend default of `line_pause_ms`, Т-§15.2) */
 const LINE_PAUSE_MS = 1200;
+/** How long a message to the teacher waits for the lines just drawn to be read (render + model on the server) */
+const SETTLE_MS = 20000;
 
 /**
  * Where the WebSocket is. `NEXT_PUBLIC_QUACK_WS` (for example `wss://api.qvack.online`) when the API has its own host;
@@ -60,6 +62,11 @@ export class CanvasSocket {
     endedAt: number;
   } | null = null;
   private lineTimer: ReturnType<typeof setTimeout> | null = null;
+  /** `line_ready` that could not go out (socket down): sent when it is back */
+  private unsentLines: LineReady[] = [];
+  /** lines sent and not yet answered with `line_recognized` */
+  private awaiting = new Set<string>();
+  private waiters = new Set<() => void>();
 
   constructor(
     private readonly canvasId: string,
@@ -111,6 +118,37 @@ export class CanvasSocket {
     if (this.line) this.line.strokeIds = this.line.strokeIds.filter((id) => !ids.includes(id));
   }
 
+  /**
+   * Before a message to the teacher: sends the strokes and the line being drawn now, without waiting for the pause,
+   * and resolves when the server has read those lines (`line_recognized`) — only then are they in the session log
+   * (`canvas.line_committed`), which is all the teacher reads of the drawing. Gives up after `SETTLE_MS` or when the socket is down.
+   */
+  settle(timeoutMs = SETTLE_MS): Promise<void> {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.flush();
+    }
+    if (this.lineTimer) {
+      clearTimeout(this.lineTimer);
+      this.flushLine();
+    }
+    if (!this.awaiting.size) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(t);
+        this.waiters.delete(done);
+        resolve();
+      };
+      const t = setTimeout(done, timeoutMs);
+      this.waiters.add(done);
+    });
+  }
+
+  private release() {
+    if (this.awaiting.size) return;
+    for (const w of [...this.waiters]) w();
+  }
+
   /** Sends what is collected now and leaves; the server writes what it has on close */
   close() {
     this.closed = true;
@@ -119,6 +157,8 @@ export class CanvasSocket {
     if (this.lineTimer) clearTimeout(this.lineTimer);
     this.flushLine();
     this.flush();
+    this.awaiting.clear();
+    this.release();
     this.ws?.close();
   }
 
@@ -135,7 +175,14 @@ export class CanvasSocket {
       started_at: line.startedAt,
       ended_at: line.endedAt,
     };
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    this.sendLine(msg);
+  }
+
+  private sendLine(msg: LineReady) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.awaiting.add(msg.line_id);
+      this.ws.send(JSON.stringify(msg));
+    } else this.unsentLines.push(msg);
   }
 
   private schedule() {
@@ -179,20 +226,28 @@ export class CanvasSocket {
     ws.onopen = () => {
       this.retry = RETRY_MIN_MS;
       for (const b of this.unacked.values()) ws.send(JSON.stringify(b));
+      // the lines go after the strokes they name: the server reads a line from the strokes it has received
+      for (const l of this.unsentLines.splice(0)) this.sendLine(l);
       this.update();
     };
     ws.onmessage = (e) => {
       try {
-        const m = JSON.parse(String(e.data)) as { type?: string; batch_no?: number };
+        const m = JSON.parse(String(e.data)) as { type?: string; batch_no?: number; line_id?: string };
         if (m.type === "ack" && typeof m.batch_no === "number") {
           this.unacked.delete(m.batch_no);
           this.update();
+        } else if (m.type === "line_recognized" && typeof m.line_id === "string") {
+          this.awaiting.delete(m.line_id);
+          this.release();
         }
       } catch {}
     };
     ws.onclose = (e) => {
       if (this.ws === ws) this.ws = null;
       this.update();
+      // an answer for a line sent on this connection may never come; nobody should wait for it
+      this.awaiting.clear();
+      this.release();
       // 1008: no session or not this learner's canvas: another try will not change that
       if (this.closed || e.code === 1008) return;
       this.retryTimer = setTimeout(() => this.connect(), this.retry);

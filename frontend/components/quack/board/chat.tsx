@@ -36,7 +36,18 @@ function Parts({ parts, onJump }: { parts: ChatPart[]; onJump: (ref: string) => 
 }
 
 /** Разговор с учителем про канвас: свёрнутая строка внизу и панель с историей */
-export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; sessionId?: string; onJump: (ref: string) => void }) {
+export function BoardChat({
+  canvasId,
+  sessionId,
+  beforeAsk,
+  onJump,
+}: {
+  canvasId: string;
+  sessionId?: string;
+  /** resolves when the drawing so far is on the server and read: the teacher sees only what is in the session log */
+  beforeAsk?: () => Promise<void>;
+  onJump: (ref: string) => void;
+}) {
   const tx = useT();
   const errorText = useErrorText();
   const { canvasChat, canvasReplies, genericReply } = useMocks();
@@ -90,6 +101,8 @@ export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; s
     setBusy(true);
     setError(null);
     try {
+      await beforeAsk?.();
+      if (ctl.signal.aborted) return;
       await askTeacher(
         sessionId,
         canvasId,

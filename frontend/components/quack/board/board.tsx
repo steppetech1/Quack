@@ -127,7 +127,7 @@ export function Board({
   }, [syncHist, setItems]);
 
   // a canvas of the backend: the strokes go to its journal and come back from it
-  const sync = useCanvasSync({
+  const { state: sync, settle } = useCanvasSync({
     enabled: !!live,
     canvasId,
     items,
@@ -838,7 +838,7 @@ export function Board({
               canUndo={hist.undo}
               canRedo={hist.redo}
             />
-            <BoardChat canvasId={canvasId} sessionId={live?.sessionId} onJump={jump} />
+            <BoardChat canvasId={canvasId} sessionId={live?.sessionId} beforeAsk={settle} onJump={jump} />
           </div>
         </>
       )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CanvasSocket, type SyncState } from "@/lib/api/canvas-socket";
 import { loadStrokes } from "@/lib/api/stroke-replay";
 import type { BoardItem, Pt } from "@/lib/canvas-board";
@@ -54,7 +54,7 @@ export function useCanvasSync({
   loaded: boolean;
   /** adds items the board lacks, without an undo step */
   restore: (add: Stroke[]) => void;
-}): SyncState {
+}): { state: SyncState; settle: () => Promise<void> } {
   const [state, setState] = useState<SyncState>("saved");
   const [ready, setReady] = useState(false);
   const socket = useRef<CanvasSocket | null>(null);
@@ -128,5 +128,8 @@ export function useCanvasSync({
     }
   }, [items, ready, enabled]);
 
-  return state;
+  /** before a message to the teacher: the drawing so far is sent and read, so the teacher can see it */
+  const settle = useCallback(() => socket.current?.settle() ?? Promise.resolve(), []);
+
+  return { state, settle };
 }
