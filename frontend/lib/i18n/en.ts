@@ -669,6 +669,15 @@ export const en = {
       image: "Image",
     },
   },
+  cardAnswers: {
+    label: "Your answer (optional)",
+    placeholder: "Type what you remember. It is saved with your rating.",
+    yours: "Your answer",
+    sending: "Saving your answers…",
+    saved: "Your answers are saved.",
+    failed: (n: number) => `${n} ${plural2(n, "answer", "answers")} didn't save. The ratings stay here.`,
+    retry: "Try again",
+  },
   live: {
     serverDown: "Can't reach the server. Is the backend running?",
     canvasOpening: "Opening a canvas…",
