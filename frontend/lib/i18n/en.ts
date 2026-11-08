@@ -685,6 +685,17 @@ export const en = {
     hint: "Hint: ",
     task: "Task",
   },
+  /** Starting a session from a topic page while another subject has one open */
+  sessionSwitch: {
+    warn: (subject: string | null) => `This will end your current session in ${subject ?? "another subject"}. Continue?`,
+    yes: "End it and start",
+    cancel: "Cancel",
+    groupLabel: "Confirm starting a new session",
+  },
+  /** The "Download everything" button of the account tab */
+  exportNotice: {
+    unavailable: "Downloading everything is not available yet.",
+  },
   live: {
     serverDown: "Can't reach the server. Is the backend running?",
     canvasOpening: "Opening a canvas…",

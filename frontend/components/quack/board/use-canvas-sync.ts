@@ -47,6 +47,7 @@ export function useCanvasSync({
   loaded,
   restore,
   onEvent,
+  onReopen,
 }: {
   enabled: boolean;
   canvasId: string;
@@ -57,6 +58,8 @@ export function useCanvasSync({
   restore: (add: Stroke[]) => void;
   /** what the socket hears besides acks: lines sent for reading, recognitions, teacher marks and hints */
   onEvent?: (e: CanvasEvent) => void;
+  /** the socket came back after a drop: the board re-reads what the teacher said meanwhile */
+  onReopen?: () => void;
 }): SyncState {
   const [state, setState] = useState<SyncState>("saved");
   const [ready, setReady] = useState(false);
@@ -65,14 +68,16 @@ export function useCanvasSync({
   const lastRev = useRef(new Map<string, number>());
   const restoreRef = useRef(restore);
   const eventRef = useRef(onEvent);
+  const reopenRef = useRef(onReopen);
   useEffect(() => {
     restoreRef.current = restore;
     eventRef.current = onEvent;
+    reopenRef.current = onReopen;
   });
 
   useEffect(() => {
     if (!enabled) return;
-    const s = new CanvasSocket(canvasId, setState, (e) => eventRef.current?.(e));
+    const s = new CanvasSocket(canvasId, setState, (e) => eventRef.current?.(e), () => reopenRef.current?.());
     socket.current = s;
     return () => {
       s.close();

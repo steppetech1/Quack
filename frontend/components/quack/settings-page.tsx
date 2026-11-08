@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { PageShell, TEXT_BTN } from "./page-parts";
 import { SkillsTab } from "./skills-tab";
-import { useSoon } from "./soon";
+import { useNotice, useSoon } from "./soon";
 
 const TAB_IDS = ["general", "domains", "skills", "usage", "language", "account"] as const;
 type TabId = (typeof TAB_IDS)[number];
@@ -434,6 +434,7 @@ function AccountTab() {
   const tx = useT();
   const { me, logout } = useData();
   const soon = useSoon();
+  const notice = useNotice();
   const [confirm, setConfirm] = useState(false);
   const del = useRef<HTMLButtonElement>(null);
   const yes = useRef<HTMLButtonElement>(null);
@@ -458,15 +459,9 @@ function AccountTab() {
         </div>
       </Row>
       <Row label={tx.settings.export} help={tx.settings.exportHelp}>
-        {API_MODE ? (
-          <Link href="/library" className={SECONDARY}>
-            {tx.settings.exportBtn}
-          </Link>
-        ) : (
-          <button type="button" onClick={() => soon(tx.settings.exportSoon)} className={SECONDARY}>
-            {tx.settings.exportBtn}
-          </button>
-        )}
+        <button type="button" onClick={() => notice(tx.exportNotice.unavailable)} className={SECONDARY}>
+          {tx.settings.exportBtn}
+        </button>
       </Row>
       <Row label={tx.settings.deleteLabel} help={tx.settings.deleteHelp}>
         {confirm ? (

@@ -687,6 +687,17 @@ export const ru: Dict = {
     hint: "Подсказка: ",
     task: "Задача",
   },
+  /** Starting a session from a topic page while another subject has one open */
+  sessionSwitch: {
+    warn: (subject: string | null) => `Это завершит твою текущую сессию ${subject ? `по предмету «${subject}»` : "по другому предмету"}. Продолжить?`,
+    yes: "Завершить и начать",
+    cancel: "Отмена",
+    groupLabel: "Подтверждение новой сессии",
+  },
+  /** The "Download everything" button of the account tab */
+  exportNotice: {
+    unavailable: "Скачать всё пока нельзя: этого ещё нет.",
+  },
   live: {
     serverDown: "Не достучался до сервера. Бэкенд запущен?",
     canvasOpening: "Открываю канвас…",

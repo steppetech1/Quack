@@ -29,8 +29,8 @@ import { Frames } from "./frames";
 import { ItemView } from "./items";
 import { TeacherLayer } from "./teacher-layer";
 import { Toolbar, type Tool } from "./toolbar";
-import { parseStreamId, useCanvasSync } from "./use-canvas-sync";
-import { useTeacherLayer } from "./use-teacher-layer";
+import { useCanvasSync } from "./use-canvas-sync";
+import { anchorLines, useTeacherLayer } from "./use-teacher-layer";
 
 type Cam = { x: number; y: number; k: number };
 type Gesture =
@@ -131,11 +131,8 @@ export function Board({
 
   // the teacher layer of a canvas of the backend: how lines were read, marks, hints, the task block
   const layer = useTeacherLayer({ enabled: !!live, canvasId, doc: live?.doc });
-  // only the lines whose strokes are still on the board have notes
-  const layerLines = useMemo(() => {
-    const ids = new Set(items.filter((i) => i.kind === "stroke").map((i) => i.id));
-    return Object.values(layer.lines).filter((l) => l.strokeIds.some((s) => ids.has(parseStreamId(s).itemId)));
-  }, [items, layer.lines]);
+  // notes sit at the line's strokes as they lie now; a line whose strokes are all gone has none
+  const layerLines = useMemo(() => anchorLines(layer.lines, items, loaded), [items, loaded, layer.lines]);
 
   // a canvas of the backend: the strokes go to its journal and come back from it
   const sync = useCanvasSync({
@@ -144,6 +141,7 @@ export function Board({
     items,
     loaded,
     onEvent: layer.handle,
+    onReopen: layer.refresh,
     restore: (add) =>
       mutate((prev) => {
         const have = new Set(prev.map((i) => i.id));

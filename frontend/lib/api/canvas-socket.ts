@@ -60,6 +60,7 @@ function socketUrl(canvasId: string): string {
 export class CanvasSocket {
   private ws: WebSocket | null = null;
   private closed = false;
+  private opened = false;
   private retry = RETRY_MIN_MS;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -84,6 +85,8 @@ export class CanvasSocket {
     private readonly canvasId: string,
     private readonly onState: (s: SyncState) => void,
     private readonly onEvent: (e: CanvasEvent) => void = () => {},
+    /** the socket is open again after a drop (not the first open): what the server said while it was down is lost to the board */
+    private readonly onReopen: () => void = () => {},
   ) {
     this.connect();
   }
@@ -202,6 +205,9 @@ export class CanvasSocket {
       this.retry = RETRY_MIN_MS;
       for (const b of this.unacked.values()) ws.send(JSON.stringify(b));
       this.update();
+      const again = this.opened;
+      this.opened = true;
+      if (again) this.onReopen();
     };
     ws.onmessage = (e) => {
       try {
