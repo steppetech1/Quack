@@ -539,6 +539,15 @@
         "title": "CardEdit",
         "type": "object"
       },
+      "CardKind": {
+        "enum": [
+          "definition",
+          "sign_to_method",
+          "distinction",
+          "against_misconception"
+        ],
+        "type": "string"
+      },
       "CardSeriesElement": {
         "additionalProperties": false,
         "description": "Серия карточек: card labels (`C…`, §17).",
@@ -568,6 +577,58 @@
         "title": "CardSeriesElement",
         "type": "object"
       },
+      "CardView": {
+        "additionalProperties": false,
+        "description": "A card as the learner sees it; `answer` is the reference answer of the task behind it to\nshow on reveal (`None` — the task has no short answer).",
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "generatedBy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generatedby"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CardKind"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Owner"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "kind",
+          "prompt",
+          "owner"
+        ],
+        "title": "CardView",
+        "type": "object"
+      },
       "CardsResponse": {
         "description": "The topic's cards at the current version; `card_id` is the task to answer.",
         "properties": {
@@ -578,8 +639,7 @@
           },
           "cards": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/CardView"
             },
             "title": "Cards",
             "type": "array"
@@ -3090,6 +3150,13 @@
           "incorrect",
           "partial",
           "unclear"
+        ],
+        "type": "string"
+      },
+      "Owner": {
+        "enum": [
+          "system",
+          "learner"
         ],
         "type": "string"
       },
