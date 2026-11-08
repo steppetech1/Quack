@@ -4,6 +4,7 @@ import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { API_MODE } from "@/lib/api/client";
+import { useData } from "@/lib/api/data";
 import { daysFromToday, localIso } from "@/lib/format";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
@@ -29,6 +30,7 @@ export function HubPage({ id }: { id: string }) {
   const { fullDate, inDays } = useFmt();
   const { getTopicDetails, cheatSheets } = useMocks();
   const { domain } = useShell();
+  const { ready, domains, graphSettled } = useData();
   const soon = useSoon();
   const { start, busy } = useStartSession();
   const api = useHubApi(id, domain.id, API_MODE);
@@ -73,7 +75,16 @@ export function HubPage({ id }: { id: string }) {
     ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(localIso(Date.parse(m.created_at))), kind: "pdf" as const }))
     : data?.materials ?? [];
 
+  // a hard load of /hub/<id>: the chapter list arrives with the graph, so "absent" is only true once that settled
+  const loading = !hub && API_MODE && (!ready || (domains.length > 0 && !graphSettled[domain.id]));
   if (!hub || !data) {
+    if (loading) {
+      return (
+        <PageFrame chipLabel={tx.page.chipSubject(domain.title)}>
+          <p role="status" className="mt-6 text-paper-dim">{tx.apiGaps.hubLoading}</p>
+        </PageFrame>
+      );
+    }
     return (
       <PageFrame chipLabel={tx.page.chipSubject(domain.title)}>
         <Crumbs domainTitle={domain.title} />

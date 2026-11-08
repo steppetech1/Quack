@@ -671,6 +671,12 @@ export const ru: Dict = {
       image: "Картинка",
     },
   },
+  apiGaps: {
+    serviceDown: "Сервис, от которого мы зависим, не отвечает. Попробуй через минуту.",
+    usageUnavailable: "Цифры использования пока недоступны.",
+    namePlaceholder: "Твоё имя",
+    hubLoading: "Загружаю главу…",
+  },
   live: {
     serverDown: "Не достучался до сервера. Бэкенд запущен?",
     canvasOpening: "Открываю канвас…",

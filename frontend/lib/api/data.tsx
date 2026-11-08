@@ -24,6 +24,8 @@ type Data = {
   /** Model of the layered graph per subject (API mode; mocks have their own store) */
   models: Record<string, GraphModel>;
   me: S["Me"] | null;
+  /** Subjects whose graph request has finished at least once (answer, 404 or failure): "not loaded yet" vs "absent" */
+  graphSettled: Record<string, boolean>;
   active: S["SessionView"] | null;
   /**
    * How far the backend projection (graph, topic states) has caught up, from `/v1/learner/stream`.
@@ -58,6 +60,7 @@ function MockData({ children }: { children: React.ReactNode }) {
       domains,
       models: {},
       me: null,
+      graphSettled: {},
       active: null,
       appliedSeq: 0,
       reload: async () => {},
@@ -84,6 +87,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const [hubs, setHubs] = useState<Record<string, ApiHub[]>>({});
   const [todays, setTodays] = useState<Record<string, S["TodayView"]>>({});
   const [me, setMe] = useState<S["Me"] | null>(null);
+  const [graphSettled, setGraphSettled] = useState<Record<string, boolean>>({});
   const [active, setActiveState] = useState<S["SessionView"] | null>(null);
   const [history, setHistory] = useState<S["SessionView"][]>([]);
   const [appliedSeq, setAppliedSeq] = useState(0);
@@ -120,6 +124,8 @@ function ApiData({ children }: { children: React.ReactNode }) {
     } catch (e) {
       // a subject without sessions or materials has no graph yet
       if (!(e instanceof ApiError && e.status === 404)) throw e;
+    } finally {
+      setGraphSettled((m) => (m[domainId] ? m : { ...m, [domainId]: true }));
     }
   }, []);
 
@@ -267,8 +273,8 @@ function ApiData({ children }: { children: React.ReactNode }) {
   }, [termsVersion, t.live.serverDown, t.live.serverError]);
 
   const value = useMemo<Data>(
-    () => ({ ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
-    [ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout],
+    () => ({ ready, error, domains, models, me, graphSettled, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
+    [ready, error, domains, models, me, graphSettled, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout],
   );
   // the gate lies over the app (the app stays mounted: the router needs its segments, and the data loads behind it)
   return (

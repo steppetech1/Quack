@@ -40,7 +40,8 @@ function usePrefs() {
   const t = useT();
   const { me, savePreferences } = useData();
   const defaults = useMemo<Prefs>(
-    () => ({ name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
+    // with the backend the name is the learner's own (empty until they set it), never the mock persona
+    () => ({ name: API_MODE ? "" : t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
     [t],
   );
   const [stored, setStored] = useState<Partial<Prefs> | null>(null);
@@ -265,7 +266,7 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
       </div>
 
       <Row label={tx.settings.nameLabel} id={`${uid}-name`}>
-        <input aria-labelledby={`${uid}-name`} value={draft.name} onChange={(e) => set("name", e.target.value)} className={FIELD} />
+        <input aria-labelledby={`${uid}-name`} value={draft.name} onChange={(e) => set("name", e.target.value)} placeholder={API_MODE ? tx.apiGaps.namePlaceholder : undefined} className={FIELD} />
       </Row>
       <Row label={tx.settings.addressLabel} help={tx.settings.addressHelp} id={`${uid}-addr`}>
         <Radio
@@ -376,6 +377,8 @@ function Meter({ label, value, text, note }: { label: string; value: number; tex
 function UsageTab() {
   const tx = useT();
   const soon = useSoon();
+  // the backend has no usage endpoint yet: no invented meters, only an honest line
+  if (API_MODE) return <p className="mt-4 text-body text-paper-dim">{tx.apiGaps.usageUnavailable}</p>;
   return (
     <div className="mt-4">
       <div className="flex items-center justify-between gap-4 pb-4">
