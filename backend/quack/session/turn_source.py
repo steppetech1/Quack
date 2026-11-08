@@ -250,6 +250,9 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
                     goal = SessionGoal(
                         intent=message.intent, topic_id=message.topic_id, hub_id=message.hub_id
                     )
+            case "voice.transcribed":
+                # The words of a spoken message (its `message.sent` carries none, `voice_seq`).
+                texts.append(LearnerText(seq=event.seq, text=str(event.payload["text"])))
             case "task.created":
                 task = TaskCreated.model_validate(event.payload)
                 created[task.task_id] = task

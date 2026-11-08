@@ -55,6 +55,9 @@ class CanvasRef(EventPayload):
 
 @register("message.sent", projector=False, dispatcher=True)
 class MessageSent(EventPayload):
+    """`voice_seq` - a spoken message: `text` stays empty, the words are the
+    `voice.transcribed` at that seq, so the utterance is recorded and read once."""
+
     text: str
     intent: Literal["learn", "practice", "review"] | None = None
     topic_id: UUID | None = None
@@ -62,6 +65,7 @@ class MessageSent(EventPayload):
     material_ids: list[UUID] = Field(default_factory=list)
     canvas_refs: list[CanvasRef] = Field(default_factory=list)
     skill_invocation: str | None = None
+    voice_seq: int | None = None
 
 
 @register("answer.submitted", projector=True, dispatcher=True)

@@ -76,6 +76,8 @@ async def record_action(
         return await _answer(db, answer, key, learner_id, session_id, domain_id, settings, redis)
     if isinstance(action, HintRequestAction | SolutionRequestAction | CheckSkipAction):
         await _own_task(db, learner_id, action.task_id)
+    if isinstance(action, MessageAction) and action.voice_seq is not None:
+        await _own_voice(db, learner_id, session_id, action.voice_seq)
     async with db.transaction():
         [event] = await append_events(
             db,
@@ -176,6 +178,14 @@ async def _own_task(db: Db, learner_id: UUID, task_id: UUID) -> TaskDocument:
     if task is None:
         raise LookupError(f"no task {task_id}")
     return task
+
+
+async def _own_voice(db: Db, learner_id: UUID, session_id: UUID, seq: int) -> None:
+    """The `voice.transcribed` of this session that a spoken message points at;
+    `LookupError` otherwise."""
+    event = await event_by_seq(db, learner_id=learner_id, seq=seq)
+    if event is None or event.type != "voice.transcribed" or event.session_id != session_id:
+        raise LookupError(f"no voice segment at seq {seq} in session {session_id}")
 
 
 async def _element_task(db: Db, learner_id: UUID, turn_seq: int, element_id: str) -> UUID:

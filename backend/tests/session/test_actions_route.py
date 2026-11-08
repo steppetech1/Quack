@@ -25,7 +25,7 @@ from quack.api.auth import SESSION_COOKIE
 from quack.auth.sessions import open_session
 from quack.config import Settings
 from quack.db.db import Db
-from quack.events.event_types import DomainCreated
+from quack.events.event_types import DomainCreated, VoiceTranscribed
 from quack.events.log import NewEvent, append_events
 from quack.llm.labels import LabelMap
 from quack.llm.provider import ProviderRequest
@@ -391,3 +391,83 @@ async def test_turn_lock_is_released_for_the_next_action(
     for response in (first, second):
         assert _names(parse_sse(response.text))[-1] == "turn_committed", response.text
     assert (await _types(pg_db, who.learner_id)).count("turn.committed") == 2
+
+
+async def _voice(
+    pg_db: Db, who: Learner, session_id: UUID | None = None, text: str = "hello"
+) -> int:
+    [stored] = await append_events(
+        pg_db,
+        who.learner_id,
+        [
+            NewEvent(
+                type="voice.transcribed",
+                payload=VoiceTranscribed(text=text, started_at_ms=0, ended_at_ms=1000),
+                actor="learner",
+                idempotency_key=f"voice:{uuid4()}",
+                session_id=session_id or who.session_id,
+            )
+        ],
+    )
+    return stored.seq
+
+
+async def test_spoken_message_is_one_learner_utterance(
+    client: httpx.AsyncClient, source: FixedSource, pg_db: Db, settings: Settings
+) -> None:
+    """The words live in `voice.transcribed`; the message that starts the turn points at it."""
+    who = await _learner(pg_db, settings)
+    seq = await _voice(pg_db, who, text="is it geometric?")
+
+    response = await _post(client, who, {"kind": "message", "voice_seq": seq})
+
+    assert response.status_code == 200, response.text
+    sent = await pg_db.fetch_one(
+        "SELECT payload FROM core.events WHERE learner_id = %(l)s AND type = 'message.sent'",
+        {"l": who.learner_id},
+    )
+    assert sent is not None
+    assert (sent["payload"]["text"], sent["payload"]["voice_seq"]) == ("", seq)
+    types = await _types(pg_db, who.learner_id)
+    assert types.count("voice.transcribed") == 1 and types.count("message.sent") == 1
+
+
+@pytest.mark.parametrize("where", ["other_session", "other_learner", "not_voice", "missing"])
+async def test_spoken_message_must_point_at_own_voice_of_the_session(
+    client: httpx.AsyncClient, source: FixedSource, pg_db: Db, settings: Settings, where: str
+) -> None:
+    who, other = await _learner(pg_db, settings), await _learner(pg_db, settings)
+    seq = {
+        "other_session": lambda: _voice(pg_db, who, session_id=uuid4()),
+        "other_learner": lambda: _voice(pg_db, other),
+        "not_voice": lambda: _first_seq(pg_db, who),
+        "missing": lambda: _no_seq(),
+    }[where]
+    response = await _post(client, who, {"kind": "message", "voice_seq": await seq()})
+
+    assert response.status_code == 404
+    assert "message.sent" not in await _types(pg_db, who.learner_id)
+
+
+async def _first_seq(pg_db: Db, who: Learner) -> int:
+    row = await pg_db.fetch_one(
+        "SELECT min(seq) AS seq FROM core.events WHERE learner_id = %(l)s", {"l": who.learner_id}
+    )
+    assert row is not None
+    return int(row["seq"])
+
+
+async def _no_seq() -> int:
+    return 10**9
+
+
+async def test_spoken_message_with_text_is_rejected(
+    client: httpx.AsyncClient, source: FixedSource, pg_db: Db, settings: Settings
+) -> None:
+    who = await _learner(pg_db, settings)
+    seq = await _voice(pg_db, who)
+
+    response = await _post(client, who, {"kind": "message", "voice_seq": seq, "text": "again"})
+
+    assert response.status_code == 422
+    assert "message.sent" not in await _types(pg_db, who.learner_id)
