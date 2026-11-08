@@ -604,13 +604,26 @@ async def request_cancel(
     return CancelOutcome(statuses.count("cancelled"), statuses.count("cancel_requested"))
 
 
+# How long a finished (`succeeded`/`failed`) visible job stays on the plaque, so the client can
+# tell a failed background job from a finished one. The finish moment is the last pulse
+# (`heartbeat_at`): `_FINISH` does not clear it.
+FINISHED_JOB_WINDOW_SEC = 300
+
+
 async def visible_jobs(db: Db, learner_id: UUID, session_id: UUID) -> list[VisibleJob]:
     """`GET /v1/sessions/{id}/jobs` (Т-§13.8): jobs of the session with `visible` in `queued`
-    and `running`; the rows of another learner are never seen."""
+    and `running`, plus those that `succeeded` or `failed` within `FINISHED_JOB_WINDOW_SEC`;
+    the rows of another learner are never seen."""
     rows = await db.fetch_all(
         "SELECT job_key, kind, status, created_at FROM ops.jobs WHERE learner_id = %(learner_id)s "
-        "AND session_id = %(session_id)s AND visible AND status IN ('queued', 'running') "
+        "AND session_id = %(session_id)s AND visible AND (status IN ('queued', 'running') "
+        "OR (status IN ('succeeded', 'failed') "
+        "AND heartbeat_at >= now() - make_interval(secs => %(window)s))) "
         "ORDER BY created_at, job_key",
-        {"learner_id": learner_id, "session_id": session_id},
+        {
+            "learner_id": learner_id,
+            "session_id": session_id,
+            "window": FINISHED_JOB_WINDOW_SEC,
+        },
     )
     return [VisibleJob(r["job_key"], r["kind"], r["status"], r["created_at"]) for r in rows]

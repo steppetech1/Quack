@@ -14,11 +14,13 @@ from uuid import UUID
 
 from quack.agents.reconcile import Subject, reconcile_domain
 from quack.jobs.runner import JobContext, register_job_handler
-from quack.jobs.types import ClaimedJob
+from quack.jobs.types import ClaimedJob, JobDeferred, JobFailedPermanently
+from quack.llm.errors import LLMBudgetExceededError
 from quack.materials.parse import (
     STEP_STRUCTURE,
     SeminarSpec,
     SubjectSpec,
+    mark_failed,
     parse_step,
     structure_step,
 )
@@ -76,9 +78,24 @@ async def create_seminar_tasks(
     await asyncio.gather(*(create(spec) for spec in tasks))
 
 
+def _is_final(error: Exception, job: ClaimedJob) -> bool:
+    """The runner will not retry this error: a permanent one, a session budget, or the last
+    attempt (the same rule as `fail_or_retry`). A deferral is not a failure."""
+    if isinstance(error, JobDeferred):
+        return False
+    if isinstance(error, LLMBudgetExceededError):
+        return error.scope == "session"
+    return isinstance(error, JobFailedPermanently) or job.attempt >= job.max_attempts
+
+
 @register_job_handler("material.parse")
 async def handle_material_parse(job: ClaimedJob, ctx: JobContext) -> None:
-    if job.payload.get("step") == STEP_STRUCTURE:
-        await structure_step(ctx, job, reconcile_subjects, create_seminar_tasks)
-    else:
-        await parse_step(ctx, job)
+    try:
+        if job.payload.get("step") == STEP_STRUCTURE:
+            await structure_step(ctx, job, reconcile_subjects, create_seminar_tasks)
+        else:
+            await parse_step(ctx, job)
+    except Exception as error:
+        if _is_final(error, job):
+            await mark_failed(ctx.db, job)
+        raise
