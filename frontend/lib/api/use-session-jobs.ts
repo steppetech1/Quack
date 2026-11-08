@@ -6,9 +6,8 @@ import { ApiError, get, type S } from "./client";
 
 /**
  * Background agents of a session ("the plaque", Т-§13.8): `GET /v1/sessions/{id}/jobs` returns the visible jobs that are
- * `queued` or `running` and nothing else — a finished job simply disappears from the list. So "finished" here means "was
- * in the list, now is not" (the backend gives no way to tell a failed job from a succeeded one; a status other than
- * queued/running, if it ever shows up, is treated as failed).
+ * `queued` or `running`, plus those that ended in the last few minutes as `succeeded` or `failed`. "Finished" here means
+ * "was active, now is `succeeded`/`failed` or gone from the list" (an older backend only drops it: that reads as done).
  *
  * Refresh: `jobs_changed` of `/v1/learner/stream` (through `DataProvider`), a reconnect of that stream, and polling while
  * something is queued or running. After a turn, `refresh()` also polls a few times even when the list is empty: the
@@ -62,7 +61,7 @@ export function useSessionJobs(sessionId: string, opts: { onDone?: (kinds: strin
     const now = new Map(next.map((j) => [j.job_key, j.kind] as const));
     const gone: FinishedJob[] = [];
     for (const [key, kind] of known.current) if (!now.has(key)) gone.push({ key, kind, failed: false });
-    for (const j of next) if (!isActive(j) && known.current.has(j.job_key)) gone.push({ key: j.job_key, kind: j.kind, failed: true });
+    for (const j of next) if (!isActive(j) && known.current.has(j.job_key)) gone.push({ key: j.job_key, kind: j.kind, failed: j.status !== "succeeded" });
     known.current = new Map(next.filter(isActive).map((j) => [j.job_key, j.kind] as const));
     setJobs(next.filter(isActive));
     if (gone.length) {

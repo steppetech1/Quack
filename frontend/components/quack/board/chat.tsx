@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { askTeacher } from "@/lib/api/canvases";
 import { ApiError, get, type S } from "@/lib/api/client";
 import { useMocks, useT } from "@/lib/i18n/provider";
+import { skillInvocation } from "@/lib/skills";
 import type { ChatMsg, ChatPart } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { Duck } from "../duck";
@@ -117,6 +118,7 @@ export function BoardChat({
           } else if (event === "error") throw new ApiError(500, String(data.code ?? "ERROR"), String(data.message ?? ""));
         },
         ctl.signal,
+        skillInvocation(v),
       );
     } catch (e) {
       if (!ctl.signal.aborted) setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? tx.live.turnLocked : errorText(e));
