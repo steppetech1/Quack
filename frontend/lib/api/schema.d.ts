@@ -978,7 +978,8 @@ export interface paths {
         /**
          * Session Jobs
          * @description ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and
-         *     `running`; a session of another learner or none — `404` (D-B-207).
+         *     `running`, plus `succeeded`/`failed` ones of the last minutes; a session of another learner
+         *     or none — `404` (D-B-207).
          */
         get: operations["session_jobs_v1_sessions__session_id__jobs_get"];
         put?: never;
@@ -1431,6 +1432,8 @@ export interface components {
             /** Prompt */
             prompt: string;
         };
+        /** @enum {string} */
+        CardKind: "definition" | "sign_to_method" | "distinction" | "against_misconception";
         /**
          * CardSeriesElement
          * @description Серия карточек: card labels (`C…`, §17).
@@ -1447,6 +1450,28 @@ export interface components {
             kind: "card_series";
         };
         /**
+         * CardView
+         * @description A card as the learner sees it; `answer` is the reference answer of the task behind it to
+         *     show on reveal (`None` — the task has no short answer).
+         */
+        CardView: {
+            /** Answer */
+            answer?: string | null;
+            /**
+             * Card Id
+             * Format: uuid
+             */
+            card_id: string;
+            /** Generatedby */
+            generatedBy?: {
+                [key: string]: unknown;
+            } | null;
+            kind: components["schemas"]["CardKind"];
+            owner: components["schemas"]["Owner"];
+            /** Prompt */
+            prompt: string;
+        };
+        /**
          * CardsResponse
          * @description The topic's cards at the current version; `card_id` is the task to answer.
          */
@@ -1457,9 +1482,7 @@ export interface components {
              */
             artifact_id: string;
             /** Cards */
-            cards: {
-                [key: string]: unknown;
-            }[];
+            cards: components["schemas"]["CardView"][];
             /** Topic Id */
             topic_id: string | null;
             /** Version */
@@ -2515,6 +2538,8 @@ export interface components {
         };
         /** @enum {string} */
         Outcome: "correct" | "incorrect" | "partial" | "unclear";
+        /** @enum {string} */
+        Owner: "system" | "learner";
         /**
          * PaceWarning
          * @description `Т-§14.6`: the hub will not be ready by its date at the current pace.
