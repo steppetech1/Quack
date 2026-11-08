@@ -715,3 +715,72 @@ async def test_periodic_keys(jobs_db: Db) -> None:
         f"sweep-inactive:{minute + 23 * 60}",
         f"sweep-inactive:{minute + 24 * 60}",
     ]
+
+
+# --- the failure hook of `material.parse`: a job the cleaner gives up on fails its material ---
+
+
+async def _stale_parse_job(db: Db, material_status: str, settings: Settings) -> tuple[str, UUID]:
+    import quack.ops.material_parse  # noqa: F401 - registers the failure hook
+
+    learner = await create_learner(db)
+    material = uuid4()
+    await db.execute(
+        "INSERT INTO content.materials (material_id, learner_id, object_key, mime, status) "
+        "VALUES (%(m)s, %(l)s, 'k', 'application/pdf', %(s)s)",
+        {"m": material, "l": learner, "s": material_status},
+    )
+    await q.enqueue(
+        db, _plan(learner, "parse", kind="material.parse", payload={"material_id": str(material)})
+    )
+    assert await q.claim_next(db, settings) is not None
+    await db.execute("UPDATE ops.jobs SET heartbeat_at = now() - interval '5 minutes'")
+    return "parse", material
+
+
+async def _material_status(db: Db, material: UUID) -> str:
+    row = await db.fetch_one(
+        "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
+    )
+    assert row is not None
+    return row["status"]
+
+
+async def test_heartbeat_timeout_on_the_last_attempt_fails_the_material(jobs_db: Db) -> None:
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    key, material = await _stale_parse_job(jobs_db, "uploaded", settings)
+    assert await q.reap_stale(jobs_db, settings) == 1
+    assert await _status(jobs_db, key) == "failed"
+    assert await _material_status(jobs_db, material) == "failed"
+
+
+async def test_a_retried_parse_does_not_fail_the_material(jobs_db: Db) -> None:
+    key, material = await _stale_parse_job(jobs_db, "uploaded", SETTINGS)
+    assert await q.reap_stale(jobs_db, SETTINGS) == 1
+    assert await _status(jobs_db, key) == "queued"
+    assert await _material_status(jobs_db, material) == "uploaded"
+
+
+async def test_a_parsed_material_is_not_overwritten_by_a_failed_job(jobs_db: Db) -> None:
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    key, material = await _stale_parse_job(jobs_db, "parsed", settings)
+    assert await q.reap_stale(jobs_db, settings) == 1
+    assert await _status(jobs_db, key) == "failed"
+    assert await _material_status(jobs_db, material) == "parsed"
+
+
+async def test_a_raising_failure_hook_does_not_undo_failed(jobs_db: Db) -> None:
+    async def broken(db: Db, job: q.ClaimedJob) -> None:
+        await db.execute("SELECT 1/0")
+
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    learner = await create_learner(jobs_db)
+    await q.enqueue(jobs_db, _plan(learner, "a", kind="hooked.kind"))
+    assert await q.claim_next(jobs_db, settings) is not None
+    await jobs_db.execute("UPDATE ops.jobs SET heartbeat_at = now() - interval '5 minutes'")
+    q.FAILURE_HOOKS["hooked.kind"] = broken
+    try:
+        assert await q.reap_stale(jobs_db, settings) == 1
+    finally:
+        del q.FAILURE_HOOKS["hooked.kind"]
+    assert await _status(jobs_db, "a") == "failed"

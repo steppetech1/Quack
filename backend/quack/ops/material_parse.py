@@ -13,6 +13,9 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from quack.agents.reconcile import Subject, reconcile_domain
+from quack.db import Db
+from quack.jobs.queue_p4 import ClaimedJob as QueuedJob
+from quack.jobs.queue_p4 import register_failure_hook
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob, JobDeferred, JobFailedPermanently
 from quack.llm.errors import LLMBudgetExceededError
@@ -21,6 +24,7 @@ from quack.materials.parse import (
     SeminarSpec,
     SubjectSpec,
     mark_failed,
+    mark_material_failed,
     parse_step,
     structure_step,
 )
@@ -99,3 +103,10 @@ async def handle_material_parse(job: ClaimedJob, ctx: JobContext) -> None:
         if _is_final(error, job):
             await mark_failed(ctx.db, job)
         raise
+
+
+@register_failure_hook("material.parse")
+async def mark_material_parse_failed(db: Db, job: QueuedJob) -> None:
+    """The queue gave up on the job for good, also without the handler seeing it (a heartbeat
+    timeout on the last attempt): the material is `failed`, a parsed one is left alone."""
+    await mark_material_failed(db, job.learner_id, job.payload)

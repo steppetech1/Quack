@@ -316,15 +316,19 @@ _SET_FAILED = (
 async def mark_failed(db: Db, job: ClaimedJob) -> None:
     """The parse of the material is over for good (a permanent error or the last attempt): the
     status is `failed`, so the client stops waiting. A parsed material keeps its status."""
-    if job.learner_id is None or "material_id" not in job.payload:
+    await mark_material_failed(db, job.learner_id, job.payload)
+
+
+async def mark_material_failed(db: Db, learner_id: UUID | None, payload: dict[str, Any]) -> None:
+    if learner_id is None or "material_id" not in payload:
         return
     await db.execute(
         _SET_FAILED,
         {
             "status": STATUS_FAILED,
             "parsed": STATUS_PARSED,
-            "learner_id": job.learner_id,
-            "material_id": UUID(str(job.payload["material_id"])),
+            "learner_id": learner_id,
+            "material_id": UUID(str(payload["material_id"])),
         },
     )
 

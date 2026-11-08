@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -380,6 +380,35 @@ async def mark_cancelled(db: Db, job: ClaimedJob, *, redis: Redis | None = None)
 
 # --- failure, retry, defer, release -------------------------------------------------------
 
+# A kind may own state that must learn of the job's final failure (a material stays `uploaded`
+# otherwise). The hook runs in the transaction that makes the job `failed`, however it got there:
+# a handler error, a permanent error, a heartbeat timeout seen by the cleaner.
+type FailureHook = Callable[[Db, ClaimedJob], Awaitable[None]]
+
+FAILURE_HOOKS: dict[str, FailureHook] = {}
+
+
+def register_failure_hook(kind: str) -> Callable[[FailureHook], FailureHook]:
+    def decorator(hook: FailureHook) -> FailureHook:
+        if kind in FAILURE_HOOKS:
+            raise ValueError(f"failure hook for job kind {kind!r} is already registered")
+        FAILURE_HOOKS[kind] = hook
+        return hook
+
+    return decorator
+
+
+async def _run_failure_hook(db: Db, job: ClaimedJob) -> None:
+    """A hook that raises must not undo `failed`: it gets its own savepoint and a log line."""
+    hook = FAILURE_HOOKS.get(job.kind)
+    if hook is None:
+        return
+    try:
+        async with db.transaction() as conn, conn.transaction():
+            await hook(db, job)
+    except Exception as exc:
+        log.error("job_failure_hook_failed", kind=job.kind, job_key=job.job_key, error=repr(exc))
+
 
 def backoff_seconds(
     attempts: int, settings: Settings, *, rand: Callable[[], float] = random.random
@@ -512,6 +541,7 @@ async def fail_or_retry(
         if permanent or job.attempts >= settings.job_max_attempts:
             await _finish(db, job, "failed", message, redis)
             await _write_failure_event(db, job, message, redis)
+            await _run_failure_hook(db, job)
             return RetryDecision("failed", job.attempts, None)
         delay = (
             backoff_seconds(job.attempts, settings, rand=rand)
