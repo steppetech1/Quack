@@ -3089,7 +3089,7 @@
       },
       "MessageAction": {
         "additionalProperties": false,
-        "description": "`message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).",
+        "description": "`message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).\n\n`voice_seq` - the message is spoken: the `seq` of its `voice.transcribed` (the answer of\n`POST …/voice`). The words are that event's, so `text` must stay empty.",
         "properties": {
           "canvas_refs": {
             "default": [],
@@ -3130,14 +3130,25 @@
             "title": "Skill Invocation"
           },
           "text": {
+            "default": "",
             "title": "Text",
             "type": "string"
+          },
+          "voice_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Seq"
           }
         },
         "required": [
           "idempotency_key",
-          "kind",
-          "text"
+          "kind"
         ],
         "title": "MessageAction",
         "type": "object"

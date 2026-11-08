@@ -2539,6 +2539,9 @@ export interface components {
         /**
          * MessageAction
          * @description `message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).
+         *
+         *     `voice_seq` - the message is spoken: the `seq` of its `voice.transcribed` (the answer of
+         *     `POST …/voice`). The words are that event's, so `text` must stay empty.
          */
         MessageAction: {
             /**
@@ -2563,8 +2566,13 @@ export interface components {
             material_ids?: string[];
             /** Skill Invocation */
             skill_invocation?: string | null;
-            /** Text */
-            text: string;
+            /**
+             * Text
+             * @default
+             */
+            text?: string;
+            /** Voice Seq */
+            voice_seq?: number | null;
         };
         /** OpenCanvas */
         OpenCanvas: {
