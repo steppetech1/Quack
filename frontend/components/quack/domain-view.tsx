@@ -7,7 +7,9 @@ import type { TodayRec } from "@/lib/graph/types";
 import { useFmt, useLocale, useMocks, useT } from "@/lib/i18n/provider";
 import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
+import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
+import { useApiCanvases } from "@/lib/api/use-canvases";
 import { useShell } from "./app-shell";
 import { CanvasesList, CanvasSearch } from "./canvases-page";
 import { Composer } from "./composer";
@@ -127,7 +129,9 @@ export function DomainView() {
   // The layered graph runs on the slice model. With the API on, the old graph stays until the adapter exists
   const model = useGraphModel(locale, domain.id);
   const hasGraph = model ? model.topics.length > 0 : domain.topics.length > 0;
-  const canvasCount = canvasesOf(domain.id).length;
+  // with the API on the canvases are the backend's (the mock store is empty there)
+  const apiCanvases = useApiCanvases(domain.id);
+  const canvasCount = API_MODE ? apiCanvases.length : canvasesOf(domain.id).length;
 
   // "Today": from the model on mocks; with the API on, from what the backend gave the older mapping.
   // Only the fields that exist are carried over.

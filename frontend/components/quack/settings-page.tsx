@@ -10,6 +10,7 @@ import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
+import { useErrorText } from "./live/error-text";
 import { PageShell, TEXT_BTN } from "./page-parts";
 import { SkillsTab } from "./skills-tab";
 import { useNotice, useSoon } from "./soon";
@@ -499,6 +500,8 @@ function AccountTab() {
   const tx = useT();
   const { me, logout } = useData();
   const soon = useSoon();
+  const errorText = useErrorText();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const del = useRef<HTMLButtonElement>(null);
   const yes = useRef<HTMLButtonElement>(null);
@@ -523,15 +526,10 @@ function AccountTab() {
         </div>
       </Row>
       <Row label={tx.settings.export} help={tx.settings.exportHelp}>
-        {API_MODE ? (
-          <Link href="/library" className={SECONDARY}>
-            {tx.settings.exportBtn}
-          </Link>
-        ) : (
-          <button type="button" onClick={() => soon(tx.settings.exportSoon)} className={SECONDARY}>
-            {tx.settings.exportBtn}
-          </button>
-        )}
+        {/* the backend can give an export by id (`GET /v1/learner/exports/{id}`) but has no call that starts one: until it does, no fake link */}
+        <button type="button" onClick={() => soon(tx.settings.exportSoon)} className={SECONDARY}>
+          {tx.settings.exportBtn}
+        </button>
       </Row>
       <Row label={tx.settings.deleteLabel} help={tx.settings.deleteHelp}>
         {confirm ? (
@@ -548,7 +546,8 @@ function AccountTab() {
                     return;
                   }
                   // the backend tombstones the learner and purges the data later; the token stops working
-                  void apiDelete("/v1/learner").then(logout, () => soon(tx.settings.deleteSoon));
+                  setDeleteError(null);
+                  void apiDelete("/v1/learner").then(logout, (e) => setDeleteError(errorText(e)));
                 }}
                 className="caps h-10 rounded-pill border border-st-confused px-6 text-st-confused transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover"
               >
@@ -575,6 +574,11 @@ function AccountTab() {
           >
             {tx.settings.deleteLabel}
           </button>
+        )}
+        {deleteError && (
+          <p role="alert" className="mt-2 text-small text-st-confused">
+            {deleteError}
+          </p>
         )}
       </Row>
     </div>

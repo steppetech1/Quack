@@ -87,6 +87,8 @@ export function SessionLive({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const sentFirst = useRef(false);
+  /** bumped by "Try again" when the history could not be read */
+  const [historyTry, setHistoryTry] = useState(0);
 
   /** A finished background job (a demo, say) leaves its result in the committed turn: re-read it, a visualization gets its `request_id` there */
   const refreshElements = useCallback(() => {
@@ -157,6 +159,12 @@ export function SessionLive({ id }: { id: string }) {
             } else if (event === "error") throw new ApiError(500, String(data.code ?? "ERROR"), String(data.message ?? ""));
           },
         );
+        // the stream closed with no `turn_committed` and no `error` frame (proxy cut, server restart): the turn is not saved
+        if (committed === null) {
+          if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply, interrupted: true }]);
+          else setError(t.interrupted);
+          return false;
+        }
         if (reply) setLines((l) => [...l, { id: `t-${committed ?? Date.now()}`, role: "teacher", text: reply, degraded }]);
         if (fresh.length) setElems((e) => [...e.map((x) => ({ ...x })), ...fresh.map((x) => ({ ...x, turnSeq: committed }))]);
         return true;
@@ -174,7 +182,7 @@ export function SessionLive({ id }: { id: string }) {
         refreshJobs();
       }
     },
-    [busy, id, t.turnLocked, errorText, refreshJobs],
+    [busy, id, t.turnLocked, t.interrupted, errorText, refreshJobs],
   );
 
   const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
@@ -225,9 +233,9 @@ export function SessionLive({ id }: { id: string }) {
     return () => {
       off = true;
     };
-    // load once per session
+    // load once per session (and again on "Try again")
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, historyTry]);
 
   // The message typed in the input box before the session existed; or, for a fresh learn/practice/review session, its intent
   useEffect(() => {
@@ -275,9 +283,21 @@ export function SessionLive({ id }: { id: string }) {
   }
   if (!detail) {
     return error ? (
-      <p role="alert" className={cn("px-4 pt-6 text-st-confused", MEASURE)}>
-        {error}
-      </p>
+      <div className={cn("px-4 pt-6", MEASURE)}>
+        <p role="alert" className="text-st-confused">
+          {error}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setHistoryTry((n) => n + 1);
+          }}
+          className={cn(PRIMARY_BTN, "mt-3")}
+        >
+          {t.retry}
+        </button>
+      </div>
     ) : (
       <div className="flex-1" aria-busy="true" />
     );
