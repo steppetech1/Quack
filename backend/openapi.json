@@ -1656,8 +1656,23 @@
         ],
         "type": "string"
       },
+      "ExportRequested": {
+        "description": "The archive that was asked for (or the one already on its way); its state is\n`GET /v1/learner/exports/{export_id}`.",
+        "properties": {
+          "export_id": {
+            "format": "uuid",
+            "title": "Export Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "export_id"
+        ],
+        "title": "ExportRequested",
+        "type": "object"
+      },
       "ExportStatus": {
-        "description": "`pending` — requested, the archive is not ready; `ready` — `download_url` lives\n`expires_in_s`; `expired` — the archive is deleted or past its term (build a new one).",
+        "description": "`pending` — requested, the archive is not ready; `ready` — `download_url` lives\n`expires_in_s`; `expired` — the archive is deleted or past its term (ask for a new one);\n`failed` — the job gave up (the storage was down, say), ask again.",
         "properties": {
           "download_url": {
             "anyOf": [
@@ -1702,7 +1717,8 @@
             "enum": [
               "pending",
               "ready",
-              "expired"
+              "expired",
+              "failed"
             ],
             "title": "Status",
             "type": "string"
@@ -8772,6 +8788,88 @@
           }
         },
         "summary": "Patch Learner Skill",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/v1/learner/export": {
+      "post": {
+        "description": "The archive of the learner's data (Т-§19.6). While the last archive is being built or is\nready, that one is given and nothing is written; after `expired` or `failed` a new request is\nmade. The id comes from the key, so a repeat of the request is the same export.",
+        "operationId": "request_export_v1_learner_export_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportRequested"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Request Export",
         "tags": [
           "artifacts"
         ]
