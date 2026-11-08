@@ -42,6 +42,15 @@
 - Обратимость: код; раскладка vault и колоды - формат для ученика, менять только вперёд.
 - Тесты: `tests/artifacts/test_topic_export_wp23_7.py` (vault, YAML, ссылки, имя файла, колода и её повторяемость, формы ответа, три маршрута, чужой ученик, 401, статусы `pending`/`ready`/`expired`); `tests/e2e/routes/c.py` (маршруты в `other_routes`, `export_id` в `ids`).
 
+### D-C-251. WP23.7: `POST /v1/learner/export` и состояние `failed` у `GET /v1/learner/exports/{id}`
+- Класс: C (форма ответа и поведение повтора не заданы документами; `AgentKind` и строка диспетчера - малая правка по D-C-231/D-C-240, класс A, сделана здесь по просьбе владельца).
+- WP / место: WP23.7, `Т-§19.6`; `quack/artifacts/export_routes.py`, `quack/events/records.py` (`AgentKind` += `data_export`), `quack/jobs/rules_p4.py` (`AGENT_JOB_KINDS["data_export"] = "export.data"`), `tests/e2e/routes/c.py`, `openapi.json`.
+- Решение: (1) `POST /v1/learner/export` с телом `{idempotency_key}` пишет `agent.requested {kind: data_export, request_id = export_id, params: {}}` от `learner`, диспетчер ставит `export.data` (P2); ответ `202 {export_id}`. `export_id = uuid5(learner, ключ)`, ключ события `data-export:{key}`. (2) Пока последний архив собирается (`pending`) или готов (`ready`, срок не вышел), повтор с любым ключом возвращает его же и ничего не пишет; после `expired` или `failed` запрос с новым ключом начинает новый архив. Проверка и запись идут под `pg_advisory_xact_lock` ученика, два одновременных запроса не дают два архива. (3) Ответ POST - только `export_id`, а не `ExportStatus`: повтор с тем же ключом даёт тот же ответ, пока архив из `pending` становится `ready` (T-E2). (4) `ExportStatus.status` += `failed`: нет строки `content.exports`, но есть `agent.completed {kind: data_export, ok: false}` с этим `request_id` (его пишет очередь, когда у задачи кончились попытки, например хранилище недоступно). (5) Лимит - общий `enforce_action_rate_limit` на POST.
+- Почему: `Т-§19.6`, закон 1 (запрос - событие), закон 5, ТЗ §6.4.
+- Обратимость: код.
+- Тесты: `tests/artifacts/test_topic_export_wp23_7.py` (событие и `pending`, идемпотентность, `ready` повторно, новый архив после `expired` и `failed`, 401/422), `tests/jobs/test_rules_p4.py` (`data_export` -> `export.data`), `tests/e2e/test_isolation_and_idempotency.py` (T-E2).
+- Требует подтверждения владельцем: нет.
+
 ### D-C-250. WP23.5: формулы листа печатает KaTeX 0.16.11 в Chromium compute; страница размечает формулу элементом `quack-math`, файлы KaTeX лежат в образе compute
 - Класс: C (compute, кроме math; `quack/artifacts/hub_cheatsheet.py`)
 - WP / место: WP23.5, `Т-§17.6`; `backend/quack/artifacts/hub_cheatsheet.py` (`cheatsheet_html`), `compute/quack_compute/renderer.py` (`Renderer.pdf`), `compute/quack_compute/settings.py` (`katex_dir`), `compute/quack_compute/katex/0.16.11/`, `.gitattributes`

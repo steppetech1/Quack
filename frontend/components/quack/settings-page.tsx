@@ -11,6 +11,7 @@ import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { useErrorText } from "./live/error-text";
+import { DataExport } from "./data-export";
 import { PageShell, TEXT_BTN } from "./page-parts";
 import { SkillsTab } from "./skills-tab";
 import { useNotice, useSoon } from "./soon";
@@ -536,10 +537,13 @@ function AccountTab() {
         </div>
       </Row>
       <Row label={tx.settings.export} help={tx.settings.exportHelp}>
-        {/* the backend can give an export by id (`GET /v1/learner/exports/{id}`) but has no call that starts one: until it does, no fake link */}
-        <button type="button" onClick={() => notice(tx.exportNotice.unavailable)} className={SECONDARY}>
-          {tx.settings.exportBtn}
-        </button>
+        {API_MODE ? (
+          <DataExport buttonClass={SECONDARY} />
+        ) : (
+          <button type="button" onClick={() => notice(tx.exportNotice.unavailable)} className={SECONDARY}>
+            {tx.settings.exportBtn}
+          </button>
+        )}
       </Row>
       <Row label={tx.settings.deleteLabel} help={tx.settings.deleteHelp}>
         {confirm ? (

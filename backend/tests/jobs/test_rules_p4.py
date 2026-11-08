@@ -68,7 +68,7 @@ def test_rule_table() -> None:
 
 def test_every_non_periodic_kind_has_a_row() -> None:
     covered = {k for row in r.RULES for k in row.job_kinds}
-    assert covered >= set(r.JOB_KINDS) - {"export.data"}  # export.data — by request (WP25)
+    assert covered >= set(r.JOB_KINDS)
 
 
 def test_rows_with_events_exist_in_the_catalog() -> None:
@@ -246,6 +246,23 @@ def test_topic_split_request_is_a_graph_job_of_the_domain() -> None:
         payload={"kind": "topic_split", "params": {}, "needed_in_session": False},
     )
     assert _kinds(bare) == []
+
+
+def test_data_export_request_is_the_job_export_data_with_the_request() -> None:
+    """WP23.7: `agent.requested {kind: data_export}` -> `export.data` with the request id."""
+    request = uid("export")
+    event = _event(
+        "agent.requested",
+        payload={
+            "request_id": request,
+            "kind": "data_export",
+            "params": {},
+            "needed_in_session": False,
+        },
+    )
+    plan = _one(event)
+    assert plan.kind == "export.data" and plan.priority_class == "P2"
+    assert plan.required_seq is None and plan.payload["request_id"] == str(request)
 
 
 def test_plan_update_cancels_agent_requests() -> None:

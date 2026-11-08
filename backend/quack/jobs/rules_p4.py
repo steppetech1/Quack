@@ -113,6 +113,7 @@ AGENT_JOB_KINDS: dict[str, str] = {
     "artifact": "agent.artifact",
     "known_check": "check.known_claim",
     "topic_split": "agent.topic_split",
+    "data_export": "export.data",
 }
 
 

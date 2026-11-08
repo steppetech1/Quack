@@ -856,6 +856,17 @@ export const en = {
     namePlaceholder: "Your name",
     hubLoading: "Loading the chapter…",
   },
+  dataExport: {
+    starting: "Asking for your archive…",
+    preparing: "Preparing your archive…",
+    slow: "Still working on it. A big account can take a few minutes. Try again later and it picks up where it left off.",
+    ready: "Your archive is ready.",
+    download: "Download archive",
+    expired: "The link has expired. Ask for a new archive.",
+    failed: "Couldn't build the archive. Try again.",
+    again: "Prepare again",
+    retry: "Check again",
+  },
   live: {
     serverDown: "Can't reach the server. Is the backend running?",
     canvasOpening: "Opening a canvas…",
