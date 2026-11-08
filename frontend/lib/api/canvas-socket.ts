@@ -13,6 +13,25 @@ type LineReady = {
   ended_at: number;
 };
 
+/**
+ * What the board hears from a canvas socket besides the acks: the line it just sent for reading and the teacher's
+ * server messages `line_recognized`, `mark` (`kind: null` takes the mark off) and `hint` (Т-§15.2, WP21.2-21.5)
+ */
+export type CanvasEvent =
+  | { type: "line_sent"; line_id: string; stroke_ids: string[]; bbox: [number, number, number, number] }
+  | {
+      type: "line_recognized";
+      line_id: string;
+      recognized: boolean;
+      kind?: "latex" | "text";
+      text?: string;
+      sympy?: string | null;
+      confidence?: number;
+      crossed_out?: boolean;
+    }
+  | { type: "mark"; line_id: string; kind: "error" | "question" | null }
+  | { type: "hint"; line_id: string | null; step: number; text: string };
+
 /** Batches go out every `stroke_batch_ms` of the backend (300) */
 const BATCH_MS = 300;
 const RETRY_MIN_MS = 1000;
@@ -64,6 +83,7 @@ export class CanvasSocket {
   constructor(
     private readonly canvasId: string,
     private readonly onState: (s: SyncState) => void,
+    private readonly onEvent: (e: CanvasEvent) => void = () => {},
   ) {
     this.connect();
   }
@@ -135,7 +155,9 @@ export class CanvasSocket {
       started_at: line.startedAt,
       ended_at: line.endedAt,
     };
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify(msg));
+    this.onEvent({ type: "line_sent", line_id: msg.line_id, stroke_ids: msg.stroke_ids, bbox: msg.bbox });
   }
 
   private schedule() {
@@ -183,10 +205,14 @@ export class CanvasSocket {
     };
     ws.onmessage = (e) => {
       try {
-        const m = JSON.parse(String(e.data)) as { type?: string; batch_no?: number };
+        const m = JSON.parse(String(e.data)) as { type?: string; batch_no?: number; line_id?: unknown; step?: unknown; text?: unknown };
         if (m.type === "ack" && typeof m.batch_no === "number") {
           this.unacked.delete(m.batch_no);
           this.update();
+        } else if ((m.type === "line_recognized" || m.type === "mark") && typeof m.line_id === "string") {
+          this.onEvent(m as CanvasEvent);
+        } else if (m.type === "hint" && typeof m.text === "string") {
+          this.onEvent({ type: "hint", line_id: typeof m.line_id === "string" ? m.line_id : null, step: typeof m.step === "number" ? m.step : 1, text: m.text });
         }
       } catch {}
     };

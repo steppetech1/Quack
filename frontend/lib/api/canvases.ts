@@ -19,6 +19,10 @@ export function askTeacher(sessionId: string, canvasId: string, text: string, on
   return sse("POST", `/v1/sessions/${sessionId}/actions`, { kind: "message", text, canvas_refs: [{ canvas_id: canvasId }], idempotency_key: idem() }, onEvent, signal);
 }
 
+/** The learner says how a misread line really reads (LaTeX to show); the backend logs `handwriting.corrected` */
+export const correctLine = (canvasId: string, lineId: string, text: string) =>
+  post(`/v1/canvases/${canvasId}/lines/${encodeURIComponent(lineId)}/correct`, { idempotency_key: idem(), text });
+
 /*
  * The title is not in the backend's CanvasView yet: it stays in this browser, by canvas id.
  * Without it (another device, cleared site data) the canvas shows as untitled.

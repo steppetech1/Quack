@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CanvasSocket, type SyncState } from "@/lib/api/canvas-socket";
+import { CanvasSocket, type CanvasEvent, type SyncState } from "@/lib/api/canvas-socket";
 import { loadStrokes } from "@/lib/api/stroke-replay";
 import type { BoardItem, Pt } from "@/lib/canvas-board";
 
@@ -25,7 +25,7 @@ function signature(pts: Pt[]): string {
 
 /** The journal wants a new id for a stroke every time it is put back or moved: `id`, `id~1`, `id~2`… */
 const streamId = (itemId: string, rev: number) => (rev === 0 ? itemId : `${itemId}~${rev}`);
-function parseStreamId(id: string): { itemId: string; rev: number } {
+export function parseStreamId(id: string): { itemId: string; rev: number } {
   const i = id.lastIndexOf("~");
   const rev = i < 0 ? NaN : Number(id.slice(i + 1));
   return Number.isInteger(rev) ? { itemId: id.slice(0, i), rev } : { itemId: id, rev: 0 };
@@ -46,6 +46,7 @@ export function useCanvasSync({
   items,
   loaded,
   restore,
+  onEvent,
 }: {
   enabled: boolean;
   canvasId: string;
@@ -54,6 +55,8 @@ export function useCanvasSync({
   loaded: boolean;
   /** adds items the board lacks, without an undo step */
   restore: (add: Stroke[]) => void;
+  /** what the socket hears besides acks: lines sent for reading, recognitions, teacher marks and hints */
+  onEvent?: (e: CanvasEvent) => void;
 }): SyncState {
   const [state, setState] = useState<SyncState>("saved");
   const [ready, setReady] = useState(false);
@@ -61,13 +64,15 @@ export function useCanvasSync({
   const known = useRef(new Map<string, Known>());
   const lastRev = useRef(new Map<string, number>());
   const restoreRef = useRef(restore);
+  const eventRef = useRef(onEvent);
   useEffect(() => {
     restoreRef.current = restore;
+    eventRef.current = onEvent;
   });
 
   useEffect(() => {
     if (!enabled) return;
-    const s = new CanvasSocket(canvasId, setState);
+    const s = new CanvasSocket(canvasId, setState, (e) => eventRef.current?.(e));
     socket.current = s;
     return () => {
       s.close();

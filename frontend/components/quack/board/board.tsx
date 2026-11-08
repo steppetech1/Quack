@@ -19,6 +19,7 @@ import {
   type InkColor,
   type Pt,
 } from "@/lib/canvas-board";
+import type { CanvasView } from "@/lib/api/canvases";
 import type { Canvas } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n/provider";
@@ -26,8 +27,10 @@ import { useSoon } from "../soon";
 import { BoardChat } from "./chat";
 import { Frames } from "./frames";
 import { ItemView } from "./items";
+import { TeacherLayer } from "./teacher-layer";
 import { Toolbar, type Tool } from "./toolbar";
-import { useCanvasSync } from "./use-canvas-sync";
+import { parseStreamId, useCanvasSync } from "./use-canvas-sync";
+import { useTeacherLayer } from "./use-teacher-layer";
 
 type Cam = { x: number; y: number; k: number };
 type Gesture =
@@ -58,7 +61,7 @@ export function Board({
   canvas?: Canvas;
   canvasId: string;
   /** A canvas of the backend: the chat talks to this session's teacher */
-  live?: { sessionId: string };
+  live?: { sessionId: string; /** the document of the canvas as loaded: its teacher layer and task blocks */ doc?: CanvasView["doc"] };
   mode: "edit" | "view";
   focusBlock?: string | null;
   topLeft?: React.ReactNode;
@@ -126,12 +129,21 @@ export function Board({
     syncHist();
   }, [syncHist, setItems]);
 
+  // the teacher layer of a canvas of the backend: how lines were read, marks, hints, the task block
+  const layer = useTeacherLayer({ enabled: !!live, canvasId, doc: live?.doc });
+  // only the lines whose strokes are still on the board have notes
+  const layerLines = useMemo(() => {
+    const ids = new Set(items.filter((i) => i.kind === "stroke").map((i) => i.id));
+    return Object.values(layer.lines).filter((l) => l.strokeIds.some((s) => ids.has(parseStreamId(s).itemId)));
+  }, [items, layer.lines]);
+
   // a canvas of the backend: the strokes go to its journal and come back from it
   const sync = useCanvasSync({
     enabled: !!live,
     canvasId,
     items,
     loaded,
+    onEvent: layer.handle,
     restore: (add) =>
       mutate((prev) => {
         const have = new Set(prev.map((i) => i.id));
@@ -732,6 +744,7 @@ export function Board({
             <ItemView key={it.id} item={it} selected={selected === it.id} editing={editing?.id === it.id} onSelect={setSelected} onEdit={onEditDone} />
           ))}
           {editingItem && <ItemView item={editingItem} selected={false} editing onSelect={setSelected} onEdit={onEditDone} />}
+          {live && teacher && <TeacherLayer lines={layerLines} marks={layer.marks} hints={layer.hints} blocks={layer.blocks} onCorrect={layer.correct} />}
           {draft && (
             <svg aria-hidden width={1} height={1} className="pointer-events-none absolute top-0 left-0 overflow-visible">
               <path
