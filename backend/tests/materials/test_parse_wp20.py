@@ -386,6 +386,35 @@ async def test_unknown_material_fails_permanently(world: _World) -> None:
     assert other != learner
 
 
+async def test_a_final_failure_marks_the_material_failed(world: _World) -> None:
+    from dataclasses import replace
+
+    from quack.ops.material_parse import handle_material_parse
+
+    learner, _, material = await world.upload()
+    job = _job(learner, material)  # no pages pushed: the compute scenario raises, attempt 1 of 5
+
+    async def status() -> str:
+        row = await world.db.fetch_one(
+            "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
+        )
+        assert row is not None
+        return str(row["status"])
+
+    with pytest.raises(Exception):  # noqa: B017 - any error of the parse
+        await handle_material_parse(job, world.ctx)
+    assert await status() == "uploaded"  # the runner will retry
+    with pytest.raises(Exception):  # noqa: B017
+        await handle_material_parse(replace(job, attempt=5), world.ctx)
+    assert await status() == "failed"  # the last attempt
+    await world.db.execute(
+        "UPDATE content.materials SET status = 'parsed' WHERE material_id = %(m)s", {"m": material}
+    )
+    with pytest.raises(JobFailedPermanently):
+        await handle_material_parse(_job(learner, uuid4()), world.ctx)  # unknown: not ours
+    assert await status() == "parsed"
+
+
 async def test_a_parsed_material_is_not_parsed_again(world: _World) -> None:
     learner, _, material = await world.upload()
     await world.db.execute(

@@ -69,6 +69,7 @@ SHEET_MODE = "sheet"
 PAGE_MIME = "image/webp"
 PDF_MIME = "application/pdf"
 STATUS_PARSED = "parsed"
+STATUS_FAILED = "failed"
 STEP_STRUCTURE = "structure"
 HUB_CONTROL_TYPE = "no_goal"
 HUB_NAME_FALLBACK = "Untitled material"
@@ -302,6 +303,28 @@ async def _set_parsed(db: Db, learner_id: UUID, material_id: UUID, pages: int) -
             "pages": pages,
             "learner_id": learner_id,
             "material_id": material_id,
+        },
+    )
+
+
+_SET_FAILED = (
+    "UPDATE content.materials SET status = %(status)s WHERE learner_id = %(learner_id)s "
+    "AND material_id = %(material_id)s AND status <> %(parsed)s"
+)
+
+
+async def mark_failed(db: Db, job: ClaimedJob) -> None:
+    """The parse of the material is over for good (a permanent error or the last attempt): the
+    status is `failed`, so the client stops waiting. A parsed material keeps its status."""
+    if job.learner_id is None or "material_id" not in job.payload:
+        return
+    await db.execute(
+        _SET_FAILED,
+        {
+            "status": STATUS_FAILED,
+            "parsed": STATUS_PARSED,
+            "learner_id": job.learner_id,
+            "material_id": UUID(str(job.payload["material_id"])),
         },
     )
 
