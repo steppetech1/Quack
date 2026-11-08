@@ -244,7 +244,8 @@ export function SessionLive({ id }: { id: string }) {
           }
         }
         setLines(past);
-        if (pastElems.length) setElems((cur) => [...pastElems, ...cur]);
+        // a cached route shown again reads the history anew: the elements already on the page must not double
+        if (pastElems.length) setElems((cur) => [...pastElems, ...cur.filter((c) => !pastElems.some((p) => p.blockId === c.blockId))]);
         scrollDown();
       })
       .catch((e) => {
@@ -363,7 +364,7 @@ export function SessionLive({ id }: { id: string }) {
             l.role === "student" ? (
               <StudentLine key={l.id} text={l.text} />
             ) : (
-              <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper">
+              <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper [overflow-wrap:anywhere]">
                 <RichText text={l.text} />
                 {l.degraded && <p className="mt-2 text-small text-paper-dim">{t.degraded}</p>}
                 {l.interrupted && <p className="mt-2 text-small text-paper-dim">{t.interrupted}</p>}
@@ -371,7 +372,7 @@ export function SessionLive({ id }: { id: string }) {
             ),
           )}
           {streaming !== null && (
-            <article aria-label={tx.session.teacherTurn} aria-busy="true" className="text-paper">
+            <article aria-label={tx.session.teacherTurn} aria-busy="true" className="text-paper [overflow-wrap:anywhere]">
               {streaming ? (
                 <RichText text={streaming} />
               ) : (

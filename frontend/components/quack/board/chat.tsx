@@ -64,6 +64,7 @@ export function BoardChat({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const readOnce = useRef(false);
 
   // the conversation so far: the feed of the session (text is in `message.sent` and `turn.committed`)
   useEffect(() => {
@@ -78,8 +79,11 @@ export function BoardChat({
           if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", parts: [text.replace(/\$/g, "")] });
           else if (ev.type === "turn.committed" && text) past.push({ id: `e-${ev.seq}`, role: "teacher", parts: [text] });
         }
-        // what was typed while this loaded stays after the history
-        setMsgs((m) => [...past, ...m]);
+        // what was typed while this loaded stays after the history. A page shown again (a cached route re-runs this) reads
+        // the history anew, and it already holds everything said here: replace, or the thread doubles
+        if (readOnce.current) setMsgs(past);
+        else setMsgs((m) => [...past, ...m]);
+        readOnce.current = true;
       })
       .catch(() => {});
     return () => {
@@ -191,7 +195,7 @@ export function BoardChat({
               <p
                 key={m.id}
                 className={cn(
-                  "max-w-[88%] rounded-[2px] border px-3 py-2 text-body",
+                  "max-w-[88%] rounded-[2px] border px-3 py-2 text-body [overflow-wrap:anywhere]",
                   m.role === "teacher" ? "self-start border-transparent border-l-seam bg-cloth text-paper" : "self-end border-seam text-paper",
                 )}
               >

@@ -95,6 +95,8 @@ export class CanvasSocket {
     /** the socket is open again after a drop (not the first open): what the server said while it was down is lost to the board */
     private readonly onReopen: () => void = () => {},
   ) {
+    // a board that is shown again (cached route) keeps the state of its last socket: this one starts clean
+    this.onState(this.state);
     this.connect();
   }
 
