@@ -119,8 +119,8 @@ export function SessionLive({ id }: { id: string }) {
 
   /** One action of the learner; the answer of the teacher streams back as frames (ТЗ Ф4 §4.7) */
   const act = useCallback(
-    async (body: Record<string, unknown>, studentText?: string) => {
-      if (busy) return;
+    async (body: Record<string, unknown>, studentText?: string): Promise<boolean> => {
+      if (busy) return false;
       setBusy(true);
       setError(null);
       setVerdict(null);
@@ -159,10 +159,12 @@ export function SessionLive({ id }: { id: string }) {
         );
         if (reply) setLines((l) => [...l, { id: `t-${committed ?? Date.now()}`, role: "teacher", text: reply, degraded }]);
         if (fresh.length) setElems((e) => [...e.map((x) => ({ ...x })), ...fresh.map((x) => ({ ...x, turnSeq: committed }))]);
+        return true;
       } catch (e) {
         setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e));
         // what was already shown stays on screen, marked: this part is not committed and is gone after a reload
         if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply, interrupted: true }]);
+        return false;
       } finally {
         setStreaming(null);
         setThinking(false);
@@ -177,10 +179,12 @@ export function SessionLive({ id }: { id: string }) {
 
   const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
 
-  const respond = (el: Elem, response: string) => {
+  const respond = async (el: Elem, response: string) => {
     if (!response.trim() || el.turnSeq === null) return;
     setElems((all) => all.map((x) => (x.blockId === el.blockId ? { ...x, answered: true } : x)));
-    return act({ kind: "element_response", turn_seq: el.turnSeq, element_id: el.element.element_id, response }, response);
+    const ok = await act({ kind: "element_response", turn_seq: el.turnSeq, element_id: el.element.element_id, response }, response);
+    // a failed send (network, locked turn, 5xx) must not eat the task: it comes back so the answer can be sent again
+    if (!ok) setElems((all) => all.map((x) => (x.blockId === el.blockId ? { ...x, answered: false } : x)));
   };
 
   // History: the feed of the session; text lives in `message.sent` (student) and `turn.committed` (teacher)
