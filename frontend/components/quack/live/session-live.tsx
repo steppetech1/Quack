@@ -148,13 +148,14 @@ export function SessionLive({ id }: { id: string }) {
 
   const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
 
-  /** A recorded clip → the recognized text goes to the teacher as an ordinary message. Returns an error text, or null */
+  /** A recorded clip → the recognized text goes to the teacher once: the message points at the recorded voice segment (`voice_seq`) and carries no text. Returns an error text, or null */
   const sendVoice = useCallback(
     async (clip: VoiceClip): Promise<string | null> => {
       try {
         const heard = await uploadVoice(id, clip);
         if (!heard.text.trim()) return tx.voiceSession.nothingHeard;
-        void send(heard.text);
+        if (heard.seq === null) return tx.voiceSession.nothingHeard;
+        void act({ kind: "message", voice_seq: heard.seq }, heard.text);
         return null;
       } catch (e) {
         if (e instanceof ApiError) {
@@ -165,7 +166,7 @@ export function SessionLive({ id }: { id: string }) {
         return errorText(e);
       }
     },
-    [id, send, errorText, tx.voiceSession],
+    [id, act, errorText, tx.voiceSession],
   );
 
   const respond = (el: Elem, response: string) => {
@@ -174,7 +175,7 @@ export function SessionLive({ id }: { id: string }) {
     return act({ kind: "element_response", turn_seq: el.turnSeq, element_id: el.element.element_id, response }, response);
   };
 
-  // History: the feed of the session; text lives in `message.sent` (student) and `turn.committed` (teacher)
+  // History: the feed of the session; text lives in `message.sent` / `voice.transcribed` (student) and `turn.committed` (teacher)
   useEffect(() => {
     let off = false;
     get<S["SessionDetail"]>(`/v1/sessions/${id}`)
@@ -188,7 +189,8 @@ export function SessionLive({ id }: { id: string }) {
         const pastElems: Elem[] = [];
         for (const ev of d.events) {
           const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
-          if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
+          // a spoken message: its words are the `voice.transcribed` event, the `message.sent` after it has none
+          if ((ev.type === "message.sent" || ev.type === "voice.transcribed") && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
           else if (ev.type === "turn.committed" && text) {
             past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null });
             // committed elements carry `request_id` (resolved from the live frame's `R…` label, ТЗ §12.3): the only
