@@ -73,7 +73,7 @@
 - **Skills, что осталось** — `GET /v1/system-templates` не вызывается; помощник «Создать скилл» остаётся на моках; чат канваса не передаёт `skill_invocation`; скиллы, сохранённые раньше в `localStorage`, не переносятся на бэк.
 - **Карточки, ответы на них** — оценки в окне колоды остаются в браузере и пропадают, до модели ученика они не доходят. Бэк принимает ответ на карточку только как действие `answer` с `source: "card"` внутри активной сессии, а текста ответа карточки API не отдаёт (в ответе только `prompt`), поэтому «Показать ответ» в режиме API пустой. Вопрос к потоку B — issue #325.
 - **Блоки конспекта и шпаргалка, что осталось** — `POST /v1/artifacts/{id}/blocks/{block_id}/accept` (принять «дополнение» к блоку), `POST /v1/hubs/{id}/cheatsheet/review`.
-- **Экспорт и данные** — `GET /v1/topics/{id}/export/anki|obsidian`, `GET /v1/learner/exports/{id}`: кнопка «Экспорт» в «Данные и аккаунт» показывает «скоро»; `PATCH /v1/learner/settings` не вызывается (настройки идут через `PATCH /v1/learner/preferences`).
+- **Экспорт и данные** — `POST /v1/learner/export` (`{idempotency_key}` → `202 {export_id}`) и `GET /v1/learner/exports/{id}` (`pending` / `ready` со ссылкой хранилища / `expired` / `failed`): кнопка «Скачать всё» в «Данные и аккаунт» (`data-export.tsx`) просит архив, опрашивает статус (2 с, затем 5 с, около 4,5 минут) и на `ready` даёт ссылку; в режиме моков — «скоро». `GET /v1/topics/{id}/export/anki|obsidian` не вызываются; `PATCH /v1/learner/settings` не вызывается (настройки идут через `PATCH /v1/learner/preferences`).
 - **Визуализации** — `GET /v1/viz/{id}`.
 - **Голос в сессии** — `POST /v1/sessions/{id}/voice`.
 - **Видимость фоновых задач** — `GET /v1/sessions/{id}/jobs`.

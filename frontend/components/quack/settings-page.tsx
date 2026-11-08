@@ -10,6 +10,7 @@ import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
+import { DataExport } from "./data-export";
 import { PageShell, TEXT_BTN } from "./page-parts";
 import { SkillsTab } from "./skills-tab";
 import { useSoon } from "./soon";
@@ -459,9 +460,7 @@ function AccountTab() {
       </Row>
       <Row label={tx.settings.export} help={tx.settings.exportHelp}>
         {API_MODE ? (
-          <Link href="/library" className={SECONDARY}>
-            {tx.settings.exportBtn}
-          </Link>
+          <DataExport buttonClass={SECONDARY} />
         ) : (
           <button type="button" onClick={() => soon(tx.settings.exportSoon)} className={SECONDARY}>
             {tx.settings.exportBtn}
