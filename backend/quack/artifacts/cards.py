@@ -33,6 +33,7 @@ from quack.artifacts.documents import (
     artifact_id_for,
     get_artifact,
 )
+from quack.artifacts.topic_export import answer_text
 from quack.config import Settings
 from quack.db import Db
 from quack.events.event_types import TaskCreated
@@ -60,6 +61,19 @@ async def topic_cards(db: Db, *, learner_id: UUID, topic_id: UUID) -> Artifact:
     """`GET /v1/topics/{id}/cards`: the current version; `ArtifactNotFound` — not the learner's
     topic."""
     return await get_artifact(db, learner_id=learner_id, kind="cards", owner_id=topic_id)
+
+
+async def card_answers(
+    db: Db, *, learner_id: UUID, cards: Sequence[Card]
+) -> dict[UUID, str | None]:
+    """The reference answer of each card, for the learner to reveal (the back of the card, the
+    same text as in the Anki export): read from the answer spec of the task behind it, for this
+    learner only (Т-§3.5). A task with no short answer, or a card with no task, gives `None`."""
+    out: dict[UUID, str | None] = {}
+    for card in cards:
+        task = await get_task(db, learner_id=learner_id, task_id=card.card_id)
+        out[card.card_id] = (answer_text(task.answer_spec) or None) if task is not None else None
+    return out
 
 
 async def write_system_cards(
