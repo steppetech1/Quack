@@ -30,6 +30,11 @@ type Data = {
    * Pages that show projected data re-fetch when it grows; 0 on mocks and before the stream connects.
    */
   appliedSeq: number;
+  /**
+   * Subscribe to the plaque signal of `/v1/learner/stream`: called with a session id on `jobs_changed`, with null when the
+   * stream (re)connects (the queue signal is not replayed, so the client re-reads the jobs). No-op on mocks.
+   */
+  subscribeJobs: (cb: (sessionId: string | null) => void) => () => void;
   /** Re-read the subject list and the active session */
   reload: () => Promise<void>;
   /** Load (or re-load) the topic graph of a subject */
@@ -60,6 +65,7 @@ function MockData({ children }: { children: React.ReactNode }) {
       me: null,
       active: null,
       appliedSeq: 0,
+      subscribeJobs: () => () => {},
       reload: async () => {},
       loadGraph: async () => {},
       setActive: () => {},
@@ -89,6 +95,14 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const [appliedSeq, setAppliedSeq] = useState(0);
   /** Graphs already on screen: the live stream refreshes these */
   const loaded = useRef(new Set<string>());
+  /** Listeners of the background-jobs plaque (`jobs_changed` of the learner stream) */
+  const jobListeners = useRef(new Set<(sessionId: string | null) => void>());
+  const subscribeJobs = useCallback((cb: (sessionId: string | null) => void) => {
+    jobListeners.current.add(cb);
+    return () => {
+      jobListeners.current.delete(cb);
+    };
+  }, []);
 
   const loadHistory = useCallback(async () => {
     const res = await get<S["SessionListResponse"]>("/v1/sessions");
@@ -164,12 +178,24 @@ function ApiData({ children }: { children: React.ReactNode }) {
     };
     const run = async () => {
       for (let attempt = 0; !stop.signal.aborted; attempt++) {
+        let announced = false;
         try {
           await sse(
             "GET",
             "/v1/learner/stream",
             undefined,
             ({ event, data }) => {
+              if (!announced) {
+                // the first frame of a connection: the plaque signal is not replayed, so listeners re-read their jobs
+                announced = true;
+                for (const cb of jobListeners.current) cb(null);
+              }
+              if (event === "jobs_changed") {
+                attempt = 0;
+                const sid = typeof data.session_id === "string" ? data.session_id : null;
+                for (const cb of jobListeners.current) cb(sid);
+                return;
+              }
               if (event !== "projection_advanced" || typeof data.applied_seq !== "number") return;
               attempt = 0;
               const seq = data.applied_seq;
@@ -267,8 +293,8 @@ function ApiData({ children }: { children: React.ReactNode }) {
   }, [termsVersion, t.live.serverDown, t.live.serverError]);
 
   const value = useMemo<Data>(
-    () => ({ ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
-    [ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout],
+    () => ({ ready, error, domains, models, me, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout }),
+    [ready, error, domains, models, me, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout],
   );
   // the gate lies over the app (the app stays mounted: the router needs its segments, and the data loads behind it)
   return (

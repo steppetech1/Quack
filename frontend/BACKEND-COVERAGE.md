@@ -76,10 +76,10 @@
 - **Экспорт и данные** — `GET /v1/topics/{id}/export/anki|obsidian`, `GET /v1/learner/exports/{id}`: кнопка «Экспорт» в «Данные и аккаунт» показывает «скоро»; `PATCH /v1/learner/settings` не вызывается (настройки идут через `PATCH /v1/learner/preferences`).
 - **Визуализации** — `GET /v1/viz/{id}`.
 - **Голос в сессии** — `POST /v1/sessions/{id}/voice`.
-- **Видимость фоновых задач** — `GET /v1/sessions/{id}/jobs`.
+- **Видимость фоновых задач** — подключена в живой сессии (`useSessionJobs`, `live/jobs-plaque.tsx`): `GET /v1/sessions/{id}/jobs` при открытии, по `jobs_changed` из `/v1/learner/stream`, при переподключении потока и опросом, пока есть `queued`/`running`; после хода ещё несколько опросов. Бэк отдаёт только `queued`/`running`: завершившаяся задача просто пропадает, отличить «упала» от «готова» нельзя (показывается «готово»).
 - **Бюджет LLM** — `GET /v1/llm/access`.
 - **Исследовательское согласие** — `POST/DELETE /v1/consents/research` (только `terms` подключён).
-- Не подключено и раньше: `GET /v1/sessions/{id}/events`.
+- Не подключено и раньше: `GET /v1/sessions/{id}/events` — и не нужно: в бэке на канал `session:events:{id}` никто не публикует (`extractor_done`, `cheatsheet_ready` не отправляются), поток всегда пуст. Обновления задач идут через `jobs_changed` в `/v1/learner/stream`.
 
 ## Состояния тем
 

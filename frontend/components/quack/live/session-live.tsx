@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl, ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
+import { useSessionJobs } from "@/lib/api/use-session-jobs";
 import { useT } from "@/lib/i18n/provider";
 import { skillInvocation } from "@/lib/skills";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,7 @@ import { RichText } from "../rich-text";
 import { PRIMARY_BTN, AREA } from "../stubs/stub-parts";
 import { firstTurnKey } from "./domain-setup-live";
 import { useErrorText } from "./error-text";
+import { JobsPlaque } from "./jobs-plaque";
 
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
@@ -86,6 +88,33 @@ export function SessionLive({ id }: { id: string }) {
   const scroller = useRef<HTMLDivElement>(null);
   const sentFirst = useRef(false);
 
+  /** A finished background job (a demo, say) leaves its result in the committed turn: re-read it, a visualization gets its `request_id` there */
+  const refreshElements = useCallback(() => {
+    get<S["SessionDetail"]>(`/v1/sessions/${id}`)
+      .then((d) => {
+        const resolved = new Map<string, S["Element"]>();
+        for (const ev of d.events) {
+          if (ev.type !== "turn.committed") continue;
+          const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
+          for (const el of markup?.elements ?? []) {
+            const e = el as { element_id?: string; kind?: string; request_id?: string | null };
+            if (e.kind === "visualization" && e.request_id && e.element_id) resolved.set(`${ev.seq}:${e.element_id}`, e as S["Element"]);
+          }
+        }
+        if (!resolved.size) return;
+        setElems((all) =>
+          all.map((x) => {
+            const e = x.element as { kind: string; element_id?: string; request_id?: string | null };
+            const next = e.kind === "visualization" && !e.request_id && x.turnSeq !== null ? resolved.get(`${x.turnSeq}:${e.element_id}`) : undefined;
+            return next ? { ...x, element: next } : x;
+          }),
+        );
+      })
+      .catch(() => {});
+  }, [id]);
+  const bg = useSessionJobs(id, { onDone: refreshElements });
+  const refreshJobs = bg.refresh;
+
   const scrollDown = () => requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
 
   /** One action of the learner; the answer of the teacher streams back as frames (ТЗ Ф4 §4.7) */
@@ -139,9 +168,11 @@ export function SessionLive({ id }: { id: string }) {
         setThinking(false);
         setBusy(false);
         scrollDown();
+        // a turn queues background agents (demo, tasks, checks) shortly after it is committed
+        refreshJobs();
       }
     },
-    [busy, id, t.turnLocked, errorText],
+    [busy, id, t.turnLocked, errorText, refreshJobs],
   );
 
   const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
@@ -320,6 +351,12 @@ export function SessionLive({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      {(bg.jobs.length > 0 || bg.finished.length > 0) && (
+        <div className="px-4 pb-2 md:px-7">
+          <JobsPlaque jobs={bg.jobs} finished={bg.finished} topicId={detail.topic_id} className={MEASURE} />
+        </div>
+      )}
 
       {live && (
         <div className="px-4 pb-4 md:px-7 md:pb-5">
