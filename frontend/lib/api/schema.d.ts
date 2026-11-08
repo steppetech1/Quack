@@ -673,6 +673,28 @@ export interface paths {
         patch: operations["patch_learner_skill_v1_learner_skills__skill_id__patch"];
         trace?: never;
     };
+    "/v1/learner/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Export
+         * @description The archive of the learner's data (Т-§19.6). While the last archive is being built or is
+         *     ready, that one is given and nothing is written; after `expired` or `failed` a new request is
+         *     made. The id comes from the key, so a repeat of the request is the same export.
+         */
+        post: operations["request_export_v1_learner_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learner/exports/{export_id}": {
         parameters: {
             query?: never;
@@ -1889,9 +1911,22 @@ export interface components {
         /** @enum {string} */
         EvidenceSource: "code" | "model" | "conversation";
         /**
+         * ExportRequested
+         * @description The archive that was asked for (or the one already on its way); its state is
+         *     `GET /v1/learner/exports/{export_id}`.
+         */
+        ExportRequested: {
+            /**
+             * Export Id
+             * Format: uuid
+             */
+            export_id: string;
+        };
+        /**
          * ExportStatus
          * @description `pending` — requested, the archive is not ready; `ready` — `download_url` lives
-         *     `expires_in_s`; `expired` — the archive is deleted or past its term (build a new one).
+         *     `expires_in_s`; `expired` — the archive is deleted or past its term (ask for a new one);
+         *     `failed` — the job gave up (the storage was down, say), ask again.
          */
         ExportStatus: {
             /** Download Url */
@@ -1909,7 +1944,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "pending" | "ready" | "expired";
+            status: "pending" | "ready" | "expired" | "failed";
         };
         /**
          * FeedEvent
@@ -6274,6 +6309,75 @@ export interface operations {
             };
             /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    request_export_v1_learner_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportRequested"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
