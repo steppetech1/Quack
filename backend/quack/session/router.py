@@ -131,7 +131,8 @@ async def session_jobs(
     session_id: UUID, learner_id: LearnerId, resources: Resources
 ) -> SessionJobsResponse:
     """ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and
-    `running`; a session of another learner or none — `404` (D-B-207)."""
+    `running`, plus `succeeded`/`failed` ones of the last minutes; a session of another learner
+    or none — `404` (D-B-207)."""
     try:
         await sessions.get_session(resources.db, learner_id=learner_id, session_id=session_id)
     except LookupError as exc:

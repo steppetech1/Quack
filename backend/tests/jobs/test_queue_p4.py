@@ -633,6 +633,25 @@ async def test_visible_jobs_of_the_session_only(jobs_db: Db) -> None:
     assert await q.visible_jobs(jobs_db, other, another) == []
 
 
+async def test_visible_jobs_keep_finished_for_a_few_minutes(jobs_db: Db) -> None:
+    """A `failed` or `succeeded` visible job stays on the plaque for the window, then leaves."""
+    learner, session = await create_learner(jobs_db), uuid4()
+    for key in ("bad", "good", "old"):
+        await q.enqueue(jobs_db, _plan(learner, key, session_id=session, visible=True))
+    await jobs_db.execute(
+        "UPDATE ops.jobs SET status = 'failed', heartbeat_at = now() WHERE job_key = 'bad'"
+    )
+    await jobs_db.execute(
+        "UPDATE ops.jobs SET status = 'succeeded', heartbeat_at = now() WHERE job_key = 'good'"
+    )
+    await jobs_db.execute(
+        "UPDATE ops.jobs SET status = 'failed', heartbeat_at = now() - interval '1 hour' "
+        "WHERE job_key = 'old'"
+    )
+    seen = await q.visible_jobs(jobs_db, learner, session)
+    assert sorted((j.job_key, j.status) for j in seen) == [("bad", "failed"), ("good", "succeeded")]
+
+
 # --- the plaque signal (T-D10; Т-§13.8, D-C-141) ------------------------------------------
 
 

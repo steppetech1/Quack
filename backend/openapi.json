@@ -10117,7 +10117,7 @@
     },
     "/v1/sessions/{session_id}/jobs": {
       "get": {
-        "description": "ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and\n`running`; a session of another learner or none — `404` (D-B-207).",
+        "description": "ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and\n`running`, plus `succeeded`/`failed` ones of the last minutes; a session of another learner\nor none — `404` (D-B-207).",
         "operationId": "session_jobs_v1_sessions__session_id__jobs_get",
         "parameters": [
           {
