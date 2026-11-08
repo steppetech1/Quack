@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { API_MODE } from "@/lib/api/client";
 import { MATERIAL_ACCEPT, materialState } from "@/lib/api/materials";
+import { useData } from "@/lib/api/data";
 import { daysFromToday, localIso } from "@/lib/format";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
@@ -30,6 +31,7 @@ export function HubPage({ id }: { id: string }) {
   const { fullDate, inDays } = useFmt();
   const { getTopicDetails, cheatSheets } = useMocks();
   const { domain } = useShell();
+  const { ready, domains, graphSettled } = useData();
   const soon = useSoon();
   const { start, busy } = useStartSession();
   const api = useHubApi(id, domain.id, API_MODE);
@@ -75,7 +77,16 @@ export function HubPage({ id }: { id: string }) {
     : data?.materials ?? [];
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // a hard load of /hub/<id>: the chapter list arrives with the graph, so "absent" is only true once that settled
+  const loading = !hub && API_MODE && (!ready || (domains.length > 0 && !graphSettled[domain.id]));
   if (!hub || !data) {
+    if (loading) {
+      return (
+        <PageFrame chipLabel={tx.page.chipSubject(domain.title)}>
+          <p role="status" className="mt-6 text-paper-dim">{tx.apiGaps.hubLoading}</p>
+        </PageFrame>
+      );
+    }
     return (
       <PageFrame chipLabel={tx.page.chipSubject(domain.title)}>
         <Crumbs domainTitle={domain.title} />

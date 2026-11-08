@@ -850,6 +850,12 @@ export const en = {
   exportNotice: {
     unavailable: "Downloading everything is not available yet.",
   },
+  apiGaps: {
+    serviceDown: "A service we depend on is down. Try again in a moment.",
+    usageUnavailable: "Usage numbers aren't available yet.",
+    namePlaceholder: "Your name",
+    hubLoading: "Loading the chapter…",
+  },
   live: {
     serverDown: "Can't reach the server. Is the backend running?",
     canvasOpening: "Opening a canvas…",

@@ -41,7 +41,8 @@ function usePrefs() {
   const t = useT();
   const { me, savePreferences } = useData();
   const defaults = useMemo<Prefs>(
-    () => ({ name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
+    // with the backend the name is the learner's own (empty until they set it), never the mock persona
+    () => ({ name: API_MODE ? "" : t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
     [t],
   );
   const [stored, setStored] = useState<Partial<Prefs> | null>(null);
@@ -266,7 +267,7 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
       </div>
 
       <Row label={tx.settings.nameLabel} id={`${uid}-name`}>
-        <input aria-labelledby={`${uid}-name`} value={draft.name} onChange={(e) => set("name", e.target.value)} className={FIELD} />
+        <input aria-labelledby={`${uid}-name`} value={draft.name} onChange={(e) => set("name", e.target.value)} placeholder={API_MODE ? tx.apiGaps.namePlaceholder : undefined} className={FIELD} />
       </Row>
       <Row label={tx.settings.addressLabel} help={tx.settings.addressHelp} id={`${uid}-addr`}>
         <Radio
@@ -441,6 +442,15 @@ function LlmAccessRow() {
 function UsageTab() {
   const tx = useT();
   const soon = useSoon();
+  // the backend has no usage endpoint yet: no invented meters, only an honest line
+  if (API_MODE) {
+    return (
+      <div className="mt-4">
+        <LlmAccessRow />
+        <p className="border-t border-seam-soft pt-4 text-body text-paper-dim">{tx.apiGaps.usageUnavailable}</p>
+      </div>
+    );
+  }
   return (
     <div className="mt-4">
       <div className="flex items-center justify-between gap-4 pb-4">
@@ -451,7 +461,6 @@ function UsageTab() {
           {tx.settings.upgrade}
         </button>
       </div>
-      {API_MODE && <LlmAccessRow />}
       <div className="divide-y divide-seam-soft border-t border-seam-soft">
         <Meter label={tx.settings.meterMessages} value={62} text="62%" note={tx.settings.meterMessagesNote} />
         <Meter label={tx.settings.meterWeek} value={38} text="38%" note={tx.settings.meterWeekNote} />
