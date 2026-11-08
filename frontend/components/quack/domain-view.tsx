@@ -211,11 +211,11 @@ export function DomainView() {
                   <DomainGraph key={domain.id} ref={graph} domain={domain} mode={graphMode} onModeChange={setGraphMode} />
                 )}
               </div>
-              <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} className="md:hidden" idPrefix="m" />
+              <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} minutes={model?.todayMinutes} className="md:hidden" idPrefix="m" />
               <div className="md:hidden">
                 <DomainTree domains={domains} activeId={domain.id} onSelect={selectDomain} showNewSubject={false} openTopicId={openTopic} />
               </div>
-              <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} className="hidden md:grid" />
+              <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} minutes={model?.todayMinutes} className="hidden md:grid" />
             </>
           ) : (
             <EmptyDomain titleDat={domain.titleDat} />

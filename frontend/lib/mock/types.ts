@@ -97,7 +97,14 @@ export type CanvasSketch = "ratio" | "plot" | "estimate";
 
 export type CanvasItem = { id: string; title: string; date: string; sketch: CanvasSketch };
 
-export type Material = { id: string; title: string; ref: string; kind: "pdf" | "slides" | "book" };
+export type Material = {
+  id: string;
+  title: string;
+  ref: string;
+  kind: "pdf" | "slides" | "book";
+  /** Parse state (backend only): the list shows a word for `processing` and `failed`, nothing for `ready` */
+  state?: "processing" | "ready" | "failed";
+};
 
 export type MomentKind = "first" | "practice" | "mistake" | "repeat";
 
