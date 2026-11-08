@@ -122,7 +122,38 @@ export function useSkills() {
     [update],
   );
 
+  /**
+   * One-time move of skills kept in this browser to the account. A name the account already has is skipped (a duplicate);
+   * an artifact type that already has a skill is dropped from the moved one (the backend allows one skill per type),
+   * the skill stays callable by its name. `failed` are the ones the backend refused: they stay in the browser.
+   */
+  const migrate = useCallback(async (items: Skill[]): Promise<{ moved: number; skipped: number; unbound: number; failed: Skill[] }> => {
+    await load(true);
+    const names = new Set((cache ?? []).map((x) => x.name));
+    const types = new Set((cache ?? []).flatMap((x) => x.bindings));
+    const out = { moved: 0, skipped: 0, unbound: 0, failed: [] as Skill[] };
+    for (const s of items) {
+      const name = skillName(s.name);
+      if (names.has(name)) {
+        out.skipped++;
+        continue;
+      }
+      const free = s.bindings.filter((b) => !types.has(b));
+      try {
+        await post("/v1/learner-skills", { ...skillToApi({ ...s, bindings: free }), idempotency_key: idem() });
+        names.add(name);
+        free.forEach((b) => types.add(b));
+        out.unbound += s.bindings.length - free.length;
+        out.moved++;
+      } catch {
+        out.failed.push(s);
+      }
+    }
+    await load(true);
+    return out;
+  }, []);
+
   const toggle = useCallback((id: string) => update((prev) => prev.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x))), [update]);
 
-  return { skills, update, save, remove, toggle, /** the backend keeps no on/off for a skill */ canToggle: !API_MODE, nameOf: skillName };
+  return { skills, update, save, remove, migrate, toggle, /** the backend keeps no on/off for a skill */ canToggle: !API_MODE, nameOf: skillName };
 }

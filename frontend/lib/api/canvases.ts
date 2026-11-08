@@ -14,9 +14,24 @@ export const openCanvas = (sessionId: string, taskId: string | null = null) => p
 /**
  * A message to the teacher about the canvas: the same `message` action of the session, with the canvas
  * as a reference (Т-§15.6). The answer streams as the frames of a normal turn.
+ * `skillInvocation` is the name of the learner's skill the text calls (`skillInvocation(text)` of `lib/skills.ts`),
+ * or `undefined`: an unknown name changes nothing on the backend.
  */
-export function askTeacher(sessionId: string, canvasId: string, text: string, onEvent: (e: { event: string; data: Record<string, unknown> }) => void, signal?: AbortSignal) {
-  return sse("POST", `/v1/sessions/${sessionId}/actions`, { kind: "message", text, canvas_refs: [{ canvas_id: canvasId }], idempotency_key: idem() }, onEvent, signal);
+export function askTeacher(
+  sessionId: string,
+  canvasId: string,
+  text: string,
+  onEvent: (e: { event: string; data: Record<string, unknown> }) => void,
+  signal?: AbortSignal,
+  skillInvocation?: string,
+) {
+  return sse(
+    "POST",
+    `/v1/sessions/${sessionId}/actions`,
+    { kind: "message", text, canvas_refs: [{ canvas_id: canvasId }], skill_invocation: skillInvocation, idempotency_key: idem() },
+    onEvent,
+    signal,
+  );
 }
 
 /*
