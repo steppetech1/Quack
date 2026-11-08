@@ -3,9 +3,13 @@
 import { Mic, Paperclip, PenLine, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useId, useRef, useState } from "react";
+import { API_MODE } from "@/lib/api/client";
+import { MATERIAL_ACCEPT } from "@/lib/api/materials";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
+import { useShell } from "./app-shell";
 import { IconButton } from "./icon-button";
+import { useMaterialUpload } from "./live/use-material-upload";
 import { useSoon } from "./soon";
 import { useSkills } from "./use-skills";
 
@@ -39,6 +43,10 @@ export function Composer({
   placeholder ??= t.composer.placeholder;
   submitText ??= t.composer.submit;
   const soon = useSoon();
+  const { domain } = useShell();
+  // with the backend, the clip uploads a lecture or a photo into the current subject; on mocks it stays a "soon"
+  const { send: sendFile, uploading } = useMaterialUpload(domain.id);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
@@ -228,7 +236,26 @@ export function Composer({
       )}
       </div>
       <div className={cn("flex items-center gap-1", compact && "max-md:hidden")}>
-        <IconButton label={t.composer.attach} onClick={() => soon(t.composer.soonAttach)}>
+        {API_MODE && (
+          <input
+            ref={fileRef}
+            type="file"
+            accept={MATERIAL_ACCEPT}
+            tabIndex={-1}
+            aria-hidden
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void sendFile(file);
+            }}
+          />
+        )}
+        <IconButton
+          label={t.composer.attach}
+          disabled={uploading}
+          onClick={() => (API_MODE && domain.id ? fileRef.current?.click() : soon(t.composer.soonAttach))}
+        >
           <Paperclip />
         </IconButton>
         <IconButton label={t.composer.dictate} onClick={() => soon(t.composer.soonVoice)}>

@@ -23,12 +23,15 @@ export function TodayCards({
   recs,
   nameOf,
   onHover,
+  minutes,
   className,
   idPrefix = "",
 }: {
   recs: TodayRec[];
   nameOf: (r: TodayRec) => string | undefined;
   onHover: (r: TodayRec | null) => void;
+  /** About how long everything for today takes (`minutes` of the backend); a line over the cards when it is there */
+  minutes?: number;
   className?: string;
   idPrefix?: string;
 }) {
@@ -66,6 +69,7 @@ export function TodayCards({
       style={{ gridTemplateRows: open ? "1fr" : "0fr", marginTop: open ? 0 : "-1rem" }}
     >
       <div className="min-h-0 overflow-hidden">
+        {minutes ? <p className="caps num mb-1.5 text-paper-dim [--caps-size:0.625rem]">{t.today.total(minutes)}</p> : null}
         <ol className="-mx-4 flex items-stretch gap-2.5 overflow-x-auto px-4 py-0.5 md:mx-0 md:overflow-visible md:px-0">
           {list.map((r) => {
             const body = content(r);

@@ -2,8 +2,9 @@
 
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { API_MODE } from "@/lib/api/client";
+import { MATERIAL_ACCEPT, materialState } from "@/lib/api/materials";
 import { daysFromToday, localIso } from "@/lib/format";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
@@ -70,8 +71,9 @@ export function HubPage({ id }: { id: string }) {
     return { ordered, materials: [...materials.values()], timeline };
   }, [domain, hub, getTopicDetails]);
   const materialItems: Material[] = api.real
-    ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(localIso(Date.parse(m.created_at))), kind: "pdf" as const }))
+    ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(localIso(Date.parse(m.created_at))), kind: "pdf" as const, state: materialState(m.status) }))
     : data?.materials ?? [];
+  const fileRef = useRef<HTMLInputElement>(null);
 
   if (!hub || !data) {
     return (
@@ -155,6 +157,8 @@ export function HubPage({ id }: { id: string }) {
           items={[
             { label: tx.hub.editTopics, soon: tx.hub.editTopicsSoon(title) },
             { label: tx.hub.editDeadline, soon: tx.hub.editDeadlineSoon, onSelect: api.real ? () => setEditingDeadline(true) : undefined },
+            // the backend does not report whether prep mode is on, so switching it off is always on offer here
+            ...(api.real && deadline && !passed ? [{ label: tx.hub.prepOff, soon: "", onSelect: () => void api.prepOff() }] : []),
           ]}
         />
       </header>
@@ -189,11 +193,21 @@ export function HubPage({ id }: { id: string }) {
           {api.real && api.gradeOffer ? (
             <GradeOffer busy={api.busy} onSave={(mark, scale) => void api.grade(mark, scale)} onLater={api.dismissGrade} />
           ) : (
-            !passed && (
+            !passed &&
+            (api.real && api.prepOn ? (
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+                <p role="status" className="caps text-ribbon">
+                  {tx.hub.prepIsOn}
+                </p>
+                <button type="button" disabled={api.busy} onClick={() => void api.prepOff()} className={cn(TEXT_BTN, "-ml-3 sm:ml-0")}>
+                  {tx.hub.prepOff}
+                </button>
+              </div>
+            ) : (
               <button type="button" disabled={api.busy} onClick={() => (api.real ? void api.prep() : soon(tx.hub.prepSoon))} className={cn(PRIMARY_BTN, "mt-3 max-sm:w-full")}>
                 {tx.hub.prep}
               </button>
-            )
+            ))
           )}
         </div>
       )}
@@ -267,6 +281,27 @@ export function HubPage({ id }: { id: string }) {
 
       <PageSection id="hub-materials" title={tx.hub.materials}>
         <MaterialsList items={materialItems} />
+        {api.real && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+            <input
+              ref={fileRef}
+              type="file"
+              accept={MATERIAL_ACCEPT}
+              tabIndex={-1}
+              aria-hidden
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void api.addMaterial(file);
+              }}
+            />
+            <button type="button" disabled={api.uploading} onClick={() => fileRef.current?.click()} className={cn(TEXT_BTN, "-ml-3 sm:ml-0")}>
+              {api.uploading ? tx.hub.addMaterialBusy : tx.hub.addMaterial}
+            </button>
+            <p className="text-small text-paper-dim">{tx.hub.materialHint}</p>
+          </div>
+        )}
       </PageSection>
 
       <PageSection id="hub-sessions" title={tx.hub.inSessions}>

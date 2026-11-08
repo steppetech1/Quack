@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { API_MODE, del as apiDelete } from "@/lib/api/client";
+import { API_MODE, ApiError, del as apiDelete, get, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { PageShell, TEXT_BTN } from "./page-parts";
 import { SkillsTab } from "./skills-tab";
-import { useSoon } from "./soon";
+import { useNotice, useSoon } from "./soon";
 
 const TAB_IDS = ["general", "domains", "skills", "usage", "language", "account"] as const;
 type TabId = (typeof TAB_IDS)[number];
@@ -373,6 +373,70 @@ function Meter({ label, value, text, note }: { label: string; value: number; tex
   );
 }
 
+/**
+ * `GET /v1/llm/access`: the state of the shared money pool (`normal` / `tight` / `judges_only`) and what the learner can do about it.
+ * The backend hides the remainder itself, so there is no meter, only a word. A failed read says so quietly and changes nothing else.
+ */
+function LlmAccessRow() {
+  const tx = useT();
+  const { savePreferences } = useData();
+  const notice = useNotice();
+  const [access, setAccess] = useState<S["LLMAccess"] | "unknown" | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let off = false;
+    get<S["LLMAccess"]>("/v1/llm/access")
+      .then((r) => !off && setAccess(r))
+      .catch((e) => !off && setAccess(e instanceof ApiError && e.status === 401 ? null : "unknown"));
+    return () => {
+      off = true;
+    };
+  }, []);
+  if (!access) return null;
+  const s = tx.settings;
+  const mode = access === "unknown" ? null : access.mode;
+  const word = mode === "normal" ? s.accessNormal : mode === "tight" ? s.accessTight : mode === "judges_only" ? s.accessJudgesOnly : "";
+  const note =
+    access === "unknown"
+      ? s.accessUnknown
+      : access.judge && mode !== "normal"
+        ? s.accessJudge
+        : mode === "normal"
+          ? s.accessNormalNote
+          : mode === "tight"
+            ? s.accessTightNote
+            : s.accessJudgesOnlyNote;
+  const becomeJudge = async () => {
+    if (access === "unknown") return;
+    setBusy(true);
+    try {
+      await savePreferences({ [access.preference_key]: true });
+      setAccess({ ...access, judge: true, blocked: false });
+      notice(s.accessJudgeSaved);
+    } catch {
+      notice(s.accessUnknown);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="border-t border-seam-soft py-4">
+      <div className="flex items-baseline justify-between gap-4">
+        <p className="text-body text-paper">{s.accessTitle}</p>
+        {word && <p className="caps shrink-0 text-paper">{word}</p>}
+      </div>
+      <p role="status" className="mt-1.5 text-small text-paper-dim">
+        {note}
+      </p>
+      {access !== "unknown" && access.blocked && (
+        <button type="button" disabled={busy} onClick={() => void becomeJudge()} className={cn(SECONDARY, "mt-3 disabled:opacity-50")}>
+          {s.accessJudgeButton}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function UsageTab() {
   const tx = useT();
   const soon = useSoon();
@@ -386,6 +450,7 @@ function UsageTab() {
           {tx.settings.upgrade}
         </button>
       </div>
+      {API_MODE && <LlmAccessRow />}
       <div className="divide-y divide-seam-soft border-t border-seam-soft">
         <Meter label={tx.settings.meterMessages} value={62} text="62%" note={tx.settings.meterMessagesNote} />
         <Meter label={tx.settings.meterWeek} value={38} text="38%" note={tx.settings.meterWeekNote} />
