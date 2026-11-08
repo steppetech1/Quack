@@ -57,6 +57,7 @@
 | Skills пользователя | `GET/POST/PATCH/DELETE /v1/learner-skills` (вкладка «Skills», меню `/` в поле ввода); вызов `/имя` в сообщении сессии уходит как `skill_invocation`. У бэка нет выключателя и отдельного имени: имя и есть команда (`[\w-]{1,40}`), один скилл на тип артефакта, поэтому в режиме API переключатель скрыт, а «вызывать через /» всегда включено |
 | Поиск | `GET /v1/search` |
 | Сессия: история, ход (SSE), присутствие, конец, итог | `POST/GET /v1/sessions`, `GET /v1/sessions/active`, `GET /v1/sessions/{id}`, `POST …/actions`, `POST …/heartbeat`, `POST …/end`, `GET …/summary` |
+| Голос в сессии | `POST /v1/sessions/{id}/voice` (multipart: `audio` WAV, `started_at_ms`, `ended_at_ms` → `{text, seq}`). Кнопка микрофона в поле ввода сессии (`composer.tsx`, `use-voice-input.ts`): запись `MediaRecorder` → декодирование и кодирование в mono 16-bit WAV 16 кГц в браузере (`lib/audio/voice-recorder.ts`, бэку нужен именно PCM WAV), клик начинает, клик отправляет, лимит 5 мин; распознанный текст уходит учителю обычным `message` через `…/actions`. Кнопка скрыта без `getUserMedia`/`MediaRecorder`, в моках остаётся заглушка «скоро»; тихая запись → текст «ничего не расслышали» |
 | Панель сессий справа | `GET /v1/sessions` |
 | Настройки «Общие»: имя, предпочтения | `PATCH /v1/learner/preferences` |
 | Удаление аккаунта | `DELETE /v1/learner` (на этом стенде падает 500: `quack/storage/deletions.py::write` тоже `NotImplementedError` — журнал удалений в S3 не доведён, см. WP25 в `STATUS.md`) |
@@ -76,7 +77,6 @@
 - **Блоки конспекта и шпаргалка, что осталось** — `POST /v1/artifacts/{id}/blocks/{block_id}/accept` (принять «дополнение» к блоку), `POST /v1/hubs/{id}/cheatsheet/review`.
 - **Экспорт и данные** — `GET /v1/topics/{id}/export/anki|obsidian`, `GET /v1/learner/exports/{id}`: кнопка «Экспорт» в «Данные и аккаунт» показывает «скоро»; `PATCH /v1/learner/settings` не вызывается (настройки идут через `PATCH /v1/learner/preferences`).
 - **Визуализации** — `GET /v1/viz/{id}`.
-- **Голос в сессии** — `POST /v1/sessions/{id}/voice`.
 - **Видимость фоновых задач** — подключена в живой сессии (`useSessionJobs`, `live/jobs-plaque.tsx`): `GET /v1/sessions/{id}/jobs` при открытии, по `jobs_changed` из `/v1/learner/stream`, при переподключении потока и опросом, пока есть `queued`/`running`; после хода ещё несколько опросов. Бэк отдаёт только `queued`/`running`: завершившаяся задача просто пропадает, отличить «упала» от «готова» нельзя (показывается «готово»).
 - **Исследовательское согласие** — `POST/DELETE /v1/consents/research` (только `terms` подключён).
 - Не подключено и раньше: `GET /v1/sessions/{id}/events` — и не нужно: в бэке на канал `session:events:{id}` никто не публикует (`extractor_done`, `cheatsheet_ready` не отправляются), поток всегда пуст. Обновления задач идут через `jobs_changed` в `/v1/learner/stream`.

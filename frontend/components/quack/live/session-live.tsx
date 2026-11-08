@@ -6,6 +6,8 @@ import { apiUrl, ApiError, get, idem, post, sse, type S } from "@/lib/api/client
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
 import { useSessionJobs } from "@/lib/api/use-session-jobs";
+import { uploadVoice } from "@/lib/api/voice";
+import type { VoiceClip } from "@/lib/audio/voice-recorder";
 import { useT } from "@/lib/i18n/provider";
 import { skillInvocation } from "@/lib/skills";
 import { cn } from "@/lib/utils";
@@ -186,6 +188,26 @@ export function SessionLive({ id }: { id: string }) {
   );
 
   const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
+
+  /** A recorded clip → the recognized text goes to the teacher as an ordinary message. Returns an error text, or null */
+  const sendVoice = useCallback(
+    async (clip: VoiceClip): Promise<string | null> => {
+      try {
+        const heard = await uploadVoice(id, clip);
+        if (!heard.text.trim()) return tx.voiceSession.nothingHeard;
+        void send(heard.text);
+        return null;
+      } catch (e) {
+        if (e instanceof ApiError) {
+          if (e.status === 413) return tx.voiceSession.tooLong;
+          if (e.status === 415) return tx.voiceSession.badFormat;
+          if (e.status === 403) return tx.voiceSession.notAllowed;
+        }
+        return errorText(e);
+      }
+    },
+    [id, send, errorText, tx.voiceSession],
+  );
 
   const respond = async (el: Elem, response: string) => {
     if (!response.trim() || el.turnSeq === null) return;
@@ -389,6 +411,7 @@ export function SessionLive({ id }: { id: string }) {
             placeholder={tx.session.replyPlaceholder}
             submitText={tx.session.send}
             onSend={(text) => void send(text)}
+            voice={{ onClip: sendVoice, disabled: busy }}
           />
         </div>
       )}
