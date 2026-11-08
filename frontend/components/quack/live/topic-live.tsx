@@ -61,6 +61,8 @@ export function TopicLive({ id }: { id: string }) {
   const [whyOpen, setWhyOpen] = useState(false);
   const [whyFacts, setWhyFacts] = useState<S["WhyFacts"] | null>(null);
   const [whyLoading, setWhyLoading] = useState(false);
+  /** a session start waiting for the learner to agree to end the open session of another subject */
+  const [confirmIntent, setConfirmIntent] = useState<Intent | null>(null);
   // moment of the render: skills past their review time get the "rusty" pill
   const [now] = useState(() => Date.now());
 
@@ -121,6 +123,7 @@ export function TopicLive({ id }: { id: string }) {
   const state = topicState(topic.display);
   const level = Math.min(1, Math.max(0, (topic.display.display_level ?? 0) / 6));
   const begin = async (intent: Intent) => {
+    setConfirmIntent(null);
     setBusy(true);
     try {
       const s = await startSession({ domain_id: topic.domain_id, topic_id: topic.topic_id, intent });
@@ -132,6 +135,11 @@ export function TopicLive({ id }: { id: string }) {
       setBusy(false);
     }
   };
+
+  // a new session ends the open one, and a card of this topic cannot be answered in a session of another subject:
+  // never end that one silently, ask first
+  const otherSubject = active?.status === "active" && active.domain_id !== topic.domain_id ? active : null;
+  const ask = (intent: Intent) => (otherSubject ? setConfirmIntent(intent) : void begin(intent));
 
   const buildCheat = async () => {
     if (!data.hubId) return;
@@ -466,7 +474,7 @@ export function TopicLive({ id }: { id: string }) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => void begin("learn")}
+            onClick={() => ask("learn")}
             className={cn(ACTION_BTN, state === "new" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.study}
@@ -480,12 +488,32 @@ export function TopicLive({ id }: { id: string }) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => void begin("review")}
+            onClick={() => ask("review")}
             className={cn(ACTION_BTN, state === "review" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.review}
           </button>
         </div>
+
+        {confirmIntent && otherSubject && (
+          <div role="group" aria-label={tx.sessionSwitch.groupLabel} className="mt-3 max-w-md rounded-[2px] border border-seam p-4">
+            <p className="text-body text-paper">{tx.sessionSwitch.warn(domains.find((d) => d.id === otherSubject.domain_id)?.title ?? null)}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                autoFocus
+                disabled={busy}
+                onClick={() => void begin(confirmIntent)}
+                className={cn(ACTION_BTN, "border border-st-confused text-st-confused hover:bg-cloth-hover")}
+              >
+                {tx.sessionSwitch.yes}
+              </button>
+              <button type="button" onClick={() => setConfirmIntent(null)} className={cn(ACTION_BTN, "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}>
+                {tx.sessionSwitch.cancel}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-2 flex flex-wrap gap-x-2">
           <button type="button" disabled={busy} onClick={() => void mark("known")} className={cn(TEXT_BTN, "-ml-3")}>

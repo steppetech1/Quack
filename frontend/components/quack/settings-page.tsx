@@ -502,6 +502,7 @@ function AccountTab() {
   const soon = useSoon();
   const errorText = useErrorText();
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const notice = useNotice();
   const [confirm, setConfirm] = useState(false);
   const del = useRef<HTMLButtonElement>(null);
   const yes = useRef<HTMLButtonElement>(null);
@@ -527,7 +528,7 @@ function AccountTab() {
       </Row>
       <Row label={tx.settings.export} help={tx.settings.exportHelp}>
         {/* the backend can give an export by id (`GET /v1/learner/exports/{id}`) but has no call that starts one: until it does, no fake link */}
-        <button type="button" onClick={() => soon(tx.settings.exportSoon)} className={SECONDARY}>
+        <button type="button" onClick={() => notice(tx.exportNotice.unavailable)} className={SECONDARY}>
           {tx.settings.exportBtn}
         </button>
       </Row>

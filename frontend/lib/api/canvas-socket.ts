@@ -62,6 +62,7 @@ function socketUrl(canvasId: string): string {
 export class CanvasSocket {
   private ws: WebSocket | null = null;
   private closed = false;
+  private opened = false;
   private retry = RETRY_MIN_MS;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -91,6 +92,8 @@ export class CanvasSocket {
     private readonly canvasId: string,
     private readonly onState: (s: SyncState) => void,
     private readonly onEvent: (e: CanvasEvent) => void = () => {},
+    /** the socket is open again after a drop (not the first open): what the server said while it was down is lost to the board */
+    private readonly onReopen: () => void = () => {},
   ) {
     this.connect();
   }
@@ -250,6 +253,9 @@ export class CanvasSocket {
       // the lines go after the strokes they name: the server reads a line from the strokes it has received
       for (const l of this.unsentLines.splice(0)) this.sendLine(l);
       this.update();
+      const again = this.opened;
+      this.opened = true;
+      if (again) this.onReopen();
     };
     ws.onmessage = (e) => {
       try {
