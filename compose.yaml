@@ -180,6 +180,9 @@ services:
       API_PORT: "8000"
       API_WORKERS: "2"
       API_GRACEFUL_SHUTDOWN_S: "30"
+      # Caddy is another container: trust its X-Forwarded-* (client address of the sign-in limit,
+      # `https` of the sign-in link). `api` is reachable only from the `backend` network.
+      API_FORWARDED_ALLOW_IPS: "*"
       COMPUTE_URL: http://compute:8001
       META_API_KEY: ${META_API_KEY:-}
       META_API_BASE_URL: ${META_API_BASE_URL:-}

@@ -4,16 +4,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { topicState } from "@/lib/api/adapters";
-import { studyCardsFromApi } from "@/lib/api/cards";
-import { ApiError, del, get, idem, patch, post, type S } from "@/lib/api/client";
+import { answerCard, studyCardsFromApi } from "@/lib/api/cards";
+import { ApiError, del, download, get, idem, patch, post, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { type Intent, startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { ArtifactHost, ExpandableCard, type WindowSpec } from "../artifact-window";
-import { DeckCard, DeckViewer, type DeckManage } from "../artifact-content";
-import { Crumbs, MemoryRing, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
+import { DeckCard, DeckViewer, type DeckAnswers, type DeckManage } from "../artifact-content";
+import { Crumbs, MemoryRing, MoreMenu, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
 import { useNotice } from "../soon";
 import { useErrorText } from "./error-text";
 import { Markdown, plainText } from "./markdown";
@@ -45,7 +45,7 @@ export function TopicLive({ id }: { id: string }) {
   const router = useRouter();
   const errorText = useErrorText();
   const notice = useNotice();
-  const { domains, appliedSeq, setActive, loadGraph } = useData();
+  const { domains, appliedSeq, active, setActive, loadGraph } = useData();
   const { focusDomain } = useShell();
   const [data, setData] = useState<Loaded | null>(null);
   /** The page for this topic is on screen: a failed live re-fetch keeps it instead of showing an error */
@@ -53,6 +53,16 @@ export function TopicLive({ id }: { id: string }) {
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** rename / merge form under the title */
+  const [panel, setPanel] = useState<"rename" | "merge" | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
+  const [mergeInto, setMergeInto] = useState("");
+  /** "Why this state?": the evidence behind it, read when opened */
+  const [whyOpen, setWhyOpen] = useState(false);
+  const [whyFacts, setWhyFacts] = useState<S["WhyFacts"] | null>(null);
+  const [whyLoading, setWhyLoading] = useState(false);
+  /** a session start waiting for the learner to agree to end the open session of another subject */
+  const [confirmIntent, setConfirmIntent] = useState<Intent | null>(null);
   // moment of the render: skills past their review time get the "rusty" pill
   const [now] = useState(() => Date.now());
 
@@ -87,6 +97,12 @@ export function TopicLive({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, appliedSeq]);
 
+  // the active session as the deck answers see it at the moment of sending, not at the render that built the deck
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
   const domain = domains.find((d) => d.id === data?.topic.domain_id);
   const domainTitle = domain?.title ?? "";
 
@@ -107,6 +123,7 @@ export function TopicLive({ id }: { id: string }) {
   const state = topicState(topic.display);
   const level = Math.min(1, Math.max(0, (topic.display.display_level ?? 0) / 6));
   const begin = async (intent: Intent) => {
+    setConfirmIntent(null);
     setBusy(true);
     try {
       const s = await startSession({ domain_id: topic.domain_id, topic_id: topic.topic_id, intent });
@@ -118,6 +135,11 @@ export function TopicLive({ id }: { id: string }) {
       setBusy(false);
     }
   };
+
+  // a new session ends the open one, and a card of this topic cannot be answered in a session of another subject:
+  // never end that one silently, ask first
+  const otherSubject = active?.status === "active" && active.domain_id !== topic.domain_id ? active : null;
+  const ask = (intent: Intent) => (otherSubject ? setConfirmIntent(intent) : void begin(intent));
 
   const buildCheat = async () => {
     if (!data.hubId) return;
@@ -149,6 +171,86 @@ export function TopicLive({ id }: { id: string }) {
     }
   };
 
+  const tools = tx.topicTools;
+
+  const exportAs = async (what: "anki" | "obsidian") => {
+    try {
+      await download(`/v1/topics/${topic.topic_id}/export/${what}`, `${topic.topic_id}.${what === "anki" ? "apkg" : "zip"}`);
+    } catch (e) {
+      notice(errorText(e));
+    }
+  };
+
+  const toggleWhy = async () => {
+    const open = !whyOpen;
+    setWhyOpen(open);
+    if (!open) return;
+    setWhyLoading(true);
+    try {
+      setWhyFacts(await get<S["WhyFacts"]>(`/v1/topics/${topic.topic_id}/why`));
+    } catch (e) {
+      setWhyOpen(false);
+      notice(errorText(e));
+    } finally {
+      setWhyLoading(false);
+    }
+  };
+
+  const dispute = async (evidenceId: string) => {
+    try {
+      await post("/v1/disputes", { target_kind: "evidence", target_id: evidenceId, idempotency_key: idem() });
+      notice(tools.disputed);
+    } catch (e) {
+      notice(errorText(e));
+    }
+  };
+
+  const rename = async () => {
+    const name = nameDraft.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      await patch(`/v1/topics/${topic.topic_id}`, { name });
+      // the projection catches up on its own; show the new name right away
+      setData((d) => (d ? { ...d, topic: { ...d.topic, name } } : d));
+      setPanel(null);
+      notice(tools.renamed);
+    } catch (e) {
+      notice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const merge = async () => {
+    if (!mergeInto) return;
+    setBusy(true);
+    try {
+      await post(`/v1/topics/${topic.topic_id}/merge`, { into: mergeInto });
+      notice(tools.merged);
+      await loadGraph(topic.domain_id).catch(() => {});
+      router.push(`/topic/${mergeInto}`);
+    } catch (e) {
+      notice(errorText(e));
+      setBusy(false);
+    }
+  };
+
+  const reviewCheat = async () => {
+    const hubId = data.hubId;
+    if (!hubId) return;
+    setBusy(true);
+    try {
+      const res = await post(`/v1/hubs/${hubId}/cheatsheet/review`, { idempotency_key: idem() });
+      setData((d) => (d?.cheat ? { ...d, cheat: { ...d.cheat, blocks: res.blocks, version: res.version } } : d));
+      notice(res.remarks.length ? tools.reviewDone(res.remarks.length) : tools.reviewClean);
+    } catch (e) {
+      notice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /** Edit (`PATCH`) and delete (`DELETE`) answer with the whole deck: an edited card gets a new id, so the deck is replaced, not patched */
   const manage: DeckManage = {
     edit: async (cardId, prompt) => {
@@ -167,6 +269,29 @@ export function TopicLive({ id }: { id: string }) {
         return null;
       } catch (e) {
         return errorText(e);
+      }
+    },
+  };
+
+  /**
+   * A rated card is the `answer` action of a session (`source: "card"`), and the backend takes it only in an active one: the
+   * active session of this subject, else a "review" session on this topic (it closes the active session of another subject).
+   * A failure comes back as text: the deck keeps its ratings and offers to try again.
+   */
+  const answers: DeckAnswers = {
+    submit: async (cardId, remembered, text) => {
+      try {
+        let cur = activeRef.current;
+        if (!cur || cur.status !== "active" || cur.domain_id !== topic.domain_id) {
+          cur = await startSession({ domain_id: topic.domain_id, topic_id: topic.topic_id, intent: "review" });
+          // the ref first: the next card of the queue may go before the next render
+          activeRef.current = cur;
+          setActive(cur);
+        }
+        await answerCard(cur.session_id, { id: cardId, remembered, text });
+        return null;
+      } catch (e) {
+        return e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e);
       }
     },
   };
@@ -200,7 +325,7 @@ export function TopicLive({ id }: { id: string }) {
       title: tx.topic.cards,
       meta: tx.topic.cardsMeta(deck.length, topic.name),
       // the key makes the viewer start afresh when the deck changes (ratings are kept per card)
-      body: <DeckViewer key={deck.map((c) => c.id).join()} cards={deck} manage={manage} />,
+      body: <DeckViewer key={deck.map((c) => c.id).join()} cards={deck} manage={manage} answers={answers} />,
     };
   }
 
@@ -209,22 +334,147 @@ export function TopicLive({ id }: { id: string }) {
       <PageFrame chipLabel={tx.page.chipTopic(topic.name)} topicId={topic.topic_id}>
         <Crumbs domainTitle={domainTitle} />
 
-        <header className="mt-2">
+        <header className="mt-2 flex items-start justify-between gap-3">
           <h1 className="display-caps text-display text-paper">{topic.name}</h1>
+          <MoreMenu
+            items={[
+              {
+                label: tx.topic.rename,
+                soon: "",
+                onSelect: () => {
+                  setNameDraft(topic.name);
+                  setPanel("rename");
+                },
+              },
+              {
+                label: tx.topic.merge,
+                soon: "",
+                onSelect: () => {
+                  setMergeInto("");
+                  setPanel("merge");
+                },
+              },
+              { label: tools.exportAnki, soon: "", onSelect: () => void exportAs("anki") },
+              { label: tools.exportObsidian, soon: "", onSelect: () => void exportAs("obsidian") },
+            ]}
+          />
         </header>
+
+        {panel === "rename" && (
+          <form
+            className="mt-3 flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void rename();
+            }}
+          >
+            <label className="sr-only" htmlFor="topic-rename">
+              {tools.renameLabel}
+            </label>
+            <input
+              id="topic-rename"
+              autoFocus
+              value={nameDraft}
+              maxLength={200}
+              onChange={(e) => setNameDraft(e.target.value)}
+              className="h-10 min-w-0 flex-1 rounded-control border border-seam bg-cloth px-3 text-body text-paper hover:border-rule focus-visible:border-ribbon sm:max-w-sm"
+            />
+            <button type="submit" disabled={busy || !nameDraft.trim()} className={cn(ACTION_BTN, "bg-ribbon text-on-ribbon hover:bg-ribbon-hover")}>
+              {tools.renameSave}
+            </button>
+            <button type="button" onClick={() => setPanel(null)} className={TEXT_BTN}>
+              {tools.cancel}
+            </button>
+          </form>
+        )}
+        {panel === "merge" && (
+          <form
+            className="mt-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void merge();
+            }}
+          >
+            <p className="text-small text-paper-dim">{tools.mergeNote(topic.name)}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label className="sr-only" htmlFor="topic-merge">
+                {tools.mergeLabel}
+              </label>
+              <select
+                id="topic-merge"
+                value={mergeInto}
+                onChange={(e) => setMergeInto(e.target.value)}
+                className="h-10 min-w-0 flex-1 rounded-control border border-seam bg-cloth px-3 text-body text-paper hover:border-rule focus-visible:border-ribbon sm:max-w-sm"
+              >
+                <option value="">{tools.mergePick}</option>
+                {(domain?.topics ?? [])
+                  .filter((x) => x.id !== topic.topic_id)
+                  .map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.title}
+                    </option>
+                  ))}
+              </select>
+              <button type="submit" disabled={busy || !mergeInto} className={cn(ACTION_BTN, "bg-ribbon text-on-ribbon hover:bg-ribbon-hover")}>
+                {tools.mergeGo}
+              </button>
+              <button type="button" onClick={() => setPanel(null)} className={TEXT_BTN}>
+                {tools.cancel}
+              </button>
+            </div>
+          </form>
+        )}
 
         <div className="mt-4 flex items-start gap-4">
           <MemoryRing state={state} retention={level} size={40} />
           <div className="min-w-0">
             <p className="display-caps text-paper">{tx.states[state].toLowerCase()}</p>
+            <button type="button" aria-expanded={whyOpen} onClick={() => void toggleWhy()} className={cn(TEXT_BTN, "-ml-4")}>
+              {whyOpen ? tools.whyHide : tools.why}
+            </button>
           </div>
         </div>
+        {whyOpen && (
+          <div className="mt-2 max-w-[62ch]">
+            {whyLoading ? (
+              <p role="status" className="text-paper-dim">
+                {tools.whyLoading}
+              </p>
+            ) : whyFacts && (whyFacts.deciding || (whyFacts.recent ?? []).length > 0) ? (
+              <>
+                {whyFacts.deciding && (
+                  <>
+                    <p className="caps text-paper-dim">
+                      {tools.whyDeciding}
+                      {whyFacts.level ? ` · ${tools.whyLevel(whyFacts.level)}` : ""}
+                    </p>
+                    <ul className="mt-1 border-t border-seam-soft">
+                      <EvidenceRow fact={whyFacts.deciding} onDispute={(id) => void dispute(id)} />
+                    </ul>
+                  </>
+                )}
+                {(whyFacts.recent ?? []).length > 0 && (
+                  <>
+                    <p className="caps mt-4 text-paper-dim">{tools.whyRecent}</p>
+                    <ul className="mt-1 border-t border-seam-soft">
+                      {(whyFacts.recent ?? []).map((f) => (
+                        <EvidenceRow key={f.evidence_id} fact={f} onDispute={(id) => void dispute(id)} />
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </>
+            ) : (
+              <p className="text-paper-dim">{tools.whyEmpty}</p>
+            )}
+          </div>
+        )}
 
         <div className="mt-5 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           <button
             type="button"
             disabled={busy}
-            onClick={() => void begin("learn")}
+            onClick={() => ask("learn")}
             className={cn(ACTION_BTN, state === "new" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.study}
@@ -238,12 +488,32 @@ export function TopicLive({ id }: { id: string }) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => void begin("review")}
+            onClick={() => ask("review")}
             className={cn(ACTION_BTN, state === "review" ? "bg-ribbon text-on-ribbon hover:bg-ribbon-hover" : "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}
           >
             {tx.topicCard.review}
           </button>
         </div>
+
+        {confirmIntent && otherSubject && (
+          <div role="group" aria-label={tx.sessionSwitch.groupLabel} className="mt-3 max-w-md rounded-[2px] border border-seam p-4">
+            <p className="text-body text-paper">{tx.sessionSwitch.warn(domains.find((d) => d.id === otherSubject.domain_id)?.title ?? null)}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                autoFocus
+                disabled={busy}
+                onClick={() => void begin(confirmIntent)}
+                className={cn(ACTION_BTN, "border border-st-confused text-st-confused hover:bg-cloth-hover")}
+              >
+                {tx.sessionSwitch.yes}
+              </button>
+              <button type="button" onClick={() => setConfirmIntent(null)} className={cn(ACTION_BTN, "border border-seam text-paper hover:border-ribbon hover:text-ribbon")}>
+                {tx.sessionSwitch.cancel}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-2 flex flex-wrap gap-x-2">
           <button type="button" disabled={busy} onClick={() => void mark("known")} className={cn(TEXT_BTN, "-ml-3")}>
@@ -292,12 +562,36 @@ export function TopicLive({ id }: { id: string }) {
             </div>
           )}
           {data.hubId && (
-            <button type="button" disabled={busy} onClick={() => void buildCheat()} className={cn(TEXT_BTN, "mt-3 -ml-3")}>
-              {data.cheat ? t.refreshCheat : t.buildCheat}
-            </button>
+            <div className="mt-3 flex flex-wrap gap-x-2">
+              <button type="button" disabled={busy} onClick={() => void buildCheat()} className={cn(TEXT_BTN, "-ml-3")}>
+                {data.cheat ? t.refreshCheat : t.buildCheat}
+              </button>
+              {data.cheat && (
+                <button type="button" disabled={busy} onClick={() => void reviewCheat()} className={TEXT_BTN}>
+                  {busy ? tools.reviewing : tools.reviewCheat}
+                </button>
+              )}
+            </div>
           )}
         </PageSection>
       </PageFrame>
     </ArtifactHost>
+  );
+}
+
+/** One piece of evidence: outcome, quote, date, and "I disagree" (`POST /v1/disputes`) */
+function EvidenceRow({ fact, onDispute }: { fact: S["EvidenceFact"]; onDispute: (evidenceId: string) => void }) {
+  const tools = useT().topicTools;
+  return (
+    <li className="flex min-h-12 items-center gap-3 border-b border-seam-soft py-2">
+      <span className={PILL}>{tools.outcome[fact.outcome]}</span>
+      <p className="min-w-0 flex-1 line-clamp-2 text-small text-paper">
+        {fact.quote ?? ""}
+        <span className="num ml-2 text-paper-dim">{new Date(fact.occurred_at_ms).toLocaleDateString()}</span>
+      </p>
+      <button type="button" onClick={() => onDispute(fact.evidence_id)} className={TEXT_BTN}>
+        {tools.disagree}
+      </button>
+    </li>
   );
 }

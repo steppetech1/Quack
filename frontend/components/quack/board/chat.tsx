@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { askTeacher } from "@/lib/api/canvases";
 import { ApiError, get, type S } from "@/lib/api/client";
 import { useMocks, useT } from "@/lib/i18n/provider";
+import { skillInvocation } from "@/lib/skills";
 import type { ChatMsg, ChatPart } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { Duck } from "../duck";
@@ -36,7 +37,18 @@ function Parts({ parts, onJump }: { parts: ChatPart[]; onJump: (ref: string) => 
 }
 
 /** Разговор с учителем про канвас: свёрнутая строка внизу и панель с историей */
-export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; sessionId?: string; onJump: (ref: string) => void }) {
+export function BoardChat({
+  canvasId,
+  sessionId,
+  beforeAsk,
+  onJump,
+}: {
+  canvasId: string;
+  sessionId?: string;
+  /** resolves when the drawing so far is on the server and read: the teacher sees only what is in the session log */
+  beforeAsk?: () => Promise<void>;
+  onJump: (ref: string) => void;
+}) {
   const tx = useT();
   const errorText = useErrorText();
   const { canvasChat, canvasReplies, genericReply } = useMocks();
@@ -52,6 +64,7 @@ export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; s
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const readOnce = useRef(false);
 
   // the conversation so far: the feed of the session (text is in `message.sent` and `turn.committed`)
   useEffect(() => {
@@ -66,8 +79,11 @@ export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; s
           if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", parts: [text.replace(/\$/g, "")] });
           else if (ev.type === "turn.committed" && text) past.push({ id: `e-${ev.seq}`, role: "teacher", parts: [text] });
         }
-        // what was typed while this loaded stays after the history
-        setMsgs((m) => [...past, ...m]);
+        // what was typed while this loaded stays after the history. A page shown again (a cached route re-runs this) reads
+        // the history anew, and it already holds everything said here: replace, or the thread doubles
+        if (readOnce.current) setMsgs(past);
+        else setMsgs((m) => [...past, ...m]);
+        readOnce.current = true;
       })
       .catch(() => {});
     return () => {
@@ -90,6 +106,8 @@ export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; s
     setBusy(true);
     setError(null);
     try {
+      await beforeAsk?.();
+      if (ctl.signal.aborted) return;
       await askTeacher(
         sessionId,
         canvasId,
@@ -104,6 +122,7 @@ export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; s
           } else if (event === "error") throw new ApiError(500, String(data.code ?? "ERROR"), String(data.message ?? ""));
         },
         ctl.signal,
+        skillInvocation(v),
       );
     } catch (e) {
       if (!ctl.signal.aborted) setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? tx.live.turnLocked : errorText(e));
@@ -176,7 +195,7 @@ export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; s
               <p
                 key={m.id}
                 className={cn(
-                  "max-w-[88%] rounded-[2px] border px-3 py-2 text-body",
+                  "max-w-[88%] rounded-[2px] border px-3 py-2 text-body [overflow-wrap:anywhere]",
                   m.role === "teacher" ? "self-start border-transparent border-l-seam bg-cloth text-paper" : "self-end border-seam text-paper",
                 )}
               >

@@ -205,3 +205,40 @@ async def test_set_of_expressions_is_check_failed_without_compute() -> None:
     result, sent = await _run(spec, answer)
     assert result == CheckFailed(answer_seq=3, part="a", reason="unparsed")
     assert sent == []
+
+
+async def test_decimal_against_an_expression_reference_gets_the_tolerance_rules() -> None:
+    """Т-§6.4: 0.7071 for `sqrt(2)/2` is a number with its own precision, not an expression to
+    compare at `math_rel_tol`: it goes to compute as a dimensionless value with the tolerance
+    of the spec, and the verdict is a `numeric` one."""
+    spec = AnswerSpec.model_validate(
+        {
+            "type": "number",
+            "value": {"latex": "\\frac{\\sqrt{2}}{2}", "sympy": "sqrt(2)/2"},
+            "tol_rel": 0.001,
+        }
+    )
+    answer = LearnerAnswer(kind="number", value="0,7071")
+    done = MathCheckResponse(status="completed", outcome="correct", method="units")
+    verdict, sent = await _run(spec, answer, done)
+    [body] = sent
+    assert (body["kind"], body["unit"], body["student_text"]) == (
+        "quantity",
+        "dimensionless",
+        "0,7071",
+    )
+    assert body["reference"]["sympy"] == "sqrt(2)/2"
+    assert (body["tolerance"]["tol_abs"], body["tolerance"]["tol_rel"]) == (None, 0.001)
+    assert isinstance(verdict, Verdict)
+    assert (verdict.outcome, verdict.method) == ("correct", "numeric")
+
+
+async def test_expression_answer_for_a_number_stays_in_the_expression_mode() -> None:
+    spec = AnswerSpec.model_validate(
+        {"type": "number", "value": {"latex": "\\frac{\\sqrt{2}}{2}", "sympy": "sqrt(2)/2"}}
+    )
+    answer = LearnerAnswer(kind="number", value="2/sqrt(8)", sympy="2/sqrt(8)")
+    done = MathCheckResponse(status="completed", outcome="correct", method="symbolic")
+    verdict, sent = await _run(spec, answer, done)
+    assert sent[0]["kind"] == "expression"
+    assert verdict.method == "symbolic"

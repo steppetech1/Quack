@@ -539,6 +539,15 @@
         "title": "CardEdit",
         "type": "object"
       },
+      "CardKind": {
+        "enum": [
+          "definition",
+          "sign_to_method",
+          "distinction",
+          "against_misconception"
+        ],
+        "type": "string"
+      },
       "CardSeriesElement": {
         "additionalProperties": false,
         "description": "Серия карточек: card labels (`C…`, §17).",
@@ -568,6 +577,58 @@
         "title": "CardSeriesElement",
         "type": "object"
       },
+      "CardView": {
+        "additionalProperties": false,
+        "description": "A card as the learner sees it; `answer` is the reference answer of the task behind it to\nshow on reveal (`None` — the task has no short answer).",
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "generatedBy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generatedby"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CardKind"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Owner"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "kind",
+          "prompt",
+          "owner"
+        ],
+        "title": "CardView",
+        "type": "object"
+      },
       "CardsResponse": {
         "description": "The topic's cards at the current version; `card_id` is the task to answer.",
         "properties": {
@@ -578,8 +639,7 @@
           },
           "cards": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/CardView"
             },
             "title": "Cards",
             "type": "array"
@@ -1656,8 +1716,23 @@
         ],
         "type": "string"
       },
+      "ExportRequested": {
+        "description": "The archive that was asked for (or the one already on its way); its state is\n`GET /v1/learner/exports/{export_id}`.",
+        "properties": {
+          "export_id": {
+            "format": "uuid",
+            "title": "Export Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "export_id"
+        ],
+        "title": "ExportRequested",
+        "type": "object"
+      },
       "ExportStatus": {
-        "description": "`pending` — requested, the archive is not ready; `ready` — `download_url` lives\n`expires_in_s`; `expired` — the archive is deleted or past its term (build a new one).",
+        "description": "`pending` — requested, the archive is not ready; `ready` — `download_url` lives\n`expires_in_s`; `expired` — the archive is deleted or past its term (ask for a new one);\n`failed` — the job gave up (the storage was down, say), ask again.",
         "properties": {
           "download_url": {
             "anyOf": [
@@ -1702,7 +1777,8 @@
             "enum": [
               "pending",
               "ready",
-              "expired"
+              "expired",
+              "failed"
             ],
             "title": "Status",
             "type": "string"
@@ -3013,7 +3089,7 @@
       },
       "MessageAction": {
         "additionalProperties": false,
-        "description": "`message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).",
+        "description": "`message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).\n\n`voice_seq` - the message is spoken: the `seq` of its `voice.transcribed` (the answer of\n`POST …/voice`). The words are that event's, so `text` must stay empty.",
         "properties": {
           "canvas_refs": {
             "default": [],
@@ -3054,14 +3130,25 @@
             "title": "Skill Invocation"
           },
           "text": {
+            "default": "",
             "title": "Text",
             "type": "string"
+          },
+          "voice_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Seq"
           }
         },
         "required": [
           "idempotency_key",
-          "kind",
-          "text"
+          "kind"
         ],
         "title": "MessageAction",
         "type": "object"
@@ -3090,6 +3177,13 @@
           "incorrect",
           "partial",
           "unclear"
+        ],
+        "type": "string"
+      },
+      "Owner": {
+        "enum": [
+          "system",
+          "learner"
         ],
         "type": "string"
       },
@@ -5239,24 +5333,55 @@
   "paths": {
     "/auth/google/callback": {
       "get": {
+        "description": "Google answers `?code&state`, or `?error=access_denied&state` when the learner refuses:\nwithout `code` that is the same 401 as any other failed sign-in, not a 422 of the framework.",
         "operationId": "google_callback_auth_google_callback_get",
         "parameters": [
           {
             "in": "query",
             "name": "code",
-            "required": true,
+            "required": false,
             "schema": {
-              "title": "Code",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
             }
           },
           {
             "in": "query",
             "name": "state",
-            "required": true,
+            "required": false,
             "schema": {
-              "title": "State",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
             }
           }
         ],
@@ -8777,6 +8902,88 @@
         ]
       }
     },
+    "/v1/learner/export": {
+      "post": {
+        "description": "The archive of the learner's data (Т-§19.6). While the last archive is being built or is\nready, that one is given and nothing is written; after `expired` or `failed` a new request is\nmade. The id comes from the key, so a repeat of the request is the same export.",
+        "operationId": "request_export_v1_learner_export_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportRequested"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Request Export",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
     "/v1/learner/exports/{export_id}": {
       "get": {
         "operationId": "get_export_v1_learner_exports__export_id__get",
@@ -10117,7 +10324,7 @@
     },
     "/v1/sessions/{session_id}/jobs": {
       "get": {
-        "description": "ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and\n`running`; a session of another learner or none — `404` (D-B-207).",
+        "description": "ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and\n`running`, plus `succeeded`/`failed` ones of the last minutes; a session of another learner\nor none — `404` (D-B-207).",
         "operationId": "session_jobs_v1_sessions__session_id__jobs_get",
         "parameters": [
           {

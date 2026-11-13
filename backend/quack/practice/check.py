@@ -149,6 +149,8 @@ async def check(
         return NotYet(answer_seq, part, "compute_unavailable")
     result = _from_compute(response, answer_seq, part, help_used or HelpUsed())
     if isinstance(result, Verdict):
+        if _number_against_expression(answer, spec, settings):
+            result = result.model_copy(update={"method": "numeric"})
         return apply_reading(result, recognition_confidence, settings)
     return result
 
@@ -213,6 +215,25 @@ def _math_request(
         return MathCheckRequest.model_validate(
             {**common, "kind": "quantity", "student_text": answer.value, "unit": spec.unit}
         )
+    if _number_against_expression(answer, spec, settings):
+        # Т-§6.4: a decimal is compared with the tolerance of the spec or by the learner's own
+        # precision. The expression mode of compute has no tolerance (it compares at
+        # `math_rel_tol`), so the pair goes to the quantity mode of compute, which makes that
+        # comparison, as a dimensionless value. A tolerance by significant digits needs the
+        # magnitude of the reference, which only compute knows, and is not applied here.
+        return MathCheckRequest.model_validate(
+            {
+                **common,
+                "kind": "quantity",
+                "student_text": answer.value,
+                "unit": "dimensionless",
+                "tolerance": Tolerance(
+                    tol_abs=spec.tol_abs,
+                    tol_rel=spec.tol_rel,
+                    min_sig_digits=settings.min_sig_digits,
+                ),
+            }
+        )
     # Т-§22.7: `sympy` of the editor or the recognizer first, else LaTeX; a raw answer
     # without either goes as `sympy` — compute parses every string by the whitelist grammar.
     student = (
@@ -229,6 +250,17 @@ def _math_request(
             "form_target": spec.form_target,
         }
     )
+
+
+def _number_against_expression(answer: LearnerAnswer, spec: AnswerSpec, settings: Settings) -> bool:
+    """A `number` whose reference is written as an expression (`sqrt(2)/2`, Т-§6.1) and whose
+    answer is a plain decimal: not an instant pair, the tolerance rules of Т-§6.4 still apply."""
+    if spec.type != "number" or spec.value is None or spec.value.sympy is None:
+        return False
+    if _parse_number(spec.value.sympy) is not None:
+        return False
+    written = _parse_number(answer.value, max_exponent=settings.instant_number_max_exponent)
+    return written is not None and written.half_unit is not None
 
 
 def _magnitude(reference: str) -> Fraction:

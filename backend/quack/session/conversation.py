@@ -162,8 +162,8 @@ def _verbatim(
                 out.append(f'Learner pressed "{_INTENT_BUTTONS[message.intent]}" on {target}')
             if message.text:
                 out.append(f"Learner: {message.text}")
-            if message.canvas_refs:
-                out.append("Learner points at: " + ", ".join(_lasso(message.canvas_refs, lines)))
+            if pointed := _lasso(message.canvas_refs, lines):
+                out.append("Learner points at: " + ", ".join(pointed))
             return out
         case "answer.submitted":
             answer = AnswerSubmitted.model_validate(data)

@@ -25,7 +25,7 @@ from quack.jobs.runner import JobContext
 from quack.llm.gateway import LLMResult
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.select import SelectedTask
-from quack.practice.task_store import create_task
+from quack.practice.task_store import Verification, create_task
 from tests.db.fixtures import create_learner
 from tests.support import graph_read as fx
 
@@ -149,3 +149,112 @@ async def test_today_prepares_plans_and_requests(
     )
     assert len(again) == 1
     assert isinstance(first, UUID)
+
+
+async def _two_items(db: Db, learner_id: UUID) -> int:
+    (shown,) = await append_events(
+        db,
+        learner_id,
+        [
+            NewEvent(
+                type="today.shown",
+                payload=TodayShown(
+                    domain_id=fx.DOMAIN,
+                    items=[
+                        TodayItem(skill_id=fx.SKILL_FAILED, reasons=["due"], score=1.0),
+                        TodayItem(skill_id=fx.SKILL_QUIET, reasons=["deadline"], score=0.5),
+                    ],
+                ),
+                actor="code",
+                idempotency_key=f"today:{uuid4()}",
+                domain_id=fx.DOMAIN,
+            )
+        ],
+    )
+    return shown.seq
+
+
+async def _bank_task(db: Db, learner_id: UUID, text: str, verification: Verification) -> UUID:
+    task_id = uuid4()
+    await create_task(
+        db,
+        learner_id=learner_id,
+        task_id=task_id,
+        family_id=uuid4(),
+        source="generated",
+        condition=TaskCondition(text=text, latex=None),
+        markup=TaskMarkupRecord(
+            tests=[TestedLevelRecord(skill_id=fx.SKILL_FAILED, level=2)],
+            method_named=False,
+            answer=AnswerSpec(type="number", value=MathValue(latex="2/3", sympy="2/3")),
+        ),
+        verification=verification,
+        actor="task_generator@1",
+        idempotency_key=f"task:{task_id}",
+    )
+    return task_id
+
+
+async def test_only_checked_bank_tasks_are_candidates(
+    pg_db: Db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WP13.5: a bank task is shown only when `verification = checked`; the plan offers no
+    other (an unchecked first candidate does not reach the planner)."""
+    learner_id = await create_learner(pg_db)
+    unchecked = await _bank_task(pg_db, learner_id, "Unchecked one", "disputed")
+    checked = await _bank_task(pg_db, learner_id, "Checked one", "checked")
+
+    async def fake_select(_driver: Any, _settings: Any, **kw: Any) -> list[SelectedTask]:
+        return [
+            SelectedTask(task_id=unchecked, traps_target=True, checked=False),
+            SelectedTask(task_id=checked, traps_target=False, checked=True),
+        ]
+
+    monkeypatch.setattr(today, "select_tasks", fake_select)
+    seq = await _two_items(pg_db, learner_id)
+    gateway = _Gateway(
+        TodayPlannerOutput(
+            items=[
+                TodayItemPlan(recommendation="1", tasks=[], generate=False, plan_steps=["a"]),
+                TodayItemPlan(recommendation="2", tasks=[], generate=False, plan_steps=["b"]),
+            ]
+        )
+    )
+    ctx = cast(JobContext, SimpleNamespace(db=pg_db, llm=gateway, settings=SETTINGS, neo4j=None))
+
+    await prepare_today(ctx, fx.FixedGraphReader(), learner_id=learner_id, trigger_seq=seq)
+
+    block = gateway.calls[0]["variables"]["candidate_tasks"]
+    assert "Checked one" in block and "Unchecked one" not in block
+
+
+async def test_a_plan_with_a_missing_item_is_not_written(
+    pg_db: Db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The planner skipped a recommendation: by position the plans would go to the wrong
+    skills, so none is written and no generation is requested."""
+    learner_id = await create_learner(pg_db)
+
+    async def fake_select(_driver: Any, _settings: Any, **kw: Any) -> list[SelectedTask]:
+        return []
+
+    monkeypatch.setattr(today, "select_tasks", fake_select)
+    seq = await _two_items(pg_db, learner_id)
+    gateway = _Gateway(
+        TodayPlannerOutput(
+            items=[TodayItemPlan(recommendation="2", tasks=[], generate=True, plan_steps=["b"])]
+        )
+    )
+    ctx = cast(JobContext, SimpleNamespace(db=pg_db, llm=gateway, settings=SETTINGS, neo4j=None))
+
+    assert (
+        await prepare_today(ctx, fx.FixedGraphReader(), learner_id=learner_id, trigger_seq=seq) == 0
+    )
+    rows = await pg_db.fetch_all(
+        "SELECT 1 FROM content.session_plans WHERE learner_id = %(l)s", {"l": learner_id}
+    )
+    requested = await pg_db.fetch_all(
+        "SELECT 1 FROM core.events WHERE learner_id = %(l)s AND type = 'agent.requested'",
+        {"l": learner_id},
+    )
+    assert rows == [] and requested == []

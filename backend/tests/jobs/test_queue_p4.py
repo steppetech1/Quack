@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import orjson
+import pytest
 from redis.asyncio import Redis
 
 from quack.config import Settings
@@ -512,19 +513,49 @@ async def test_failure_writes_the_event_once(jobs_db: Db) -> None:
     assert len(events) == 1
 
 
-async def test_failure_commits_nothing_when_the_event_fails(jobs_db: Db) -> None:
+async def test_failure_commits_nothing_when_the_event_fails(
+    jobs_db: Db, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Law 7: `failed` and its event are one transaction."""
-    ghost = uuid4()  # no `core.learners` row: append_events refuses
+    learner = await create_learner(jobs_db)
+    await q.enqueue(jobs_db, _plan(learner, "a"))
+    job = await q.claim_next(jobs_db, SETTINGS)
+    assert job is not None
+
+    async def refuses(*_args: object, **_kwargs: object) -> list[object]:
+        raise RuntimeError("the log is away")
+
+    monkeypatch.setattr(q, "append_events", refuses)
+    with pytest.raises(RuntimeError):
+        await q.fail_or_retry(jobs_db, job, "e", SETTINGS, permanent=True)
+    assert await _status(jobs_db, "a") == "running"
+
+
+async def test_job_of_a_deleted_account_fails_without_an_event(jobs_db: Db) -> None:
+    """A job that outlived its learner (`core.learners` row gone) is `failed` with no event to
+    write; before, `append_events` refused and the transition rolled back every time."""
+    ghost = uuid4()
     await q.enqueue(jobs_db, _plan(ghost, "a"))
     job = await q.claim_next(jobs_db, SETTINGS)
     assert job is not None
-    try:
-        await q.fail_or_retry(jobs_db, job, "e", SETTINGS, permanent=True)
-    except LookupError:
-        pass
-    else:  # pragma: no cover
-        raise AssertionError("append_events must have refused")
-    assert await _status(jobs_db, "a") == "running"
+    decision = await q.fail_or_retry(jobs_db, job, "e", SETTINGS, permanent=True)
+    assert decision is not None and decision.status == "failed"
+    assert await _status(jobs_db, "a") == "failed"
+    assert await jobs_db.fetch_all("SELECT 1 FROM core.events") == []
+
+
+async def test_reaper_does_not_stop_at_a_job_it_cannot_return(jobs_db: Db) -> None:
+    """One transaction held every stale job of every learner: a job whose failure could not be
+    written rolled all of them back at each pass. Now each job has its own savepoint."""
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    ghost, learner = uuid4(), await create_learner(jobs_db)
+    await q.enqueue(jobs_db, _plan(ghost, "a", lock_key="a"))
+    await q.enqueue(jobs_db, _plan(learner, "b", lock_key="b"))
+    assert await q.claim_next(jobs_db, settings) is not None
+    assert await q.claim_next(jobs_db, settings) is not None
+    await jobs_db.execute("UPDATE ops.jobs SET heartbeat_at = now() - interval '5 minutes'")
+    assert await q.reap_stale(jobs_db, settings) == 2
+    assert await _status(jobs_db, "a") == await _status(jobs_db, "b") == "failed"
 
 
 async def test_stale_worker_cannot_finish_a_job_it_lost(jobs_db: Db) -> None:
@@ -633,6 +664,25 @@ async def test_visible_jobs_of_the_session_only(jobs_db: Db) -> None:
     assert await q.visible_jobs(jobs_db, other, another) == []
 
 
+async def test_visible_jobs_keep_finished_for_a_few_minutes(jobs_db: Db) -> None:
+    """A `failed` or `succeeded` visible job stays on the plaque for the window, then leaves."""
+    learner, session = await create_learner(jobs_db), uuid4()
+    for key in ("bad", "good", "old"):
+        await q.enqueue(jobs_db, _plan(learner, key, session_id=session, visible=True))
+    await jobs_db.execute(
+        "UPDATE ops.jobs SET status = 'failed', heartbeat_at = now() WHERE job_key = 'bad'"
+    )
+    await jobs_db.execute(
+        "UPDATE ops.jobs SET status = 'succeeded', heartbeat_at = now() WHERE job_key = 'good'"
+    )
+    await jobs_db.execute(
+        "UPDATE ops.jobs SET status = 'failed', heartbeat_at = now() - interval '1 hour' "
+        "WHERE job_key = 'old'"
+    )
+    seen = await q.visible_jobs(jobs_db, learner, session)
+    assert sorted((j.job_key, j.status) for j in seen) == [("bad", "failed"), ("good", "succeeded")]
+
+
 # --- the plaque signal (T-D10; Т-§13.8, D-C-141) ------------------------------------------
 
 
@@ -696,3 +746,72 @@ async def test_periodic_keys(jobs_db: Db) -> None:
         f"sweep-inactive:{minute + 23 * 60}",
         f"sweep-inactive:{minute + 24 * 60}",
     ]
+
+
+# --- the failure hook of `material.parse`: a job the cleaner gives up on fails its material ---
+
+
+async def _stale_parse_job(db: Db, material_status: str, settings: Settings) -> tuple[str, UUID]:
+    import quack.ops.material_parse  # noqa: F401 - registers the failure hook
+
+    learner = await create_learner(db)
+    material = uuid4()
+    await db.execute(
+        "INSERT INTO content.materials (material_id, learner_id, object_key, mime, status) "
+        "VALUES (%(m)s, %(l)s, 'k', 'application/pdf', %(s)s)",
+        {"m": material, "l": learner, "s": material_status},
+    )
+    await q.enqueue(
+        db, _plan(learner, "parse", kind="material.parse", payload={"material_id": str(material)})
+    )
+    assert await q.claim_next(db, settings) is not None
+    await db.execute("UPDATE ops.jobs SET heartbeat_at = now() - interval '5 minutes'")
+    return "parse", material
+
+
+async def _material_status(db: Db, material: UUID) -> str:
+    row = await db.fetch_one(
+        "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
+    )
+    assert row is not None
+    return row["status"]
+
+
+async def test_heartbeat_timeout_on_the_last_attempt_fails_the_material(jobs_db: Db) -> None:
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    key, material = await _stale_parse_job(jobs_db, "uploaded", settings)
+    assert await q.reap_stale(jobs_db, settings) == 1
+    assert await _status(jobs_db, key) == "failed"
+    assert await _material_status(jobs_db, material) == "failed"
+
+
+async def test_a_retried_parse_does_not_fail_the_material(jobs_db: Db) -> None:
+    key, material = await _stale_parse_job(jobs_db, "uploaded", SETTINGS)
+    assert await q.reap_stale(jobs_db, SETTINGS) == 1
+    assert await _status(jobs_db, key) == "queued"
+    assert await _material_status(jobs_db, material) == "uploaded"
+
+
+async def test_a_parsed_material_is_not_overwritten_by_a_failed_job(jobs_db: Db) -> None:
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    key, material = await _stale_parse_job(jobs_db, "parsed", settings)
+    assert await q.reap_stale(jobs_db, settings) == 1
+    assert await _status(jobs_db, key) == "failed"
+    assert await _material_status(jobs_db, material) == "parsed"
+
+
+async def test_a_raising_failure_hook_does_not_undo_failed(jobs_db: Db) -> None:
+    async def broken(db: Db, job: q.ClaimedJob) -> None:
+        await db.execute("SELECT 1/0")
+
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    learner = await create_learner(jobs_db)
+    await q.enqueue(jobs_db, _plan(learner, "a", kind="hooked.kind"))
+    assert await q.claim_next(jobs_db, settings) is not None
+    await jobs_db.execute("UPDATE ops.jobs SET heartbeat_at = now() - interval '5 minutes'")
+    q.FAILURE_HOOKS["hooked.kind"] = broken
+    try:
+        assert await q.reap_stale(jobs_db, settings) == 1
+    finally:
+        del q.FAILURE_HOOKS["hooked.kind"]
+    assert await _status(jobs_db, "a") == "failed"

@@ -11,7 +11,13 @@ import pytest
 
 from quack.api.app import create_app
 from quack.api.ratelimit import enforce_action_rate_limit
-from quack.artifacts.cards import delete_card, edit_card, topic_cards, write_system_cards
+from quack.artifacts.cards import (
+    card_answers,
+    delete_card,
+    edit_card,
+    topic_cards,
+    write_system_cards,
+)
 from quack.artifacts.documents import ArtifactNotFound, Card
 from quack.config import Settings
 from quack.db import Db
@@ -154,7 +160,7 @@ async def test_cards_routes(
         assert listed["cards"] == [
             {
                 "card_id": str(card.card_id), "kind": "sign_to_method", "prompt": "Root test when?",
-                "owner": "system", "generatedBy": None,
+                "owner": "system", "generatedBy": None, "answer": "$\\frac{1}{3}$",
             }
         ]  # fmt: skip
         edit = {"prompt": "When the root test?", "idempotency_key": "p1"}
@@ -163,6 +169,8 @@ async def test_cards_routes(
         assert (await client.patch(f"/v1/cards/{card.card_id}", json=edit)).json() == (
             patched.json()
         )
+        # the successor task keeps the markup, so the edited card shows the same answer
+        assert patched.json()["cards"][0]["answer"] == "$\\frac{1}{3}$"
         new_id = patched.json()["cards"][0]["card_id"]
         drop = {"idempotency_key": "x1"}
         deleted = await client.request("DELETE", f"/v1/cards/{new_id}", json=drop)
@@ -171,3 +179,25 @@ async def test_cards_routes(
         assert (await client.get(f"/v1/topics/{topic_id}/cards")).status_code == 404
         foreign = {"prompt": "x", "idempotency_key": "p1"}
         assert (await client.patch(f"/v1/cards/{card.card_id}", json=foreign)).status_code == 404
+
+
+async def test_card_answer_is_null_without_a_short_answer(pg_db: Db) -> None:
+    """The answer of a card is the reference answer of its task for the reveal; a task with no short
+    answer (a bare proof) or a card with no task in the bank gives `None`."""
+    learner = await create_learner(pg_db)
+    card = await _card(pg_db, learner, "Prove it")
+    bare = records.TaskMarkupRecord(
+        tests=MARKUP.tests, method_named=False, answer=AnswerSpec(type="proof")
+    )
+    proof_id = uuid4()
+    await create_task(
+        pg_db, learner_id=learner, task_id=proof_id, family_id=proof_id, source="generated",
+        condition=TaskCondition(text="Prove it", latex=None), markup=bare,
+        verification="unchecked", actor=WRITER, idempotency_key=f"card:{proof_id}",
+    )  # fmt: skip
+    proof = card.model_copy(update={"card_id": proof_id})
+    ghost = card.model_copy(update={"card_id": uuid4()})
+    answers = await card_answers(pg_db, learner_id=learner, cards=[card, proof, ghost])
+    assert answers == {card.card_id: "$\\frac{1}{3}$", proof_id: None, ghost.card_id: None}
+    other = await create_learner(pg_db)
+    assert await card_answers(pg_db, learner_id=other, cards=[card]) == {card.card_id: None}

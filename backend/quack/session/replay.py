@@ -154,6 +154,7 @@ class _OfflinePorts:
             output.p3_markup,
             skill_labels=guard.skill_labels,
             misconception_labels=guard.misconception_labels,
+            labels=guard.labels,
         )
         reasons = [v.reason for v in found]
         if guard.has_spoiler(turn.text):

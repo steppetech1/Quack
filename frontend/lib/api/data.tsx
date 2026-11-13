@@ -24,12 +24,19 @@ type Data = {
   /** Model of the layered graph per subject (API mode; mocks have their own store) */
   models: Record<string, GraphModel>;
   me: S["Me"] | null;
+  /** Subjects whose graph request has finished at least once (answer, 404 or failure): "not loaded yet" vs "absent" */
+  graphSettled: Record<string, boolean>;
   active: S["SessionView"] | null;
   /**
    * How far the backend projection (graph, topic states) has caught up, from `/v1/learner/stream`.
    * Pages that show projected data re-fetch when it grows; 0 on mocks and before the stream connects.
    */
   appliedSeq: number;
+  /**
+   * Subscribe to the plaque signal of `/v1/learner/stream`: called with a session id on `jobs_changed`, with null when the
+   * stream (re)connects (the queue signal is not replayed, so the client re-reads the jobs). No-op on mocks.
+   */
+  subscribeJobs: (cb: (sessionId: string | null) => void) => () => void;
   /** Re-read the subject list and the active session */
   reload: () => Promise<void>;
   /** Load (or re-load) the topic graph of a subject */
@@ -58,8 +65,10 @@ function MockData({ children }: { children: React.ReactNode }) {
       domains,
       models: {},
       me: null,
+      graphSettled: {},
       active: null,
       appliedSeq: 0,
+      subscribeJobs: () => () => {},
       reload: async () => {},
       loadGraph: async () => {},
       setActive: () => {},
@@ -84,11 +93,20 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const [hubs, setHubs] = useState<Record<string, ApiHub[]>>({});
   const [todays, setTodays] = useState<Record<string, S["TodayView"]>>({});
   const [me, setMe] = useState<S["Me"] | null>(null);
+  const [graphSettled, setGraphSettled] = useState<Record<string, boolean>>({});
   const [active, setActiveState] = useState<S["SessionView"] | null>(null);
   const [history, setHistory] = useState<S["SessionView"][]>([]);
   const [appliedSeq, setAppliedSeq] = useState(0);
   /** Graphs already on screen: the live stream refreshes these */
   const loaded = useRef(new Set<string>());
+  /** Listeners of the background-jobs plaque (`jobs_changed` of the learner stream) */
+  const jobListeners = useRef(new Set<(sessionId: string | null) => void>());
+  const subscribeJobs = useCallback((cb: (sessionId: string | null) => void) => {
+    jobListeners.current.add(cb);
+    return () => {
+      jobListeners.current.delete(cb);
+    };
+  }, []);
 
   const loadHistory = useCallback(async () => {
     const res = await get<S["SessionListResponse"]>("/v1/sessions");
@@ -120,6 +138,8 @@ function ApiData({ children }: { children: React.ReactNode }) {
     } catch (e) {
       // a subject without sessions or materials has no graph yet
       if (!(e instanceof ApiError && e.status === 404)) throw e;
+    } finally {
+      setGraphSettled((m) => (m[domainId] ? m : { ...m, [domainId]: true }));
     }
   }, []);
 
@@ -149,6 +169,22 @@ function ApiData({ children }: { children: React.ReactNode }) {
     void reload();
   }, [reload]);
 
+  // The backend counts "today", due dates and pace in the learner's time zone and falls back to UTC until it is told:
+  // send the browser's once (and again if the learner travels)
+  const meId = me?.learner_id;
+  const savedZone = typeof me?.settings?.timezone === "string" ? me.settings.timezone : null;
+  useEffect(() => {
+    if (!meId) return;
+    let zone: string | undefined;
+    try {
+      zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {}
+    if (!zone || zone === savedZone) return;
+    void patch("/v1/learner/settings", { timezone: zone })
+      .then((r) => setMe((m) => (m ? { ...m, settings: r.settings } : m)))
+      .catch(() => {});
+  }, [meId, savedZone]);
+
   // Live updates: the stream says only "the projection moved", the data comes with ordinary GETs
   useEffect(() => {
     if (!ready || !me) return;
@@ -164,12 +200,24 @@ function ApiData({ children }: { children: React.ReactNode }) {
     };
     const run = async () => {
       for (let attempt = 0; !stop.signal.aborted; attempt++) {
+        let announced = false;
         try {
           await sse(
             "GET",
             "/v1/learner/stream",
             undefined,
             ({ event, data }) => {
+              if (!announced) {
+                // the first frame of a connection: the plaque signal is not replayed, so listeners re-read their jobs
+                announced = true;
+                for (const cb of jobListeners.current) cb(null);
+              }
+              if (event === "jobs_changed") {
+                attempt = 0;
+                const sid = typeof data.session_id === "string" ? data.session_id : null;
+                for (const cb of jobListeners.current) cb(sid);
+                return;
+              }
               if (event !== "projection_advanced" || typeof data.applied_seq !== "number") return;
               attempt = 0;
               const seq = data.applied_seq;
@@ -267,8 +315,8 @@ function ApiData({ children }: { children: React.ReactNode }) {
   }, [termsVersion, t.live.serverDown, t.live.serverError]);
 
   const value = useMemo<Data>(
-    () => ({ ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout }),
-    [ready, error, domains, models, me, active, appliedSeq, reload, loadGraph, setActive, savePreferences, logout],
+    () => ({ ready, error, domains, models, me, graphSettled, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout }),
+    [ready, error, domains, models, me, graphSettled, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout],
   );
   // the gate lies over the app (the app stays mounted: the router needs its segments, and the data loads behind it)
   return (

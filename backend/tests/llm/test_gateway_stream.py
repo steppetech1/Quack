@@ -282,3 +282,62 @@ async def test_graph_step_stopped_by_the_consumer_frees_the_slot(
     gw.settings.teacher_admission_wait_ms = 50  # the slot must be free now, not after GC
     second = await _collect(stream.stream_structured(request))
     assert isinstance(second[-1], StreamCompleted)
+
+
+# --- audit fixes of 2026-11-13: probe without a verdict, a stream without its end event -----
+
+
+async def test_stream_probe_without_a_slot_does_not_lock_the_breaker(
+    pg_db: Db, prompts: PromptRegistry
+) -> None:
+    """The breaker lets one probe through; if the probe finds no free slot of the model
+    (`LLMRateLimitedError`), it ends without a verdict and the next call probes again."""
+    provider = _provider()
+    provider.fail(ScriptedFailure("unavailable", schema_name="StreamAnswer", times=1))
+    gw = _gateway(
+        pg_db,
+        provider,
+        prompts,
+        llm_concurrency={"api": {WONDER: 1}},
+        teacher_admission_wait_ms=50,
+        circuit_failures=1,
+        circuit_open_s=0.2,
+        llm_retry_attempts=0,
+    )
+    request, stream = _stream(gw, uuid4(), uuid4())
+    with pytest.raises(LLMUnavailableError):
+        await _collect(stream.stream_structured(request))  # opens the breaker
+    await asyncio.sleep(0.3)
+
+    # Another role holds the only slot of the model while the probe arrives.
+    holder = asyncio.create_task(gw._semaphore(WONDER).acquire())  # pyright: ignore[reportPrivateUsage]
+    await holder
+    with pytest.raises(LLMRateLimitedError):
+        await _collect(stream.stream_structured(request))  # the probe: no slot
+    gw._semaphore(WONDER).release()  # pyright: ignore[reportPrivateUsage]
+
+    second = await _collect(stream.stream_structured(request))  # must reach the provider
+    assert isinstance(second[-1], StreamCompleted)
+
+
+class _NoEndEvent:
+    """Gives the text and stops without `response.completed`."""
+
+    async def complete_structured(self, request: Any) -> Any:  # pragma: no cover - unused
+        raise AssertionError("not called")
+
+    async def stream_structured(self, request: Any) -> AsyncIterator[StreamEvent]:
+        yield TextDelta('{"label":')
+
+
+async def test_stream_without_the_end_event_has_a_usage_row(
+    pg_db: Db, prompts: PromptRegistry
+) -> None:
+    gw = _gateway(pg_db, _NoEndEvent(), prompts)
+    learner_id = uuid4()
+    request, stream = _stream(gw, learner_id, uuid4())
+
+    events = await _collect(stream.stream_structured(request))
+
+    assert [type(e) for e in events] == [TextDelta]
+    assert [r["status"] for r in await _usage(pg_db, learner_id)] == ["incomplete"]

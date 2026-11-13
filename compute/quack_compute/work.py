@@ -136,6 +136,8 @@ def image_render_strokes(request: RenderStrokesRequest, settings: ComputeSetting
     canvas = np.full((request.height, request.width), 255, dtype=np.uint8)
     thickness = settings.stroke_thickness_px
     for stroke in request.strokes:
+        if not stroke.points:
+            continue  # a stroke without a point draws nothing
         points = np.array([[round(x), round(y)] for x, y in stroke.points], dtype=np.int32)
         if len(points) == 1:
             cv2.circle(canvas, tuple(int(v) for v in points[0]), thickness, 0, -1)

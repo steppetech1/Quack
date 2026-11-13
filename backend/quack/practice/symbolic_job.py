@@ -19,7 +19,7 @@ from quack.events.event_types import AnswerSubmitted
 from quack.events.keys import check_failed_key, verdict_key
 from quack.events.log import NewEvent, append_events
 from quack.practice.answer_spec import LearnerAnswer
-from quack.practice.answers import help_in_session
+from quack.practice.answers import help_in_session, part_spec
 from quack.practice.check import CheckFailed, HelpUsed, NeedsModel, NotYet, Verdict, check
 from quack.practice.model_check import record_verdict
 from quack.practice.repo import event_by_key, event_by_seq
@@ -57,7 +57,7 @@ async def insure_symbolic(
     )
     result = await check(
         LearnerAnswer.model_validate(payload.answer.model_dump()),
-        task.answer_spec,
+        await part_spec(db, learner_id=learner_id, task=task, part=part),
         answer_seq=answer_seq,
         part=part,
         settings=settings,

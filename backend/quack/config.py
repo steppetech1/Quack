@@ -105,13 +105,40 @@ class DiagnosticParams(BaseModel):
 
 
 # Д-§7: the secrets each process role needs in prod (compose passes only these, ТЗ WP9.2).
-# JWT_SECRET is gone with JWT (ТЗ Ф4 §2.3 row 3, WP18.3).
+# JWT_SECRET is gone with JWT (ТЗ Ф4 §2.3 row 3, WP18.3). Beyond the model key and the graph
+# password the table of Д-§7 gives `api` the mail key, Google sign-in, the learner objects and the
+# deletions bucket (with its address, D-C-103), and `workers` the last two: a process without them
+# starts and then cannot sign anyone in, store a file or delete (Т-§19.1, Т-§19.5). `TERMS_VERSION`
+# is no secret, but without it nobody has current terms and no session can start (Т-§19.4).
+# Tracing (LANGSMITH) is optional (D-B-201); Modal is named by Д-§7 for `workers` only and is
+# left to its own checks.
+_STORAGE_SECRETS = (
+    "S3_ENDPOINT",
+    "S3_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "DELETIONS_S3_ENDPOINT",
+    "DELETIONS_S3_ACCESS_KEY",
+    "DELETIONS_S3_SECRET_KEY",
+)
 _PROD_SECRETS_BY_ROLE: dict[str, tuple[str, ...]] = {
-    "api": ("META_API_KEY", "NEO4J_PASSWORD"),
-    "workers": ("META_API_KEY", "NEO4J_PASSWORD"),
+    "api": (
+        "META_API_KEY",
+        "NEO4J_PASSWORD",
+        "EMAIL_API_KEY",
+        "GOOGLE_OIDC_CLIENT_ID",
+        "GOOGLE_OIDC_CLIENT_SECRET",
+        "TERMS_VERSION",
+        *_STORAGE_SECRETS,
+    ),
+    "workers": ("META_API_KEY", "NEO4J_PASSWORD", *_STORAGE_SECRETS),
     "projector": ("NEO4J_PASSWORD",),
     "ops": (),
 }
+
+
+def _filled(value: SecretStr | str | None) -> bool:
+    text = value.get_secret_value() if isinstance(value, SecretStr) else value
+    return bool(text and text.strip())
 
 
 # --- stream B ---
@@ -240,6 +267,9 @@ class Settings(BaseSettings):
     heartbeat_interval_sec: int = 30
     heartbeat_ttl_sec: int = 90
     turn_lock_ttl_sec: int = 60
+    # The holder of the turn lock extends it this often while the turn runs (a turn can outlast
+    # the TTL: model timeouts, retries, tools); a dead process loses the lock after the TTL.
+    turn_lock_renew_sec: int = 20
     llm_semaphore_limit: int = 32
     daily_token_limit_per_learner: int = 150_000
     session_token_limit: int = 40_000
@@ -277,6 +307,14 @@ class Settings(BaseSettings):
     # Д-§4.1, Д-§14.1: API process count and graceful shutdown (compose values: 2 / 30).
     api_workers: int = 1
     api_graceful_shutdown_s: int = 30
+    # Whose `X-Forwarded-For/-Proto` uvicorn believes: the client address of the sign-in limit and
+    # the `https` of the sign-in link come from Caddy, which is a separate container (Д-§3.1), so
+    # the default of uvicorn (127.0.0.1) would see Caddy's address and `http`. compose sets `*`:
+    # `api` is reachable only from the `backend` network, Caddy overwrites the header of a client.
+    api_forwarded_allow_ips: str = "127.0.0.1"
+    # `X-Request-ID` and `X-Trace-ID` of a client are echoed in the response and every log line:
+    # a longer value (or one with characters outside printable ASCII) is replaced by a new id.
+    request_id_max_chars: int = Field(default=64, ge=1)
     # WP3.5 (Д-§6.1): how long `workers` waits for running jobs on SIGTERM.
     worker_shutdown_grace_s: float = 20.0
     # WP3.3: periodic jobs. Phase 3 decisions (ТЗ §6.2).
@@ -680,6 +718,10 @@ class Settings(BaseSettings):
     stuck_erase_times: int = 3
     max_unprompted_marks_per_task: int = 2
     min_intervention_gap_s: int = 45
+    # WP21.3: the longest side, in board pixels, of the image of one pen line sent to compute; the
+    # box comes from client coordinates and the documents give no number (D-C-131). The same
+    # number is `render_strokes_max_side_px` of the compute service.
+    line_render_max_side_px: int = Field(default=8192, ge=1)
     # Client parameters served in GET /v1/me (ТЗ §6.7); Т-§21.3 (§15.2, §15.3, §16.2).
     stroke_batch_ms: int = 300
     line_pause_ms: int = 1200
@@ -773,14 +815,24 @@ class Settings(BaseSettings):
         """Д-§7, ТЗ WP9.2: each process gets only its own secrets, prod requires exactly those of
         the role (`projector` has no META_API_KEY, `migrate` and other `ops` commands none)."""
         if self.env == "prod":
-            secrets = {
+            secrets: dict[str, SecretStr | str | None] = {
                 "META_API_KEY": self.meta_api_key,
                 "NEO4J_PASSWORD": self.neo4j_password,
+                "EMAIL_API_KEY": self.email_api_key,
+                "GOOGLE_OIDC_CLIENT_ID": self.google_oidc_client_id,
+                "GOOGLE_OIDC_CLIENT_SECRET": self.google_oidc_client_secret,
+                "TERMS_VERSION": self.terms_version,
+                "S3_ENDPOINT": self.s3_endpoint,
+                "S3_ACCESS_KEY": self.s3_access_key,
+                "S3_SECRET_KEY": self.s3_secret_key,
+                "DELETIONS_S3_ENDPOINT": self.deletions_s3_endpoint,
+                "DELETIONS_S3_ACCESS_KEY": self.deletions_s3_access_key,
+                "DELETIONS_S3_SECRET_KEY": self.deletions_s3_secret_key,
             }
             missing = [
                 name
                 for name in _PROD_SECRETS_BY_ROLE[self.process_role]
-                if not secrets[name].get_secret_value()
+                if not _filled(secrets[name])
             ]
             if missing:
                 raise ValueError(f"missing required secrets for ENV=prod: {', '.join(missing)}")

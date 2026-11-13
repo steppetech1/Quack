@@ -7,7 +7,7 @@ the session action `answer` with `source = card` (stream B), not a route here.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -17,9 +17,10 @@ from quack.api.auth import get_current_learner_id
 from quack.api.errors import ApiError
 from quack.api.ratelimit import enforce_action_rate_limit
 from quack.api.resources import AppResources, get_resources
-from quack.artifacts.cards import delete_card, edit_card, topic_cards
-from quack.artifacts.documents import Artifact, ArtifactNotFound
+from quack.artifacts.cards import card_answers, delete_card, edit_card, topic_cards
+from quack.artifacts.documents import Artifact, ArtifactNotFound, Card
 from quack.artifacts.notes_routes import KeyedRequest
+from quack.db import Db
 
 # Router-level auth: 401 before body validation (ТЗ Фазы 3 WP1.2, T-A2).
 router = APIRouter(
@@ -36,21 +37,32 @@ class CardEdit(KeyedRequest):
     prompt: str = Field(min_length=1)
 
 
+class CardView(Card):
+    """A card as the learner sees it; `answer` is the reference answer of the task behind it to
+    show on reveal (`None` — the task has no short answer)."""
+
+    answer: str | None = None
+
+
 class CardsResponse(BaseModel):
     """The topic's cards at the current version; `card_id` is the task to answer."""
 
     artifact_id: UUID
     topic_id: UUID | None
     version: int
-    cards: list[dict[str, Any]]
+    cards: list[CardView]
 
 
-def _response(artifact: Artifact) -> CardsResponse:
+async def _response(db: Db, learner_id: UUID, artifact: Artifact) -> CardsResponse:
+    answers = await card_answers(db, learner_id=learner_id, cards=artifact.cards)
     return CardsResponse(
         artifact_id=artifact.artifact_id,
         topic_id=artifact.topic_id,
         version=artifact.version,
-        cards=[card.model_dump(mode="json", by_alias=True) for card in artifact.cards],
+        cards=[
+            CardView.model_validate({**card.model_dump(), "answer": answers[card.card_id]})
+            for card in artifact.cards
+        ],
     )
 
 
@@ -66,7 +78,7 @@ async def get_topic_cards(
         cards = await topic_cards(resources.db, learner_id=learner_id, topic_id=topic_id)
     except ArtifactNotFound as exc:
         raise _not_found(exc) from exc
-    return _response(cards)
+    return await _response(resources.db, learner_id, cards)
 
 
 @router.patch("/cards/{card_id}", response_model=CardsResponse)
@@ -84,7 +96,7 @@ async def patch_card(
         )
     except ArtifactNotFound as exc:
         raise _not_found(exc) from exc
-    return _response(artifact)
+    return await _response(resources.db, learner_id, artifact)
 
 
 @router.delete("/cards/{card_id}", response_model=CardsResponse)
@@ -101,4 +113,4 @@ async def remove_card(
         )
     except ArtifactNotFound as exc:
         raise _not_found(exc) from exc
-    return _response(artifact)
+    return await _response(resources.db, learner_id, artifact)

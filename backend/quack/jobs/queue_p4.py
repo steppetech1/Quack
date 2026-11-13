@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -39,7 +39,7 @@ from redis.asyncio import Redis
 from quack.config import Settings
 from quack.db import Db
 from quack.db.redis import learner_signal_channel
-from quack.events.log import NewEvent, append_events
+from quack.events.log import LearnerNotFoundError, NewEvent, append_events
 from quack.jobs.rules_p4 import JobPlan
 from quack.llm.access import access_mode, budgets_for
 from quack.logging import get_logger
@@ -380,6 +380,35 @@ async def mark_cancelled(db: Db, job: ClaimedJob, *, redis: Redis | None = None)
 
 # --- failure, retry, defer, release -------------------------------------------------------
 
+# A kind may own state that must learn of the job's final failure (a material stays `uploaded`
+# otherwise). The hook runs in the transaction that makes the job `failed`, however it got there:
+# a handler error, a permanent error, a heartbeat timeout seen by the cleaner.
+type FailureHook = Callable[[Db, ClaimedJob], Awaitable[None]]
+
+FAILURE_HOOKS: dict[str, FailureHook] = {}
+
+
+def register_failure_hook(kind: str) -> Callable[[FailureHook], FailureHook]:
+    def decorator(hook: FailureHook) -> FailureHook:
+        if kind in FAILURE_HOOKS:
+            raise ValueError(f"failure hook for job kind {kind!r} is already registered")
+        FAILURE_HOOKS[kind] = hook
+        return hook
+
+    return decorator
+
+
+async def _run_failure_hook(db: Db, job: ClaimedJob) -> None:
+    """A hook that raises must not undo `failed`: it gets its own savepoint and a log line."""
+    hook = FAILURE_HOOKS.get(job.kind)
+    if hook is None:
+        return
+    try:
+        async with db.transaction() as conn, conn.transaction():
+            await hook(db, job)
+    except Exception as exc:
+        log.error("job_failure_hook_failed", kind=job.kind, job_key=job.job_key, error=repr(exc))
+
 
 def backoff_seconds(
     attempts: int, settings: Settings, *, rand: Callable[[], float] = random.random
@@ -463,27 +492,26 @@ async def _write_failure_event(db: Db, job: ClaimedJob, error: str, redis: Redis
         return  # periodic jobs belong to no learner
     request_id = job.payload.get("request_id")
     trigger = job.payload.get("trigger_seq")
-    await append_events(
-        db,
-        job.learner_id,
-        [
-            NewEvent(
-                type="agent.completed",
-                payload={
-                    "request_id": request_id,
-                    "job_key": None if request_id else job.job_key,
-                    "kind": str(job.payload.get("kind") or job.kind),
-                    "ok": False,
-                    "error": error,
-                },
-                actor="system",
-                idempotency_key=f"agent_completed:{job.job_key}",
-                session_id=job.session_id,
-                causation_seq=trigger if isinstance(trigger, int) else None,
-            )
-        ],
-        redis=redis,
+    event = NewEvent(
+        type="agent.completed",
+        payload={
+            "request_id": request_id,
+            "job_key": None if request_id else job.job_key,
+            "kind": str(job.payload.get("kind") or job.kind),
+            "ok": False,
+            "error": error,
+        },
+        actor="system",
+        idempotency_key=f"agent_completed:{job.job_key}",
+        session_id=job.session_id,
+        causation_seq=trigger if isinstance(trigger, int) else None,
     )
+    try:
+        await append_events(db, job.learner_id, [event], redis=redis)
+    except LearnerNotFoundError:
+        # The account was deleted under the job: nobody to answer, and the failure must not
+        # undo the transition (`reap_stale` handles every stale job in one transaction).
+        log.warning("job_failure_of_deleted_learner", job_key=job.job_key)
 
 
 async def fail_or_retry(
@@ -512,6 +540,7 @@ async def fail_or_retry(
         if permanent or job.attempts >= settings.job_max_attempts:
             await _finish(db, job, "failed", message, redis)
             await _write_failure_event(db, job, message, redis)
+            await _run_failure_hook(db, job)
             return RetryDecision("failed", job.attempts, None)
         delay = (
             backoff_seconds(job.attempts, settings, rand=rand)
@@ -557,17 +586,24 @@ async def reap_stale(db: Db, settings: Settings, *, redis: Redis | None = None) 
     """The cleaner (Т-§13.1): a job in work without a pulse for `job_stale_after_sec` returns to
     the queue — or is `failed` when its attempts are out; a stale `cancel_requested` is
     `cancelled`. Returns the number of jobs touched."""
-    async with db.transaction():
+    async with db.transaction() as conn:
         rows = await db.fetch_all(_STALE, {"stale": settings.job_stale_after_sec})
+        touched = 0
         for row in rows:
             job = _claimed(row)
-            if row["status"] == "cancel_requested":
-                await mark_cancelled(db, job, redis=redis)
-            else:
-                await fail_or_retry(
-                    db, job, "heartbeat timeout", settings, retry_delay_s=0.0, redis=redis
-                )
-        return len(rows)
+            try:
+                async with conn.transaction():  # a savepoint: one job does not undo the others
+                    if row["status"] == "cancel_requested":
+                        await mark_cancelled(db, job, redis=redis)
+                    else:
+                        await fail_or_retry(
+                            db, job, "heartbeat timeout", settings, retry_delay_s=0.0, redis=redis
+                        )
+            except Exception as exc:  # law 7: a job that cannot be returned stays for the next pass
+                log.error("job_reap_failed", job_key=job.job_key, error=repr(exc))
+                continue
+            touched += 1
+        return touched
 
 
 # --- cancel and the plaque ----------------------------------------------------------------
@@ -604,13 +640,26 @@ async def request_cancel(
     return CancelOutcome(statuses.count("cancelled"), statuses.count("cancel_requested"))
 
 
+# How long a finished (`succeeded`/`failed`) visible job stays on the plaque, so the client can
+# tell a failed background job from a finished one. The finish moment is the last pulse
+# (`heartbeat_at`): `_FINISH` does not clear it.
+FINISHED_JOB_WINDOW_SEC = 300
+
+
 async def visible_jobs(db: Db, learner_id: UUID, session_id: UUID) -> list[VisibleJob]:
     """`GET /v1/sessions/{id}/jobs` (Т-§13.8): jobs of the session with `visible` in `queued`
-    and `running`; the rows of another learner are never seen."""
+    and `running`, plus those that `succeeded` or `failed` within `FINISHED_JOB_WINDOW_SEC`;
+    the rows of another learner are never seen."""
     rows = await db.fetch_all(
         "SELECT job_key, kind, status, created_at FROM ops.jobs WHERE learner_id = %(learner_id)s "
-        "AND session_id = %(session_id)s AND visible AND status IN ('queued', 'running') "
+        "AND session_id = %(session_id)s AND visible AND (status IN ('queued', 'running') "
+        "OR (status IN ('succeeded', 'failed') "
+        "AND heartbeat_at >= now() - make_interval(secs => %(window)s))) "
         "ORDER BY created_at, job_key",
-        {"learner_id": learner_id, "session_id": session_id},
+        {
+            "learner_id": learner_id,
+            "session_id": session_id,
+            "window": FINISHED_JOB_WINDOW_SEC,
+        },
     )
     return [VisibleJob(r["job_key"], r["kind"], r["status"], r["created_at"]) for r in rows]

@@ -141,3 +141,47 @@ def test_numeric_fields_are_required(field: str) -> None:
         TransitionRequest.model_validate(
             {**BASE, "numeric": numeric, "previous": {"sympy": "x"}, "current": {"sympy": "x"}}
         )
+
+
+@pytest.mark.parametrize("assumption", ["positive", "nonnegative", "integer", "nonzero"])
+def test_latex_answer_shares_the_symbols_of_the_spec(assumption: str) -> None:
+    """The reference is parsed with the assumptions of the spec; the LaTeX answer must get
+    the same symbols, or the numeric check samples `x` of each side independently."""
+    result = _check(
+        student={"latex": "\\frac{x^{2}}{2}"},
+        reference={"sympy": "x**2/2"},
+        variables=[{"name": "x", "assumptions": [assumption]}],
+    )
+    assert (result.status, result.outcome) == ("completed", "correct")
+
+
+def test_latex_answer_is_still_wrong_when_it_is_wrong_under_assumptions() -> None:
+    result = _check(
+        student={"latex": "\\frac{x^{2}}{3}"},
+        reference={"sympy": "x**2/2"},
+        variables=[{"name": "x", "assumptions": ["positive"]}],
+    )
+    assert (result.status, result.outcome) == ("completed", "incorrect")
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        ("0.7071", "correct"),
+        ("0,7071", "correct"),
+        ("7.071e-1", "correct"),
+        ("0.71", "unclear"),  # two significant digits, within half a unit
+        ("0.75", "incorrect"),
+    ],
+)
+def test_decimal_against_an_expression_reference(answer: str, outcome: str) -> None:
+    """Т-§6.4 for `number` with a reference written as an expression: the learner's own
+    precision, not the 1e-9 of the expression mode (the backend sends it as a dimensionless
+    quantity)."""
+    result = _check(
+        kind="quantity",
+        student_text=answer,
+        reference={"sympy": "sqrt(2)/2"},
+        unit="dimensionless",
+    )
+    assert (result.status, result.outcome) == ("completed", outcome)

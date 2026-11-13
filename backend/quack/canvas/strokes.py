@@ -16,6 +16,7 @@ repeated `batch_no` and `stroke_id` and order chunks by their key (the ULID), no
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -26,7 +27,7 @@ import msgpack
 import zstandard
 
 from quack.config import Settings
-from quack.storage.keys import canvas_chunk_key
+from quack.storage.keys import canvas_chunk_key, canvas_chunk_prefix
 from quack.storage.objects import ObjectStore, StorageUnavailable
 
 CHUNK_CONTENT_TYPE = "application/octet-stream"
@@ -132,6 +133,23 @@ def _points(raw: list[list[float | int]]) -> tuple[Point, ...]:
         else:
             points.append(Point(float(x), float(y), int(t), float(pressure)))
     return tuple(points)
+
+
+async def load_journal(
+    storage: ObjectStore, *, learner_id: UUID, session_id: UUID, canvas_id: UUID
+) -> tuple[dict[str, Stroke], set[str]]:
+    """The strokes and the erased stroke ids of every chunk written for the canvas, by any
+    socket before this one (a reconnect starts a socket with an empty memory, D-C-114). A stroke
+    repeated in a second chunk is one stroke. `StorageUnavailable` goes up."""
+    prefix = canvas_chunk_prefix(learner_id, session_id, canvas_id)
+    chunks = await asyncio.gather(*(storage.get(o.key) for o in await storage.list_objects(prefix)))
+    strokes: dict[str, Stroke] = {}
+    erased: set[str] = set()
+    for data in chunks:
+        for batch in decode_chunk(data):
+            strokes.update((stroke.stroke_id, stroke) for stroke in batch.strokes)
+            erased.update(i for erasure in batch.erasures for i in erasure.stroke_ids)
+    return strokes, erased
 
 
 def chunk_max_batches(settings: Settings) -> int:

@@ -187,6 +187,8 @@ async def test_s3_unset_endpoint_is_storage_unavailable_not_a_crash() -> None:
             await store.list_objects("learners/x/")
         with pytest.raises(StorageUnavailable):
             await store.delete_keys(["learners/x/a.bin"])
+        with pytest.raises(StorageUnavailable):  # was a bare ValueError: a 500 on material pages
+            await store.presigned_get_url("learners/x/a.bin", 300)
     finally:
         await store.aclose()
 

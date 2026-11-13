@@ -34,6 +34,7 @@ from quack.materials.parse import (
 )
 from quack.prompts.registry import PromptRegistry
 from quack.runtime import HANDLER_MODULES
+from quack.storage.objects import StorageUnavailable
 from tests.db.fixtures import create_learner
 from tests.support.compute import ComputeScenario, scripted_compute
 from tests.support.llm import ScriptedLLMProvider
@@ -135,6 +136,24 @@ class _World:
                 )
             ],
         )
+        if session_id is not None:  # the session must be the learner's (it was a made-up id)
+            await append_events(
+                self.db,
+                learner,
+                [
+                    NewEvent(
+                        type="session.started",
+                        payload={
+                            "session_id": str(session_id),
+                            "domain_id": str(domain),
+                            "intent": "learn",
+                        },
+                        actor="learner",
+                        idempotency_key=str(uuid4()),
+                        session_id=session_id,
+                    )
+                ],
+            )
         material = await upload_material(
             self.db,
             self.storage,
@@ -300,6 +319,39 @@ async def test_parse_step_repeat_after_a_crash_reuses_pages(world: _World) -> No
     assert queued["payload"]["step"] == "structure"
 
 
+async def test_a_failure_while_storing_pages_leaves_no_pages(world: _World) -> None:
+    """Law 7, WP20.2: the store fails on the second page image. No row of `material_pages`
+    stays (a part of the pages would make the repeat skip the extraction and take it for the
+    whole file); the repeat extracts again and stores every page."""
+    learner, _, material = await world.upload()
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    put = world.storage.put
+    calls = 0
+
+    async def flaky(key: str, data: bytes, content_type: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise StorageUnavailable("down")
+        await put(key, data, content_type)
+
+    world.storage.put = flaky  # type: ignore[method-assign]  # a double of the test
+    with pytest.raises(StorageUnavailable):
+        await parse_step(world.ctx, _job(learner, material))
+    world.storage.put = put  # type: ignore[method-assign]
+    rows = await world.db.fetch_all(
+        "SELECT page FROM content.material_pages WHERE material_id = %(m)s", {"m": material}
+    )
+    assert rows == []
+    await parse_step(world.ctx, _job(learner, material))
+    rows = await world.db.fetch_all(
+        "SELECT page FROM content.material_pages WHERE material_id = %(m)s ORDER BY page",
+        {"m": material},
+    )
+    assert [r["page"] for r in rows] == [1, 2]
+
+
 async def test_parser_gets_batches_and_loses_nothing_on_bad_numbers(world: _World) -> None:
     """Т-§4.3: large materials go to `material_parser` in parallel batches; a number the model
     invented or repeated is dropped, a chunk it skipped stays unmarked."""
@@ -384,6 +436,35 @@ async def test_unknown_material_fails_permanently(world: _World) -> None:
     with pytest.raises(JobFailedPermanently):  # a material of another learner is not found
         await parse_step(world.ctx, _job(learner, material))
     assert other != learner
+
+
+async def test_a_final_failure_marks_the_material_failed(world: _World) -> None:
+    from dataclasses import replace
+
+    from quack.ops.material_parse import handle_material_parse
+
+    learner, _, material = await world.upload()
+    job = _job(learner, material)  # no pages pushed: the compute scenario raises, attempt 1 of 5
+
+    async def status() -> str:
+        row = await world.db.fetch_one(
+            "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
+        )
+        assert row is not None
+        return str(row["status"])
+
+    with pytest.raises(Exception):  # noqa: B017 - any error of the parse
+        await handle_material_parse(job, world.ctx)
+    assert await status() == "uploaded"  # the runner will retry
+    with pytest.raises(Exception):  # noqa: B017
+        await handle_material_parse(replace(job, attempt=5), world.ctx)
+    assert await status() == "failed"  # the last attempt
+    await world.db.execute(
+        "UPDATE content.materials SET status = 'parsed' WHERE material_id = %(m)s", {"m": material}
+    )
+    with pytest.raises(JobFailedPermanently):
+        await handle_material_parse(_job(learner, uuid4()), world.ctx)  # unknown: not ours
+    assert await status() == "parsed"
 
 
 async def test_a_parsed_material_is_not_parsed_again(world: _World) -> None:

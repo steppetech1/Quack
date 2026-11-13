@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from quack.config import ModelPrice, RoleConfig, Settings
+from tests.test_settings_meta_api import PROD_REST
 
 TOKENS = {"input": 1.0, "cached_input": 0.1, "output": 4.0}
 
@@ -77,7 +78,7 @@ def test_an_empty_llm_prices_is_the_empty_table(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setenv("META_API_KEY", "k")
     for role in ("api", "workers"):  # prod still refuses it (D-B-198)
         with pytest.raises(ValidationError, match="LLM_PRICES is required"):
-            _settings(env="prod", process_role=role, neo4j_password="pw")
+            _settings(env="prod", process_role=role, neo4j_password="pw", **PROD_REST)
     _settings(env="prod", process_role="projector", neo4j_password="pw")
 
 

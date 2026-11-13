@@ -4,15 +4,17 @@ import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { API_MODE, del as apiDelete } from "@/lib/api/client";
+import { API_MODE, ApiError, del as apiDelete, get, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useLocale, useT } from "@/lib/i18n/provider";
 import { LOCALES, LOCALE_NAME } from "@/lib/i18n/locale";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
+import { useErrorText } from "./live/error-text";
+import { DataExport } from "./data-export";
 import { PageShell, TEXT_BTN } from "./page-parts";
 import { SkillsTab } from "./skills-tab";
-import { useSoon } from "./soon";
+import { useNotice, useSoon } from "./soon";
 
 const TAB_IDS = ["general", "domains", "skills", "usage", "language", "account"] as const;
 type TabId = (typeof TAB_IDS)[number];
@@ -40,7 +42,8 @@ function usePrefs() {
   const t = useT();
   const { me, savePreferences } = useData();
   const defaults = useMemo<Prefs>(
-    () => ({ name: t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
+    // with the backend the name is the learner's own (empty until they set it), never the mock persona
+    () => ({ name: API_MODE ? "" : t.settings.defaultName, address: "ty", course: t.settings.defaultCourse, replyLang: "ui" }),
     [t],
   );
   const [stored, setStored] = useState<Partial<Prefs> | null>(null);
@@ -265,7 +268,7 @@ function GeneralTab({ prefs, onSave }: { prefs: Prefs; onSave: (p: Prefs) => voi
       </div>
 
       <Row label={tx.settings.nameLabel} id={`${uid}-name`}>
-        <input aria-labelledby={`${uid}-name`} value={draft.name} onChange={(e) => set("name", e.target.value)} className={FIELD} />
+        <input aria-labelledby={`${uid}-name`} value={draft.name} onChange={(e) => set("name", e.target.value)} placeholder={API_MODE ? tx.apiGaps.namePlaceholder : undefined} className={FIELD} />
       </Row>
       <Row label={tx.settings.addressLabel} help={tx.settings.addressHelp} id={`${uid}-addr`}>
         <Radio
@@ -373,9 +376,82 @@ function Meter({ label, value, text, note }: { label: string; value: number; tex
   );
 }
 
+/**
+ * `GET /v1/llm/access`: the state of the shared money pool (`normal` / `tight` / `judges_only`) and what the learner can do about it.
+ * The backend hides the remainder itself, so there is no meter, only a word. A failed read says so quietly and changes nothing else.
+ */
+function LlmAccessRow() {
+  const tx = useT();
+  const { savePreferences } = useData();
+  const notice = useNotice();
+  const [access, setAccess] = useState<S["LLMAccess"] | "unknown" | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let off = false;
+    get<S["LLMAccess"]>("/v1/llm/access")
+      .then((r) => !off && setAccess(r))
+      .catch((e) => !off && setAccess(e instanceof ApiError && e.status === 401 ? null : "unknown"));
+    return () => {
+      off = true;
+    };
+  }, []);
+  if (!access) return null;
+  const s = tx.settings;
+  const mode = access === "unknown" ? null : access.mode;
+  const word = mode === "normal" ? s.accessNormal : mode === "tight" ? s.accessTight : mode === "judges_only" ? s.accessJudgesOnly : "";
+  const note =
+    access === "unknown"
+      ? s.accessUnknown
+      : access.judge && mode !== "normal"
+        ? s.accessJudge
+        : mode === "normal"
+          ? s.accessNormalNote
+          : mode === "tight"
+            ? s.accessTightNote
+            : s.accessJudgesOnlyNote;
+  const becomeJudge = async () => {
+    if (access === "unknown") return;
+    setBusy(true);
+    try {
+      await savePreferences({ [access.preference_key]: true });
+      setAccess({ ...access, judge: true, blocked: false });
+      notice(s.accessJudgeSaved);
+    } catch {
+      notice(s.accessUnknown);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="border-t border-seam-soft py-4">
+      <div className="flex items-baseline justify-between gap-4">
+        <p className="text-body text-paper">{s.accessTitle}</p>
+        {word && <p className="caps shrink-0 text-paper">{word}</p>}
+      </div>
+      <p role="status" className="mt-1.5 text-small text-paper-dim">
+        {note}
+      </p>
+      {access !== "unknown" && access.blocked && (
+        <button type="button" disabled={busy} onClick={() => void becomeJudge()} className={cn(SECONDARY, "mt-3 disabled:opacity-50")}>
+          {s.accessJudgeButton}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function UsageTab() {
   const tx = useT();
   const soon = useSoon();
+  // the backend has no usage endpoint yet: no invented meters, only an honest line
+  if (API_MODE) {
+    return (
+      <div className="mt-4">
+        <LlmAccessRow />
+        <p className="border-t border-seam-soft pt-4 text-body text-paper-dim">{tx.apiGaps.usageUnavailable}</p>
+      </div>
+    );
+  }
   return (
     <div className="mt-4">
       <div className="flex items-center justify-between gap-4 pb-4">
@@ -434,6 +510,9 @@ function AccountTab() {
   const tx = useT();
   const { me, logout } = useData();
   const soon = useSoon();
+  const errorText = useErrorText();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const notice = useNotice();
   const [confirm, setConfirm] = useState(false);
   const del = useRef<HTMLButtonElement>(null);
   const yes = useRef<HTMLButtonElement>(null);
@@ -459,11 +538,9 @@ function AccountTab() {
       </Row>
       <Row label={tx.settings.export} help={tx.settings.exportHelp}>
         {API_MODE ? (
-          <Link href="/library" className={SECONDARY}>
-            {tx.settings.exportBtn}
-          </Link>
+          <DataExport buttonClass={SECONDARY} />
         ) : (
-          <button type="button" onClick={() => soon(tx.settings.exportSoon)} className={SECONDARY}>
+          <button type="button" onClick={() => notice(tx.exportNotice.unavailable)} className={SECONDARY}>
             {tx.settings.exportBtn}
           </button>
         )}
@@ -483,7 +560,8 @@ function AccountTab() {
                     return;
                   }
                   // the backend tombstones the learner and purges the data later; the token stops working
-                  void apiDelete("/v1/learner").then(logout, () => soon(tx.settings.deleteSoon));
+                  setDeleteError(null);
+                  void apiDelete("/v1/learner").then(logout, (e) => setDeleteError(errorText(e)));
                 }}
                 className="caps h-10 rounded-pill border border-st-confused px-6 text-st-confused transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover"
               >
@@ -510,6 +588,11 @@ function AccountTab() {
           >
             {tx.settings.deleteLabel}
           </button>
+        )}
+        {deleteError && (
+          <p role="alert" className="mt-2 text-small text-st-confused">
+            {deleteError}
+          </p>
         )}
       </Row>
     </div>

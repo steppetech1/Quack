@@ -328,11 +328,20 @@ _PROFILE_EVIDENCE = (
     "RETURN e.id AS eid, properties(e) AS ep, s.id AS sid, properties(s) AS sp, "
     "t.id AS tid, properties(t) AS tp"
 )
+_PROFILE = (
+    "MATCH (l:Learner {id: $learner})-[:HAS_PROFILE]->(p:Profile) "
+    "RETURN p.id AS pid, properties(p) AS pp"
+)
 
 
 async def _read_profile_evidence(tx: AsyncManagedTransaction, learner: str) -> SubGraph:
-    """The direct active evidence of the learner with its skill and task (WP5.3)."""
+    """The direct active evidence of the learner with its skill and task (WP5.3), and the
+    `Profile` itself: the fold sets what it has and removes the `learned*` it no longer has,
+    so it must see what the node holds now (T-P1: batches equal the rebuild)."""
     out = _Collected()
+    found = await tx.run(literal(_PROFILE), learner=learner)
+    async for row in found:
+        out.node("Profile", row["pid"], row["pp"])
     rows = await tx.run(literal(_PROFILE_EVIDENCE), learner=learner)
     async for row in rows:
         out.node("Evidence", row["eid"], row["ep"])
@@ -444,6 +453,11 @@ async def write_batch(
         await session.execute_write(_write, learner_id, diff, seq, version)
 
 
+# `Learner.projectorVersion` of a graph written by parts and not finished: a rebuild of a big
+# learner (`replace_learner` with `chunk`) puts it with the watermark 0 until its last write.
+UNFINISHED_VERSION = ""
+
+
 async def replace_learner(
     driver: AsyncDriver,
     learner_id: str,
@@ -455,7 +469,9 @@ async def replace_learner(
 ) -> None:
     """Rebuild (WP3.5, `Т-§2.7`): the learner's subgraph is replaced. `chunk=None` — in one
     transaction; otherwise the old subgraph is deleted and the new one written by parts of at
-    most `chunk` operations, the watermark last (a big learner without an active session)."""
+    most `chunk` operations, the watermark last (a big learner without an active session). Until
+    the last write the learner carries `UNFINISHED_VERSION`: the batch loop clears such a graph
+    and projects the log again (`project_learner`)."""
     diff = SliceDiff(upsert_nodes=list(graph.nodes), delete_nodes=[], upsert_rels=list(graph.rels),
                      delete_rels=[])  # fmt: skip
 
@@ -475,10 +491,10 @@ async def replace_learner(
         await session.execute_write(delete)
         for start in range(0, len(diff.upsert_nodes), chunk):
             part = SliceDiff(diff.upsert_nodes[start : start + chunk], [], [], [])
-            await session.execute_write(_write, learner_id, part, 0, "")
+            await session.execute_write(_write, learner_id, part, 0, UNFINISHED_VERSION)
         for start in range(0, len(diff.upsert_rels), chunk):
             part = SliceDiff([], [], diff.upsert_rels[start : start + chunk], [])
-            await session.execute_write(_write, learner_id, part, 0, "")
+            await session.execute_write(_write, learner_id, part, 0, UNFINISHED_VERSION)
         await session.execute_write(_write, learner_id, SliceDiff([], [], [], []), seq, version)
 
 

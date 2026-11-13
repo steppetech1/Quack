@@ -92,10 +92,11 @@ def _parsed(value: MathInput | None, variables: list[Variable]) -> Any:
     """Т-§22.7: `sympy` first through the grammar; else LaTeX through strict ANTLR."""
     if value is None:
         raise ParseRefused("no input")
+    assumptions = {v.name: {a: True for a in v.assumptions} for v in variables}
     if value.sympy is not None:
-        return parse(value.sympy, {v.name: {a: True for a in v.assumptions} for v in variables})
+        return parse(value.sympy, assumptions)
     if value.latex is not None:
-        return parse_latex_strict(value.latex)
+        return parse_latex_strict(value.latex, assumptions)
     raise ParseRefused("neither sympy nor latex")
 
 

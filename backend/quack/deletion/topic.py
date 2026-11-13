@@ -69,6 +69,19 @@ _ARTIFACTS = (
     "SELECT artifact_id FROM content.artifacts "
     "WHERE learner_id = %(learner_id)s AND topic_id = %(topic_uuid)s"
 )
+# The jobs that carry the topic's data (the text of a misconception rides in the payload of
+# `embedding.compute`): the jobs triggered by the events deleted below (`trigger_seq`), the jobs
+# named by the topic, its tasks or its vectors. Before the events go: it reads them.
+_DELETE_JOBS = (
+    "DELETE FROM ops.jobs WHERE learner_id = %(learner_id)s AND ("
+    "payload->>'topic_id' = %(topic)s OR payload->>'task_id' = ANY(%(tasks)s) "
+    "OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload->'nodes') = "
+    "'array' THEN payload->'nodes' ELSE '[]'::jsonb END) n WHERE n->>'node_id' = ANY(%(nodes)s)) "
+    "OR CASE WHEN jsonb_typeof(payload->'trigger_seq') = 'number' "
+    "THEN (payload->>'trigger_seq')::bigint END IN (SELECT seq FROM core.events WHERE "
+    + _SELECTED
+    + "))"
+)
 _DELETES = (
     "DELETE FROM content.tasks WHERE learner_id = %(learner_id)s AND task_id = ANY(%(task_uuids)s)",
     "DELETE FROM content.artifact_versions WHERE learner_id = %(learner_id)s "
@@ -132,11 +145,15 @@ async def erase_topic(
         params["answers"] = [r["seq"] for r in await db.fetch_all(_ANSWERS, params)]
         params["artifacts"] = [r["artifact_id"] for r in await db.fetch_all(_ARTIFACTS, params)]
         keys = {r["key"] for r in await db.fetch_all(_EVENT_KEYS, params) if r["key"]}
+        await db.execute(_DELETE_JOBS, params)
         await db.execute(_DELETE_EVENTS, params)
         for statement in _DELETES:
             await db.execute(statement, params)
-    if keys:
-        await store.delete_keys(sorted(keys))
+        # Before the commit: a store that fails rolls the rows back, so the repeat still finds
+        # the keys; a commit that fails after it finds the objects gone (idempotent) and
+        # deletes the rows.
+        if keys:
+            await store.delete_keys(sorted(keys))
     return len(keys)
 
 
@@ -150,20 +167,21 @@ async def apply_topic_record(
     *,
     redis: Redis | None = None,
 ) -> bool:
-    """The deletion of the record, its row of `ops.deletion_log`, the rebuild; repeatable."""
+    """The deletion of the record, the rebuild, then its row of `ops.deletion_log` (`Д-§8.5`
+    step 3: a rebuild that did not happen raises and leaves the record to the reconcile)."""
     members = await topic_members(neo4j, learner_id, record.target_id) or ([], [])
     async with db.advisory_lock(LockKeyspace.LEARNER_PROJECTION, learner_id) as acquired:
         if not acquired:
             raise DeletionBusy(str(learner_id))
         await erase_topic(db, store, learner_id, record.target_id, *members)
-        row = {
-            "deletion_id": record.deletion_id,
-            "learner_id": learner_id,
-            "target_id": record.target_id,
-            "deleted_at": record.deleted_at,
-        }
-        await db.execute(_LOG, row)
     await rebuild_after(db, neo4j, settings, learner_id, redis=redis)
+    row = {
+        "deletion_id": record.deletion_id,
+        "learner_id": learner_id,
+        "target_id": record.target_id,
+        "deleted_at": record.deleted_at,
+    }
+    await db.execute(_LOG, row)
     return True
 
 

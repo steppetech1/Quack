@@ -23,6 +23,28 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-A-250. Волна исправлений по аудиту багов (2026-11-13): удаление, очередь, правки ученика, проектор
+- Класс: B (обратимо, внутри контрактов); п.2 и п.10 — уточнение порядка из Д-§8.5 и Т-§2.7
+- WP / место: WP3–WP8, WP17, WP25; `quack/deletion/{account,domain,journal,topic}.py`, `quack/jobs/{queue_p4,rules_p4}.py`, `quack/domains/topic_edits.py`, `quack/review/today.py`, `quack/graph/projection/{handlers,store,rebuild,runner}.py`, `quack/graph/overlay_build.py`
+- Контекст: аудит 2026-11-10 (ветка `local/work`, `18608f8`) нашёл дефекты; каждый проверен по коду и документам перед правкой. Работа локальная, деление на потоки по решению владельца не применялось.
+- Решение:
+  1. Объекты хранилища домена и темы удаляются внутри транзакции строк, до коммита: сбой хранилища откатывает строки, ключи остаются для повтора (`delete_keys` идемпотентен).
+  2. Строка `ops.deletion_log` пишется после успешной пересборки (Д-§8.5 шаг 3); `rebuild_after` при `busy`/`failed` бросает `DeletionBusy` (API — 503), `reconcile`/`replay` обходят все записи и бросают `DeletionBusy` в конце.
+  3. Удаление домена и темы удаляет задачи `ops.jobs`, порождённые удаляемыми событиями (`payload.trigger_seq`) и связанные по payload; домен чистит `counters` диспетчера (эпизоды, `new_topics`), `content.study_plans` своих хабов и `canvas_boards` по `task_id`.
+  4. Удаление аккаунта берёт блокировку строки `ops.dispatcher_offsets` до `DELETE ops.jobs`; `_write_failure_event` терпит `LearnerNotFoundError`; `reap_stale` — точка сохранения на задачу.
+  5. Уточнение D-A-199: согласие на шпаргалку (`agent.requested`) не склеивается (`coalesce_key` убран, `lock_key artifact:{hub}` остался) — задача несёт `request_id` (Т-§13.1).
+  6. Уточнение D-A-193 п.3: «исходное состояние» в ключе `topic.renamed` / `hub.deadline_set` / `hub.topics_changed` / `episode.reassigned` — `seq` последнего события этого вида по цели, а не пара значений `old->new`; повтор уже выставленного значения возвращает то же событие. `topic.hidden:{id}` не менялся: обратного перехода из `hidden` в проекторе нет.
+  7. Ключ `today.shown` — по домену, дате и составу пунктов без `score`.
+  8. `agent.topic_split` без домена берёт `lock_key = topic_split:{learner_id}`.
+  9. Понижение уже вынесенных вердиктов при `task.key_disputed` / `task.markup_disputed` (Т-§5.6) делает обработчик `_task_checked` фазы А: Evidence задачи с `verification="code"` получают `model`, `tier=2`; результат один в пачках, пересборке и наложении.
+  10. `projectorVersion == ""` — метка незаконченной пересборки по частям: перед записью частями `ops.projector_offsets.seq` ставится в 0, проектор чистит частичный граф и проецирует журнал заново (Т-§2.7).
+  11. Свёртка профиля читает узел `Profile` в срез пачки (удаление устаревших `learned*`) и события профиля только до последнего события пачки или наложения.
+  12. `skill.merged` различает связи по identity-свойствам (`TESTS {level, part}`); `edge.removed` для `same_idea` удаляет оба направления (Т-§3.4.3).
+- Почему: законы 5, 7, 8 (Т-§1.1); Т-§2.7, Т-§3.4.3, Т-§5.6, Т-§13.1, Т-§19.5; Д-§8.5; T-P1
+- Обратимость: правки кода без миграций и без смены `rules@3`
+- Тесты: `tests/domains/{test_deletion_fixes,test_edit_keys}.py`, `tests/jobs/{test_queue_p4,test_rules_p4,test_cheatsheet_consent_queue}.py`, `tests/graph/{test_projection_rules3,test_projection_batches,test_projection_runner}.py`; изменены `test_rules_p4.py::test_cheatsheet_consent_is_the_job_of_its_hub` и `::test_topic_split_request_is_a_graph_job_of_the_domain` (закрепляли дефект)
+- Требует подтверждения владельцем: да — не исправлено и ждёт решения: (а) «ядовитое» событие в пачке диспетчера останавливает ученика (нет аналога `projector_failures`); (б) индекс `uq_jobs_running_lock` не покрывает `cancel_requested` (нужна миграция); (в) `topic.created` / `topic.proposed` по id, ставшему Alias, перезаписывает целевую тему
+
 ### D-A-249. Открытые вопросы владельцу (STATUS §6, issue #270) — решены по документам по поручению владельца 2026-11-05
 - Класс: C для пунктов 1, 3, 4, 7, 8 (схема после G1, слой 1 промптов — ТЗ §0.4.4 п.2, п.13); остальные — A/B/C
 - WP / место: STATUS §6; `Фаза 4 — решения (единое).md`; затрагивает B (промпты, D-B-104, D-B-132, D-B-143) и C (D-C-117, D-C-152, D-C-211, D-C-214, Q-C-1). Решения B уже были в #270 (D-B-220); здесь они сверены с документами

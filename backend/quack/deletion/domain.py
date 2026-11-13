@@ -3,8 +3,11 @@
 Order: the record in the R2 journal first — it fails, nothing is deleted (`SERVICE_UNAVAILABLE`);
 then under the learner's advisory lock the rows of the domain within the bounds of `Т-§19.5`
 (every event with its `domain_id`, its sessions whole with all their events, materials, canvases,
-tasks, artifacts) and their objects; then the row of `ops.deletion_log` with the same id; then
-the learner is rebuilt from what is left (WP3.5), so the graph forgets the domain.
+tasks, artifacts, study plans of its hubs, the jobs that carry its data) and their objects, in
+one transaction: the objects go before the commit, so a failed store leaves the rows (and the
+keys they name) for the repeat; then the learner is rebuilt from what is left (WP3.5), so the
+graph forgets the domain; the row of `ops.deletion_log` with the same id comes last (`Д-§8.5`
+step 3): a rebuild that did not happen leaves the record for `deletions.reconcile`.
 """
 
 from __future__ import annotations
@@ -51,7 +54,41 @@ _ARTIFACTS = (
     "SELECT artifact_id FROM content.artifacts "
     "WHERE learner_id = %(learner_id)s AND domain_id = %(domain_id)s"
 )
+_TASKS = (
+    "SELECT task_id FROM content.tasks "
+    "WHERE learner_id = %(learner_id)s AND domain_id = %(domain_id)s"
+)
+_HUBS = (
+    "SELECT DISTINCT payload->>'hub_id' AS hub FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND type = 'hub.created' AND (domain_id = %(domain_id)s "
+    "OR payload->>'domain_id' = %(domain)s)"
+)
+# The jobs that carry the domain's data (the text of a chunk or a misconception rides in the
+# payload of `embedding.compute`): the jobs its events triggered (`trigger_seq`), the jobs of its
+# sessions, its materials and its hygiene. A running one loses its row and stops at its pulse.
+_DELETE_JOBS = (
+    "DELETE FROM ops.jobs WHERE learner_id = %(learner_id)s AND ("
+    "session_id = ANY(%(sessions)s) OR lock_key = %(domain_lock)s "
+    "OR payload->>'domain_id' = %(domain)s OR payload->>'material_id' = ANY(%(material_texts)s) "
+    "OR CASE WHEN jsonb_typeof(payload->'trigger_seq') = 'number' "
+    "THEN (payload->>'trigger_seq')::bigint END IN (SELECT seq FROM core.events "
+    "WHERE learner_id = %(learner_id)s "
+    "AND (domain_id = %(domain_id)s OR session_id = ANY(%(sessions)s))))"
+)
+# The open episodes of the deleted sessions and the counter of new topics of the domain would
+# make the idle check close an episode of a session that no longer exists (WP7.5).
+_FORGET_COUNTERS = (
+    "UPDATE ops.dispatcher_offsets SET counters = jsonb_set(jsonb_set(counters, '{episodes}', "
+    "COALESCE((SELECT jsonb_object_agg(e.k, e.v) FROM jsonb_each(COALESCE(counters->'episodes', "
+    "'{}'::jsonb)) AS e(k, v) WHERE e.k <> ALL(%(session_texts)s) "
+    "AND e.v->>'domain_id' IS DISTINCT FROM %(domain)s), '{}'::jsonb)), '{new_topics}', "
+    "COALESCE(counters->'new_topics', '{}'::jsonb) - %(domain)s::text) "
+    "WHERE learner_id = %(learner_id)s"
+)
 _DELETES = (
+    _DELETE_JOBS,
+    _FORGET_COUNTERS,
+    "DELETE FROM content.study_plans WHERE learner_id = %(learner_id)s AND hub_id = ANY(%(hubs)s)",
     "DELETE FROM core.events WHERE learner_id = %(learner_id)s "
     "AND (domain_id = %(domain_id)s OR session_id = ANY(%(sessions)s))",
     "DELETE FROM content.material_pages WHERE learner_id = %(learner_id)s "
@@ -59,7 +96,7 @@ _DELETES = (
     "DELETE FROM content.materials WHERE learner_id = %(learner_id)s "
     "AND material_id = ANY(%(materials)s)",
     "DELETE FROM content.canvas_boards WHERE learner_id = %(learner_id)s "
-    "AND session_id = ANY(%(sessions)s)",
+    "AND (session_id = ANY(%(sessions)s) OR task_id = ANY(%(tasks)s))",
     "DELETE FROM content.tasks WHERE learner_id = %(learner_id)s AND domain_id = %(domain_id)s",
     "DELETE FROM content.artifact_versions WHERE learner_id = %(learner_id)s "
     "AND artifact_id = ANY(%(artifacts)s)",
@@ -98,33 +135,54 @@ async def _own(neo4j: AsyncDriver, learner_id: UUID, domain_id: UUID) -> bool:
 
 async def erase_domain(db: Db, store: ObjectStore, learner_id: UUID, domain_id: UUID) -> int:
     """The rows and objects of the domain (`Т-§19.5`); returns the number of objects."""
-    params: dict[str, object] = {"learner_id": learner_id, "domain_id": domain_id}
+    params: dict[str, object] = {
+        "learner_id": learner_id,
+        "domain_id": domain_id,
+        "domain": str(domain_id),
+        "domain_lock": f"domain:{domain_id}",
+    }
     async with db.transaction():
-        params["sessions"] = [r["session_id"] for r in await db.fetch_all(_SESSIONS, params)]
+        sessions = [r["session_id"] for r in await db.fetch_all(_SESSIONS, params)]
+        params["sessions"] = sessions
+        params["session_texts"] = [str(s) for s in sessions]
         materials = await db.fetch_all(_MATERIALS, params)
         params["materials"] = [r["material_id"] for r in materials]
+        params["material_texts"] = [str(r["material_id"]) for r in materials]
         params["artifacts"] = [r["artifact_id"] for r in await db.fetch_all(_ARTIFACTS, params)]
+        params["tasks"] = [r["task_id"] for r in await db.fetch_all(_TASKS, params)]
+        params["hubs"] = [UUID(r["hub"]) for r in await db.fetch_all(_HUBS, params) if r["hub"]]
         keys = {r["object_key"] for r in materials}
         keys |= {r["image_key"] for r in await db.fetch_all(_PAGE_KEYS, params)}
         keys |= {r["key"] for r in await db.fetch_all(_EVENT_KEYS, params) if r["key"]}
         for statement in _DELETES:
             await db.execute(statement, params)
-    if keys:
-        await store.delete_keys(sorted(keys))
+        # Before the commit: a store that fails rolls the rows back, so the repeat still finds
+        # the keys; a commit that fails after it finds the objects gone (`delete_keys` is
+        # idempotent) and deletes the rows.
+        if keys:
+            await store.delete_keys(sorted(keys))
     return len(keys)
 
 
 async def rebuild_after(
     db: Db, neo4j: AsyncDriver, settings: Settings, learner_id: UUID, *, redis: Redis | None
 ) -> None:
-    """The graph forgets what was deleted (WP3.5); the projector may hold the lock a moment."""
+    """The graph forgets what was deleted (WP3.5); the projector may hold the lock a moment.
+
+    A rebuild that did not happen (the lock stays busy, or a rule failed) raises `DeletionBusy`:
+    the caller writes no row of `ops.deletion_log`, so `deletions.reconcile` repeats the deletion
+    and the rebuild instead of leaving the deleted nodes in Neo4j for good."""
+    status = "busy"
     for _ in range(_REBUILD_TRIES):
         outcome = await rebuild_learner(
             db, neo4j, settings, learner_id, redis=redis, respect_presence=False
         )
-        if outcome.status != "busy":
-            return
+        status = outcome.status
+        if status != "busy":
+            break
         await asyncio.sleep(0.2)
+    if status != "rebuilt":
+        raise DeletionBusy(f"{learner_id}: the graph was not rebuilt ({status})")
 
 
 async def apply_domain_record(
@@ -137,22 +195,22 @@ async def apply_domain_record(
     *,
     redis: Redis | None = None,
 ) -> None:
-    """The deletion the record names, under the learner's lock, then its row of
-    `ops.deletion_log` and the rebuild. Repeatable: a second run finds nothing to delete and
-    the log row exists (WP25 п.5)."""
+    """The deletion the record names, under the learner's lock, then the rebuild and, last, its
+    row of `ops.deletion_log`. Repeatable: a second run finds nothing to delete and the log row
+    is written once (WP25 п.5)."""
     domain_id = record.target_id
     async with db.advisory_lock(LockKeyspace.LEARNER_PROJECTION, learner_id) as acquired:
         if not acquired:
             raise DeletionBusy(str(learner_id))
         await erase_domain(db, store, learner_id, domain_id)
-        log_row = {
-            "deletion_id": record.deletion_id,
-            "learner_id": learner_id,
-            "target_id": domain_id,
-            "deleted_at": record.deleted_at,
-        }
-        await db.execute(_LOG, log_row)
     await rebuild_after(db, neo4j, settings, learner_id, redis=redis)
+    log_row = {
+        "deletion_id": record.deletion_id,
+        "learner_id": learner_id,
+        "target_id": domain_id,
+        "deleted_at": record.deleted_at,
+    }
+    await db.execute(_LOG, log_row)
 
 
 async def delete_domain(

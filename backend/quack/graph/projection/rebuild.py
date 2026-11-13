@@ -102,6 +102,10 @@ async def rebuild_learner(
             ):
                 return RebuildOutcome("active_session", applied, operations)
             chunk = limit
+            # Written by parts the graph is not whole until the last write: with the copy of the
+            # watermark at 0 a rebuild that fails midway leaves the learner to the batch loop
+            # (`_PENDING`), which clears the partial graph and projects the log again (Т-§2.7).
+            await db.execute(_OFFSET, {"learner_id": learner_id, "seq": 0})
         await replace_learner(neo4j, str(learner_id), graph, applied, RULES_VERSION, chunk=chunk)
         await db.execute(_OFFSET, {"learner_id": learner_id, "seq": applied})
         log.info("rebuild_done", learner_id=str(learner_id), seq=applied, operations=operations)

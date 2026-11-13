@@ -11,7 +11,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Google Callback */
+        /**
+         * Google Callback
+         * @description Google answers `?code&state`, or `?error=access_denied&state` when the learner refuses:
+         *     without `code` that is the same 401 as any other failed sign-in, not a 422 of the framework.
+         */
         get: operations["google_callback_auth_google_callback_get"];
         put?: never;
         post?: never;
@@ -673,6 +677,28 @@ export interface paths {
         patch: operations["patch_learner_skill_v1_learner_skills__skill_id__patch"];
         trace?: never;
     };
+    "/v1/learner/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Export
+         * @description The archive of the learner's data (Т-§19.6). While the last archive is being built or is
+         *     ready, that one is given and nothing is written; after `expired` or `failed` a new request is
+         *     made. The id comes from the key, so a repeat of the request is the same export.
+         */
+        post: operations["request_export_v1_learner_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learner/exports/{export_id}": {
         parameters: {
             query?: never;
@@ -978,7 +1004,8 @@ export interface paths {
         /**
          * Session Jobs
          * @description ТЗ Ф4 §4.8, `Т-§13.8` (WP7.4): the plaque — visible jobs of the session in `queued` and
-         *     `running`; a session of another learner or none — `404` (D-B-207).
+         *     `running`, plus `succeeded`/`failed` ones of the last minutes; a session of another learner
+         *     or none — `404` (D-B-207).
          */
         get: operations["session_jobs_v1_sessions__session_id__jobs_get"];
         put?: never;
@@ -1431,6 +1458,8 @@ export interface components {
             /** Prompt */
             prompt: string;
         };
+        /** @enum {string} */
+        CardKind: "definition" | "sign_to_method" | "distinction" | "against_misconception";
         /**
          * CardSeriesElement
          * @description Серия карточек: card labels (`C…`, §17).
@@ -1447,6 +1476,28 @@ export interface components {
             kind: "card_series";
         };
         /**
+         * CardView
+         * @description A card as the learner sees it; `answer` is the reference answer of the task behind it to
+         *     show on reveal (`None` — the task has no short answer).
+         */
+        CardView: {
+            /** Answer */
+            answer?: string | null;
+            /**
+             * Card Id
+             * Format: uuid
+             */
+            card_id: string;
+            /** Generatedby */
+            generatedBy?: {
+                [key: string]: unknown;
+            } | null;
+            kind: components["schemas"]["CardKind"];
+            owner: components["schemas"]["Owner"];
+            /** Prompt */
+            prompt: string;
+        };
+        /**
          * CardsResponse
          * @description The topic's cards at the current version; `card_id` is the task to answer.
          */
@@ -1457,9 +1508,7 @@ export interface components {
              */
             artifact_id: string;
             /** Cards */
-            cards: {
-                [key: string]: unknown;
-            }[];
+            cards: components["schemas"]["CardView"][];
             /** Topic Id */
             topic_id: string | null;
             /** Version */
@@ -1889,9 +1938,22 @@ export interface components {
         /** @enum {string} */
         EvidenceSource: "code" | "model" | "conversation";
         /**
+         * ExportRequested
+         * @description The archive that was asked for (or the one already on its way); its state is
+         *     `GET /v1/learner/exports/{export_id}`.
+         */
+        ExportRequested: {
+            /**
+             * Export Id
+             * Format: uuid
+             */
+            export_id: string;
+        };
+        /**
          * ExportStatus
          * @description `pending` — requested, the archive is not ready; `ready` — `download_url` lives
-         *     `expires_in_s`; `expired` — the archive is deleted or past its term (build a new one).
+         *     `expires_in_s`; `expired` — the archive is deleted or past its term (ask for a new one);
+         *     `failed` — the job gave up (the storage was down, say), ask again.
          */
         ExportStatus: {
             /** Download Url */
@@ -1909,7 +1971,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "pending" | "ready" | "expired";
+            status: "pending" | "ready" | "expired" | "failed";
         };
         /**
          * FeedEvent
@@ -2481,6 +2543,9 @@ export interface components {
         /**
          * MessageAction
          * @description `message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).
+         *
+         *     `voice_seq` - the message is spoken: the `seq` of its `voice.transcribed` (the answer of
+         *     `POST …/voice`). The words are that event's, so `text` must stay empty.
          */
         MessageAction: {
             /**
@@ -2505,8 +2570,13 @@ export interface components {
             material_ids?: string[];
             /** Skill Invocation */
             skill_invocation?: string | null;
-            /** Text */
-            text: string;
+            /**
+             * Text
+             * @default
+             */
+            text?: string;
+            /** Voice Seq */
+            voice_seq?: number | null;
         };
         /** OpenCanvas */
         OpenCanvas: {
@@ -2515,6 +2585,8 @@ export interface components {
         };
         /** @enum {string} */
         Outcome: "correct" | "incorrect" | "partial" | "unclear";
+        /** @enum {string} */
+        Owner: "system" | "learner";
         /**
          * PaceWarning
          * @description `Т-§14.6`: the hub will not be ready by its date at the current pace.
@@ -3496,9 +3568,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     google_callback_auth_google_callback_get: {
         parameters: {
-            query: {
-                code: string;
-                state: string;
+            query?: {
+                code?: string | null;
+                state?: string | null;
+                error?: string | null;
             };
             header?: never;
             path?: never;
@@ -6274,6 +6347,75 @@ export interface operations {
             };
             /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    request_export_v1_learner_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportRequested"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

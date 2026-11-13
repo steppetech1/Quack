@@ -23,6 +23,28 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-252. Волна исправлений по аудиту багов (2026-11-13): канвас, материалы, compute, вход, хранилище, эксплуатация
+- Класс: B; п.11 (обязательные секреты prod) и п.9 (доверие заголовкам прокси) меняют условия выкатки
+- WP / место: WP9, WP18–WP25; `quack/canvas/{socket,recognition,photo_pipeline,strokes,channel,router}.py`, `quack/materials/{parse,router,library}.py`, `quack/storage/{deletions,objects,uploads}.py`, `quack/auth/router.py`, `quack/api/app.py`, `quack/ops/backup.py`, `quack/cli.py`, `quack/config.py`, `compute/quack_compute/{app,renderer,settings,work}.py`, `compose.yaml`, `deploy/Caddyfile`, `deploy/README.md`
+- Контекст: аудит 2026-11-10 (ветка `local/work`, `18608f8`); каждый дефект проверен по коду и документам перед правкой.
+- Решение:
+  1. Страницы материала пишутся одной транзакцией после записи картинок: сбой не оставляет строк, повтор извлекает файл заново (закон 7).
+  2. Фото-строки идут в проверку шагов через сообщение `line_recognized` с полем `source: "photo"` в канале `canvas:{id}` и хук в relay сокета (WP22.3); `canvas_channel` / `publish_canvas` вынесены в `canvas/channel.py`.
+  3. Строка, стёртая до прихода распознавания, пишется как `canvas.line_erased`; повтор пачки до записи chunk не выполняет `book.add` и стирания повторно; новая запись фото-строки сбрасывает её «стёртость».
+  4. Сокет при старте засевает `LineBook` строками журнала и подгружает штрихи прежних сокетов; повтор `line_ready` с иным прочтением возвращает первую записанную строку. Повтор `batch_no` вторым chunk — не дефект (D-C-114).
+  5. Рендер снимков отдаёт только `VIZ_PAGE_URL`, остальные запросы обрываются (Д-§3.2); `/v1/render/*` под `compute_task_timeout_s`; `render_max_param_sets = 10` (сверх — 422).
+  6. Лимит стороны холста `line_render_max_side_px = 8192` (backend) и `render_strokes_max_side_px = 8192` (compute); штрихи без точек отбрасываются.
+  7. `R2DeletionJournal` реализован на aioboto3 (Д-§8.5): ключ `{deleted_at}-{deletion_id}.json`, `list_since` через `StartAfter`; сбой, пустой endpoint и битый объект — `DeletionJournalUnavailable` (503).
+  8. Загрузки: `read_upload` проверяет размер до чтения и читает не больше лимита + 1 байт; в Caddy `request_body max_size 64MiB` (Т-§19.8).
+  9. uvicorn запускается с `proxy_headers` и `api_forwarded_allow_ips` (в compose `*`: api доступен только из сети backend); Caddy пропускает `/companion/pair`.
+  10. `session_id` в загрузке материала проверяется по `session.started` ученика, иначе 404.
+  11. В prod обязательны: для `api` — `EMAIL_API_KEY`, `GOOGLE_OIDC_*`, `TERMS_VERSION`, `S3_*`, `DELETIONS_S3_*`; для `workers` — `S3_*`, `DELETIONS_S3_*` (Д-§7).
+  12. Отказ на экране Google (`?error=…`) — 401 `UNAUTHENTICATED`; state сравнивается `secrets.compare_digest`; `presigned_get_url` — 503 при сбое; `X-Request-ID` ограничен `request_id_max_chars = 64`; stderr `pg_dump` и `age` читается по ходу.
+- Почему: закон 7; Т-§15.1, Т-§19.1, Т-§19.5, Т-§19.8; Д-§3.1, Д-§3.2, Д-§7, Д-§8.5; ТЗ WP20.2, WP21, WP22.1, WP22.3, WP24
+- Обратимость: правки кода и конфигурации; новые параметры `line_render_max_side_px`, `api_forwarded_allow_ips`, `request_id_max_chars`, в compute `render_max_param_sets`, `render_strokes_max_side_px`
+- Тесты: `tests/canvas/{test_recognition_wp21,test_photo_pipeline_wp22,test_socket_reconnect_wp21}.py`, `tests/materials/*`, `tests/storage/{test_deletion_journal_r2,test_upload_size,test_storage_wp19}.py`, `tests/auth/test_auth_routes.py`, `tests/test_edge_c1.py`, `tests/test_ops_backup.py`, `tests/test_settings_meta_api.py`, `tests/test_settings_p4_review.py`, `compute/tests/test_wp24_endpoints.py`; тесты настроек, закреплявшие «ровно META + NEO4J», расширены
+- Требует подтверждения владельцем: да — (а) бакет `quack-deletions` и `DELETIONS_S3_*` до выкатки, иначе удаление отдаёт 503, а prod не стартует (п.11); (б) перевод приложения на роль `quack_app` (WP9.1) не сделан: нужен отдельный DSN мигратора и `ops db-roles` в локальном стенде; (в) локальные копии d3/plotly в compute для проверки снимком; (г) nonce/PKCE, проверка `Origin` у WebSocket, гашение ссылки входа по GET (так задано WP18), кавычки в `render-env.sh`, `trusted_proxies` Caddy при проксировании через Vercel; значения новых лимитов
+
 ### D-C-241. Q-C-1: `timeout_ms` в тестах compute; `illustrations/` не описывается в `keys.py`
 - Класс: C
 - WP / место: #300 (A → C); `compute/tests/test_compute_service.py`, `backend/tests/test_ops_p4_recovery.py`
@@ -41,6 +63,15 @@
 - Почему: `Т-§19.7`, ТЗ WP23.7, `D-C-140` (карточка - задача банка), `D-C-231`, закон 1 (запрос ученика - событие, маршрут сам задачу не ставит).
 - Обратимость: код; раскладка vault и колоды - формат для ученика, менять только вперёд.
 - Тесты: `tests/artifacts/test_topic_export_wp23_7.py` (vault, YAML, ссылки, имя файла, колода и её повторяемость, формы ответа, три маршрута, чужой ученик, 401, статусы `pending`/`ready`/`expired`); `tests/e2e/routes/c.py` (маршруты в `other_routes`, `export_id` в `ids`).
+
+### D-C-251. WP23.7: `POST /v1/learner/export` и состояние `failed` у `GET /v1/learner/exports/{id}`
+- Класс: C (форма ответа и поведение повтора не заданы документами; `AgentKind` и строка диспетчера - малая правка по D-C-231/D-C-240, класс A, сделана здесь по просьбе владельца).
+- WP / место: WP23.7, `Т-§19.6`; `quack/artifacts/export_routes.py`, `quack/events/records.py` (`AgentKind` += `data_export`), `quack/jobs/rules_p4.py` (`AGENT_JOB_KINDS["data_export"] = "export.data"`), `tests/e2e/routes/c.py`, `openapi.json`.
+- Решение: (1) `POST /v1/learner/export` с телом `{idempotency_key}` пишет `agent.requested {kind: data_export, request_id = export_id, params: {}}` от `learner`, диспетчер ставит `export.data` (P2); ответ `202 {export_id}`. `export_id = uuid5(learner, ключ)`, ключ события `data-export:{key}`. (2) Пока последний архив собирается (`pending`) или готов (`ready`, срок не вышел), повтор с любым ключом возвращает его же и ничего не пишет; после `expired` или `failed` запрос с новым ключом начинает новый архив. Проверка и запись идут под `pg_advisory_xact_lock` ученика, два одновременных запроса не дают два архива. (3) Ответ POST - только `export_id`, а не `ExportStatus`: повтор с тем же ключом даёт тот же ответ, пока архив из `pending` становится `ready` (T-E2). (4) `ExportStatus.status` += `failed`: нет строки `content.exports`, но есть `agent.completed {kind: data_export, ok: false}` с этим `request_id` (его пишет очередь, когда у задачи кончились попытки, например хранилище недоступно). (5) Лимит - общий `enforce_action_rate_limit` на POST.
+- Почему: `Т-§19.6`, закон 1 (запрос - событие), закон 5, ТЗ §6.4.
+- Обратимость: код.
+- Тесты: `tests/artifacts/test_topic_export_wp23_7.py` (событие и `pending`, идемпотентность, `ready` повторно, новый архив после `expired` и `failed`, 401/422), `tests/jobs/test_rules_p4.py` (`data_export` -> `export.data`), `tests/e2e/test_isolation_and_idempotency.py` (T-E2).
+- Требует подтверждения владельцем: нет.
 
 ### D-C-250. WP23.5: формулы листа печатает KaTeX 0.16.11 в Chromium compute; страница размечает формулу элементом `quack-math`, файлы KaTeX лежат в образе compute
 - Класс: C (compute, кроме math; `quack/artifacts/hub_cheatsheet.py`)

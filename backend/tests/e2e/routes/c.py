@@ -274,6 +274,15 @@ STREAM = Stream(
             body=lambda ids, v: {},
             no_other_body="the body has no field besides the key",
         ),
+        # ТЗ Ф4 WP23.7, Т-§19.6: the request of the archive of the data: `agent.requested
+        # {data_export}`, the job `export.data`. A repeat is the same export (pending or ready).
+        Route(
+            "POST",
+            "/v1/learner/export",
+            stage=330,
+            body=lambda ids, v: {},
+            no_other_body="the body has no field besides the key",
+        ),
         # --- routes without `idempotency_key`; each reason is a ТЗ rule ---
         # ТЗ Ф4 §6.4: the body is `{timezone}` only; no event, a repeat sets the same value.
         Route(
@@ -361,7 +370,7 @@ STREAM = Stream(
             # ТЗ Ф4 §6.4 «Артефакты», WP23.1, WP23.4
             ("GET", "/v1/topics/{topic_id}/notes"),
             ("GET", "/v1/topics/{topic_id}/cards"),
-            # ТЗ Ф4 §6.4, WP23.7 (D-C-240): read only; the archive of the data is built by a job
+            # ТЗ Ф4 §6.4, WP23.7 (D-C-240): read only; the archive is asked for by the POST above
             ("GET", "/v1/topics/{topic_id}/export/obsidian"),
             ("GET", "/v1/topics/{topic_id}/export/anki"),
             ("GET", "/v1/learner/exports/{export_id}"),

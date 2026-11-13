@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
-import { ApiError, del, get, idem, put, qs, type S } from "@/lib/api/client";
+import { ApiError, del, get, idem, post, put, qs, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
@@ -205,7 +205,8 @@ export function LibraryLive() {
   );
 }
 
-type NoteBlock = { block_id: string; kind: string; content: string; owner?: string };
+/** `supplementTo` — the system's addition next to a block of the learner: accept (merged into it) or delete */
+type NoteBlock = { block_id: string; kind: string; content: string; owner?: string; supplementTo?: string | null };
 
 /** The notes of a topic as blocks: edit a block (`PUT …/blocks/{id}`) or delete it. The system writes them after sessions; the route id is the topic id */
 export function NoteLive({ noteId }: { noteId: string }) {
@@ -281,6 +282,19 @@ export function NoteLive({ noteId }: { noteId: string }) {
     }
   };
 
+  const accept = async (block: NoteBlock) => {
+    if (!doc) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setDoc(await post(`/v1/artifacts/${doc.artifact_id}/blocks/${block.block_id}/accept`, { idempotency_key: idem() }));
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!loaded) return <PageShell aria-busy="true">{error && <ErrorLine text={error} />}</PageShell>;
   if (!topic) {
     return (
@@ -317,19 +331,26 @@ export function NoteLive({ noteId }: { noteId: string }) {
               </>
             ) : (
               <>
+                {b.supplementTo && <p className="caps mb-2 text-paper-dim">{tx.topicTools.supplement}</p>}
                 <Markdown text={b.content} className="space-y-2 text-body text-paper" />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      setEditing(b.block_id);
-                      setDraft(b.content);
-                    }}
-                    className={SECONDARY_BTN}
-                  >
-                    {tx.live.notesEdit}
-                  </button>
+                  {b.supplementTo ? (
+                    <button type="button" disabled={busy} onClick={() => void accept(b)} className={PRIMARY_BTN}>
+                      {tx.topicTools.accept}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setEditing(b.block_id);
+                        setDraft(b.content);
+                      }}
+                      className={SECONDARY_BTN}
+                    >
+                      {tx.live.notesEdit}
+                    </button>
+                  )}
                   <button type="button" disabled={busy} onClick={() => void remove(b)} className={DANGER_BTN}>
                     {t.delete}
                   </button>

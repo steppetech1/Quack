@@ -10,6 +10,7 @@ from uuid import UUID, uuid4, uuid5
 
 import pytest
 
+from quack.compute_client.math_contracts import MathCheckResponse
 from quack.config import Settings
 from quack.db import Db
 from quack.events.event_types import (
@@ -25,9 +26,10 @@ from quack.events.records import (
     AgentParamsRecord,
     DigestStructuredRecord,
     TaskMarkupRecord,
+    TaskPartRecord,
     TestedLevelRecord,
 )
-from quack.events.values import AnswerSpec, MathValue, Verdict
+from quack.events.values import AnswerOption, AnswerSpec, LearnerAnswer, MathValue, Verdict
 from quack.graph.memory import InMemoryGraph
 from quack.llm.gateway import LLMGateway
 from quack.practice.role_outputs import TaskCondition
@@ -44,6 +46,7 @@ from quack.session.turn_source import (
 )
 from tests.db.fixtures import create_learner
 from tests.support import graph_read as fx
+from tests.support.compute import ComputeScenario, scripted_compute
 from tests.support.llm import ScriptedLLMProvider
 
 SETTINGS = Settings()
@@ -450,7 +453,7 @@ def test_route_builds_the_source_from_the_resources() -> None:
     from quack.session.router import get_turn_context_source
 
     resources = SimpleNamespace(
-        db=None, llm=None, settings=SETTINGS, neo4j=None, redis=None, embeddings=None
+        db=None, llm=None, settings=SETTINGS, neo4j=None, redis=None, embeddings=None, compute=None
     )
     state = SimpleNamespace(resources=resources)
     request = cast(Any, SimpleNamespace(app=SimpleNamespace(state=state)))
@@ -644,3 +647,296 @@ async def test_material_search_is_wired_to_the_embeddings(monkeypatch: pytest.Mo
     assert down is not None
     with pytest.raises(EmbeddingsUnavailable):
         await down("ratio test", [], 5)
+
+
+# --- review of 2026-11-13: the guard's tasks, parts, element answers, the inline verdict ---
+
+
+def test_spoiler_tasks_leave_out_the_solution_asked_and_the_answer_solved() -> None:
+    """Т-§12.4 / WP13.5: «показана, не закрыта, `solution.requested` не было». The task of a
+    solution request (closed only by this very turn) and the task a correct answer solves may
+    be spoken about; the other active tasks stay guarded."""
+    skill = uuid4()
+    asked, answered, plain = uuid4(), uuid4(), uuid4()
+    events = [
+        _task(1, asked, skill),
+        _task(2, answered, skill),
+        _task(3, plain, skill),
+        _event(4, "solution.requested", {"task_id": str(asked)}),
+        _answer(5, answered),
+        _verdict(6, 5, "correct", "main"),
+    ]
+    request = read_journal(events[:4], 4)
+    assert request.open_tasks == [asked, answered, plain]
+    assert request.spoiler_tasks == [answered, plain]
+    solved = read_journal(events, 5)
+    assert solved.spoiler_tasks == [plain]
+    wrong = read_journal([*events[:5], _verdict(6, 5, "incorrect", "main")], 5)
+    assert wrong.spoiler_tasks == [answered, plain] and wrong.answered is not None
+    assert not wrong.answered.solved
+
+
+def _parted(seq: int, task_id: UUID) -> StoredEvent:
+    spec = AnswerSpec(type="number", value=MathValue(latex="1", sympy="1"))
+    markup = _markup(uuid4()).model_copy(
+        update={
+            "parts": [
+                TaskPartRecord(part="a", answer=spec),
+                TaskPartRecord(part="b", answer=spec),
+            ]
+        }
+    )
+    return _event(
+        seq,
+        "task.created",
+        TaskCreated(
+            task_id=task_id,
+            family_id=uuid4(),
+            source="teacher",
+            markup=markup,
+            verification="unchecked",
+        ),
+    )
+
+
+def test_a_task_with_parts_is_solved_only_when_every_part_is() -> None:
+    """Т-§6.2: a correct part a is not a solved task (it used to close as `solved`)."""
+    task = uuid4()
+    only_a = [_parted(1, task), _answer(2, task), _verdict(3, 2, "correct", "a")]
+    journal = read_journal(only_a, 2)
+    assert journal.answered is not None and not journal.answered.solved
+    assert task in journal.spoiler_tasks
+
+    both = [*only_a, _answer(4, task), _verdict(5, 4, "correct", "b")]
+    journal = read_journal(both, 4)
+    assert journal.answered is not None and journal.answered.solved
+    assert task not in journal.spoiler_tasks
+
+    b_wrong = [*only_a, _answer(4, task), _verdict(5, 4, "incorrect", "b")]
+    answered = read_journal(b_wrong, 4).answered
+    assert answered is not None and not answered.solved
+
+    fixed_a = [*b_wrong, _answer(6, task), _verdict(7, 6, "correct", "b")]
+    answered = read_journal(fixed_a, 6).answered
+    assert answered is not None and answered.solved  # the latest verdict of each part counts
+
+
+def test_a_wrong_attempt_before_the_right_one_does_not_unsolve_the_task() -> None:
+    task = uuid4()
+    events = [
+        _task(1, task, uuid4()),
+        _answer(2, task),
+        _verdict(3, 2, "incorrect", "main"),
+        _answer(4, task),
+        _verdict(5, 4, "correct", "main"),
+    ]
+    answered = read_journal(events, 4).answered
+    assert answered is not None and answered.solved
+
+
+def test_the_answer_of_a_task_element_belongs_to_the_response() -> None:
+    """For `element_response` the action is `element.responded`; its `answer.submitted`
+    (`causation_seq` = the response) and the verdict of that answer are the answered action."""
+    task = uuid4()
+    response = _event(
+        3, "element.responded", {"turn_seq": 2, "element_id": "e1", "response": "5/6"}
+    )
+    answer = _answer(4, task).model_copy(update={"causation_seq": 3})
+    events = [_task(1, task, uuid4()), response, answer, _verdict(5, 4, "correct", "main")]
+
+    journal = read_journal(events, 3)
+
+    assert journal.answered is not None and journal.answered.task_id == task
+    assert journal.answered.solved and journal.answer_seq == 4
+    assert journal.answered_verdict is not None and journal.answered_verdict.answer_seq == 4
+    alone = read_journal([_task(1, task, uuid4()), response], 3)  # a response that is no answer
+    assert alone.answered is None and alone.answer_seq is None
+
+
+def test_the_correct_option_of_a_choice_is_guarded() -> None:
+    spec = AnswerSpec(
+        type="choice",
+        options=[
+            AnswerOption(option_id="A", text="increasing", correct=True),
+            AnswerOption(option_id="B", text="decreasing", correct=False),
+        ],
+    )
+    assert answer_strings(spec) == ["increasing"]
+
+
+EXPRESSION = AnswerSpec(type="expression", value=MathValue(latex="2x", sympy="2*x"))
+
+
+async def _fast_answer(db: Db, learner_id: UUID, session_id: UUID) -> int:
+    """A task whose answer is an expression, and the learner's answer without a verdict."""
+    task_id = uuid4()
+    await create_task(
+        db,
+        learner_id=learner_id,
+        task_id=task_id,
+        family_id=uuid4(),
+        source="generated",
+        condition=TaskCondition(text="Simplify x + x", latex=None),
+        markup=_markup(fx.SKILL_FAILED).model_copy(update={"answer": EXPRESSION}),
+        verification="checked",
+        actor="teacher@2",
+        idempotency_key=f"task:{task_id}",
+        session_id=session_id,
+        domain_id=fx.DOMAIN,
+    )
+    [answer] = await append_events(
+        db,
+        learner_id,
+        [
+            NewEvent(
+                type="answer.submitted",
+                payload=AnswerSubmitted(
+                    task_id=task_id,
+                    answer=LearnerAnswer(kind="expression", value="x+x", sympy="x + x"),
+                    source="chat",
+                ),
+                actor="learner",
+                idempotency_key=f"answer:{uuid4()}",
+                session_id=session_id,
+                domain_id=fx.DOMAIN,
+            )
+        ],
+    )
+    return answer.seq
+
+
+async def _assemble_with_compute(
+    db: Db, learner_id: UUID, session_id: UUID, seq: int, *replies: MathCheckResponse | int
+) -> tuple[Any, ComputeScenario]:
+    scenario = ComputeScenario()
+    scenario.push_for("/v1/math/check", *replies)
+    compute = scripted_compute(scenario)
+    source = MemoryTurnContextSource(
+        db=db,
+        gateway=LLMGateway(ScriptedLLMProvider(), SETTINGS, db=db),
+        settings=SETTINGS,
+        reader=lambda _learner: fx.FixedGraphReader(),
+        compute=compute,
+        clock=lambda: NOW_MS,
+    )
+    try:
+        return await source.assemble(_request(learner_id, session_id, seq)), scenario
+    finally:
+        await compute.aclose()
+
+
+async def _verdicts(db: Db, learner_id: UUID) -> list[dict[str, Any]]:
+    return await db.fetch_all(
+        "SELECT idempotency_key, payload FROM core.events WHERE learner_id = %(l)s "
+        "AND type = 'verdict.recorded' ORDER BY seq",
+        {"l": learner_id},
+    )
+
+
+async def test_the_turn_waits_for_the_fast_verdict_inline(pg_db: Db) -> None:
+    """Т-§6.1, WP11.3, T-CH2: an `expression` answer goes to compute while the context is
+    assembled; the verdict that came in time is written (one, by its key), reaches the turn
+    (`verdict` frame, `stance code`, `solved`) and the guard lets the correct answer be named."""
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    seq = await _fast_answer(pg_db, learner_id, session_id)
+    ok = MathCheckResponse(status="completed", outcome="correct", method="symbolic")
+
+    setup, scenario = await _assemble_with_compute(pg_db, learner_id, session_id, seq, ok)
+
+    frame = setup.assembled.verdict
+    assert frame is not None and (frame.answer_seq, frame.part, frame.outcome) == (
+        seq,
+        "main",
+        "correct",
+    )
+    assert setup.assembled.guard.answered_verdict is not None
+    assert setup.answered is not None and setup.answered.solved
+    assert not setup.assembled.guard.has_spoiler("so it is 2x, well done")  # the task is solved
+    assert b'"timeout_ms":%d' % SETTINGS.symbolic_inline_timeout_ms in scenario.requests[0].content
+    rows = await _verdicts(pg_db, learner_id)
+    assert [r["idempotency_key"] for r in rows] == [f"verdict:{seq}:main"]
+
+
+@pytest.mark.parametrize("reply", [504, 503])
+async def test_a_verdict_that_is_late_is_left_to_the_insurance(pg_db: Db, reply: int) -> None:
+    """Not in time, or compute is down: nothing is written, the turn goes on without a
+    verdict; the answer stays guarded."""
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    seq = await _fast_answer(pg_db, learner_id, session_id)
+
+    setup, _ = await _assemble_with_compute(pg_db, learner_id, session_id, seq, reply)
+
+    assert setup.assembled.verdict is None and setup.assembled.guard.answered_verdict is None
+    assert setup.answered is not None and not setup.answered.solved
+    assert await _verdicts(pg_db, learner_id) == []
+    assert setup.assembled.guard.has_spoiler("so it is 2x, well done")
+
+
+async def test_an_answer_with_a_verdict_is_not_sent_to_compute(pg_db: Db) -> None:
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    seq = await _fast_answer(pg_db, learner_id, session_id)
+    await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="verdict.recorded",
+                payload=Verdict(
+                    answer_seq=seq,
+                    part="main",
+                    outcome="incorrect",
+                    method="symbolic",
+                    verification="code",
+                ),
+                actor="code",
+                idempotency_key=f"verdict:{seq}:main",
+                session_id=session_id,
+                domain_id=fx.DOMAIN,
+                causation_seq=seq,
+            )
+        ],
+    )
+
+    setup, scenario = await _assemble_with_compute(pg_db, learner_id, session_id, seq)
+
+    assert scenario.requests == [] and setup.assembled.verdict is None
+    assert setup.assembled.guard.answered_verdict is not None
+
+
+async def test_the_manifest_keeps_the_events_of_the_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Т-§3.2: `overlay_seqs` of the manifest are the events the slice was read with."""
+    from neo4j import AsyncDriver
+
+    from quack.graph.overlay import SessionOverlay
+    from quack.graph.read import SliceFocus
+    from quack.session import turn_source
+
+    request = _request(fx.LEARNER, SESSION, 5)
+    tail = [_event(4, "message.sent", {"text": "a"}), _event(5, "message.sent", {"text": "b"})]
+    built = SessionOverlay(applied_seq=3, overlay_seq=5, events=tail, graph=InMemoryGraph())
+
+    async def fake_overlay(*_args: Any, **_kwargs: Any) -> SessionOverlay:
+        return built
+
+    async def fake_end(*_args: Any, **_kwargs: Any) -> int:
+        return 5
+
+    monkeypatch.setattr(turn_source, "build_session_overlay", fake_overlay)
+    monkeypatch.setattr(turn_source, "journal_end", fake_end)
+    source = MemoryTurnContextSource(
+        db=cast(Db, None),
+        gateway=cast(LLMGateway, None),
+        settings=SETTINGS,
+        reader=lambda _learner: fx.FixedGraphReader(),
+        neo4j=cast(AsyncDriver, object()),
+    )
+    focus = SliceFocus(skill_ids=[], topic_ids=[], domain_id=None)
+
+    _slice, unavailable, seqs = await source._slice(fx.FixedGraphReader(), request, focus)  # pyright: ignore[reportPrivateUsage]
+
+    assert not unavailable and seqs == [4, 5]

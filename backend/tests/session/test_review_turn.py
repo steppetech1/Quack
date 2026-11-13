@@ -147,3 +147,40 @@ async def test_bank_gives_a_new_family_task_for_a_candidate(monkeypatch: Any) ->
     labels = LabelMap.build(SETTINGS, skills=[fx.SKILL_FAILED], tasks=[task_id])
     text = render_memory_picture(inputs, labels, SETTINGS, NOW_MS)
     assert 'Repeat with a new family, bank task K1: "Reduce 4/6".' in text
+
+
+async def test_bank_offers_only_a_checked_task(monkeypatch: Any) -> None:
+    """Т-§12.4 «Сгенерированное проверено»: `select_tasks` only puts checked tasks first
+    (Т-§5.7); a repeat is offered only from the checked ones — with no checked task in the
+    pick, the candidate gets none."""
+    unchecked, checked = uuid4(), uuid4()
+    picks: list[list[SelectedTask]] = [
+        [
+            SelectedTask(task_id=unchecked, traps_target=False, checked=False),
+            SelectedTask(task_id=checked, traps_target=False, checked=True),
+        ],
+        [SelectedTask(task_id=unchecked, traps_target=False, checked=False)],
+    ]
+
+    async def fake_select(_driver: Any, _settings: Any, **_kw: Any) -> list[SelectedTask]:
+        return picks.pop(0)
+
+    async def fake_get_task(_db: Any, *, task_id: UUID, **_kw: Any) -> Any:
+        return SimpleNamespace(condition=SimpleNamespace(text=f"task {task_id}"))
+
+    monkeypatch.setattr(review_turn, "select_tasks", fake_select)
+    monkeypatch.setattr(review_turn, "get_task", fake_get_task)
+    candidates = [
+        ReviewCandidate(skill_id=NEED, priority=1.0, reasons=["retention"]),
+        ReviewCandidate(skill_id=OTHER, priority=0.5, reasons=["retention"]),
+    ]
+    bank = await bank_for_review(
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        _Reader(),
+        SETTINGS,
+        learner_id=fx.LEARNER,
+        candidates=candidates,
+        targets={},
+    )
+    assert bank == {NEED: [ReviewTask(checked, f"task {checked}")]}

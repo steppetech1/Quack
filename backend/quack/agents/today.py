@@ -25,10 +25,13 @@ from quack.graph.read import GraphReader, HubGoal, create_graph_reader
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob
 from quack.llm.labels import LabelMap, UnknownLabelError
+from quack.logging import get_logger
 from quack.practice.repo import event_by_seq
 from quack.practice.select import select_tasks
 from quack.practice.task_store import get_task
 from quack.practice.today_plan import prepared_session_id
+
+log = get_logger(__name__)
 
 PLANNER_ROLE = "today_planner"
 ALL_LEVELS: list[Level] = [1, 2, 3, 4, 5, 6]
@@ -77,7 +80,9 @@ async def prepare_today(
             skill_id=item.skill_id,
             level=levels[item.skill_id],
         )
-        candidates[item.skill_id] = [t.task_id for t in picked[:per_item]]
+        # WP13.5 «Сгенерированное проверено»: a bank task is shown only when `verification =
+        # checked`, so the plan names no other; an empty bank means `generate` (WP16.8).
+        candidates[item.skill_id] = [t.task_id for t in picked if t.checked][:per_item]
     labels = LabelMap.build(
         settings,
         skills=[item.skill_id for item in shown.items],
@@ -110,9 +115,17 @@ async def prepare_today(
         None,
         f"today.prepare:{trigger_seq}",
     )
+    if len(result.value.items) != len(shown.items):
+        # One plan item per recommendation, in order (the prompt's contract): with another count
+        # the plans cannot be told from each other, so none is written and the teacher starts
+        # from the goal by itself (WP16.8).
+        log.warning(
+            "today_plan_count_mismatch", asked=len(shown.items), got=len(result.value.items)
+        )
+        return 0
     plans: list[dict[str, object]] = []
     requests: list[NewEvent] = []
-    for item, planned in zip(shown.items, result.value.items, strict=False):
+    for item, planned in zip(shown.items, result.value.items, strict=True):
         steps = [s.strip() for s in planned.plan_steps if s.strip()]
         for label in planned.tasks:
             try:

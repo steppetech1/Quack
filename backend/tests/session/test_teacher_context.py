@@ -812,3 +812,17 @@ def test_lasso_refs_in_the_conversation() -> None:
     text = render_conversation(log.events, LabelMap.build(SETTINGS), SETTINGS)
     assert "Learner: why is this wrong?" in text
     assert "Learner points at: canvas line L1, a canvas line, block b-1" in text
+
+
+def test_empty_lasso_adds_no_pointing_line() -> None:
+    """A ref with neither `line_id` nor `block_id` gives no «Learner points at:» line."""
+    from quack.events.event_types import CanvasRef
+
+    log = _Log()
+    log.add(
+        "message.sent",
+        MessageSent(text="hello", canvas_refs=[CanvasRef(canvas_id=SESSION)]),
+    )
+    text = render_conversation(log.events, LabelMap.build(SETTINGS), SETTINGS)
+    assert "Learner: hello" in text
+    assert "points at" not in text

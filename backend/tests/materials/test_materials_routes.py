@@ -75,7 +75,18 @@ async def test_upload_list_and_read(pg_db: Db, client_for: ClientFor, settings: 
     storage = InMemoryObjectStore()
     client = await client_for(learner, storage)
     session_id = uuid4()
+    await _event(
+        pg_db,
+        learner,
+        "session.started",
+        {"session_id": str(session_id), "domain_id": str(domain), "intent": "learn"},
+        session_id=session_id,
+    )
 
+    foreign = await client.post(
+        f"/v1/domains/{domain}/materials", files=_pdf(), data={"session_id": str(uuid4())}
+    )
+    assert foreign.status_code == 404  # not a session of this learner
     uploaded = await client.post(
         f"/v1/domains/{domain}/materials", files=_pdf(), data={"session_id": str(session_id)}
     )

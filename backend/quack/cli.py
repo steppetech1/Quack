@@ -202,6 +202,8 @@ def _run_api(settings: Settings) -> int:
         port=settings.api_port,
         workers=settings.api_workers,
         timeout_graceful_shutdown=settings.api_graceful_shutdown_s,
+        proxy_headers=True,
+        forwarded_allow_ips=settings.api_forwarded_allow_ips,
         log_config=None,
     )
     return 0
