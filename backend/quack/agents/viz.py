@@ -91,8 +91,13 @@ def page_html(output: VizBuilderOutput) -> str:
 async def _check(compute: ComputeClient, html: str, sets: list[dict[str, Any]]) -> list[str]:
     rendered = await compute.render_snapshots(RenderSnapshotsRequest(html=html, param_sets=sets))
     errors: list[str] = []
-    for params, snapshot in zip(sets, rendered.snapshots, strict=False):
+    for index, params in enumerate(sets):
         label = json.dumps(params, sort_keys=True)
+        if index >= len(rendered.snapshots):
+            # A set without a snapshot is not checked, and "not checked" is not "passed" (law 8).
+            errors.append(f"no snapshot at {label}")
+            continue
+        snapshot = rendered.snapshots[index]
         errors.extend(f"console error at {label}: {e}" for e in snapshot.console_errors)
         if snapshot.blank:
             errors.append(f"blank canvas at {label}")

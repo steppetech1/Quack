@@ -31,6 +31,7 @@ from quack.llm.errors import (
     LLMRateLimitedError,
     LLMSchemaError,
     LLMUnavailableError,
+    ProviderUnavailableError,
 )
 from quack.llm.gateway import LLMGateway
 from quack.llm.pressure import pressured_models, set_pressure_flag
@@ -797,3 +798,101 @@ async def test_role_call_with_an_image(pg_db: Db, settings: Settings) -> None:
         "image_url": "data:image/png;base64," + base64.b64encode(b"\x89PNG-line").decode(),
     }
     assert isinstance(text_only["input"][0]["content"], str)
+
+
+# --- WP10.4 / WP5.5 audit fixes (2026-11-13) ------------------------------------------------
+
+
+class _ProbeProvider:
+    """Fails once as the model API, then raises `then` (a probe without a verdict), then
+    answers."""
+
+    def __init__(self, then: BaseException) -> None:
+        self.then = then
+        self.calls = 0
+
+    async def complete_structured(self, request: ProviderRequest) -> ProviderResponse:
+        self.calls += 1
+        if self.calls == 1:
+            raise ProviderUnavailableError("down")
+        if self.calls == 2:
+            raise self.then
+        return ProviderResponse('{"label": "ok"}', 10, 5, 0, request.model)
+
+
+@pytest.mark.parametrize("then", [ValueError("broken answer"), asyncio.CancelledError()])
+async def test_probe_without_a_verdict_does_not_lock_the_breaker(
+    pg_db: Db, role_prompts: PromptRegistry, then: BaseException
+) -> None:
+    """A probe call that ends neither in success nor in failure of the provider (a cancelled
+    client, a body that is not JSON) frees the probe: the next call reaches the model."""
+    model = f"m-{uuid4().hex}"
+    provider = _ProbeProvider(then)
+    gw = _gw(
+        pg_db,
+        provider,
+        role_prompts,
+        llm_role_models={"extractor": model},
+        circuit_failures=1,
+        circuit_open_s=0.2,
+        llm_retry_attempts=0,
+    )
+    with pytest.raises(LLMUnavailableError):
+        await _ask(gw)  # opens the breaker
+    await asyncio.sleep(0.3)
+    with pytest.raises(type(then)):
+        await _ask(gw)  # the probe, which ends without a verdict
+    assert (await _ask(gw)).value.label == "ok"
+    assert provider.calls == 3
+
+
+async def test_failed_label_repair_writes_one_row_per_attempt(
+    pg_db: Db, role_prompts: PromptRegistry
+) -> None:
+    """The second answer of a `check` repair does not parse: the first one is returned and the
+    two attempts have two rows, not three (WP10.4)."""
+    provider = ScriptedLLMProvider()
+    seen: list[ProviderRequest] = []
+
+    def responder(request: ProviderRequest) -> str:
+        seen.append(request)
+        return '{"label": "bad"}' if len(seen) == 1 else "{not json"
+
+    provider.respond("GatewayAnswer", responder)
+    learner = uuid4()
+    gw = _gw(pg_db, provider, role_prompts)
+    result = await _ask(gw, learner_id=learner, check=lambda _v: "unknown label")
+    assert result.value.label == "bad"
+    rows = await _usage(pg_db, learner)
+    assert [r["status"] for r in rows] == ["schema_error", "schema_error"]
+    assert [r["retried"] for r in rows] == [False, True]
+
+
+async def test_cut_answer_is_recorded_with_its_tokens(pg_db: Db, settings: Settings) -> None:
+    """`status: incomplete` carries `usage`: the cut answer is paid, so its row and the budgets
+    count the tokens (WP10.4)."""
+    learner = uuid4()
+    answer = '{"reply_text": "Hi.", "pedagogical_move": "explain"}'
+    handler = _MockResponses(
+        httpx2.Response(200, json=_responses_body("cut", status="incomplete", cached=20)),
+        httpx2.Response(200, json=_responses_body(answer)),
+    )
+    gateway = LLMGateway(_client(handler), settings, _OneTemplateRegistry(), db=pg_db)
+    await gateway.generate_structured(
+        role="teacher",
+        prompt_version=1,
+        response_model=TeacherOutput,
+        variables={"role": "teacher"},
+        learner_id=learner,
+        session_id=None,
+        turn_id=None,
+        idempotency_key=f"cut:{uuid4()}",
+    )
+    rows = await pg_db.fetch_all(
+        "SELECT status, input_tokens, output_tokens, cached_input_tokens FROM ops.llm_usage "
+        "WHERE learner_id = %(l)s ORDER BY id",
+        {"l": learner},
+    )
+    assert [r["status"] for r in rows] == ["incomplete", "ok"]
+    assert (rows[0]["input_tokens"], rows[0]["output_tokens"]) == (100, 40)
+    assert rows[0]["cached_input_tokens"] == 20

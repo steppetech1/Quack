@@ -196,6 +196,11 @@ async def run_split(
         labels = LabelMap.build(
             settings, skills=[s.skill_id for s in named], topics=[memory.topic_id]
         )
+        # `candidate_skills_k` limits the labels (Т-§4.5): a topic with more skills shows the
+        # first ones to the model; the rest has no label and stays with the part that keeps the
+        # topic, like a skill without a name (D-B-213 п.4).
+        shown = [s for s in named if labels.label("skill", s.skill_id)]
+        beyond = [s.skill_id for s in named if not labels.label("skill", s.skill_id)]
         answer = await ctx.llm.generate_structured(
             BUILDER_ROLE,
             int(prompt.rsplit("@", 1)[1]),
@@ -203,15 +208,15 @@ async def run_split(
             {
                 "mode": SPLIT_MODE,
                 "subjects": f"{labels.label('topic', memory.topic_id)}: {_clean(memory.name)}",
-                "candidates": _skill_lines(named, labels),
+                "candidates": _skill_lines(shown, labels),
             },
             learner_id,
             requested.session_id,
             None,
             f"graph.topic_split:{request_id}",
-            check=lambda out: split_problem(out, labels, len(named)),
+            check=lambda out: split_problem(out, labels, len(shown)),
         )
-        if split_problem(answer.value, labels, len(named)) is not None:
+        if split_problem(answer.value, labels, len(shown)) is not None:
             error = "split_not_valid"
             log.warning("topic_split_dropped", request_id=str(request_id))
         else:
@@ -220,7 +225,7 @@ async def run_split(
                 domain_id=domain_id,
                 topic_id=memory.topic_id,
                 skill_ids=[s.skill_id for s in named],
-                unnamed=[s.skill_id for s in memory.skills if not s.name],
+                unnamed=[*(s.skill_id for s in memory.skills if not s.name), *beyond],
                 parts=plan_parts(answer.value, labels),
                 request_id=request_id,
                 actor=prompt,

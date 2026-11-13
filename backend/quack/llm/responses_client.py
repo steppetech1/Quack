@@ -225,11 +225,18 @@ class ResponsesClient:
                 log.info("llm_commentary", model=request.model, text=_message_text(item))
                 continue
             answer = _message_text(item)
-        if data.get("status") == "incomplete":
-            raise ProviderIncompleteError(answer, headers=headers)
         usage = data.get("usage") or {}
         input_details = usage.get("input_tokens_details") or {}
         output_details = usage.get("output_tokens_details") or {}
+        if data.get("status") == "incomplete":
+            raise ProviderIncompleteError(
+                answer,
+                headers=headers,
+                input_tokens=int(usage.get("input_tokens", 0)),
+                output_tokens=int(usage.get("output_tokens", 0)),
+                cached_tokens=int(input_details.get("cached_tokens", 0)),
+                reasoning_tokens=int(output_details.get("reasoning_tokens", 0)),
+            )
         return ProviderResponse(
             content=answer,
             input_tokens=int(usage.get("input_tokens", 0)),
@@ -275,14 +282,21 @@ class ResponsesClient:
         for item in data.get("output") or []:
             if item.get("type") == "message" and item.get("phase") != "commentary":
                 answer = _message_text(item)
-        if data.get("status") == "incomplete":
-            raise ProviderIncompleteError(answer, headers=headers)
         usage = data.get("usage") or {}
+        cached = int((usage.get("input_tokens_details") or {}).get("cached_tokens", 0))
+        if data.get("status") == "incomplete":
+            raise ProviderIncompleteError(
+                answer,
+                headers=headers,
+                input_tokens=int(usage.get("input_tokens", 0)),
+                output_tokens=int(usage.get("output_tokens", 0)),
+                cached_tokens=cached,
+            )
         return ProviderResponse(
             content=answer,
             input_tokens=int(usage.get("input_tokens", 0)),
             output_tokens=int(usage.get("output_tokens", 0)),
-            cached_tokens=int((usage.get("input_tokens_details") or {}).get("cached_tokens", 0)),
+            cached_tokens=cached,
             model=str(data.get("model", request.model)),
             headers=headers,
         )

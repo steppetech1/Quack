@@ -614,3 +614,67 @@ def test_split_topic_requests_the_split_of_a_known_topic_only() -> None:
     assert asked.idempotency_key.endswith(f":agent:topic_split:{TOPIC}")
     assert [e.type for e in split("T9")] == ["turn.committed"]
     assert [e.type for e in split(None)] == ["turn.committed"]
+
+
+def test_what_the_guard_leaves_the_write_can_resolve() -> None:
+    """The guard checks every label `turn_batch` turns into an id: after it drops the unknown
+    ones (the turn after the retries) the write raises no `UnknownLabelError`, which used to fail
+    a turn whose text was already shown (`cancel_requests: ["R9"]`)."""
+    from quack.session.guards import drop_unknown_markup_labels, markup_violations
+
+    labels = LabelMap.build(
+        SETTINGS,
+        skills=[SKILL],
+        topics=[TOPIC],
+        hubs=[HUB],
+        misconceptions=[MISCONCEPTION],
+        requests=[uuid4()],
+    )
+    output = _output(
+        planUpdate={
+            "completed_steps": [],
+            "current_step": "s",
+            "next_steps": [],
+            "branches": [],
+            "cancel_requests": ["R1", "R9"],
+        },
+        deadline=_deadline(coverage=["T1", "T7"]),
+        elements=[
+            {
+                "element_id": "e1",
+                "kind": "short_answer",
+                "prompt": "What is the sum?",
+                "ask_confidence": False,
+            },
+            {"element_id": "e2", "kind": "material_link", "chunk": "P9", "page": None},
+            {"element_id": "e3", "kind": "card_series", "cards": ["C1"]},
+        ],
+    )
+    markup = output.p3_markup
+
+    def violations(m: Any) -> Any:
+        return markup_violations(m, skill_labels={"S1"}, misconception_labels={"M1"}, labels=labels)
+
+    assert violations(markup)
+    manifest = _manifest(uuid4(), uuid4(), labels)
+
+    def write(markup_: Any) -> Any:
+        settled = output.model_copy(update={"p3_markup": markup_})
+        return turn_batch(
+            _turn(settled),
+            labels,
+            manifest=manifest,
+            action_seq=1,
+            domain_id=DOMAIN,
+            settings=SETTINGS,
+            learner_texts=LEARNER,
+        )
+
+    with pytest.raises(UnknownLabelError):
+        write(markup)
+    settled = drop_unknown_markup_labels(
+        markup, skill_labels={"S1"}, misconception_labels={"M1"}, labels=labels
+    )
+    assert violations(settled) == []
+    batch = write(settled)
+    assert [e.type for e in batch.events if e.type == "hub.deadline_set"] == ["hub.deadline_set"]

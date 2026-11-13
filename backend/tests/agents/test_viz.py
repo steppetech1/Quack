@@ -187,3 +187,19 @@ def test_param_sets_and_libraries() -> None:
         update={"viz_static_base_url": "https://x/static/", "viz_libraries": {"D3": "/d3.js"}}
     )
     assert libraries_block(libs) == "D3: https://x/static/d3.js"
+
+
+async def test_a_set_without_a_snapshot_is_not_a_pass(pg_db: Db) -> None:
+    """Compute returned one snapshot for two parameter sets: the second set was not checked,
+    which is an error of the round (law 8), not a pass."""
+    learner_id = await create_learner(pg_db)
+    request_id = await _requested(pg_db, learner_id)
+    gateway = _Gateway([_page("<p>v1</p>", ['{"a": 1}', '{"a": 2}']), _page("<p>v2</p>")])
+    compute = _Compute([[GOOD], [GOOD]])
+
+    done = await _build(
+        pg_db, gateway, compute, InMemoryObjectStore(), learner_id=learner_id, request_id=request_id
+    )
+
+    assert gateway.calls[1]["variables"]["previous_errors"] == 'no snapshot at {"a": 2}'
+    assert done.payload["ok"] is True

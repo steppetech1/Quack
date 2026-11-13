@@ -9,7 +9,9 @@ from uuid import uuid4
 
 import pytest
 
+from quack.config import Settings
 from quack.graph.read.models import RequiresLink
+from quack.llm.labels import LabelMap
 from quack.practice.check import Verdict
 from quack.session.guards import (
     Boundary,
@@ -232,3 +234,127 @@ def test_boundary_names_the_missing_prerequisites_once() -> None:
     assert str(PRE) not in violation.detail and str(PRE2) not in violation.detail
     assert "S1 needs S2 and 1 unlabeled first" in violation.detail
     assert violation.detail.count("S2") == 1
+
+
+# --- every label the write resolves (Т-§12.4 «короткие метки существуют», WP13.5) ---
+
+
+def _label_table() -> LabelMap:
+    return LabelMap.build(
+        Settings(env="test"),
+        skills=[uuid4()],
+        topics=[uuid4()],
+        hubs=[uuid4()],
+        chunks=[uuid4()],
+        requests=[uuid4()],
+        tasks=[uuid4()],
+    )
+
+
+def _request(**params: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "skill": None,
+        "level": None,
+        "topic": None,
+        "task": None,
+        "misconception": None,
+        "description": "d",
+    }
+    return {"kind": "viz", "params": {**base, **params}, "needed_in_session": True}
+
+
+def _plan(*cancel: str) -> dict[str, Any]:
+    return {
+        "completed_steps": [],
+        "current_step": "s",
+        "next_steps": [],
+        "branches": [],
+        "cancel_requests": list(cancel),
+    }
+
+
+def _deadline(**fields: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "hub_label": None,
+        "new_hub_name": "Exam",
+        "deadline_at": "2026-12-01T09:00:00+00:00",
+        "coverage": [],
+        "quote": "q",
+        "control_type": None,
+    }
+    return {**base, **fields}
+
+
+def _link(element_id: str, chunk: str) -> dict[str, Any]:
+    return {"element_id": element_id, "kind": "material_link", "chunk": chunk, "page": None}
+
+
+def _check(markup: TurnMarkup, labels: LabelMap) -> list[GuardViolation]:
+    return markup_violations(markup, skill_labels={"S1"}, misconception_labels=set(), labels=labels)
+
+
+def test_labels_of_requests_cancels_elements_and_deadline_must_exist() -> None:
+    """`cancel_requests: ["R9"]` used to pass the guard and fail the write
+    (`UnknownLabelError`, no turn in the journal); now it is a violation that the retry
+    names, and the same for the other places the write turns a label into an id."""
+    labels = _label_table()
+    clean = _markup(
+        planUpdate=_plan("R1"),
+        agentRequests=[_request(skill="S1", topic="T1", task="K1")],
+        elements=[_link("e2", "P1")],
+        deadline=_deadline(hub_label="H1", new_hub_name=None, coverage=["T1"]),
+    )
+    assert _check(clean, labels) == []
+    assert _check(_markup(), labels) == []
+
+    cases = [
+        (_markup(planUpdate=_plan("R9")), "R9"),
+        (_markup(agentRequests=[_request(topic="T9")]), "T9"),
+        (_markup(agentRequests=[_request(task="K9")]), "K9"),
+        # no card has a label in this call
+        (_markup(elements=[{"element_id": "e2", "kind": "card_series", "cards": ["C1"]}]), "C1"),
+        (
+            _markup(
+                elements=[
+                    {
+                        "element_id": "e2",
+                        "kind": "visualization",
+                        "request": "R9",
+                        "plot": None,
+                        "is_task": False,
+                    }
+                ]
+            ),
+            "R9",
+        ),
+        (_markup(elements=[_link("e2", "P9")]), "P9"),
+        (_markup(deadline=_deadline(hub_label="H9", new_hub_name=None)), "H9"),
+        (_markup(deadline=_deadline(coverage=["T7"])), "T7"),
+    ]
+    for markup, label in cases:
+        [violation] = _check(markup, labels)
+        assert violation.reason == "unknown_label" and label in violation.detail
+
+
+def test_unknown_request_cancel_element_and_deadline_labels_are_dropped() -> None:
+    labels = _label_table()
+    markup = _markup(
+        planUpdate=_plan("R1", "R9"),
+        agentRequests=[_request(topic="T1"), _request(topic="T9")],
+        elements=[_link("e2", "P1"), _link("e3", "P9")],
+        deadline=_deadline(coverage=["T1", "T7"]),
+    )
+    settled = drop_unknown_markup_labels(
+        markup, skill_labels={"S1"}, misconception_labels=set(), labels=labels
+    )
+    assert settled.plan_update.cancel_requests == ["R1"]
+    assert [r.params.topic for r in settled.agent_requests] == ["T1"]
+    assert [e.element_id for e in settled.elements] == ["e2"]
+    assert settled.deadline is not None and settled.deadline.coverage == ["T1"]
+    assert _check(settled, labels) == []
+
+    unknown_hub = _markup(deadline=_deadline(hub_label="H9", new_hub_name=None))
+    dropped = drop_unknown_markup_labels(
+        unknown_hub, skill_labels={"S1"}, misconception_labels=set(), labels=labels
+    )
+    assert dropped.deadline is None
