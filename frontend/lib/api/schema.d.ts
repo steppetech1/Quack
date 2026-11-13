@@ -11,7 +11,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Google Callback */
+        /**
+         * Google Callback
+         * @description Google answers `?code&state`, or `?error=access_denied&state` when the learner refuses:
+         *     without `code` that is the same 401 as any other failed sign-in, not a 422 of the framework.
+         */
         get: operations["google_callback_auth_google_callback_get"];
         put?: never;
         post?: never;
@@ -3564,9 +3568,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     google_callback_auth_google_callback_get: {
         parameters: {
-            query: {
-                code: string;
-                state: string;
+            query?: {
+                code?: string | null;
+                state?: string | null;
+                error?: string | null;
             };
             header?: never;
             path?: never;
