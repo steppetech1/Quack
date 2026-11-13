@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from datetime import UTC, datetime, timedelta
@@ -20,6 +21,13 @@ FAKE_AGE = (
     sys.executable,
     "-c",
     "import sys; sys.stdout.buffer.write(b'AGE:' + sys.stdin.buffer.read())",
+)
+# 300 KB of warnings on stderr (the pipe holds 64 KB) before the dump: `pg_dump` with many objects.
+CHATTY_DUMP = (
+    sys.executable,
+    "-c",
+    "import sys; sys.stderr.write('warning: object ' * 20000);"
+    " sys.stderr.flush(); sys.stdout.buffer.write(b'dump-bytes-' * 200000)",
 )
 FAILING_DUMP = (sys.executable, "-c", "import sys; sys.stderr.write('no connection'); sys.exit(3)")
 
@@ -64,6 +72,17 @@ async def backup(
         alert=calls.alert,
         now=lambda: clock,
     )
+
+
+async def test_backup_survives_a_dump_that_fills_the_stderr_pipe(tmp_path: Path):
+    """The stderr of `pg_dump` and `age` was read once, at the end: more than the pipe holds and
+    the child stopped on the write, the backup hung."""
+    calls = Calls()
+
+    assert await asyncio.wait_for(backup(tmp_path, calls, dump=CHATTY_DUMP), timeout=60) == 0
+
+    [uploaded] = (tmp_path / "r2" / "dumps").glob("*.dump.age")
+    assert uploaded.read_bytes() == b"AGE:" + DUMP
 
 
 async def test_backup_streams_dump_through_encryption_and_keeps_a_local_copy(tmp_path: Path):

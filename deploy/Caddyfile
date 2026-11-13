@@ -1,6 +1,6 @@
 # Quack edge (ТЗ Фазы 4 WP9.2, Д-§3.1, Д-§10). TLS, redirect 80 -> 443, proxy to `api`.
 #
-# Outside the server only the learner API, sign-in and /healthz are reachable. /health/live,
+# Outside the server only the learner API, sign-in, the companion pairing and /healthz are reachable. /health/live,
 # /health/ready, /internal/*, the docs and the OpenAPI document are answered with 404 here and
 # never reach `api` (Т-§19.1, Д-§9.1). The one thing Caddy serves itself is /static/viz/* (the
 # pinned D3, Plotly, KaTeX of the visualizations, deploy/static/viz/, WP9.2, D-C-218).
@@ -15,10 +15,16 @@
 
 {$API_DOMAIN:api.qvack.online} {
 	@public {
-		path /healthz /auth/* /v1/*
+		path /healthz /auth/* /v1/* /companion/pair
 	}
 
 	handle @public {
+		# A request body above this size is answered with 413 before `api` reads it: uploads are
+		# capped at `upload_max_mb` (50) by the API, the rest is multipart overhead (Т-§19.8).
+		# Without it a multi-gigabyte upload is spooled and read by `api` (mem_limit 1g).
+		request_body {
+			max_size 64MiB
+		}
 		# `flush_interval -1`: SSE of the teacher turn and the change channel are not buffered
 		# (Д-§3.1, Т-§1.10).
 		# `stream_close_delay`: a config reload must not cut the canvas WebSocket at once; the

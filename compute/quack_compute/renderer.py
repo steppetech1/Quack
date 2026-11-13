@@ -105,11 +105,9 @@ class Renderer:
         try:
             await page.add_init_script(f"window.QUACK_VIZ_PARAMS = {json.dumps(params)};")
             # Init scripts run on navigation, not on `set_content`: the page is served from
-            # memory at an internal address (no network, Д-§3.2).
-            await page.route(
-                VIZ_PAGE_URL,
-                lambda route: route.fulfill(body=html, content_type="text/html; charset=utf-8"),
-            )
+            # memory at an internal address. The HTML is written by a model (untrusted): every
+            # other request of the page is refused, none reaches a network (Д-§3.2).
+            await page.route("**/*", lambda route: self._serve_viz_page(route, html))
             await page.goto(VIZ_PAGE_URL, wait_until="load")
             png = await page.screenshot(full_page=True)
         finally:
@@ -125,6 +123,12 @@ class Renderer:
             console_errors=errors,
             blank=bool((image == image[0, 0]).all()),
         )
+
+    async def _serve_viz_page(self, route: Route, html: str) -> None:
+        if route.request.url == VIZ_PAGE_URL:
+            await route.fulfill(body=html, content_type="text/html; charset=utf-8")
+        else:
+            await route.abort()
 
     async def pdf(self, request: RenderPdfRequest) -> RenderPdfResponse:
         """HTML → A4 PDF and its page count (Т-§17.6: the one-page check of a cheat sheet).

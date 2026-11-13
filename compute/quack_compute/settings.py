@@ -21,6 +21,10 @@ class ComputeSettings:
     # Hard timeout of one PDF, image or render job; the documents give none — Phase 4 decision
     # D-C-107 (conservative: a longer wait). Math jobs carry their own timeout in the request.
     compute_task_timeout_s: float = 60.0
+    # WP24: the most `/v1/render/snapshots` renders in one call. The documents give no
+    # number («при нескольких значениях параметров»); a call past it is refused with 422 —
+    # Phase 4 decision D-C-107.
+    render_max_param_sets: int = 10
     # Д-§4.2: the only place compute writes temporary files.
     compute_tmp_dir: str = "/srv/quack/tmp"
     # Д-§4.2: the directory «чистится по возрасту раз в час». Who and what age the documents do
@@ -42,6 +46,10 @@ class ComputeSettings:
     align_min_sheet_area_share: float = 0.2
     # WP21.3, a pen line of `render-strokes` in pixels; D-C-110.
     stroke_thickness_px: int = 2
+    # WP21.3: the longest side of the image of `render-strokes`; the request comes from the
+    # coordinates of a client, and the image is `width * height` bytes. A larger one is refused
+    # with 422; the documents give no number — Phase 4 decision D-C-131.
+    render_strokes_max_side_px: int = 8192
 
     @classmethod
     def from_env(cls) -> ComputeSettings:

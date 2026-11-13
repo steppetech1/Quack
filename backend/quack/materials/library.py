@@ -30,6 +30,12 @@ _DOMAIN_OF_LEARNER = (
     "SELECT 1 AS found FROM core.events WHERE learner_id = %(learner_id)s "
     "AND type = 'domain.created' AND payload ->> 'domain_id' = %(domain_id)s LIMIT 1"
 )
+# The session is the learner's when its `session.started` is in the learner's log (law 1), as for
+# canvases: a foreign `session_id` must not reach the event and the parse job.
+_SESSION_OF_LEARNER = (
+    "SELECT 1 AS found FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND type = 'session.started' AND payload ->> 'session_id' = %(session_id)s LIMIT 1"
+)
 _INSERT_MATERIAL = (
     "INSERT INTO content.materials "
     "(material_id, learner_id, domain_id, session_id, object_key, mime, status) "
@@ -94,9 +100,12 @@ async def upload_material(
     redis: Redis | None = None,
 ) -> Material:
     """Store a PDF or an image (type by content, `upload_max_mb`) and record it.
-    `UploadRejected`, `MaterialNotFound` (unknown domain), `StorageUnavailable`."""
+    `UploadRejected`, `MaterialNotFound` (unknown domain or a session that is not the learner's),
+    `StorageUnavailable`."""
     upload = detect_upload(data, max_mb=settings.upload_max_mb)
     await _check_domain(db, learner_id, domain_id)
+    if session_id is not None:
+        await _check_session(db, learner_id, session_id)
     material_id = uuid4()
     object_key = material_original_key(learner_id, material_id, upload.extension)
     # The object first: a failed write leaves no row and no event (Т-§20.7).
@@ -174,6 +183,14 @@ async def _check_domain(db: Db, learner_id: UUID, domain_id: UUID) -> None:
     )
     if found is None:
         raise MaterialNotFound(f"domain {domain_id} not found")
+
+
+async def _check_session(db: Db, learner_id: UUID, session_id: UUID) -> None:
+    found = await db.fetch_one(
+        _SESSION_OF_LEARNER, {"learner_id": learner_id, "session_id": str(session_id)}
+    )
+    if found is None:
+        raise MaterialNotFound(f"session {session_id} not found")
 
 
 def _material(row: dict[str, Any]) -> Material:

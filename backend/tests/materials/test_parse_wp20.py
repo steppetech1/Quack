@@ -34,6 +34,7 @@ from quack.materials.parse import (
 )
 from quack.prompts.registry import PromptRegistry
 from quack.runtime import HANDLER_MODULES
+from quack.storage.objects import StorageUnavailable
 from tests.db.fixtures import create_learner
 from tests.support.compute import ComputeScenario, scripted_compute
 from tests.support.llm import ScriptedLLMProvider
@@ -135,6 +136,24 @@ class _World:
                 )
             ],
         )
+        if session_id is not None:  # the session must be the learner's (it was a made-up id)
+            await append_events(
+                self.db,
+                learner,
+                [
+                    NewEvent(
+                        type="session.started",
+                        payload={
+                            "session_id": str(session_id),
+                            "domain_id": str(domain),
+                            "intent": "learn",
+                        },
+                        actor="learner",
+                        idempotency_key=str(uuid4()),
+                        session_id=session_id,
+                    )
+                ],
+            )
         material = await upload_material(
             self.db,
             self.storage,
@@ -298,6 +317,39 @@ async def test_parse_step_repeat_after_a_crash_reuses_pages(world: _World) -> No
         "SELECT payload FROM ops.jobs WHERE kind = 'material.parse'"
     )
     assert queued["payload"]["step"] == "structure"
+
+
+async def test_a_failure_while_storing_pages_leaves_no_pages(world: _World) -> None:
+    """Law 7, WP20.2: the store fails on the second page image. No row of `material_pages`
+    stays (a part of the pages would make the repeat skip the extraction and take it for the
+    whole file); the repeat extracts again and stores every page."""
+    learner, _, material = await world.upload()
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    put = world.storage.put
+    calls = 0
+
+    async def flaky(key: str, data: bytes, content_type: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise StorageUnavailable("down")
+        await put(key, data, content_type)
+
+    world.storage.put = flaky  # type: ignore[method-assign]  # a double of the test
+    with pytest.raises(StorageUnavailable):
+        await parse_step(world.ctx, _job(learner, material))
+    world.storage.put = put  # type: ignore[method-assign]
+    rows = await world.db.fetch_all(
+        "SELECT page FROM content.material_pages WHERE material_id = %(m)s", {"m": material}
+    )
+    assert rows == []
+    await parse_step(world.ctx, _job(learner, material))
+    rows = await world.db.fetch_all(
+        "SELECT page FROM content.material_pages WHERE material_id = %(m)s ORDER BY page",
+        {"m": material},
+    )
+    assert [r["page"] for r in rows] == [1, 2]
 
 
 async def test_parser_gets_batches_and_loses_nothing_on_bad_numbers(world: _World) -> None:

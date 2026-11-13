@@ -5333,24 +5333,55 @@
   "paths": {
     "/auth/google/callback": {
       "get": {
+        "description": "Google answers `?code&state`, or `?error=access_denied&state` when the learner refuses:\nwithout `code` that is the same 401 as any other failed sign-in, not a 422 of the framework.",
         "operationId": "google_callback_auth_google_callback_get",
         "parameters": [
           {
             "in": "query",
             "name": "code",
-            "required": true,
+            "required": false,
             "schema": {
-              "title": "Code",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
             }
           },
           {
             "in": "query",
             "name": "state",
-            "required": true,
+            "required": false,
             "schema": {
-              "title": "State",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
             }
           }
         ],

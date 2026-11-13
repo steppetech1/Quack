@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from quack_compute import work
@@ -91,6 +91,15 @@ def create_app(settings: ComputeSettings | None = None) -> FastAPI:
         timeout_s = request.app.state.settings.compute_task_timeout_s
         return await pool.run(fn, *args, timeout_s=timeout_s)
 
+    async def within_timeout[R](request: Request, job: Awaitable[R]) -> R:
+        """A job of the renderer (it runs in the event loop, not in the pool) under the same hard
+        timeout as the pool jobs (WP24): past it the job is cancelled and the answer is 504."""
+        timeout_s = request.app.state.settings.compute_task_timeout_s
+        try:
+            return await asyncio.wait_for(job, timeout_s)
+        except TimeoutError as exc:
+            raise JobTimeout(f"job exceeded {timeout_s} s") from exc
+
     @app.get("/health/live")
     async def health_live() -> dict[str, str]:
         return {"status": "ok"}
@@ -126,19 +135,26 @@ def create_app(settings: ComputeSettings | None = None) -> FastAPI:
 
     @app.post("/v1/image/render-strokes")
     async def image_render_strokes(body: RenderStrokesRequest, request: Request) -> ImageResponse:
-        return await in_pool(request, work.image_render_strokes, body, request.app.state.settings)
+        settings: ComputeSettings = request.app.state.settings
+        limit = settings.render_strokes_max_side_px
+        if not (1 <= body.width <= limit and 1 <= body.height <= limit):
+            raise HTTPException(422, f"width and height must be from 1 to {limit}")
+        return await in_pool(request, work.image_render_strokes, body, settings)
 
     @app.post("/v1/render/snapshots")
     async def render_snapshots(
         body: RenderSnapshotsRequest, request: Request
     ) -> RenderSnapshotsResponse:
         renderer: Renderer = request.app.state.renderer
-        return await renderer.snapshots(body)
+        limit = request.app.state.settings.render_max_param_sets
+        if len(body.param_sets) > limit:
+            raise HTTPException(422, f"at most {limit} parameter sets in one call")
+        return await within_timeout(request, renderer.snapshots(body))
 
     @app.post("/v1/render/pdf")
     async def render_pdf(body: RenderPdfRequest, request: Request) -> RenderPdfResponse:
         renderer: Renderer = request.app.state.renderer
-        return await renderer.pdf(body)
+        return await within_timeout(request, renderer.pdf(body))
 
     return app
 

@@ -7,6 +7,7 @@ Public: `POST /auth/link`, `GET /auth/link/verify`, `GET /auth/google/start`,
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -226,11 +227,21 @@ async def google_start(request: Request, resources: Resources) -> Response:
     responses={303: {"description": "Signed in: back to the app"}},
 )
 async def google_callback(
-    code: str, state: str, request: Request, resources: Resources
+    request: Request,
+    resources: Resources,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
 ) -> Response:
+    """Google answers `?code&state`, or `?error=access_denied&state` when the learner refuses:
+    without `code` that is the same 401 as any other failed sign-in, not a 422 of the framework."""
     expected = request.cookies.get(OIDC_STATE_COOKIE)
-    if not expected or expected != state:
+    if not expected or not state or not secrets.compare_digest(expected.encode(), state.encode()):
         return _unauthenticated(request, "sign-in with Google was not started here")
+    if error is not None or not code:
+        response = _unauthenticated(request, "sign-in with Google was not completed")
+        response.delete_cookie(OIDC_STATE_COOKIE, domain=resources.settings.session_cookie_domain)
+        return response
     try:
         identity = await _oidc(request).identity(code=code)
         learner_id = await learner_for_google(resources.db, identity)

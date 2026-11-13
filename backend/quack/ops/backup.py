@@ -39,6 +39,8 @@ CHUNK_BYTES = 1024 * 1024
 # S3 multipart parts are at least 5 MiB except the last one.
 PART_BYTES = 8 * 1024 * 1024
 HTTP_TIMEOUT_S = 10.0
+# How much of the end of a child's stderr goes into the error message (and is kept while reading).
+ERROR_TAIL_BYTES = 500
 
 
 class BackupFailed(Exception):
@@ -175,6 +177,15 @@ def _prune_local(directory: Path) -> None:
         leftover.unlink()
 
 
+async def _drain_tail(stream: asyncio.StreamReader, keep: int = ERROR_TAIL_BYTES) -> bytes:
+    """Read a pipe to its end and keep only the last `keep` bytes: a child that writes more than
+    the pipe buffer (64 KiB) to stderr would otherwise block on the write and never finish."""
+    tail = b""
+    while chunk := await stream.read(CHUNK_BYTES):
+        tail = (tail + chunk)[-keep:]
+    return tail
+
+
 async def _stream_dump(
     dump_cmd: Sequence[str],
     encrypt_cmd: Sequence[str],
@@ -190,7 +201,10 @@ async def _stream_dump(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    assert dump.stdout and encrypt.stdin and encrypt.stdout
+    assert dump.stdout and encrypt.stdin and encrypt.stdout and dump.stderr and encrypt.stderr
+    # `pg_dump` warns per object, `age` may too: read both from the start, not at the end.
+    dump_err_task = asyncio.create_task(_drain_tail(dump.stderr))
+    encrypt_err_task = asyncio.create_task(_drain_tail(encrypt.stderr))
     fd = os.open(local_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 
     async def feed() -> None:
@@ -208,18 +222,20 @@ async def _stream_dump(
         while out := await encrypt.stdout.read(CHUNK_BYTES):
             yield out
         await feeder
-        dump_err, encrypt_err = await asyncio.gather(dump.stderr.read(), encrypt.stderr.read())  # pyright: ignore[reportOptionalMemberAccess]
+        dump_err, encrypt_err = await asyncio.gather(dump_err_task, encrypt_err_task)
         dump_code, encrypt_code = await asyncio.gather(dump.wait(), encrypt.wait())
         if dump_code != 0:
             raise BackupFailed(
-                f"pg_dump exited with {dump_code}: {dump_err.decode(errors='replace')[-500:]}"
+                f"pg_dump exited with {dump_code}: {dump_err.decode(errors='replace')}"
             )
         if encrypt_code != 0:
             raise BackupFailed(
-                f"age exited with {encrypt_code}: {encrypt_err.decode(errors='replace')[-500:]}"
+                f"age exited with {encrypt_code}: {encrypt_err.decode(errors='replace')}"
             )
     finally:
         feeder.cancel()
+        dump_err_task.cancel()
+        encrypt_err_task.cancel()
         for proc in (dump, encrypt):
             if proc.returncode is None:
                 proc.kill()

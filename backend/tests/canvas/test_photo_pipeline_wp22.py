@@ -178,6 +178,58 @@ async def test_photos_of_one_sheet_write_only_new_lines(pg_db: Db, settings: Set
     assert result.committed == [f"{fourth}:{fourth}:0", f"{fourth}:{fourth}:1"]
 
 
+async def test_a_line_struck_out_written_again_and_struck_out_again_is_erased_again(
+    pg_db: Db, settings: Settings
+) -> None:
+    """WP22.3 п.3: the crossed-out state is that of the last writing of the line. A line struck
+    out in one photo, written again in the next and struck out in a third is erased twice (the
+    old erasure does not stand for the new writing)."""
+    learner = await create_learner(pg_db)
+    session_id = uuid4()
+    started = NewEvent(
+        type="session.started",
+        payload={"session_id": str(session_id), "domain_id": str(uuid4()), "intent": "learn"},
+        actor="learner",
+        idempotency_key=str(uuid4()),
+    )
+    await append_events(pg_db, learner, [started])
+    canvas = await open_canvas(pg_db, learner_id=learner, session_id=session_id)
+    storage = InMemoryObjectStore()
+    scenario = ComputeScenario()
+    answer = AlignResponse(aligned=True, image_webp_b64=base64.b64encode(ALIGNED).decode())
+    scenario.push_for(ALIGN, *[answer] * 4)
+    sheet: dict[str, list[dict[str, Any]]] = {"lines": []}
+    provider = ScriptedLLMProvider()
+    provider.respond("RecognizerSheetOutput", lambda _request: dict(sheet))
+    resources = build_app_resources(
+        settings, None, None, db=pg_db, provider=provider,
+        compute=scripted_compute(scenario), storage=storage,
+    )  # fmt: skip
+
+    async def run(line: dict[str, Any]) -> Any:
+        photo_id = await _photo(pg_db, storage, learner, canvas.canvas_id)
+        sheet["lines"] = [line]
+        await run_photo_pipeline(
+            resources.db, resources.llm, resources.compute, storage, settings,
+            learner_id=learner, photo_id=photo_id,
+        )  # fmt: skip
+        return photo_id
+
+    first = await run(_line("2x+4=10", 0.1))
+    await run(_line("2x+4=10", 0.1, crossed=True))  # struck out
+    await run(_line("2x+4=12", 0.1))  # written again, a little changed
+    await run(_line("2x+4=12", 0.1, crossed=True))  # struck out again
+    log = await _log(pg_db, learner)
+    line_id = f"{first}:{first}:0"
+    assert [kind for kind, _, _ in log] == [
+        "canvas.line_committed",
+        "canvas.line_erased",
+        "canvas.line_committed",
+        "canvas.line_erased",
+    ]
+    assert {line for _, line, _ in log} == {line_id}
+
+
 def test_pipeline_job_is_registered() -> None:
     """`photo.pipeline` (P1, stream A's dispatcher row) has its handler in `quack.canvas`."""
     assert JOB_HANDLERS["photo.pipeline"].__module__ == "quack.canvas.photo_pipeline"

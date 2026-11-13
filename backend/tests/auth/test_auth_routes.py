@@ -119,6 +119,15 @@ async def test_google_flow(client: httpx.AsyncClient) -> None:
     assert unverified.status_code == 401
     refused = await client.get("/auth/google/callback", params={"code": "unknown", "state": state})
     assert refused.status_code == 401  # Google refused the code or its id token is not valid
+    # The learner refused at Google: `?error=access_denied&state=…` without `code` was a 422.
+    denied = await client.get(
+        "/auth/google/callback", params={"error": "access_denied", "state": state}
+    )
+    assert denied.status_code == 401
+    assert denied.json()["error"]["code"] == "UNAUTHENTICATED"
+    assert (await client.get("/auth/google/callback")).status_code == 401  # nothing at all
+    start = await client.get("/auth/google/start")  # the refusal ended that attempt
+    state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
     done = await client.get("/auth/google/callback", params={"code": "good", "state": state})
     assert done.status_code == 303 and done.headers["location"] == REDIRECT
     assert (await client.get("/v1/me")).json()["email"] == "gina@example.com"

@@ -111,10 +111,11 @@ class S3ObjectStore:
                 return await body.read()
 
     async def presigned_get_url(self, key: str, ttl_s: int) -> str:
-        s3 = await self._s3()
-        url = await s3.generate_presigned_url(
-            "get_object", Params={"Bucket": self._bucket, "Key": key}, ExpiresIn=ttl_s
-        )
+        async with _unavailable_on_failure():
+            s3 = await self._s3()
+            url = await s3.generate_presigned_url(
+                "get_object", Params={"Bucket": self._bucket, "Key": key}, ExpiresIn=ttl_s
+            )
         return str(url)
 
     async def list_objects(self, prefix: str) -> list[ObjectInfo]:

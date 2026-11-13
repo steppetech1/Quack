@@ -25,6 +25,7 @@ from quack.compute_client.client import ComputeClient, ComputeUnavailableError
 from quack.compute_client.contracts import RenderStrokesRequest
 from quack.compute_client.contracts import Stroke as RenderStroke
 from quack.db import Db
+from quack.events.errors import IdempotencyConflictError
 from quack.events.event_types import CanvasLineCommitted, CanvasLineErased, HandwritingCorrected
 from quack.events.log import NewEvent, append_events
 from quack.llm.errors import LLMError
@@ -91,6 +92,11 @@ RENDER_MIME = "image/webp"
 LINE_MODE = "line"
 SHEET_MODE = "sheet"
 
+_EVENT_BY_KEY = (
+    "SELECT payload FROM core.events "
+    "WHERE learner_id = %(learner_id)s AND idempotency_key = %(key)s"
+)
+
 
 @dataclass(frozen=True)
 class LineStrokes:
@@ -103,19 +109,33 @@ class LineStrokes:
     strokes: tuple[Stroke, ...]
 
 
-def render_request(strokes: Sequence[Stroke]) -> RenderStrokesRequest:
+class LineTooLarge(ValueError):
+    """The box of the points of a line is not an image compute may draw."""
+
+
+def render_request(strokes: Sequence[Stroke], max_side_px: int) -> RenderStrokesRequest:
     """The strokes moved to the corner of their own box: the image is the line only. The box
     comes from the points, not from the client `bbox`, whose convention the documents do not
-    fix (D-C-131)."""
+    fix (D-C-131). The coordinates are the client's: a box with a side past `max_side_px` (or
+    with a coordinate that is not a number) is `LineTooLarge`, a stroke without points is
+    dropped."""
+    strokes = [stroke for stroke in strokes if stroke.points]
     points = [p for stroke in strokes for p in stroke.points]
+    if not points:
+        raise LineTooLarge("the line has no points")
+    if not all(math.isfinite(c) for p in points for c in (p.x, p.y)):
+        raise LineTooLarge("a coordinate is not a finite number")
     x0, y0 = min(p.x for p in points), min(p.y for p in points)
     x1, y1 = max(p.x for p in points), max(p.y for p in points)
+    width, height = math.ceil(x1 - x0) + 1, math.ceil(y1 - y0) + 1
+    if max(width, height) > max_side_px:
+        raise LineTooLarge(f"the line is {width} x {height}, the limit is {max_side_px}")
     return RenderStrokesRequest(
         strokes=[
             RenderStroke(points=[(p.x - x0, p.y - y0) for p in stroke.points]) for stroke in strokes
         ],
-        width=math.ceil(x1 - x0) + 1,
-        height=math.ceil(y1 - y0) + 1,
+        width=width,
+        height=height,
     )
 
 
@@ -128,18 +148,23 @@ async def recognize_line(
     session_id: UUID | None,
     canvas_id: UUID,
     line: LineStrokes,
+    max_side_px: int,
     redis: Redis | None = None,
 ) -> CanvasLineCommitted | None:
     """Render the line, read it with `recognizer@1` and write `canvas.line_committed {source:
-    pen}`; `None` — the line has no strokes of this socket, or compute or the model is down
-    (nothing is written, the client may send `line_ready` again). A repeated `line_ready`
-    writes nothing new: the same image gives the same answer through the outbox and the event
-    key is the line (law 5)."""
-    if not line.strokes:
-        return None
+    pen}`; `None` — the line has no strokes of this socket, it is too large to draw
+    (`max_side_px`), or compute or the model is down (nothing is written, the client may send
+    `line_ready` again). A repeated `line_ready` writes nothing new: the event key is the line
+    (law 5), and a reading that differs from the written one (another model answer, another
+    set of strokes) is answered with the written line, not with a conflict."""
     key = f"canvas.line_committed:{canvas_id}:{line.line_id}"
     try:
-        image = await compute.image_render_strokes(render_request(line.strokes))
+        request = render_request(line.strokes, max_side_px)
+    except LineTooLarge as exc:
+        log.warning("line_not_drawn", canvas_id=str(canvas_id), reason=str(exc))
+        return None
+    try:
+        image = await compute.image_render_strokes(request)
         result = await gateway.generate_structured(
             RECOGNIZER_ROLE,
             RECOGNIZER_VERSION,
@@ -169,20 +194,26 @@ async def recognize_line(
         recognition_confidence=read.confidence,
         crossed_out=read.crossed_out,
     )
-    await append_events(
-        db,
-        learner_id,
-        [
-            NewEvent(
-                type="canvas.line_committed",
-                payload=payload,
-                actor=f"{RECOGNIZER_ROLE}@{RECOGNIZER_VERSION}",
-                idempotency_key=key,
-                session_id=session_id,
-            )
-        ],
-        redis=redis,
-    )
+    try:
+        await append_events(
+            db,
+            learner_id,
+            [
+                NewEvent(
+                    type="canvas.line_committed",
+                    payload=payload,
+                    actor=f"{RECOGNIZER_ROLE}@{RECOGNIZER_VERSION}",
+                    idempotency_key=key,
+                    session_id=session_id,
+                )
+            ],
+            redis=redis,
+        )
+    except IdempotencyConflictError:
+        written = await db.fetch_one(_EVENT_BY_KEY, {"learner_id": learner_id, "key": key})
+        if written is None:  # pragma: no cover - the conflict is the proof it exists
+            raise
+        return CanvasLineCommitted.model_validate(written["payload"])
     return payload
 
 
@@ -337,6 +368,8 @@ class LineBook:
         self._strokes: dict[str, Stroke] = {}
         self._lines: dict[str, tuple[frozenset[str], str]] = {}
         self._erased: set[str] = set()
+        # The chunks of the earlier sockets of the canvas are read once (`adopt`).
+        self.history_loaded = False
 
     def add(self, batch: StrokeBatch) -> list[tuple[str, str]]:
         """Take the batch in; `(line_id, text)` of recognized lines it erased entirely."""
@@ -378,9 +411,29 @@ class LineBook:
         ended_at_ms: int,
     ) -> LineStrokes:
         strokes = tuple(
-            self._strokes[i] for i in stroke_ids if i in self._strokes and i not in self._erased
+            self._strokes[i]
+            for i in stroke_ids
+            if i in self._strokes and i not in self._erased and self._strokes[i].points
         )
         return LineStrokes(line_id, bbox, started_at_ms, ended_at_ms, strokes)
 
-    def recognized(self, line: CanvasLineCommitted) -> None:
-        self._lines[line.line_id] = (frozenset(line.stroke_ids), line.text)
+    def missing(self, stroke_ids: Sequence[str]) -> bool:
+        """Does a line name a stroke this socket has not seen (it was sent before a reconnect)?"""
+        return any(i not in self._strokes for i in stroke_ids)
+
+    def adopt(self, strokes: dict[str, Stroke], erased: set[str]) -> None:
+        """The strokes and erasures of the earlier sockets of the canvas (`load_journal`);
+        what this socket received itself stays as it is."""
+        for stroke_id, stroke in strokes.items():
+            self._strokes.setdefault(stroke_id, stroke)
+        self._erased.update(erased)
+        self.history_loaded = True
+
+    def recognized(self, line: CanvasLineCommitted) -> bool:
+        """Take a recognized line in; `False` - every stroke it was read from was erased while
+        the model read it, the line is gone and stays out (the caller writes the erasure)."""
+        ids = frozenset(line.stroke_ids)
+        if ids and ids <= self._erased:
+            return False
+        self._lines[line.line_id] = (ids, line.text)
+        return True
