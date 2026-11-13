@@ -171,6 +171,24 @@ def test_applying_a_batch_again_changes_nothing() -> None:
     assert _graph(asyncio.run(again())) == _graph(_whole())
 
 
+def test_a_dispute_after_the_verdict_gives_the_same_graph_in_every_mode() -> None:
+    """Т-§5.6, T-P1: a `task.key_disputed` after a code verdict lowers its evidence to class model
+    in a batch of one event as in the whole rebuild, and the fold counts it as a model verdict
+    (a lone model verdict does not open the level, Т-§7.3)."""
+    script = [*SCRIPT[:13], _ev(14, "task.key_disputed", {"task_id": TASK})]
+    whole = asyncio.run(_project(script, [False] * (len(script) - 1)))
+    by_event = asyncio.run(_project(script, [True] * (len(script) - 1)))
+    assert _graph(by_event) == _graph(whole)
+    nodes, _ = _graph(whole)
+    evidence = [v for (label, _), v in nodes.items() if label == "Evidence"]
+    assert evidence and {(v["verification"], v["tier"]) for v in evidence} == {("model", 2)}
+    before, _ = _graph(asyncio.run(_project(SCRIPT[:13], [False] * 12)))
+    assert {v["verification"] for (label, _), v in before.items() if label == "Evidence"} == {
+        "code"
+    }
+    assert (before[("Skill", S1)]["l3SuccessW"], nodes[("Skill", S1)]["l3SuccessW"]) == (0.5, 0.0)
+
+
 _LEVEL = ("Status", "Basis", "DecisiveEvidenceId", "SuccessW", "FailW", "ProvenAtMs", "FailedAtMs")
 REQUIRED: dict[str, set[str]] = {
     "Domain": {"name", "status"},

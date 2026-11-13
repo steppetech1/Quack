@@ -39,7 +39,7 @@ from redis.asyncio import Redis
 from quack.config import Settings
 from quack.db import Db
 from quack.db.redis import learner_signal_channel
-from quack.events.log import NewEvent, append_events
+from quack.events.log import LearnerNotFoundError, NewEvent, append_events
 from quack.jobs.rules_p4 import JobPlan
 from quack.llm.access import access_mode, budgets_for
 from quack.logging import get_logger
@@ -492,27 +492,26 @@ async def _write_failure_event(db: Db, job: ClaimedJob, error: str, redis: Redis
         return  # periodic jobs belong to no learner
     request_id = job.payload.get("request_id")
     trigger = job.payload.get("trigger_seq")
-    await append_events(
-        db,
-        job.learner_id,
-        [
-            NewEvent(
-                type="agent.completed",
-                payload={
-                    "request_id": request_id,
-                    "job_key": None if request_id else job.job_key,
-                    "kind": str(job.payload.get("kind") or job.kind),
-                    "ok": False,
-                    "error": error,
-                },
-                actor="system",
-                idempotency_key=f"agent_completed:{job.job_key}",
-                session_id=job.session_id,
-                causation_seq=trigger if isinstance(trigger, int) else None,
-            )
-        ],
-        redis=redis,
+    event = NewEvent(
+        type="agent.completed",
+        payload={
+            "request_id": request_id,
+            "job_key": None if request_id else job.job_key,
+            "kind": str(job.payload.get("kind") or job.kind),
+            "ok": False,
+            "error": error,
+        },
+        actor="system",
+        idempotency_key=f"agent_completed:{job.job_key}",
+        session_id=job.session_id,
+        causation_seq=trigger if isinstance(trigger, int) else None,
     )
+    try:
+        await append_events(db, job.learner_id, [event], redis=redis)
+    except LearnerNotFoundError:
+        # The account was deleted under the job: nobody to answer, and the failure must not
+        # undo the transition (`reap_stale` handles every stale job in one transaction).
+        log.warning("job_failure_of_deleted_learner", job_key=job.job_key)
 
 
 async def fail_or_retry(
@@ -587,17 +586,24 @@ async def reap_stale(db: Db, settings: Settings, *, redis: Redis | None = None) 
     """The cleaner (Т-§13.1): a job in work without a pulse for `job_stale_after_sec` returns to
     the queue — or is `failed` when its attempts are out; a stale `cancel_requested` is
     `cancelled`. Returns the number of jobs touched."""
-    async with db.transaction():
+    async with db.transaction() as conn:
         rows = await db.fetch_all(_STALE, {"stale": settings.job_stale_after_sec})
+        touched = 0
         for row in rows:
             job = _claimed(row)
-            if row["status"] == "cancel_requested":
-                await mark_cancelled(db, job, redis=redis)
-            else:
-                await fail_or_retry(
-                    db, job, "heartbeat timeout", settings, retry_delay_s=0.0, redis=redis
-                )
-        return len(rows)
+            try:
+                async with conn.transaction():  # a savepoint: one job does not undo the others
+                    if row["status"] == "cancel_requested":
+                        await mark_cancelled(db, job, redis=redis)
+                    else:
+                        await fail_or_retry(
+                            db, job, "heartbeat timeout", settings, retry_delay_s=0.0, redis=redis
+                        )
+            except Exception as exc:  # law 7: a job that cannot be returned stays for the next pass
+                log.error("job_reap_failed", job_key=job.job_key, error=repr(exc))
+                continue
+            touched += 1
+        return touched
 
 
 # --- cancel and the plaque ----------------------------------------------------------------

@@ -23,6 +23,14 @@ from quack.llm.tracing import Tracer
 from quack.storage.deletions import DeletionJournal, DeletionRecord
 from quack.storage.objects import ObjectStore
 
+# The mark of the dispatcher is locked first: a batch of the dispatcher in flight commits its jobs
+# before the deletion of `ops.jobs` looks for them, and one that starts later finds the row
+# locked and skips the learner (`FOR UPDATE SKIP LOCKED`); no job of the learner outlives it.
+_ENSURE_MARK = (
+    "INSERT INTO ops.dispatcher_offsets (learner_id) VALUES (%(learner_id)s) "
+    "ON CONFLICT (learner_id) DO NOTHING"
+)
+_LOCK_MARK = "SELECT 1 FROM ops.dispatcher_offsets WHERE learner_id = %(learner_id)s FOR UPDATE"
 _EMAIL = "SELECT email FROM core.learners WHERE learner_id = %(learner_id)s"
 # Children before parents; `ops.deletion_log` is kept on purpose.
 _DELETES = (
@@ -71,6 +79,8 @@ async def apply_account_record(
         if not acquired:
             raise DeletionBusy(str(learner_id))
         async with db.transaction():
+            await db.execute(_ENSURE_MARK, {"learner_id": learner_id})
+            await db.fetch_one(_LOCK_MARK, {"learner_id": learner_id})
             row = await db.fetch_one(_EMAIL, {"learner_id": learner_id})
             params = {"learner_id": learner_id, "email": None if row is None else row["email"]}
             for statement in _DELETES:

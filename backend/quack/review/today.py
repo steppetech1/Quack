@@ -3,14 +3,15 @@
 `today` is synchronous code at the opening of a domain (`Т-§14.4`): the review candidates of
 the core (`quack.graph.read.review_candidates`, WP17.1) of this domain only (`П-3.2`), at most
 `today_max_items` with a priority above `today_min_score`; nothing important — an empty answer.
-A non-empty show is `today.shown` keyed by the domain, the learner's date and the items, so the
-dispatcher prepares the plan once (`today.prepare`, WP16.8). Every read is of the learner's own
-nodes; another learner's id is «not found» (law 1).
+A non-empty show is `today.shown` keyed by the domain, the learner's date and the items (their
+skills, topics and reasons, not the scores: the priority moves with the clock), so the dispatcher
+prepares the plan once for the same set of items (`today.prepare`, WP16.8). Every read is of the
+learner's own nodes; another learner's id is «not found» (law 1).
 """
 
 from __future__ import annotations
 
-import hashlib
+import contextlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal
@@ -24,6 +25,8 @@ from redis.asyncio import Redis
 from quack.config import Settings
 from quack.db import Db
 from quack.db.neo4j import literal, read_session
+from quack.events.errors import IdempotencyConflictError
+from quack.events.keys import today_key
 from quack.events.log import NewEvent, append_events
 from quack.graph.read import create_graph_reader
 
@@ -264,11 +267,22 @@ async def today(
     graded = {r["hub"] for r in await db.fetch_all(_GRADED, {"learner_id": learner_id})}
     if items:
         payload = {"domain_id": str(domain_id), "items": [i.model_dump(mode="json") for i in items]}
-        digest = hashlib.sha256(str(payload["items"]).encode()).hexdigest()[:16]
-        key = f"today:{domain_id}:{day.date().isoformat()}:{digest}"
+        # The key follows the set of items, not their scores: the priority depends on `now`
+        # continuously, so a key over the scores gave a new event and a new `today.prepare` on
+        # almost every request. The order is by skill, so a swap of two neighbours is not new.
+        shown: list[dict[str, object]] = [
+            {
+                "skill_id": str(i.skill_id),
+                "topic_id": None if i.topic_id is None else str(i.topic_id),
+                "reasons": i.reasons,
+            }
+            for i in sorted(items, key=lambda i: str(i.skill_id))
+        ]
+        key = today_key(domain_id, day.date(), shown)
         event = NewEvent(type="today.shown", payload=payload, actor="system",
                          idempotency_key=key, domain_id=domain_id)  # fmt: skip
-        await append_events(db, learner_id, [event], redis=redis)
+        with contextlib.suppress(IdempotencyConflictError):  # same items today, other scores:
+            await append_events(db, learner_id, [event], redis=redis)  # that show stands
     tz = str(day.tzinfo) if day.tzinfo is not None else "UTC"
     return TodayView(
         items=items,

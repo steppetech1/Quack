@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 from quack.config import Settings
 from quack.db import Db
 from quack.deletion.account import apply_account_record
-from quack.deletion.domain import apply_domain_record
+from quack.deletion.domain import DeletionBusy, apply_domain_record
 from quack.deletion.topic import apply_topic_record
 from quack.logging import get_logger
 from quack.storage.deletions import DeletionJournal, DeletionRecord
@@ -52,6 +52,23 @@ async def _apply(
     return True
 
 
+async def _try(
+    db: Db,
+    neo4j: AsyncDriver,
+    settings: Settings,
+    store: ObjectStore,
+    record: DeletionRecord,
+    redis: Redis | None,
+) -> bool:
+    """False — the learner is busy or the rebuild did not happen; the record is left for later."""
+    try:
+        await _apply(db, neo4j, settings, store, record, redis)
+    except DeletionBusy as busy:
+        log.warning("deletion_not_finished", deletion_id=str(record.deletion_id), reason=str(busy))
+        return False
+    return True
+
+
 async def _logged(db: Db, learner_id: object, deletion_id: object) -> bool:
     row = await db.fetch_one(_LOGGED, {"learner_id": learner_id, "deletion_id": deletion_id})
     return row is not None
@@ -67,12 +84,19 @@ async def reconcile_deletions(
     *,
     redis: Redis | None = None,
 ) -> int:
-    """Records since `since` without a row of `ops.deletion_log` run again; returns how many."""
-    done = 0
+    """Records since `since` without a row of `ops.deletion_log` run again; returns how many.
+
+    A record whose learner is busy (the projection lock, a rebuild that did not happen) does not
+    stop the others: it is logged, and after the pass `DeletionBusy` is raised, so the job
+    repeats and the record stays without its row until it is done."""
+    done, busy = 0, 0
     for record in await journal.list_since(since):
         if await _logged(db, record.learner_id, record.deletion_id):
             continue
-        done += await _apply(db, neo4j, settings, store, record, redis)
+        busy += not await _try(db, neo4j, settings, store, record, redis)
+        done += 1
+    if busy:
+        raise DeletionBusy(f"{busy} deletions are not finished")
     return done
 
 
@@ -86,8 +110,12 @@ async def replay_deletions(
     *,
     redis: Redis | None = None,
 ) -> int:
-    """Every record since `since` again (after a restore); returns how many ran."""
-    done = 0
+    """Every record since `since` again (after a restore); returns how many ran. Busy records
+    are handled as in `reconcile_deletions`."""
+    done, busy = 0, 0
     for record in await journal.list_since(since):
-        done += await _apply(db, neo4j, settings, store, record, redis)
+        busy += not await _try(db, neo4j, settings, store, record, redis)
+        done += 1
+    if busy:
+        raise DeletionBusy(f"{busy} deletions are not finished")
     return done

@@ -376,17 +376,23 @@ def _agent_requested(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
         if p.params.topic_id is None:
             return []
         payload["topic_id"] = str(p.params.topic_id)
-        return [_plan(event, kind, cls=cls, lock_key=f"domain:{event.domain_id}", graph=True,
-                      payload=payload)]  # fmt: skip
+        # A request without a domain on its envelope (the job finds the domain of the topic
+        # itself) must not take `domain:None`, one lock for every learner (Т-§13.1).
+        lock = f"domain:{event.domain_id}" if event.domain_id else f"topic_split:{event.learner_id}"
+        return [_plan(event, kind, cls=cls, lock_key=lock, graph=True, payload=payload)]
     if p.kind == "artifact" and p.params.artifact == "cheatsheet":
         # Т-§17.7 «генерация — после согласия», D-A-199: the consent to the cheat sheet of a hub
         # is the job of that hub, with the request to answer; without a hub nothing to build.
         if p.params.hub_id is None:
             return []
+        # The lock is the hub's (one writer of a hub at a time), but the job does not coalesce:
+        # it carries the `request_id` to answer, and a coalescing job keeps the payload of the
+        # waiting one (`enqueue`), so a consent that met the job of `hub.deadline_set` lost its
+        # request and was never answered. The key is the request's event (`_plan`).
         key = f"artifact:{p.params.hub_id}"
         payload["hub_id"] = str(p.params.hub_id)
-        return [_plan(event, "artifact.cheatsheet", cls=cls, lock_key=key, coalesce_key=key,
-                      graph=True, payload=payload)]  # fmt: skip
+        return [_plan(event, "artifact.cheatsheet", cls=cls, lock_key=key, graph=True,
+                      payload=payload)]  # fmt: skip
     return [_plan(event, kind, cls=cls, payload=payload)]
 
 

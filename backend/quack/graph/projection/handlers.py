@@ -63,7 +63,7 @@ from quack.graph.projection.mutations import (
     Mutation,
     SetProps,
 )
-from quack.graph.projection.types import Props
+from quack.graph.projection.types import REL_IDENTITY, Props, RelRecord
 from quack.graph.projection.view import NOTHING, Need, SliceView
 
 type Needs = Callable[[StoredEvent], Need]
@@ -223,8 +223,11 @@ def _edge(event: StoredEvent, view: SliceView) -> list[Mutation]:
         return []
     rel_type = _EDGE_TYPES[p.kind]
     if not isinstance(p, EdgeAdded):
+        # `SAME_IDEA` is stored one way and read without a direction (Т-§3.4.3): removed whichever
+        # way it was written.
+        ends = [(a, b), (b, a)] if p.kind == "same_idea" else [(a, b)]
         return [
-            DeleteRel("Skill", a, rel_type, "Skill", b),
+            *(DeleteRel("Skill", x, rel_type, "Skill", y) for x, y in ends),
             *_supersede_derived(event, view, p.kind, a, b),
         ]
     props: Props = {"confidence": p.confidence}
@@ -524,6 +527,10 @@ def _merge_needs(event: StoredEvent) -> Need:
     return Need(neighbourhoods=frozenset(ends))
 
 
+def _identity(r: RelRecord) -> tuple[object, ...]:
+    return tuple(r.props.get(name) for name in REL_IDENTITY.get(r.rel_type, ()))
+
+
 def _merged(event: StoredEvent, view: SliceView) -> list[Mutation]:
     """Relations and evidence go to the target, the old node is deleted and its id becomes an
     `Alias` of the target; aliases of the old node move with its other relations (Т-§2.8). A
@@ -535,18 +542,22 @@ def _merged(event: StoredEvent, view: SliceView) -> list[Mutation]:
     if old is None or target is None or old == target:
         return []
     own = _OWN_RELS[label]
-    target_out = {(r.rel_type, r.to_label, r.to_id) for r in view.out_rels(label, into_ref)}
-    target_in = {(r.rel_type, r.from_label, r.from_id) for r in view.in_rels(label, into_ref)}
+    # A relation is told apart by its identity props too: `TESTS {level, part}` of the old skill
+    # is not the `TESTS` of the same task with another level or part (Т-§3.4.3, D-A-133).
+    target_out = {(r.rel_type, r.to_label, r.to_id, *_identity(r))
+                  for r in view.out_rels(label, into_ref)}  # fmt: skip
+    target_in = {(r.rel_type, r.from_label, r.from_id, *_identity(r))
+                 for r in view.in_rels(label, into_ref)}  # fmt: skip
     changes: list[Mutation] = []
     for r in view.out_rels(label, old_ref):
         if (r.rel_type, True) in own or (r.to_label, r.to_id) == (label, target):
             continue
-        if (r.rel_type, r.to_label, r.to_id) not in target_out:
+        if (r.rel_type, r.to_label, r.to_id, *_identity(r)) not in target_out:
             changes.append(MergeRel(label, target, r.rel_type, r.to_label, r.to_id, r.props))
     for r in view.in_rels(label, old_ref):
         if (r.rel_type, False) in own or (r.from_label, r.from_id) == (label, target):
             continue
-        if (r.rel_type, r.from_label, r.from_id) not in target_in:
+        if (r.rel_type, r.from_label, r.from_id, *_identity(r)) not in target_in:
             changes.append(MergeRel(r.from_label, r.from_id, r.rel_type, label, target, r.props))
     return [
         *changes,
@@ -871,6 +882,15 @@ def _task_checked(event: StoredEvent, view: SliceView) -> list[Mutation]:
     if props is None:
         return []
     changes: list[Mutation] = [SetProps("Task", task, {"verification": _CHECKS[event.type]})]
+    if _CHECKS[event.type] == "disputed":
+        # The verdicts already given (and what is derived from them) go down to class model:
+        # T1 of code becomes T2 of a model, the same as a verdict recorded after the dispute.
+        for r in view.in_rels("Task", task, "ON_TASK"):
+            evidence = view.node("Evidence", r.from_id)
+            if evidence is not None and evidence.get("verification") == "code":
+                changes.append(
+                    SetProps("Evidence", r.from_id, {"verification": "model", "tier": 2})
+                )
     if p.corrected_markup is not None:
         markup = p.corrected_markup
         changes.append(SetProps("Task", task, {"methodNamed": markup.method_named}))

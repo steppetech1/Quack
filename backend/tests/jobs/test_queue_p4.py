@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import orjson
+import pytest
 from redis.asyncio import Redis
 
 from quack.config import Settings
@@ -512,19 +513,49 @@ async def test_failure_writes_the_event_once(jobs_db: Db) -> None:
     assert len(events) == 1
 
 
-async def test_failure_commits_nothing_when_the_event_fails(jobs_db: Db) -> None:
+async def test_failure_commits_nothing_when_the_event_fails(
+    jobs_db: Db, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Law 7: `failed` and its event are one transaction."""
-    ghost = uuid4()  # no `core.learners` row: append_events refuses
+    learner = await create_learner(jobs_db)
+    await q.enqueue(jobs_db, _plan(learner, "a"))
+    job = await q.claim_next(jobs_db, SETTINGS)
+    assert job is not None
+
+    async def refuses(*_args: object, **_kwargs: object) -> list[object]:
+        raise RuntimeError("the log is away")
+
+    monkeypatch.setattr(q, "append_events", refuses)
+    with pytest.raises(RuntimeError):
+        await q.fail_or_retry(jobs_db, job, "e", SETTINGS, permanent=True)
+    assert await _status(jobs_db, "a") == "running"
+
+
+async def test_job_of_a_deleted_account_fails_without_an_event(jobs_db: Db) -> None:
+    """A job that outlived its learner (`core.learners` row gone) is `failed` with no event to
+    write; before, `append_events` refused and the transition rolled back every time."""
+    ghost = uuid4()
     await q.enqueue(jobs_db, _plan(ghost, "a"))
     job = await q.claim_next(jobs_db, SETTINGS)
     assert job is not None
-    try:
-        await q.fail_or_retry(jobs_db, job, "e", SETTINGS, permanent=True)
-    except LookupError:
-        pass
-    else:  # pragma: no cover
-        raise AssertionError("append_events must have refused")
-    assert await _status(jobs_db, "a") == "running"
+    decision = await q.fail_or_retry(jobs_db, job, "e", SETTINGS, permanent=True)
+    assert decision is not None and decision.status == "failed"
+    assert await _status(jobs_db, "a") == "failed"
+    assert await jobs_db.fetch_all("SELECT 1 FROM core.events") == []
+
+
+async def test_reaper_does_not_stop_at_a_job_it_cannot_return(jobs_db: Db) -> None:
+    """One transaction held every stale job of every learner: a job whose failure could not be
+    written rolled all of them back at each pass. Now each job has its own savepoint."""
+    settings = SETTINGS.model_copy(update={"job_max_attempts": 1})
+    ghost, learner = uuid4(), await create_learner(jobs_db)
+    await q.enqueue(jobs_db, _plan(ghost, "a", lock_key="a"))
+    await q.enqueue(jobs_db, _plan(learner, "b", lock_key="b"))
+    assert await q.claim_next(jobs_db, settings) is not None
+    assert await q.claim_next(jobs_db, settings) is not None
+    await jobs_db.execute("UPDATE ops.jobs SET heartbeat_at = now() - interval '5 minutes'")
+    assert await q.reap_stale(jobs_db, settings) == 2
+    assert await _status(jobs_db, "a") == await _status(jobs_db, "b") == "failed"
 
 
 async def test_stale_worker_cannot_finish_a_job_it_lost(jobs_db: Db) -> None:
