@@ -31,6 +31,7 @@ HEALTHY_STATUS: dict[str, Any] = {
         "max_lag_events": 0,
         "stopped_streams": 0,
     },
+    "dispatcher": {"learners_lagging": 0, "max_lag_events": 0, "stopped_streams": 0},
     "jobs": {"oldest_queued_age_s": None, "failed_share_last_hour": None},
     "llm": {"pressure": [], "circuit_open": []},
 }
@@ -84,6 +85,13 @@ def test_a_stopped_projector_stream_is_critical():
     found = by_key(snapshot(status_patch={"projector": {"stopped_streams": 2}}))
     assert found[alerts.PROJECTOR_STOPPED].level == "critical"
     assert "2" in found[alerts.PROJECTOR_STOPPED].message
+
+
+def test_a_stopped_dispatcher_stream_is_critical():
+    found = by_key(snapshot(status_patch={"dispatcher": {"stopped_streams": 3}}))
+    assert found[alerts.DISPATCHER_STOPPED].level == "critical"
+    assert "3" in found[alerts.DISPATCHER_STOPPED].message
+    assert alerts.PROJECTOR_STOPPED not in found
 
 
 def test_team_spend_above_the_daily_threshold_is_a_warning():

@@ -110,6 +110,17 @@ async def test_ops_status_report(
         "VALUES (%(learner_id)s, 3, 'boom')",
         {"learner_id": lagging},
     )
+    await pg_db.execute(
+        "INSERT INTO ops.dispatcher_failures (learner_id, seq, error_type, error, attempts, "
+        "stopped_at) VALUES (%(l)s, 3, 'KeyError', 'boom', 10, now())",
+        {"l": lagging},
+    )
+    # Still repeated, not stopped: not counted.
+    await pg_db.execute(
+        "INSERT INTO ops.dispatcher_failures (learner_id, seq, error_type, error) "
+        "VALUES (%(l)s, 1, 'KeyError', 'boom')",
+        {"l": fine},
+    )
     await _job(pg_db, "queued", run_at=now - timedelta(seconds=120))
     await _job(pg_db, "queued", learner_id=lagging, required=last)  # waits for the projector
     await _job(pg_db, "queued", learner_id=fine, required=2)  # the projector is there already
@@ -140,7 +151,11 @@ async def test_ops_status_report(
         "max_lag_events": 3,
         "stopped_streams": 1,
     }
-    assert report["dispatcher"] == {"learners_lagging": 1, "max_lag_events": 3}
+    assert report["dispatcher"] == {
+        "learners_lagging": 1,
+        "max_lag_events": 3,
+        "stopped_streams": 1,
+    }
     jobs = report["jobs"]
     assert jobs["by_status"] == {"queued": 3, "succeeded": 3, "failed": 2}
     assert jobs["oldest_queued_age_s"] >= 120

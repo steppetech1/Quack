@@ -102,6 +102,7 @@ CROSS_LEARNER_ALLOWED |= {
         "_PROJECTOR",
         "_DISPATCHER",
         "_STOPPED",
+        "_DISPATCHER_STOPPED",
         "_BY_STATUS",
         "_OLDEST_QUEUED",
         "_WAITING",

@@ -92,6 +92,34 @@ def test_a_value_with_a_newline_is_refused_and_not_echoed():
     assert "line2-secret" not in done.stderr
 
 
+@pytest.mark.parametrize("value", ["ab$c", "$", "pre${HOME}post", "end$"])
+def test_a_value_with_a_dollar_sign_is_refused_and_not_echoed(value: str):
+    """`.env` is written without quotes and Compose reads `$` as an interpolation: the value would
+    reach the containers changed, so the render stops and names only the variable."""
+    for name in ("APP_DB_PASSWORD", "EMAIL_API_KEY"):  # a required value and an optional one
+        env = {**REQUIRED, name: f"secret-{value}-tail"}
+
+        done = run("render-env.sh", "env.example", env=env)
+
+        assert done.returncode == 1
+        assert f"render-env: {name} contains a dollar sign" in done.stderr
+        assert "secret-" not in done.stderr and "-tail" not in done.stderr
+        assert value not in done.stderr.replace("dollar sign", "")
+
+
+def test_a_dollar_sign_in_a_template_default_is_refused_too(tmp_path: Path):
+    template = tmp_path / "env.example"
+    template.write_text(
+        (DEPLOY / "env.example").read_text(encoding="utf-8") + "EXTRA_SETTING=a$b\n",
+        encoding="utf-8",
+    )
+
+    done = run("render-env.sh", str(template), env=REQUIRED)
+
+    assert done.returncode == 1
+    assert "EXTRA_SETTING contains a dollar sign" in done.stderr
+
+
 def test_a_template_with_crlf_line_endings_renders_the_same(tmp_path: Path):
     crlf = tmp_path / "env.crlf"
     crlf.write_bytes(

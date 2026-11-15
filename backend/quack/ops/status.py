@@ -37,6 +37,11 @@ _DISPATCHER = (
 )
 # A stopped stream is a row of `ops.projector_failures`; `ops resume` removes it (Д-§8.7).
 _STOPPED = "SELECT COUNT(*) AS n FROM ops.projector_failures"
+# The same for the dispatcher: a row with `stopped_at` (a row without it is a failure still
+# being repeated); `ops resume` removes it.
+_DISPATCHER_STOPPED = (
+    "SELECT COUNT(*) AS n FROM ops.dispatcher_failures WHERE stopped_at IS NOT NULL"
+)
 _BY_STATUS = "SELECT status, COUNT(*) AS n FROM ops.jobs GROUP BY status"
 _OLDEST_QUEUED = (
     "SELECT EXTRACT(EPOCH FROM (now() - MIN(run_at)))::float8 AS age FROM ops.jobs "
@@ -92,6 +97,7 @@ async def _postgres_part(db: Db) -> dict[str, Any]:
         "dispatcher": {
             "learners_lagging": int(dispatcher["lagging"]),
             "max_lag_events": int(dispatcher["max_lag"]),
+            "stopped_streams": int((await _row(db, _DISPATCHER_STOPPED))["n"]),
         },
         "jobs": {
             "by_status": by_status,
@@ -176,7 +182,7 @@ async def collect_status(
         "projector": dict.fromkeys(
             ("learners_total", "learners_lagging", "max_lag_events", "stopped_streams")
         ),
-        "dispatcher": dict.fromkeys(("learners_lagging", "max_lag_events")),
+        "dispatcher": dict.fromkeys(("learners_lagging", "max_lag_events", "stopped_streams")),
         "jobs": dict.fromkeys(
             (
                 "by_status",

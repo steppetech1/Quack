@@ -22,7 +22,7 @@ from pydantic import SecretStr
 from quack.api.app import create_app
 from quack.api.auth import SESSION_COOKIE
 from quack.api.email import RESEND_EMAILS_URL, ResendEmailSender
-from quack.auth.google import AuthlibGoogleOIDC
+from quack.auth.google import AuthlibGoogleOIDC, code_challenge
 from quack.auth.router import OIDC_STATE_COOKIE
 from quack.config import Settings
 from quack.db import Db
@@ -124,12 +124,12 @@ async def test_link_goes_to_resend_and_signs_in(pg_db: Db, settings: Settings) -
         stored = await pg_db.fetch_all("SELECT token_hash FROM core.auth_links")
         assert [row["token_hash"] for row in stored] != [token] and len(stored) == 1
 
-        verified = await s.client.get("/auth/link/verify", params={"token": token})
+        verified = await s.client.post("/auth/link/verify", data={"token": token})
         assert verified.status_code == 303 and verified.headers["location"] == REDIRECT
         assert (await s.client.get("/v1/me")).json()["email"] == "ann@example.com"
 
         s.client.cookies.clear()
-        replay = await s.client.get("/auth/link/verify", params={"token": token})
+        replay = await s.client.post("/auth/link/verify", data={"token": token})
         assert replay.status_code == 401 and SESSION_COOKIE not in replay.headers.get(
             "set-cookie", ""
         )
@@ -194,7 +194,16 @@ async def test_ip_limit_stops_before_resend(pg_db: Db, settings: Settings) -> No
 async def _start(s: Stack) -> str:
     start = await s.client.get("/auth/google/start")
     assert start.status_code == 302
-    return parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+    query = parse_qs(urlsplit(start.headers["location"]).query)
+    s.google.nonce = query["nonce"][0]  # Google puts the nonce of the request into the id token
+    return query["state"][0]
+
+
+def _flow_cookie(set_cookie: str) -> tuple[str, str, str]:
+    """`state`, `nonce` and PKCE `code_verifier` of the state cookie of `start`."""
+    value = set_cookie.split("=", 1)[1].split(";", 1)[0]
+    state, nonce, verifier = value.split(".")
+    return state, nonce, verifier
 
 
 async def test_google_start_binds_state_to_the_browser(pg_db: Db, settings: Settings) -> None:
@@ -208,7 +217,12 @@ async def test_google_start_binds_state_to_the_browser(pg_db: Db, settings: Sett
         assert query["client_id"] == [CLIENT_ID] and query["redirect_uri"] == [CALLBACK]
         assert query["response_type"] == ["code"]
         cookie = start.headers["set-cookie"]
-        assert cookie.startswith(f"{OIDC_STATE_COOKIE}={query['state'][0]};")
+        state, nonce, verifier = _flow_cookie(cookie)
+        assert state == query["state"][0] and nonce == query["nonce"][0]
+        # PKCE (RFC 7636): the challenge is the S256 of the verifier kept in the cookie.
+        assert query["code_challenge_method"] == ["S256"]
+        assert query["code_challenge"] == [code_challenge(verifier)] and 43 <= len(verifier) <= 128
+        assert verifier not in start.headers["location"]
         assert "httponly" in cookie.lower() and "secure" in cookie.lower()
         assert CLIENT_SECRET not in start.headers["location"]
         # A second start is a new state: a state is not reusable across flows.
@@ -221,7 +235,10 @@ async def test_google_callback_exchanges_the_code_and_signs_in(
 ) -> None:
     async with _stack(pg_db, settings) as s:
         s.google.code_claims["good"] = s.google.claims()
-        state = await _start(s)
+        start = await s.client.get("/auth/google/start")
+        _, _, verifier = _flow_cookie(start.headers["set-cookie"])
+        query = parse_qs(urlsplit(start.headers["location"]).query)
+        s.google.nonce, state = query["nonce"][0], query["state"][0]
         done = await s.client.get("/auth/google/callback", params={"code": "good", "state": state})
         assert done.status_code == 303 and done.headers["location"] == REDIRECT
 
@@ -229,6 +246,9 @@ async def test_google_callback_exchanges_the_code_and_signs_in(
         form = parse_qs(token_request.content.decode())
         assert form["code"] == ["good"] and form["grant_type"] == ["authorization_code"]
         assert form["redirect_uri"] == [CALLBACK]
+        # PKCE: the exchange carries the verifier whose S256 is the challenge sent at `start`.
+        assert form["code_verifier"] == [verifier]
+        assert code_challenge(form["code_verifier"][0]) == query["code_challenge"][0]
         assert (await s.client.get("/v1/me")).json()["email"] == "gina@example.com"
         assert OIDC_STATE_COOKIE not in {c.name for c in s.client.cookies.jar}
 
@@ -236,6 +256,34 @@ async def test_google_callback_exchanges_the_code_and_signs_in(
         s.client.cookies.delete(SESSION_COOKIE, domain=settings.session_cookie_domain)
         again = await s.client.get("/auth/google/callback", params={"code": "good", "state": state})
         assert again.status_code == 401 and len(s.google.token_requests) == 1
+
+
+@pytest.mark.parametrize("nonce", ["another-flow", ""], ids=["foreign-nonce", "empty-nonce"])
+async def test_google_callback_refuses_an_id_token_of_another_flow(
+    pg_db: Db, settings: Settings, nonce: str
+) -> None:
+    """An id token whose `nonce` is not the one of this browser's `start` (a replayed or
+    injected token) signs nobody in: 401, no session, no learner."""
+    async with _stack(pg_db, settings) as s:
+        s.google.code_claims["c"] = s.google.claims(nonce=nonce)
+        state = await _start(s)
+        s.google.nonce = None  # the claims keep the nonce they were given
+        refused = await s.client.get("/auth/google/callback", params={"code": "c", "state": state})
+        assert refused.status_code == 401 and refused.json()["error"]["code"] == "UNAUTHENTICATED"
+        assert SESSION_COOKIE not in refused.headers.get("set-cookie", "")
+        assert await _learners(pg_db, "gina@example.com") == 0
+
+
+async def test_google_callback_refuses_an_id_token_without_a_nonce(
+    pg_db: Db, settings: Settings
+) -> None:
+    async with _stack(pg_db, settings) as s:
+        s.google.code_claims["c"] = s.google.claims()  # no `nonce` claim at all
+        state = await _start(s)
+        s.google.nonce = None
+        refused = await s.client.get("/auth/google/callback", params={"code": "c", "state": state})
+        assert refused.status_code == 401
+        assert await _learners(pg_db, "gina@example.com") == 0
 
 
 @pytest.mark.parametrize("started", [True, False], ids=["wrong-state", "no-start-cookie"])

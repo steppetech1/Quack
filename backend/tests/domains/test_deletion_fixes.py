@@ -217,3 +217,19 @@ async def test_account_deletion_outlives_no_job_of_a_batch_in_flight(
     release.set()
     await asyncio.wait_for(asyncio.gather(in_flight, deleting), timeout=30)
     assert await _count(pg_db, _COUNT_JOBS, learner) == 0
+
+
+async def test_account_deletion_clears_the_stopped_dispatcher_stream(
+    pg_db: Db, neo4j: AsyncDriver
+) -> None:
+    learner, other = await create_learner(pg_db), await create_learner(pg_db)
+    for who in (learner, other):
+        await pg_db.execute(
+            "INSERT INTO ops.dispatcher_failures (learner_id, seq, error_type, error, stopped_at) "
+            "VALUES (%(l)s, 1, 'KeyError', 'boom', now())",
+            {"l": who},
+        )
+    record = DeletionRecord(uuid4(), learner, "account", learner, NOW)
+    await apply_account_record(pg_db, neo4j, InMemoryObjectStore(), learner, record)
+    rows = await pg_db.fetch_all("SELECT learner_id FROM ops.dispatcher_failures")
+    assert [r["learner_id"] for r in rows] == [other]

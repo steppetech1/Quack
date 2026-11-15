@@ -8,6 +8,12 @@ their deterministic `job_key` and the same `episode.closed` by its key (law 5). 
 reads relational tables only (`Т-§13.3`: the journal, not the projection), calls no model and
 never writes to Neo4j (law 3).
 
+A batch that raises is rolled back whole and the failure is written to `ops.dispatcher_failures`
+in its own transaction (the counterpart of `ops.projector_failures`): after
+`dispatcher_failure_limit` failures in a row on one event the learner's stream stops
+(`stopped_at`), the others go on. The event is never skipped (`Т-§2.10`); `resume` deletes the
+row and the dispatcher continues from the same mark.
+
 `counters` (D-A-160): `{"episodes": {<session_id>: open episode}, "new_topics": {<domain_id>: n}}`.
 """
 
@@ -72,6 +78,24 @@ _LOCK_OFFSET = (
     "SELECT last_dispatched_seq, counters FROM ops.dispatcher_offsets "
     "WHERE learner_id = %(learner_id)s FOR UPDATE SKIP LOCKED"
 )
+_STOPPED = (
+    "SELECT 1 FROM ops.dispatcher_failures WHERE learner_id = %(learner_id)s "
+    "AND stopped_at IS NOT NULL"
+)
+_RECORD_FAILURE = (
+    "INSERT INTO ops.dispatcher_failures AS f (learner_id, seq, error_type, error) "
+    "VALUES (%(learner_id)s, %(seq)s, %(error_type)s, %(error)s) "
+    "ON CONFLICT (learner_id) DO UPDATE SET "
+    "attempts = CASE WHEN f.seq = EXCLUDED.seq THEN f.attempts + 1 ELSE 1 END, "
+    "seq = EXCLUDED.seq, error_type = EXCLUDED.error_type, error = EXCLUDED.error, "
+    "updated_at = now()"
+)
+_STOP_STREAM = (
+    "UPDATE ops.dispatcher_failures SET stopped_at = now() WHERE learner_id = %(learner_id)s "
+    "AND attempts >= %(limit)s AND stopped_at IS NULL"
+)
+_CLEAR_FAILURE = "DELETE FROM ops.dispatcher_failures WHERE learner_id = %(learner_id)s"
+_ERROR_LIMIT = 2000
 _MOVE_OFFSET = (
     "UPDATE ops.dispatcher_offsets SET last_dispatched_seq = %(seq)s, counters = %(counters)s, "
     "updated_at = now() WHERE learner_id = %(learner_id)s"
@@ -111,6 +135,9 @@ def _now() -> datetime:
 _PENDING_LEARNERS = (
     "SELECT l.learner_id FROM core.learners l LEFT JOIN ops.dispatcher_offsets d "
     "ON d.learner_id = l.learner_id WHERE l.seq > COALESCE(d.last_dispatched_seq, 0) "
+    # A stopped stream does not take a place of the `LIMIT`: the others are not starved.
+    "AND NOT EXISTS (SELECT 1 FROM ops.dispatcher_failures f "
+    "WHERE f.learner_id = l.learner_id AND f.stopped_at IS NOT NULL) "
     "ORDER BY l.learner_id LIMIT %(limit)s"
 )
 _LAG = (
@@ -123,6 +150,18 @@ _IDLE_LEARNERS = (
     "jsonb_each(COALESCE(d.counters->'episodes', '{}'::jsonb)) e "
     "WHERE (e.value->>'last_at')::timestamptz <= %(cutoff)s"
 )
+
+
+@dataclass
+class _Progress:
+    """The event a batch is on — the `seq` its failure is recorded with."""
+
+    seq: int = 0
+
+
+async def resume(db: Db, learner_id: UUID) -> None:
+    """`ops resume`: the stopped stream of the learner goes on from the event it stopped on."""
+    await db.execute(_CLEAR_FAILURE, {"learner_id": learner_id})
 
 
 @dataclass
@@ -158,12 +197,57 @@ class DispatcherP4:
 
     async def dispatch_batch(self, learner_id: UUID) -> DispatchOutcome | None:
         """One transaction for the next batch of the learner; None if another dispatcher holds
-        its mark."""
+        its mark or the stream is stopped. A failure rolls the batch back, is recorded in
+        `ops.dispatcher_failures` and raised again."""
+        progress = _Progress()
+        try:
+            return await self._dispatch_batch(learner_id, progress)
+        except Exception as exc:
+            await self._record_failure(learner_id, progress.seq, exc)
+            raise
+
+    async def _record_failure(self, learner_id: UUID, seq: int, exc: Exception) -> None:
+        """Its own transaction, after the rollback of the batch (law 7). A failure that cannot
+        be recorded is only logged: the batch is repeated by the next pass anyway."""
+        try:
+            async with self.db.transaction():
+                await self.db.execute(
+                    _RECORD_FAILURE,
+                    {
+                        "learner_id": learner_id,
+                        "seq": seq,
+                        "error_type": type(exc).__name__,
+                        "error": repr(exc)[:_ERROR_LIMIT],
+                    },
+                )
+                await self.db.execute(
+                    _STOP_STREAM,
+                    {"learner_id": learner_id, "limit": self.settings.dispatcher_failure_limit},
+                )
+                stopped = await self.db.fetch_one(_STOPPED, {"learner_id": learner_id})
+        except Exception as record_exc:
+            log.error(
+                "dispatcher_failure_not_recorded",
+                learner_id=str(learner_id),
+                error=repr(record_exc),
+            )
+            return
+        if stopped is not None:
+            log.error(
+                "dispatcher_stream_stopped", learner_id=str(learner_id), seq=seq, error=repr(exc)
+            )
+
+    async def _dispatch_batch(
+        self, learner_id: UUID, progress: _Progress
+    ) -> DispatchOutcome | None:
         async with self.db.transaction():
             locked = await self._lock_mark(learner_id)
             if locked is None:
                 return None
+            if await self.db.fetch_one(_STOPPED, {"learner_id": learner_id}) is not None:
+                return None
             after, counters = locked
+            progress.seq = after + 1
             events = await self.db.fetch_all(
                 _READ_EVENTS,
                 {
@@ -178,6 +262,7 @@ class DispatcherP4:
             tracker = EpisodeTracker(self.settings, counters.episodes)
             jobs = episodes = 0
             for event in events:
+                progress.seq = event.seq
                 if (event.type, event.schema_version) not in SPECS:
                     log.warning(
                         "dispatcher_unknown_event",
@@ -198,6 +283,8 @@ class DispatcherP4:
                 _MOVE_OFFSET,
                 {"learner_id": learner_id, "seq": last, "counters": Jsonb(counters.dump())},
             )
+            # The failures in a row end with a batch that went through.
+            await self.db.execute(_CLEAR_FAILURE, {"learner_id": learner_id})
             return DispatchOutcome(learner_id, last, len(events), jobs, episodes)
 
     async def process_learner(self, learner_id: UUID) -> int:

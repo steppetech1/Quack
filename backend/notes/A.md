@@ -23,6 +23,20 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-A-251. Решения владельца по D-A-250 (2026-11-15): остановка потока диспетчера и индекс блокировки очереди
+- Класс: B; две миграции схемы
+- WP / место: WP7; `quack/jobs/dispatcher_p4.py`, `quack/ops/{status,alerts}.py`, `quack/deletion/account.py`, `quack/cli.py`, `quack/config.py`; миграции `20261115000001_dispatcher_failures.sql`, `20261115000002_jobs_in_work_lock_index.sql`, `20261115000003_jobs_drop_running_lock_index.sql`
+- Контекст: владелец 2026-11-15 поручил принять решения по открытым пунктам (а) и (б) D-A-250 самостоятельно.
+- Решение:
+  1. Сбой пачки диспетчера пишется в `ops.dispatcher_failures` отдельной транзакцией (seq события, тип и текст ошибки, `attempts`). После `dispatcher_failure_limit = 10` сбоев подряд на одном seq ставится `stopped_at`: поток ученика остановлен, остальные идут дальше. Событие не пропускается, метка не двигается (Т-§2.10); успешная пачка стирает строку.
+  2. Отличие от проектора: проектор останавливается на первом `EventFailed`, диспетчер — по порогу, потому что его сбой может быть временным.
+  3. Остановленные ученики исключены из `pending_learners` до `LIMIT` (нет голодания); видны в `ops status` (`dispatcher.stopped_streams`) и дают критичную тревогу `DISPATCHER_STOPPED`; `ops resume` снимает остановку и проектора, и диспетчера; удаление аккаунта чистит строки.
+  4. Уникальный индекс `uq_jobs_in_work_lock` по `lock_key` на `status IN ('running', 'cancel_requested')` заменяет `uq_jobs_running_lock`; новый создаётся раньше, чем удаляется старый (оба `CONCURRENTLY`).
+- Почему: Т-§2.10, Т-§13.1; закон 7
+- Обратимость: миграции с `migrate:down`
+- Тесты: `tests/jobs/{test_dispatcher_p4,test_queue_p4}.py`, `tests/test_ops_alerts.py`, `tests/test_ops_p4_status.py`, `tests/test_ops_p4_recovery.py`, `tests/domains/test_deletion_fixes.py`, `tests/db/test_baseline_migration.py`; `tests/test_infra.py::test_migration_creates_contract_indexes` переведён на новый индекс
+- Требует подтверждения владельцем: нет. Перед выкаткой проверить, что в живой базе нет двух задач с одним `lock_key` в `running` и `cancel_requested` — иначе создание индекса упадёт
+
 ### D-A-250. Волна исправлений по аудиту багов (2026-11-13): удаление, очередь, правки ученика, проектор
 - Класс: B (обратимо, внутри контрактов); п.2 и п.10 — уточнение порядка из Д-§8.5 и Т-§2.7
 - WP / место: WP3–WP8, WP17, WP25; `quack/deletion/{account,domain,journal,topic}.py`, `quack/jobs/{queue_p4,rules_p4}.py`, `quack/domains/topic_edits.py`, `quack/review/today.py`, `quack/graph/projection/{handlers,store,rebuild,runner}.py`, `quack/graph/overlay_build.py`

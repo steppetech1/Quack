@@ -68,7 +68,10 @@ Prerequisites: Docker + Docker Compose, Node.js 20+.
    `compose.override.yaml` is picked up automatically for local runs — it publishes Postgres,
    Neo4j, Redis and the API on `127.0.0.1`, and brings up its own local MinIO (S3-compatible
    object storage, used for canvas strokes/photos/exports) with sane defaults, so you don't need
-   real S3 credentials to run locally. Migrations run automatically before the API starts.
+   real S3 credentials to run locally. Migrations run automatically before the API starts: the
+   `migrate` service creates the Postgres roles first (the API, workers and projector connect as
+   `quack_app`, without DDL rights; `.env.example` has local passwords for the roles, and without
+   them they fall back to `POSTGRES_PASSWORD`), then applies the migrations as `quack_migrator`.
 
    Check everything is up: `docker compose ps` — `api`, `workers`, `projector`, `compute`,
    `minio`, `postgres`, `neo4j`, `redis` should all be `Up` (`api`/`postgres`/`neo4j`/`redis`

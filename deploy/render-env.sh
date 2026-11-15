@@ -5,7 +5,12 @@
 # environment variable of the same name (the deploy job maps secrets and variables of the GitHub
 # Environment `production` into the environment of this script), else the default written in the
 # template. Fails, printing only NAMES, when a required value is empty, a placeholder like <owner>
-# is left, or a value holds a newline. Values never go to stderr.
+# is left, or a value holds a newline or a `$`. Values never go to stderr.
+#
+# Why `$` is refused: the file is written without quotes and Compose reads `$` in `.env` as the
+# start of an interpolation (`$x`, `${x}`), so a password like `ab$c` would reach the containers
+# as `ab` and lock the stack out of its own database. Quoting would change the file format, the
+# fix is a value without `$`.
 set -euo pipefail
 
 template="${1:?usage: render-env.sh <env.example>}"
@@ -25,6 +30,9 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -n "$value" ]] || value="${BASH_REMATCH[2]}"
   if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
     echo "render-env: $name contains a newline" >&2; failed=1; continue
+  fi
+  if [[ "$value" == *'$'* ]]; then
+    echo "render-env: $name contains a dollar sign, Compose would read it as interpolation; use a value without it" >&2; failed=1; continue
   fi
   if [[ "$value" =~ \<[^\>]*\> ]]; then
     echo "render-env: $name still holds a placeholder, set it" >&2; failed=1; continue

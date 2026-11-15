@@ -69,10 +69,19 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Verify Link */
+        /**
+         * Verify Link
+         * @description The page of the link: a form with one button. It redeems nothing and writes nothing —
+         *     mail scanners open links before the learner does, and a GET that signs in would spend the
+         *     token on them. The token is spent by the POST of the form.
+         */
         get: operations["verify_link_auth_link_verify_get"];
         put?: never;
-        post?: never;
+        /**
+         * Verify Link Submit
+         * @description Redeems the token once (`application/x-www-form-urlencoded`, field `token`) and signs in.
+         */
+        post: operations["verify_link_submit_auth_link_verify_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1410,6 +1419,11 @@ export interface components {
             ended_at_ms: number;
             /** Started At Ms */
             started_at_ms: number;
+        };
+        /** Body_verify_link_submit_auth_link_verify_post */
+        Body_verify_link_submit_auth_link_verify_post: {
+            /** Token */
+            token: string;
         };
         /** CanvasList */
         CanvasList: {
@@ -3669,6 +3683,39 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    verify_link_submit_auth_link_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_verify_link_submit_auth_link_verify_post"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -47,7 +47,12 @@ current batch.
 
 `compose.yaml` in the repository root: `postgres`, `neo4j`, `redis`, `migrate`, `api`,
 `projector`, `workers`, `compute`. Secrets come from `.env` next to `compose.yaml` (names:
-`backend/.env.example` plus `POSTGRES_PASSWORD`). No service publishes a port;
+`backend/.env.example` plus `POSTGRES_PASSWORD`). The processes connect to Postgres as `quack_app`
+(no DDL), not as the superuser: `migrate` first runs `ops db-roles` on the superuser DSN (roles,
+passwords from `APP_DB_PASSWORD`, `MIGRATOR_DB_PASSWORD`, `READER_DB_PASSWORD`, grants, schemas
+handed to `quack_migrator`; a database created by the superuser is brought in order), then
+`dbmate up` as `quack_migrator`. A local `.env` may leave the three passwords out: each falls back
+to `POSTGRES_PASSWORD`. By hand: `docker compose run --rm migrate ops db-roles`. No service publishes a port;
 `compose.override.yaml` publishes the databases and the API on 127.0.0.1 for local work.
 
 ```bash

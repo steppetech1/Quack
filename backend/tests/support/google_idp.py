@@ -27,6 +27,8 @@ class Google:
         self.key = RSAKey.generate_key(2048, auto_kid=True)
         self.code_claims: dict[str, dict[str, object]] = {}
         self.token_status = 200
+        # The nonce of the flow under test: put into the id token unless the claims name one.
+        self.nonce: str | None = None
         self.forced_id_token: str | None = None  # given instead of the signed one (forgeries)
         self.requests: list[httpx2.Request] = []
 
@@ -59,6 +61,8 @@ class Google:
             claims = self.code_claims.get(form.get("code", [""])[0])
             if self.token_status != 200 or claims is None:
                 return httpx2.Response(self.token_status or 400, json={"error": "invalid_grant"})
+            if self.nonce is not None:
+                claims = {"nonce": self.nonce, **claims}
             return httpx2.Response(
                 200,
                 json={

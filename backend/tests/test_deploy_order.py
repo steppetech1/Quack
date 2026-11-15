@@ -86,3 +86,51 @@ def test_a_manual_rollback_checks_can_rollback_and_runs_no_migration() -> None:
     assert "ROLLBACK=1" in TEXT
     assert "can-rollback --to-registry" in TEXT
     assert "if ((!ROLLBACK && NEW_MIGRATIONS)); then" in TEXT
+
+
+@pytest.mark.skipif(BASH is None, reason="bash is not available")
+@pytest.mark.parametrize(
+    "missing", ["APP_DB_PASSWORD", "READER_DB_PASSWORD", "MIGRATOR_DB_PASSWORD"]
+)
+def test_a_rollout_without_a_role_password_stops_before_anything_is_touched(
+    tmp_path: Path, missing: str
+) -> None:
+    """WP9.1: compose falls back to POSTGRES_PASSWORD for a missing role password (a local
+    stack); the server must never rely on that. The check runs before the first Docker call."""
+    assert BASH is not None
+    (tmp_path / "deploy").mkdir()
+    (tmp_path / "deploy" / "deploy.sh").write_bytes(SCRIPT.read_bytes())
+    names = {
+        "QUACK_REGISTRY": "ghcr.io/x",
+        "APP_DB_PASSWORD": "a",
+        "READER_DB_PASSWORD": "r",
+        "MIGRATOR_DB_PASSWORD": "m",
+    }
+    names[missing] = ""
+    (tmp_path / ".env").write_text(
+        "".join(f"{k}={v}\n" for k, v in names.items()), encoding="utf-8"
+    )
+
+    done = subprocess.run(
+        [BASH, "deploy/deploy.sh", "abc1234"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/nonexistent-so-docker-cannot-run:/usr/bin:/bin"},
+    )
+
+    assert done.returncode == 1
+    assert f"set {missing} in .env" in done.stdout
+    assert not (tmp_path / "release.env").exists()
+
+
+def test_roles_come_before_the_dump_and_the_migration_repeats_them() -> None:
+    """Roles (a new or rotated `quack_reader` password takes effect here), dump, migrate (roles
+    once more, then dbmate as the migrator), then the processes; a rollback runs neither."""
+    roles = position("dc run --rm migrate ops db-roles")
+    dump = position("ops backup now", roles)
+    migrate = position("dc run --rm migrate; then", dump)
+    assert roles < dump < migrate < position("\nrollout\n", migrate)
+    rollback_branch = TEXT[position("if ((ROLLBACK)); then") : roles]
+    assert "can-rollback" in rollback_branch and "db-roles" not in rollback_branch

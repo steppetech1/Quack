@@ -264,10 +264,22 @@ async def correct_line(
     )
 
 
+def _origin_allowed(websocket: WebSocket, allowed: list[str]) -> bool:
+    """Cross-site WebSocket hijacking: a browser sends the cookie to the socket of any page, so
+    a handshake with an `Origin` outside `cors_origins` is refused. Without `Origin` the client
+    is not a browser (the companion app, a script) and the cookie decides alone."""
+    origin = websocket.headers.get("origin")
+    return origin is None or origin in allowed
+
+
 @router.websocket("/canvases/{canvas_id}/ws")
 async def canvas_socket(websocket: WebSocket, canvas_id: UUID) -> None:
-    """WP21.2: refused with 1008 without a session that may open this canvas (D-C-121)."""
+    """WP21.2: refused with 1008 without a session that may open this canvas (D-C-121), and
+    with a browser `Origin` that is not one of `cors_origins` (before the session is looked at)."""
     resources = get_resources(websocket)
+    if not _origin_allowed(websocket, resources.settings.cors_origins):
+        await websocket.close(code=socket.CLOSE_POLICY)
+        return
     session = await websocket_session(websocket)
     canvas = None
     if socket.may_open(session, canvas_id):

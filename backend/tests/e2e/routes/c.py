@@ -354,6 +354,7 @@ STREAM = Stream(
             # ТЗ Ф4 WP18: sign-in routes (public ones are listed in `PUBLIC_ROUTES`).
             ("POST", "/auth/link"),
             ("GET", "/auth/link/verify"),
+            ("POST", "/auth/link/verify"),
             ("GET", "/auth/google/start"),
             ("GET", "/auth/google/callback"),
             ("POST", "/auth/logout"),
