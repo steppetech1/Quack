@@ -1,27 +1,36 @@
 """Routes of login and consents (ТЗ Ф4 WP18, §6.4 «Вход»; Т-§19.1, Т-§19.4, Т-§14.6).
 
-Public: `POST /auth/link`, `GET /auth/link/verify`, `GET /auth/google/start`,
+Public: `POST /auth/link`, `GET` and `POST /auth/link/verify`, `GET /auth/google/start`,
 `GET /auth/google/callback`. With a session: `POST /auth/logout`, `GET /v1/me`,
 `PATCH /v1/learner/settings`, `POST /v1/consents`, `DELETE /v1/consents/research`.
 """
 
 from __future__ import annotations
 
+import html
 import secrets
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from quack.api.auth import SESSION_COOKIE, CurrentSession, get_current_session
 from quack.api.errors import ApiError, error_response
 from quack.api.resources import AppResources, get_resources
 from quack.auth.consents import give_consent, has_current_terms, revoke_research
-from quack.auth.google import EmailNotVerified, GoogleOIDC, OidcFailed, learner_for_google
+from quack.auth.google import (
+    EmailNotVerified,
+    GoogleOIDC,
+    OidcFailed,
+    code_challenge,
+    learner_for_google,
+    new_code_verifier,
+    new_nonce,
+)
 from quack.auth.links import (
     AuthRateLimited,
     LinkInvalid,
@@ -33,8 +42,40 @@ from quack.auth.links import (
 from quack.auth.pairing import CanvasNotPairable, issue_pairing_token, redeem_pairing_token
 from quack.auth.sessions import cookie_params, open_session, revoke_session
 
-# D-C-115: the state of the Google flow lives in a short cookie of its own.
+# D-C-115: the state of the Google flow lives in a short cookie of its own. The cookie holds
+# `state.nonce.code_verifier` (the alphabet of `secrets.token_urlsafe` has no dot).
 OIDC_STATE_COOKIE = "quack_oidc_state"
+_OIDC_COOKIE_PARTS = 3
+
+# The page of `GET /auth/link/verify`: no external resources, one button, the token in a hidden
+# field. The same rules go in `<meta>` too — a proxy of the frontend passes the body, not headers.
+_CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+_VERIFY_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="{csp}">
+<meta name="robots" content="noindex">
+<title>Sign in</title>
+<style>
+body{{margin:0;min-height:100vh;display:grid;place-items:center;font:16px system-ui}}
+main{{text-align:center;padding:24px}}
+button{{font:inherit;padding:12px 32px;border-radius:8px;border:0;background:#111;color:#fff}}
+</style>
+</head>
+<body>
+<main>
+<h1>Sign in to Quack</h1>
+<form method="post" action="verify">
+<input type="hidden" name="token" value="{token}">
+<button type="submit">Sign in</button>
+</form>
+</main>
+</body>
+</html>
+"""
 
 router = APIRouter(tags=["auth"])
 
@@ -192,10 +233,33 @@ async def post_link(body: LinkRequest, request: Request, resources: Resources) -
 @router.get(
     "/auth/link/verify",
     name="verify_link",
+    response_class=HTMLResponse,
+    response_model=None,
+)
+async def verify_link_page(token: str) -> Response:
+    """The page of the link: a form with one button. It redeems nothing and writes nothing —
+    mail scanners open links before the learner does, and a GET that signs in would spend the
+    token on them. The token is spent by the POST of the form."""
+    return HTMLResponse(
+        _VERIFY_PAGE.format(csp=_CSP, token=html.escape(token, quote=True)),
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": _CSP,
+        },
+    )
+
+
+@router.post(
+    "/auth/link/verify",
+    name="verify_link_submit",
     response_model=SignedIn,
     responses={303: {"description": "Signed in: back to the app"}},
 )
-async def verify_link(token: str, request: Request, resources: Resources) -> Response:
+async def verify_link(
+    request: Request, resources: Resources, token: Annotated[str, Form()]
+) -> Response:
+    """Redeems the token once (`application/x-www-form-urlencoded`, field `token`) and signs in."""
     try:
         learner_id = await redeem_link(resources.db, token=token, now=_now())
     except LinkInvalid:
@@ -213,11 +277,14 @@ async def verify_link(token: str, request: Request, resources: Resources) -> Res
     responses={302: {"description": "To Google"}},
 )
 async def google_start(request: Request, resources: Resources) -> Response:
-    state = new_token()
-    response = RedirectResponse(_oidc(request).authorize_url(state=state), status_code=302)
+    state, nonce, verifier = new_token(), new_nonce(), new_code_verifier()
+    url = _oidc(request).authorize_url(
+        state=state, nonce=nonce, code_challenge=code_challenge(verifier)
+    )
+    response = RedirectResponse(url, status_code=302)
     params = cookie_params(resources.settings)
     params.update(key=OIDC_STATE_COOKIE, max_age=resources.settings.auth_link_ttl_min * 60)
-    response.set_cookie(value=state, **params)
+    response.set_cookie(value=f"{state}.{nonce}.{verifier}", **params)
     return response
 
 
@@ -235,15 +302,21 @@ async def google_callback(
 ) -> Response:
     """Google answers `?code&state`, or `?error=access_denied&state` when the learner refuses:
     without `code` that is the same 401 as any other failed sign-in, not a 422 of the framework."""
-    expected = request.cookies.get(OIDC_STATE_COOKIE)
-    if not expected or not state or not secrets.compare_digest(expected.encode(), state.encode()):
+    parts = request.cookies.get(OIDC_STATE_COOKIE, "").split(".")
+    if (
+        len(parts) != _OIDC_COOKIE_PARTS
+        or not all(parts)
+        or not state
+        or not secrets.compare_digest(parts[0].encode(), state.encode())
+    ):
         return _unauthenticated(request, "sign-in with Google was not started here")
+    _, nonce, verifier = parts
     if error is not None or not code:
         response = _unauthenticated(request, "sign-in with Google was not completed")
         response.delete_cookie(OIDC_STATE_COOKIE, domain=resources.settings.session_cookie_domain)
         return response
     try:
-        identity = await _oidc(request).identity(code=code)
+        identity = await _oidc(request).identity(code=code, nonce=nonce, code_verifier=verifier)
         learner_id = await learner_for_google(resources.db, identity)
     except EmailNotVerified:
         return _unauthenticated(request, "Google has not verified this address")

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx2
 import pytest
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -20,6 +21,7 @@ from quack.db import Db
 from quack.db.redis import llm_pressure_key
 from quack.llm.errors import LLMRateLimitedError, LLMUnavailableError, ProviderUnavailableError
 from quack.llm.gateway import LLMGateway
+from quack.llm.responses_client import ResponsesClient
 from quack.llm.streaming import StreamCompleted, StreamEvent, StreamingLLMProvider, TextDelta
 from quack.llm.tool_loop import stream_step
 from quack.prompts.build_manifest import write_manifest
@@ -318,6 +320,37 @@ async def test_stream_probe_without_a_slot_does_not_lock_the_breaker(
 
     second = await _collect(stream.stream_structured(request))  # must reach the provider
     assert isinstance(second[-1], StreamCompleted)
+
+
+async def test_rate_limit_event_inside_the_stream_sets_pressure_not_the_breaker(
+    pg_db: Db, prompts: PromptRegistry, redis: Redis
+) -> None:
+    """A limit that arrives as an `error` event of the SSE stream (format not confirmed by a live
+    run) is handled as an HTTP 429: the pressure flag is set and the breaker is not charged —
+    with `circuit_failures=1` one provider failure would open it."""
+    body = b'event: error\ndata: {"type":"error","code":"rate_limit_exceeded","retry_after":5}\n\n'
+    calls: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    client = ResponsesClient(
+        "http://meta.test/v1",
+        "key",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    gw = _gateway(pg_db, client, prompts, redis, circuit_failures=1, llm_retry_attempts=0)
+    learner_id = uuid4()
+    request, stream = _stream(gw, learner_id, uuid4())
+
+    for _ in range(2):  # the second call reaches the provider: the breaker is closed
+        with pytest.raises(LLMRateLimitedError) as raised:
+            await _collect(stream.stream_structured(request))
+        assert raised.value.reason == "rate_limited" and raised.value.retry_after_sec == 5.0
+    assert len(calls) == 2
+    assert await redis.exists(llm_pressure_key(WONDER))
+    assert [r["status"] for r in await _usage(pg_db, learner_id)] == ["error", "error"]
 
 
 class _NoEndEvent:

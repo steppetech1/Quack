@@ -16,11 +16,13 @@ from joserfc.jwk import RSAKey
 from pydantic import SecretStr
 
 from quack.api.email import EmailUnavailable, ResendEmailSender, create_email_sender
-from quack.auth.google import AuthlibGoogleOIDC, GoogleIdentity, OidcFailed
+from quack.auth.google import AuthlibGoogleOIDC, GoogleIdentity, OidcFailed, code_challenge
 from quack.config import Settings
 from tests.support.google_idp import CLIENT_ID, CLIENT_SECRET, TOKEN_URL, Google
 
 LINK = "https://api.qvack.online/auth/link/verify?token=abc"
+NONCE = "nonce-of-the-flow"
+VERIFIER = "v" * 64
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -98,7 +100,9 @@ def test_factory_builds_resend_from_settings(settings: Settings) -> None:
 
 @pytest.fixture
 def google() -> Google:
-    return Google()
+    idp = Google()
+    idp.nonce = NONCE  # Google echoes the nonce of the authorization request
+    return idp
 
 
 @pytest.fixture
@@ -118,7 +122,9 @@ def oidc(google: Google, oidc_settings: Settings) -> AuthlibGoogleOIDC:
 
 
 def test_authorize_url_asks_google_for_a_code_with_the_state(oidc: AuthlibGoogleOIDC) -> None:
-    url = urlsplit(oidc.authorize_url(state="state-1"))
+    url = urlsplit(
+        oidc.authorize_url(state="state-1", nonce=NONCE, code_challenge=code_challenge(VERIFIER))
+    )
     assert (
         f"{url.scheme}://{url.netloc}{url.path}" == "https://accounts.google.com/o/oauth2/v2/auth"
     )
@@ -128,17 +134,22 @@ def test_authorize_url_asks_google_for_a_code_with_the_state(oidc: AuthlibGoogle
     assert query["response_type"] == ["code"]
     assert query["state"] == ["state-1"]
     assert set(query["scope"][0].split()) == {"openid", "email"}
+    assert query["nonce"] == [NONCE]
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["code_challenge"] == [code_challenge(VERIFIER)]
+    assert VERIFIER not in str(url.geturl())
 
 
 async def test_identity_of_a_verified_address(google: Google, oidc: AuthlibGoogleOIDC) -> None:
     google.code_claims["good"] = google.claims()
-    identity = await oidc.identity(code="good")
+    identity = await oidc.identity(code="good", nonce=NONCE, code_verifier=VERIFIER)
     assert identity == GoogleIdentity(email="Gina@Example.com", email_verified=True)
     token_request = next(r for r in google.requests if str(r.url) == TOKEN_URL)
     form = parse_qs(token_request.content.decode())
     assert form["grant_type"] == ["authorization_code"]
     assert form["code"] == ["good"]
     assert form["redirect_uri"] == ["https://api.qvack.online/auth/google/callback"]
+    assert form["code_verifier"] == [VERIFIER]  # PKCE: only the exchange carries the verifier
     # The client authenticates itself with the secret (basic auth or the form of the request).
     authorization = token_request.headers.get("authorization", "")
     assert form.get("client_secret") == [CLIENT_SECRET] or authorization.startswith("Basic ")
@@ -148,32 +159,53 @@ async def test_identity_of_a_verified_address(google: Google, oidc: AuthlibGoogl
 async def test_identity_keeps_the_unverified_flag(google: Google, oidc: AuthlibGoogleOIDC) -> None:
     """The refusal of an unverified address is `learner_for_google`'s (T-AU3), not the adapter's."""
     google.code_claims["bad"] = google.claims(email_verified=False)
-    assert (await oidc.identity(code="bad")).email_verified is False
+    assert (
+        await oidc.identity(code="bad", nonce=NONCE, code_verifier=VERIFIER)
+    ).email_verified is False
 
 
 async def test_identity_reads_google_style_string_flag(
     google: Google, oidc: AuthlibGoogleOIDC
 ) -> None:
     google.code_claims["s"] = google.claims(email_verified="true")
-    assert (await oidc.identity(code="s")).email_verified is True
+    assert (
+        await oidc.identity(code="s", nonce=NONCE, code_verifier=VERIFIER)
+    ).email_verified is True
+
+
+def test_code_challenge_is_the_s256_of_the_verifier() -> None:
+    """RFC 7636 appendix B: the published pair of the standard."""
+    verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    assert code_challenge(verifier) == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 
 
 @pytest.mark.parametrize(
     "override",
     [
         {"aud": "another-client"},
+        {"nonce": "nonce-of-another-flow"},
+        {"nonce": ""},
         {"iss": "https://evil.example"},
         {"exp": 1},
         {"email": None},
     ],
-    ids=["wrong-audience", "wrong-issuer", "expired", "no-email"],
+    ids=["wrong-audience", "foreign-nonce", "empty-nonce", "wrong-issuer", "expired", "no-email"],
 )
 async def test_identity_refuses_a_bad_token(
     google: Google, oidc: AuthlibGoogleOIDC, override: dict[str, object]
 ) -> None:
     google.code_claims["x"] = google.claims(**override)
     with pytest.raises(OidcFailed):
-        await oidc.identity(code="x")
+        await oidc.identity(code="x", nonce=NONCE, code_verifier=VERIFIER)
+
+
+async def test_identity_refuses_an_id_token_without_a_nonce(
+    google: Google, oidc: AuthlibGoogleOIDC
+) -> None:
+    google.nonce = None
+    google.code_claims["x"] = google.claims()
+    with pytest.raises(OidcFailed):
+        await oidc.identity(code="x", nonce=NONCE, code_verifier=VERIFIER)
 
 
 async def test_identity_refuses_a_foreign_signature(
@@ -194,7 +226,7 @@ async def test_identity_refuses_a_foreign_signature(
         transport=httpx2.MockTransport(handler),
     )
     with pytest.raises(OidcFailed):
-        await forged.identity(code="x")
+        await forged.identity(code="x", nonce=NONCE, code_verifier=VERIFIER)
 
 
 async def test_identity_refuses_a_code_google_rejects(
@@ -202,7 +234,7 @@ async def test_identity_refuses_a_code_google_rejects(
 ) -> None:
     google.token_status = 400
     with pytest.raises(OidcFailed):
-        await oidc.identity(code="used-twice")
+        await oidc.identity(code="used-twice", nonce=NONCE, code_verifier=VERIFIER)
 
 
 async def test_identity_when_google_is_unreachable(oidc_settings: Settings) -> None:
@@ -211,7 +243,7 @@ async def test_identity_when_google_is_unreachable(oidc_settings: Settings) -> N
 
     down = AuthlibGoogleOIDC(oidc_settings, transport=httpx2.MockTransport(handler))
     with pytest.raises(OidcFailed):
-        await down.identity(code="x")
+        await down.identity(code="x", nonce=NONCE, code_verifier=VERIFIER)
 
 
 async def test_identity_refuses_an_unsigned_token(google: Google, oidc_settings: Settings) -> None:
@@ -230,4 +262,4 @@ async def test_identity_refuses_an_unsigned_token(google: Google, oidc_settings:
 
     forged = AuthlibGoogleOIDC(oidc_settings, transport=httpx2.MockTransport(handler))
     with pytest.raises(OidcFailed):
-        await forged.identity(code="x")
+        await forged.identity(code="x", nonce=NONCE, code_verifier=VERIFIER)

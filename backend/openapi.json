@@ -409,6 +409,19 @@
         "title": "Body_upload_voice_v1_sessions__session_id__voice_post",
         "type": "object"
       },
+      "Body_verify_link_submit_auth_link_verify_post": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "Body_verify_link_submit_auth_link_verify_post",
+        "type": "object"
+      },
       "CanvasList": {
         "properties": {
           "canvases": {
@@ -5479,6 +5492,7 @@
     },
     "/auth/link/verify": {
       "get": {
+        "description": "The page of the link: a form with one button. It redeems nothing and writes nothing —\nmail scanners open links before the learner does, and a GET that signs in would spend the\ntoken on them. The token is spent by the POST of the form.",
         "operationId": "verify_link_auth_link_verify_get",
         "parameters": [
           {
@@ -5491,6 +5505,46 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          }
+        },
+        "summary": "Verify Link",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Redeems the token once (`application/x-www-form-urlencoded`, field `token`) and signs in.",
+        "operationId": "verify_link_submit_auth_link_verify_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_verify_link_submit_auth_link_verify_post"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -5516,7 +5570,7 @@
             "description": "VALIDATION_ERROR"
           }
         },
-        "summary": "Verify Link",
+        "summary": "Verify Link Submit",
         "tags": [
           "auth"
         ]

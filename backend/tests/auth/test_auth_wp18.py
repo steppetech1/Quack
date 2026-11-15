@@ -131,13 +131,22 @@ async def test_google_oidc_callback(pg_db: Db) -> None:
     oidc = FakeOIDC()
     oidc.script("good", email="Gina@Example.com")
     oidc.script("bad", email="eve@example.com", email_verified=False)
-    assert "state=s1" in oidc.authorize_url(state="s1")
+    assert "state=s1" in oidc.authorize_url(state="s1", nonce="n1", code_challenge="c1")
 
-    learner = await learner_for_google(pg_db, await oidc.identity(code="good"))
+    learner = await learner_for_google(
+        pg_db, await oidc.identity(code="good", nonce="n1", code_verifier="v1")
+    )
     assert await _learner_by_email(pg_db, "gina@example.com") == learner
-    assert await learner_for_google(pg_db, await oidc.identity(code="good")) == learner
+    assert (
+        await learner_for_google(
+            pg_db, await oidc.identity(code="good", nonce="n1", code_verifier="v1")
+        )
+        == learner
+    )
     with pytest.raises(EmailNotVerified):
-        await learner_for_google(pg_db, await oidc.identity(code="bad"))
+        await learner_for_google(
+            pg_db, await oidc.identity(code="bad", nonce="n1", code_verifier="v1")
+        )
     assert await _learner_by_email(pg_db, "eve@example.com") is None
 
 

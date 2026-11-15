@@ -229,14 +229,15 @@ class System:
         return await self._accept_terms(learner_id, email, {"Cookie": f"{SESSION_COOKIE}={cookie}"})
 
     async def sign_in_by_link(self, email: str | None = None) -> Learner:
-        """The way in of T-E1: `POST /auth/link`, the link of the mail, `GET /auth/link/verify`
-        (the session cookie comes back in `set-cookie`), then the terms. `email` signs in an
-        address again (T-E12: the same address after the account was deleted)."""
+        """The way in of T-E1: `POST /auth/link`, the link of the mail, the form of its page
+        (`POST /auth/link/verify`: the session cookie comes back in `set-cookie`), then the
+        terms. `email` signs in an address again (T-E12: the same address after the account was
+        deleted)."""
         email = email or f"e2e-{uuid4().hex[:12]}@example.com"
         sent = await self.client.post("/auth/link", json={"email": email})
         assert sent.status_code == 200, sent.text
         token = parse_qs(urlsplit(self.resources.email.last_link(email)).query)["token"][0]  # type: ignore[attr-defined]
-        verified = await self.client.get("/auth/link/verify", params={"token": token})
+        verified = await self.client.post("/auth/link/verify", data={"token": token})
         # Without `auth_success_redirect_url` the verification answers 200 with the learner.
         assert verified.status_code == 200, verified.text
         found = re.search(rf"{SESSION_COOKIE}=([^;]+)", verified.headers["set-cookie"])

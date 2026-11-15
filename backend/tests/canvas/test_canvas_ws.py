@@ -198,6 +198,32 @@ async def test_sign_in_and_scope(pg_db: Db, settings: Settings, app_for: AppFor)
             assert closed.value.code == CLOSE_POLICY, message
 
 
+async def test_origin_of_a_browser_must_be_in_the_list(
+    pg_db: Db, settings: Settings, app_for: AppFor
+) -> None:
+    """Cross-site WebSocket hijacking: the browser sends the session cookie from any page, so a
+    handshake whose `Origin` is not in `cors_origins` is refused (1008) before the session is
+    looked at — with a valid cookie too. A listed `Origin` and no `Origin` at all (not a
+    browser) open the socket."""
+    owner = await create_learner(pg_db)
+    _, canvas_id = await _canvas(pg_db, owner)
+    app = app_for(storage=InMemoryObjectStore())
+    path = f"/v1/canvases/{canvas_id}/ws"
+    cookies = await _cookie(pg_db, settings, owner)
+    allowed = settings.cors_origins[0]
+
+    for foreign in ("https://evil.example", "null", allowed + "/", allowed.upper()):
+        with pytest.raises(WebSocketClosed) as closed:
+            async with AsgiWebSocket(app, path, cookies=cookies, origin=foreign):
+                pass
+        assert closed.value.code == CLOSE_POLICY, foreign
+
+    for origin in (allowed, None):
+        async with AsgiWebSocket(app, path, cookies=cookies, origin=origin) as ws:
+            await ws.send_json(_batch(1))
+            assert (await ws.receive_json())["type"] == "ack"
+
+
 async def test_malformed_message_closes_the_socket(
     pg_db: Db, settings: Settings, app_for: AppFor
 ) -> None:

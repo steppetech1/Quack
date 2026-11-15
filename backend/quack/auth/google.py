@@ -7,6 +7,7 @@ The test double is `tests.support.oidc.FakeOIDC` (§8.1).
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
@@ -15,6 +16,7 @@ import httpx2
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from authlib.oauth2.rfc6749.parameters import prepare_grant_uri
+from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet
@@ -31,6 +33,26 @@ GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISSUERS = ["https://accounts.google.com", "accounts.google.com"]
 SCOPE = "openid email"
 ID_TOKEN_ALGORITHMS = ["RS256"]
+PKCE_METHOD = "S256"
+# RFC 7636 §4.1: a verifier is 43..128 characters; 48 random bytes make 64.
+_VERIFIER_BYTES = 48
+_NONCE_BYTES = 16
+
+
+def new_nonce() -> str:
+    """The `nonce` of one Google flow: bound to the id token (replay of a foreign token)."""
+    return secrets.token_urlsafe(_NONCE_BYTES)
+
+
+def new_code_verifier() -> str:
+    """The PKCE `code_verifier` of one Google flow (RFC 7636)."""
+    return secrets.token_urlsafe(_VERIFIER_BYTES)
+
+
+def code_challenge(verifier: str) -> str:
+    """The `S256` challenge of a verifier: what Google gets at `start`, the verifier itself
+    goes to Google only at the exchange of the code."""
+    return create_s256_code_challenge(verifier)
 
 
 class EmailNotVerified(Exception):
@@ -49,13 +71,14 @@ class GoogleIdentity:
 
 
 class GoogleOIDC(Protocol):
-    def authorize_url(self, *, state: str) -> str:
-        """Where `GET /auth/google/start` redirects."""
+    def authorize_url(self, *, state: str, nonce: str, code_challenge: str) -> str:
+        """Where `GET /auth/google/start` redirects (`state`, `nonce`, PKCE `S256` challenge)."""
         ...
 
-    async def identity(self, *, code: str) -> GoogleIdentity:
-        """Exchange the code of `GET /auth/google/callback` for the id token's identity.
-        `OidcFailed` when Google refuses or the id token is not valid."""
+    async def identity(self, *, code: str, nonce: str, code_verifier: str) -> GoogleIdentity:
+        """Exchange the code of `GET /auth/google/callback` (with the PKCE verifier) for the id
+        token's identity. `OidcFailed` when Google refuses, the id token is not valid or its
+        `nonce` is not the one of this flow."""
         ...
 
 
@@ -63,7 +86,8 @@ class AuthlibGoogleOIDC:
     """`GoogleOIDC` on `authlib` with redirect URI `google_oidc_redirect_url` (Д-§3.1).
 
     The code is exchanged at Google's token endpoint; the id token is then checked against
-    Google's published keys (RS256 signature, issuer, audience, expiry). `transport` lets tests
+    Google's published keys (RS256 signature, issuer, audience, expiry, `nonce` of this flow).
+    The flow carries PKCE `S256` (RFC 7636). `transport` lets tests
     replace the network."""
 
     def __init__(
@@ -72,7 +96,7 @@ class AuthlibGoogleOIDC:
         self._settings = settings
         self._transport = transport
 
-    def authorize_url(self, *, state: str) -> str:
+    def authorize_url(self, *, state: str, nonce: str, code_challenge: str) -> str:
         return prepare_grant_uri(
             GOOGLE_AUTHORIZE_URL,
             self._settings.google_oidc_client_id.get_secret_value(),
@@ -80,9 +104,12 @@ class AuthlibGoogleOIDC:
             redirect_uri=self._settings.google_oidc_redirect_url,
             scope=SCOPE,
             state=state,
+            nonce=nonce,
+            code_challenge=code_challenge,
+            code_challenge_method=PKCE_METHOD,
         )
 
-    async def identity(self, *, code: str) -> GoogleIdentity:
+    async def identity(self, *, code: str, nonce: str, code_verifier: str) -> GoogleIdentity:
         client_id = self._settings.google_oidc_client_id.get_secret_value()
         timeout = self._settings.auth_http_timeout_s
         try:
@@ -96,7 +123,10 @@ class AuthlibGoogleOIDC:
             )
             try:
                 token: dict[str, Any] = await oauth.fetch_token(
-                    GOOGLE_TOKEN_URL, code=code, grant_type="authorization_code"
+                    GOOGLE_TOKEN_URL,
+                    code=code,
+                    grant_type="authorization_code",
+                    code_verifier=code_verifier,
                 )
             finally:
                 await oauth.aclose()  # pyright: ignore[reportAttributeAccessIssue]
@@ -113,6 +143,11 @@ class AuthlibGoogleOIDC:
                 aud={"essential": True, "value": client_id},
                 exp={"essential": True},
             ).validate(claims)
+            token_nonce = claims.get("nonce")
+            if not isinstance(token_nonce, str) or not secrets.compare_digest(
+                token_nonce.encode(), nonce.encode()
+            ):
+                raise OidcFailed("the id token of Google is not for this sign-in (nonce)")
         except OidcFailed:
             raise
         except (OAuthError, httpx2.HTTPError, JoseError, ValueError, KeyError) as exc:

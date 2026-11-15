@@ -23,6 +23,16 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-B-224. Решение владельца по D-B-223 (2026-11-15): лимит запросов внутри SSE-потока
+- Класс: B
+- WP / место: WP10; `quack/llm/responses_client.py`
+- Контекст: владелец 2026-11-15 поручил принять решение по открытому пункту (в) D-B-223 самостоятельно. Формата события в документах и в записях спайка нет.
+- Решение: события `error` и `response.failed` с `rate_limit` в `code` или `type`, либо со статусом 429 (на корне, в `error`, в `response.error`) поднимают `ProviderRateLimitedError`, как HTTP 429: шлюз ставит флаг давления (Т-§22.5) и не засчитывает отказ размыкателю. `retry_after` берётся из события, если есть. Остальные `error` — по-прежнему отказ провайдера.
+- Почему: Т-§22.5 (реактивные лимиты), WP5.5
+- Обратимость: правка разбора
+- Тесты: `tests/llm/test_phase4_stream_adapter.py`, `tests/llm/test_gateway_stream.py`
+- Требует подтверждения владельцем: нет, но формат события взят по общему виду Responses API и **не подтверждён живым прогоном** — сверить при первом реальном 429 в потоке
+
 ### D-B-223. Волна исправлений по аудиту багов (2026-11-13): ход учителя, проверка ответов, шлюз моделей, агенты
 - Класс: B (обратимо, внутри контрактов)
 - WP / место: WP10–WP14, WP16; `quack/session/{action_turn,guards,record,replay,review_turn,turn_graph,turn_source}.py`, `quack/practice/{answers,repo,symbolic_job,jobs,check}.py`, `quack/llm/{gateway,errors,responses_client}.py`, `quack/agents/{topic_split,today,viz}.py`, `compute/quack_compute/math/{latex,service}.py`, `quack/config.py`

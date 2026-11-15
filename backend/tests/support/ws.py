@@ -29,9 +29,20 @@ class WebSocketClosed(Exception):
 class AsgiWebSocket:
     """`async with AsgiWebSocket(app, "/v1/canvases/…/ws", cookies={...}) as ws:`."""
 
-    def __init__(self, app: ASGIApp, path: str, *, cookies: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        path: str,
+        *,
+        cookies: dict[str, str] | None = None,
+        origin: str | None = None,
+    ) -> None:
+        """`origin` is the `Origin` header of a browser handshake; without it the client is not
+        a browser."""
         cookie = "; ".join(f"{name}={value}" for name, value in (cookies or {}).items())
         headers = [(b"host", b"test")] + ([(b"cookie", cookie.encode())] if cookie else [])
+        if origin is not None:
+            headers.append((b"origin", origin.encode()))
         self._scope: dict[str, Any] = {
             "type": "websocket",
             "asgi": {"version": "3.0"},

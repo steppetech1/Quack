@@ -89,6 +89,39 @@ def _seconds(value: str | None) -> float | None:
         return None  # an HTTP date: the gateway parses the raw header (WP5.3)
 
 
+_RETRY_AFTER_FIELDS = ("retry_after", "retry_after_sec", "retry_after_seconds")
+
+
+def _event_rate_limit(event: Mapping[str, Any]) -> tuple[bool, float | None]:
+    """Whether an `error` / `response.failed` event of the stream is a rate limit, and its
+    `retry_after` in seconds when the event carries one.
+
+    The format is NOT confirmed by a live run (the spike recorded no 429 inside a stream, notes
+    B.md item в): it follows the common Responses API shape. The event, its `error` object or
+    `response.error` say `rate_limit…` in `code` or `type` (`rate_limit_exceeded`,
+    `rate_limit_error`), or carry the number 429 in `status`, `status_code` or `code`."""
+    response = event.get("response")
+    candidates: list[Mapping[str, Any]] = [event]
+    for holder in (event, response if isinstance(response, Mapping) else {}):
+        error = holder.get("error")
+        if isinstance(error, Mapping):
+            candidates.append(error)
+    limited = False
+    retry_after: float | None = None
+    for part in candidates:
+        for key in ("code", "type", "status", "status_code"):
+            value = part.get(key)
+            if isinstance(value, str) and "rate_limit" in value.lower():
+                limited = True
+            if value == 429 or (isinstance(value, str) and value.strip() == "429"):
+                limited = True
+        for key in _RETRY_AFTER_FIELDS:
+            seconds = _seconds(None if part.get(key) is None else str(part[key]))
+            if retry_after is None and seconds is not None and seconds > 0:
+                retry_after = seconds
+    return limited, retry_after if limited else None
+
+
 def _message_text(item: Mapping[str, Any]) -> str:
     parts = item.get("content") or []
     return "".join(
@@ -469,5 +502,12 @@ def _stream_event(
             )
         ]
     if kind in ("response.failed", "error"):
+        limited, retry_after = _event_rate_limit(event)
+        if limited:
+            # A limit inside the stream is a 429 for the gateway: the pressure flag, not the
+            # breaker. Format not confirmed by a live run (see `_event_rate_limit`).
+            raise ProviderRateLimitedError(
+                retry_after, headers=headers, body=orjson.dumps(event).decode()
+            )
         raise ProviderUnavailableError(f"stream error event {kind}: {orjson.dumps(event).decode()}")
     return []
