@@ -262,7 +262,8 @@ async def test_decimal_against_an_expression_reference_takes_sig_digits_of_the_s
     assert sent[0]["tolerance"]["min_sig_digits"] == 4
 
     _, sent = await _run(_decimal_reference_spec("sqrt(2)/2"), answer, done)
-    assert sent[0]["tolerance"]["sig_digits"] is None
+    # An unset field is not sent, so a compute of the release before it takes the request.
+    assert "sig_digits" not in sent[0]["tolerance"]
     assert sent[0]["tolerance"]["min_sig_digits"] == SETTINGS.min_sig_digits
 
 
