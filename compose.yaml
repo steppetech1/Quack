@@ -30,11 +30,18 @@ x-backend-image: &backend-image
     context: ./backend
   restart: unless-stopped
 
+# Д-§7, ТЗ Ф4 WP9.1: the long-lived processes connect as `quack_app` (reads and writes the tables
+# of `core`, `content`, `ops`, no DDL), never as the superuser `quack`. The role is created and
+# given its grants by `ops db-roles` in the `migrate` service, which runs before them. Its
+# password, like those of `quack_migrator` and `quack_reader`, is `*_DB_PASSWORD` of `.env`; when
+# a local `.env` leaves it out it is POSTGRES_PASSWORD. The server never relies on that:
+# render-env.sh requires the three values and deploy.sh refuses to roll out without them. The
+# passwords are part of a URL here: letters, digits and `-._~` only.
 x-db-env: &db-env
   ENV: ${ENV:-prod}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   QUACK_VERSION: ${QUACK_VERSION:-dev}
-  POSTGRES_DSN: postgresql://quack:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/quack
+  POSTGRES_DSN: postgresql://quack_app:${APP_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}}@postgres:5432/quack
   NEO4J_URI: bolt://neo4j:7687
   NEO4J_USER: neo4j
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
@@ -135,20 +142,22 @@ services:
     cpus: 0.25
 
   migrate:
-    # `ops migrate` = `dbmate up` on /app/db/migrations (WP1.1, WP9); api, projector and workers
-    # wait for it to complete (D-C-160).
+    # `ops migrate --with-roles`: first `ops db-roles` on the superuser DSN below (creates and
+    # updates the roles, passwords and grants, hands the schemas to `quack_migrator`; idempotent),
+    # then `dbmate up` on /app/db/migrations as `quack_migrator` (WP1.1, WP9, WP9.1). api,
+    # projector and workers wait for it to complete (D-C-160). The only service with the
+    # superuser DSN besides the database itself.
     <<: *backend-image
     restart: "no"
-    command: ["ops", "migrate"]
+    command: ["ops", "migrate", "--with-roles"]
     environment:
       ENV: ${ENV:-prod}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       QUACK_VERSION: ${QUACK_VERSION:-dev}
       POSTGRES_DSN: postgresql://quack:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/quack
-      # `ops db-roles` runs in this service too (superuser DSN); `ops migrate` ignores them.
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-}
-      READER_DB_PASSWORD: ${READER_DB_PASSWORD:-}
-      MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD:-}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      READER_DB_PASSWORD: ${READER_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD:-${POSTGRES_PASSWORD}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -306,12 +315,13 @@ services:
     profiles: [backup]
     restart: "no"
     command: ["ops", "backup"]
-    # Д-§7: the dump reads as `quack_reader`, created by `ops db-roles` (deploy.sh runs it).
+    # Д-§7: the dump reads as `quack_reader` (member of pg_read_all_data, what `pg_dump` needs and
+    # nothing more), created by `ops db-roles` (the `migrate` service; deploy.sh runs it first).
     environment:
       ENV: ${ENV:-prod}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       QUACK_VERSION: ${QUACK_VERSION:-dev}
-      POSTGRES_DSN: postgresql://quack_reader:${READER_DB_PASSWORD:-}@postgres:5432/quack
+      POSTGRES_DSN: postgresql://quack_reader:${READER_DB_PASSWORD:-${POSTGRES_PASSWORD}}@postgres:5432/quack
       BACKUP_LOCAL_DIR: /backups
       BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
       BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:-}
@@ -347,7 +357,7 @@ services:
       ENV: ${ENV:-prod}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       QUACK_VERSION: ${QUACK_VERSION:-dev}
-      POSTGRES_DSN: postgresql://quack_reader:${READER_DB_PASSWORD:-}@postgres:5432/quack
+      POSTGRES_DSN: postgresql://quack_reader:${READER_DB_PASSWORD:-${POSTGRES_PASSWORD}}@postgres:5432/quack
       REDIS_URL: redis://redis:6379/0
       BACKUP_LOCAL_DIR: /backups
       HOST_STATE_PATH: /host-state/state.json

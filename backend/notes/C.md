@@ -23,6 +23,22 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-253. Решения владельца по D-C-252 (2026-11-15): роль приложения в Postgres, вход, Origin сокета, рендер `.env`, лимиты
+- Класс: B; п.1 меняет порядок выкатки и отменяет D-C-160 п.6; п.2 — отступление от буквы ТЗ WP18
+- WP / место: WP9.1, WP18, WP21; `compose.yaml`, `deploy/{deploy.sh,render-env.sh,README.md,env.example}`, `.env.example`, `quack/ops/{db_roles,commands}.py`, `quack/cli.py`, `quack/auth/{router,google}.py`, `quack/api/openapi.py`, `quack/canvas/router.py`, `frontend/app/api/auth/link/verify/route.ts`
+- Контекст: владелец 2026-11-15 поручил принять решения по открытым пунктам D-C-252 самостоятельно.
+- Решение:
+  1. **D-C-160 п.6 отменён.** `api`, `workers`, `projector` ходят как `quack_app`, `backup` и `alerts` — как `quack_reader`, схему ведёт `quack_migrator`. Суперпользователь остаётся только у сервиса `migrate`: `ops migrate --with-roles` выполняет `apply_db_roles` и затем `dbmate up` под мигратором. `db-roles` идемпотентно приводит базу, созданную суперпользователем: передаёт владение (только там, где владелец другой), выдаёт права, закрывает `public` и журнал `schema_migrations` от `quack_app`. Порядок выкатки: роли → дамп → `migrate` → процессы; откат шаг ролей не запускает. Локально пароль роли по умолчанию — `POSTGRES_PASSWORD`; в prod три пароля обязательны (`deploy.sh` падает без них).
+  2. Ссылка входа: `GET /auth/link/verify` отдаёт страницу с кнопкой и токен не гасит, вход — `POST /auth/link/verify`. ТЗ WP18 задаёт гашение по GET; отступление принято из-за почтовых сканеров, открывающих ссылку раньше ученика.
+  3. Google OIDC: `nonce` и PKCE S256; cookie состояния — `state.nonce.verifier`.
+  4. WebSocket канваса проверяет `Origin` по `cors_origins` до `accept`: чужой — 1008, отсутствующий (не браузер) — пропуск.
+  5. `render-env.sh` отказывается рендерить значение с `$`; формат `.env` не меняется.
+  6. Лимиты D-C-252 подтверждены стартовыми: `line_render_max_side_px = 8192`, `render_strokes_max_side_px = 8192`, `render_max_param_sets = 10`, `request_body max_size 64MiB`, `request_id_max_chars = 64`; у B — `turn_lock_renew_sec = 20`.
+- Почему: ТЗ WP9.1, Д-§7 (п.1); Т-§19.1 (п.2–п.4); Т-§19.8, Т-§21.3 (п.6)
+- Обратимость: п.1 — откат на прежний образ работает на базе с владельцем-мигратором; остальное — откат коммита
+- Тесты: `tests/test_ops_db_roles.py`, `tests/test_stand_dbmate.py`, `tests/test_deploy_env.py`, `tests/test_deploy_order.py`, `tests/auth/*`, `tests/canvas/test_canvas_ws.py`, `tests/e2e/system.py` (вход по POST); стенд `docker compose -p qroles` на чистых томах: `migrate` — код 0, сервисы под `quack_app`, DDL отклоняется
+- Требует подтверждения владельцем: нет. Не проверено: `deploy.sh` на сервере, откат на старый образ в Docker, страница входа в браузере. Остаются открытыми из D-C-252: бакет `quack-deletions`, локальные копии d3/plotly в compute, `trusted_proxies` Caddy при проксировании через Vercel
+
 ### D-C-252. Волна исправлений по аудиту багов (2026-11-13): канвас, материалы, compute, вход, хранилище, эксплуатация
 - Класс: B; п.11 (обязательные секреты prod) и п.9 (доверие заголовкам прокси) меняют условия выкатки
 - WP / место: WP9, WP18–WP25; `quack/canvas/{socket,recognition,photo_pipeline,strokes,channel,router}.py`, `quack/materials/{parse,router,library}.py`, `quack/storage/{deletions,objects,uploads}.py`, `quack/auth/router.py`, `quack/api/app.py`, `quack/ops/backup.py`, `quack/cli.py`, `quack/config.py`, `compute/quack_compute/{app,renderer,settings,work}.py`, `compose.yaml`, `deploy/Caddyfile`, `deploy/README.md`

@@ -44,12 +44,47 @@ def test_the_processes_of_phase_4_need_no_flag(compose: dict[str, Any]) -> None:
 
 def test_the_schema_is_migrated_before_the_processes_start(compose: dict[str, Any]) -> None:
     migrate = compose["services"]["migrate"]
-    assert migrate["command"] == ["ops", "migrate"]
+    # Roles on the superuser DSN, then `dbmate up` as `quack_migrator` (WP9.1).
+    assert migrate["command"] == ["ops", "migrate", "--with-roles"]
     assert migrate["restart"] == "no"
     assert migrate["depends_on"]["postgres"]["condition"] == "service_healthy"
     for name in PROCESSES:
         waits = compose["services"][name]["depends_on"]["migrate"]
         assert waits["condition"] == "service_completed_successfully", name
+
+
+def _dsn_user(service: dict[str, Any]) -> str:
+    dsn = str(service["environment"]["POSTGRES_DSN"])
+    return dsn.split("://", 1)[1].split(":", 1)[0]
+
+
+def test_the_services_do_not_connect_to_postgres_as_the_superuser(compose: dict[str, Any]) -> None:
+    """WP9.1, Д-§7: the long-lived processes are `quack_app`, the short-lived `backup` and
+    `alerts` are `quack_reader`; the superuser DSN stays with `migrate` (the roles step)."""
+    services = compose["services"]
+    for name in PROCESSES:
+        assert _dsn_user(services[name]) == "quack_app", name
+        assert "APP_DB_PASSWORD" in services[name]["environment"]["POSTGRES_DSN"], name
+    for name in ("backup", "alerts"):
+        assert _dsn_user(services[name]) == "quack_reader", name
+    superusers = {
+        name
+        for name, service in services.items()
+        if "POSTGRES_DSN" in service.get("environment", {}) and _dsn_user(service) == "quack"
+    }
+    assert superusers == {"migrate"}
+    for name in ("APP_DB_PASSWORD", "READER_DB_PASSWORD", "MIGRATOR_DB_PASSWORD"):
+        assert name in services["migrate"]["environment"], name
+
+
+def test_a_local_env_without_the_role_passwords_falls_back_to_postgres_password() -> None:
+    """Locally `docker compose up` works with the two passwords of the README; the server's
+    `.env` is guarded by render-env.sh and deploy.sh."""
+    text = COMPOSE.read_text(encoding="utf-8")
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    for name in ("APP_DB_PASSWORD", "READER_DB_PASSWORD", "MIGRATOR_DB_PASSWORD"):
+        assert f"${{{name}:-${{POSTGRES_PASSWORD" in text, name
+        assert re.search(rf"^{name}=\S+$", example, re.MULTILINE), name
 
 
 # --- image -------------------------------------------------------------------------------
@@ -139,6 +174,76 @@ def test_ops_migrate_runs_dbmate_up_on_the_migrations_directory() -> None:
     # The password goes through the environment, never through the command line.
     assert env["DATABASE_URL"].endswith("@postgres:5432/quack?sslmode=disable")
     assert not any("pw@" in arg for arg in args)
+
+
+def test_role_dsn_swaps_the_user_and_encodes_the_password() -> None:
+    dsn = commands.role_dsn(
+        "postgresql://quack:pw@postgres:5432/quack", "quack_migrator", "a/b@c:d$e"
+    )
+
+    assert dsn == "postgresql://quack_migrator:a%2Fb%40c%3Ad%24e@postgres:5432/quack"
+    kept = commands.role_dsn("postgres://u:p@[::1]:6543/db?sslmode=require", "r", "x")
+    assert kept == "postgres://r:x@[::1]:6543/db?sslmode=require"
+    with pytest.raises(ValueError, match="postgresql://"):
+        commands.role_dsn("host=postgres user=quack", "r", "x")
+
+
+def _with_role_passwords(dsn: str, migrator: str = "m/pass") -> Settings:
+    return _settings(dsn).model_copy(
+        update={
+            "app_db_password": SecretStr("app-pass"),
+            "reader_db_password": SecretStr("reader-pass"),
+            "migrator_db_password": SecretStr(migrator),
+        }
+    )
+
+
+def test_migrate_with_roles_prepares_the_roles_and_runs_dbmate_as_the_migrator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quack import cli
+
+    steps: list[str] = []
+
+    async def fake_roles(settings: Settings) -> int:
+        steps.append(f"roles as {settings.postgres_dsn.split('@')[0]}")
+        return 0
+
+    def fake_migrate(settings: Settings) -> None:
+        steps.append(f"dbmate as {settings.postgres_dsn.split('@')[0]}")
+
+    monkeypatch.setattr(cli, "_db_roles", fake_roles)
+    monkeypatch.setattr(cli, "migrate", fake_migrate)
+    monkeypatch.setattr(cli, "ensure_clean_start", lambda dsn: steps.append("alembic check"))
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: _with_role_passwords("postgresql://quack:pw@postgres:5432/quack"),
+    )
+
+    assert cli.main(["ops", "migrate", "--with-roles"]) == 0
+    assert steps == [
+        "alembic check",
+        "roles as postgresql://quack:pw",
+        "dbmate as postgresql://quack_migrator:m%2Fpass",
+    ]
+
+
+def test_migrate_with_roles_stops_before_dbmate_when_a_password_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quack import cli
+
+    def never(settings: Settings) -> None:
+        raise AssertionError("dbmate must not run without the roles")
+
+    monkeypatch.setattr(cli, "migrate", never)
+    monkeypatch.setattr(cli, "ensure_clean_start", lambda dsn: None)
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: _settings("postgresql://quack:pw@postgres:5432/quack")
+    )
+
+    assert cli.main(["ops", "migrate", "--with-roles"]) == 1
 
 
 def test_ops_migrate_refuses_a_database_with_the_alembic_schema() -> None:

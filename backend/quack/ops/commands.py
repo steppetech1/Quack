@@ -7,7 +7,7 @@ import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import psycopg
 
@@ -31,10 +31,33 @@ def dbmate_url(dsn: str) -> str:
     return urlunsplit(("postgres", parts.netloc, parts.path, query, ""))
 
 
+def role_dsn(dsn: str, role: str, password: str) -> str:
+    """`dsn` (a URL) with another user and password, both percent-encoded: the DSN the migrator
+    of `ops migrate --with-roles` connects with (Д-§7). Host, port, database and query stay."""
+    parts = urlsplit(dsn)
+    if not parts.scheme.startswith("postgres") or not parts.hostname:
+        raise ValueError("POSTGRES_DSN must be a postgresql:// URL")
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"{quote(role, safe='')}:{quote(password, safe='')}@{host}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def _has_alembic_schema(dsn: str) -> bool:
     with psycopg.connect(dsn, connect_timeout=10) as conn:
         row = conn.execute("SELECT to_regclass('public.alembic_version') IS NOT NULL").fetchone()
     return bool(row and row[0])
+
+
+def ensure_clean_start(
+    dsn: str, *, has_alembic_schema: Callable[[str], bool] = _has_alembic_schema
+) -> None:
+    """Refuse a database of Phases 1-3 (ТЗ Ф4 §2.3) before anything is changed in it."""
+    if has_alembic_schema(dsn):
+        raise AlembicSchemaFound(
+            "the database has the Alembic schema of Phases 1-3 (public.alembic_version): "
+            "Phase 4 needs a clean start, recreate the database (ТЗ Ф4 §2.3)"
+        )
 
 
 def migrate(
@@ -44,11 +67,7 @@ def migrate(
     has_alembic_schema: Callable[[str], bool] = _has_alembic_schema,
 ) -> None:
     """`dbmate up` on `backend/db/migrations` (ТЗ Ф4 WP1.1, WP9; D-C-160)."""
-    if has_alembic_schema(settings.postgres_dsn):
-        raise AlembicSchemaFound(
-            "the database has the Alembic schema of Phases 1-3 (public.alembic_version): "
-            "Phase 4 needs a clean start, recreate the database (ТЗ Ф4 §2.3)"
-        )
+    ensure_clean_start(settings.postgres_dsn, has_alembic_schema=has_alembic_schema)
     args = [
         "dbmate",
         "--migrations-dir",
