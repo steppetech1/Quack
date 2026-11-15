@@ -69,7 +69,9 @@ def create_app(settings: ComputeSettings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.pool = TaskPool(settings.compute_workers)
         app.state.pool.start()
-        app.state.renderer = Renderer(settings.chromium_idle_close_s, settings.katex_dir)
+        app.state.renderer = Renderer(
+            settings.chromium_idle_close_s, settings.katex_dir, settings.viz_libraries_dir
+        )
         sweeper = asyncio.create_task(_sweep_forever(settings, app.state.renderer))
         try:
             yield

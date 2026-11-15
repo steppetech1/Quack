@@ -196,6 +196,7 @@ def _math_request(
         ],
         "tolerance": Tolerance(
             tol_abs=None if tolerance is None else float(tolerance),
+            sig_digits=spec.sig_digits,
             min_sig_digits=settings.min_sig_digits,
         ),
         "numeric": NumericParams(
@@ -219,8 +220,11 @@ def _math_request(
         # Т-§6.4: a decimal is compared with the tolerance of the spec or by the learner's own
         # precision. The expression mode of compute has no tolerance (it compares at
         # `math_rel_tol`), so the pair goes to the quantity mode of compute, which makes that
-        # comparison, as a dimensionless value. A tolerance by significant digits needs the
-        # magnitude of the reference, which only compute knows, and is not applied here.
+        # comparison, as a dimensionless value. The magnitude of a reference written as an
+        # expression is known to compute only, so the tolerance by significant digits of the
+        # spec goes there as it is (`sig_digits`: half a unit of that digit of the reference,
+        # the verdict of `_number` for a numeric reference) and also as the least number of
+        # digits of this request; a spec without it falls back to `settings.min_sig_digits`.
         return MathCheckRequest.model_validate(
             {
                 **common,
@@ -230,7 +234,8 @@ def _math_request(
                 "tolerance": Tolerance(
                     tol_abs=spec.tol_abs,
                     tol_rel=spec.tol_rel,
-                    min_sig_digits=settings.min_sig_digits,
+                    sig_digits=spec.sig_digits,
+                    min_sig_digits=spec.sig_digits or settings.min_sig_digits,
                 ),
             }
         )

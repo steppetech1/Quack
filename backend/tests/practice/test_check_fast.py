@@ -242,3 +242,37 @@ async def test_expression_answer_for_a_number_stays_in_the_expression_mode() -> 
     verdict, sent = await _run(spec, answer, done)
     assert sent[0]["kind"] == "expression"
     assert verdict.method == "symbolic"
+
+
+def _decimal_reference_spec(sympy: str, **extra: Any) -> AnswerSpec:
+    return AnswerSpec.model_validate(
+        {"type": "number", "value": {"latex": sympy, "sympy": sympy}, **extra}
+    )
+
+
+async def test_decimal_against_an_expression_reference_takes_sig_digits_of_the_spec() -> None:
+    """Т-§6.4: `sig_digits` of the spec reaches compute: as the tolerance by that digit of the
+    reference (compute knows the magnitude of `sqrt(2)/2`) and as the least number of digits of
+    the request; a spec without it falls back to `settings.min_sig_digits`."""
+    done = MathCheckResponse(status="completed", outcome="correct", method="units")
+    answer = LearnerAnswer(kind="number", value="0.7071")
+
+    _, sent = await _run(_decimal_reference_spec("sqrt(2)/2", sig_digits=4), answer, done)
+    assert sent[0]["tolerance"]["sig_digits"] == 4
+    assert sent[0]["tolerance"]["min_sig_digits"] == 4
+
+    _, sent = await _run(_decimal_reference_spec("sqrt(2)/2"), answer, done)
+    assert sent[0]["tolerance"]["sig_digits"] is None
+    assert sent[0]["tolerance"]["min_sig_digits"] == SETTINGS.min_sig_digits
+
+
+@pytest.mark.parametrize(("written", "outcome"), [("0.7071", "correct"), ("0.707", "incorrect")])
+async def test_a_numeric_reference_with_sig_digits_has_the_verdicts_compute_gives(
+    written: str, outcome: str
+) -> None:
+    """The boundary the expression reference must share (the same pair is in the compute tests
+    for `sqrt(2)/2`): four significant digits of 0.70710678 are half a unit of the fourth."""
+    spec = _decimal_reference_spec("0.70710678", sig_digits=4)
+    result, sent = await _run(spec, LearnerAnswer(kind="number", value=written))
+    assert sent == []  # an instant check, compute is not asked
+    assert isinstance(result, Verdict) and result.outcome == outcome

@@ -77,3 +77,14 @@ def test_no_raw_sympify_or_parse_expr() -> None:
             assert name not in ("sympify", "S"), f"{path.name}: {name}"
             if name == "parse_expr":
                 assert path.name == "grammar.py", path.name
+
+
+def test_e_is_eulers_number_unless_the_spec_names_a_variable_e() -> None:
+    assert parse("e**x") == sympy.E ** sympy.Symbol("x", real=True)
+    assert parse("e^x") == sympy.exp(sympy.Symbol("x", real=True))
+    assert parse("2e") == 2 * sympy.E
+    assert float(parse("1e3")) == 1000.0  # a number token, not `1*e3`
+    variable = parse("e*x", {"e": {"real": True}})
+    assert sympy.Symbol("e", real=True) in variable.free_symbols
+    assert parse("e", euler_e=False) == sympy.Symbol("e", real=True)
+    assert parse("E") == sympy.E

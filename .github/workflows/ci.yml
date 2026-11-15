@@ -212,7 +212,7 @@ jobs:
             echo "compute=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only "$BASE" HEAD | grep -Eq '^(compute/|\.github/workflows/)'; then
+          if git diff --name-only "$BASE" HEAD | grep -Eq '^(compute/|deploy/static/viz/|\.github/workflows/)'; then
             echo "compute=true" >> "$GITHUB_OUTPUT"
           else
             echo "nothing relevant changed; the heavy steps are skipped"
@@ -269,7 +269,7 @@ jobs:
             echo "images=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only "$BASE" HEAD | grep -Eq '^(backend/|compute/|\.github/workflows/)'; then
+          if git diff --name-only "$BASE" HEAD | grep -Eq '^(backend/|compute/|deploy/static/viz/|\.github/workflows/)'; then
             echo "images=true" >> "$GITHUB_OUTPUT"
           else
             echo "nothing relevant changed; the heavy steps are skipped"
@@ -287,7 +287,8 @@ jobs:
       - if: steps.changes.outputs.images == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: compute
+          context: .
+          file: compute/Dockerfile
           platforms: linux/amd64
           push: false
           tags: quack-compute:ci
@@ -337,7 +338,8 @@ jobs:
             ${{ steps.names.outputs.backend }}:${{ github.ref_name }}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: compute
+          context: .
+          file: compute/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |

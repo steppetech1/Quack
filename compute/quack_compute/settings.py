@@ -32,10 +32,20 @@ class ComputeSettings:
     # one sweep interval is left over from a finished job.
     tmp_sweep_interval_s: int = 3600
     tmp_max_age_s: int = 3600
-    # WP23.5, Т-§17.6: the pinned KaTeX (js, css, woff2 fonts) that typesets the formulas of a
-    # printed page; a copy of `deploy/static/viz/katex/<version>/` made into the image, the
-    # version is the one of `SHA256SUMS`. Phase 4 decision D-C-250.
-    katex_dir: str = str(Path(__file__).resolve().parent / "katex" / "0.16.11")
+    # The pinned libraries of visualizations (d3, plotly, KaTeX): a copy of `deploy/static/viz/`
+    # made into the image (the build context is the repository root), listed in its
+    # `SHA256SUMS`. Two users: a visualization page loads them at the base address the request
+    # carries (`/v1/render/snapshots`, no network) and a printed page gets its formulas typeset
+    # by the KaTeX of this directory (WP23.5, D-C-250). The image sets `VIZ_LIBRARIES_DIR`; in a
+    # checkout it is the directory of the repository.
+    viz_libraries_dir: str = str(Path(__file__).resolve().parents[2] / "deploy" / "static" / "viz")
+    # The pinned KaTeX version of `SHA256SUMS` (the printed page; the CSS names its fonts).
+    katex_version: str = "0.16.11"
+
+    @property
+    def katex_dir(self) -> str:
+        return str(Path(self.viz_libraries_dir) / "katex" / self.katex_version)
+
     # WP22.3 п.1, sheet contour search — the documents give no numbers; Phase 4 decision D-C-110:
     # blur kernel, Canny thresholds, polygon precision as a share of the contour perimeter and
     # the least area of the sheet as a share of the photo.

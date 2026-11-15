@@ -295,7 +295,9 @@ services:
   compute:
     image: ${QUACK_COMPUTE_IMAGE:-quack-compute:local}
     build:
-      context: ./compute
+      # The repository root: the image copies deploy/static/viz/ (the pinned libraries).
+      context: .
+      dockerfile: compute/Dockerfile
     restart: unless-stopped
     # No database variables, no secrets, no internet (Т-§6.5).
     environment:

@@ -83,6 +83,7 @@ from quack.session.teacher_context import (
     Profile,
     SessionGoal,
     TeacherSlots,
+    card_label_line,
     fit_budget,
     frozen_slots,
     render_labels,
@@ -104,7 +105,13 @@ from quack.session.tools import (
 )
 from quack.session.turn_commit import AnsweredAction, LearnerText, TurnManifestRow
 from quack.session.turn_graph import AssembledTurn, Effort, GuardInputs, Role
-from quack.session.turn_inputs import learner_state, load_learner_skill, load_plan, load_snapshot
+from quack.session.turn_inputs import (
+    cards_for_turn,
+    learner_state,
+    load_learner_skill,
+    load_plan,
+    load_snapshot,
+)
 from quack.session.turn_policy import resolve_degraded_mode
 
 log = get_logger(__name__)
@@ -157,6 +164,9 @@ class SessionJournal:
     # Т-§12.4: the active tasks whose answer the text may not show — open, and no
     # `solution.requested`; a task the answered answer solves is closed by this very turn.
     spoiler_tasks: list[UUID]
+    # Т-§12.4: the answers of the parts of those tasks (`markup.parts[i].answer`) the learner has
+    # not solved yet — a part with a correct latest verdict may be spoken about; (task, spec).
+    spoiler_parts: list[tuple[UUID, AnswerSpec]]
     learner_texts: list[LearnerText]
     first_turn: bool
     repeated_failure: bool
@@ -195,6 +205,30 @@ def _solved(
     if parts:
         return all(part in latest and latest[part].outcome == "correct" for part in parts)
     return bool(latest) and all(v.outcome == "correct" for v in latest.values())
+
+
+def _spoiler_parts(
+    created: dict[UUID, TaskCreated],
+    tasks: Sequence[UUID],
+    verdicts: dict[tuple[int, str], Verdict],
+    answer_tasks: dict[int, UUID],
+) -> list[tuple[UUID, AnswerSpec]]:
+    """Т-§12.4: the answers of the parts of the guarded tasks, except the parts whose latest
+    verdict is `correct` (the same exception as for the whole task). A task without parts has
+    none; the accepted wordings of a `short_text` are not added (decision of the owner)."""
+    latest: dict[tuple[UUID, str], Verdict] = {}
+    for (answer_seq, part), verdict in sorted(verdicts.items()):
+        task_id = answer_tasks.get(answer_seq)
+        if task_id is not None:
+            latest[(task_id, part)] = verdict
+    found: list[tuple[UUID, AnswerSpec]] = []
+    for task_id in tasks:
+        task = created.get(task_id)
+        for part in (task.markup.parts if task is not None else None) or ():
+            done = latest.get((task_id, part.part))
+            if done is None or done.outcome != "correct":
+                found.append((task_id, part.answer))
+    return found
 
 
 def _repeated_failure(
@@ -305,11 +339,15 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
         for task_id, task in created.items()
     }
     task_skills = list(dict.fromkeys(s for t in open_tasks for s in skills[t]))
+    spoiler_tasks = [t for t in open_tasks if t not in solution_asked]
     journal = SessionJournal(
         goal=goal,
         open_tasks=open_tasks,
         task_skills=task_skills,
-        spoiler_tasks=[t for t in open_tasks if t not in solution_asked],
+        spoiler_tasks=spoiler_tasks,
+        spoiler_parts=_spoiler_parts(
+            created, spoiler_tasks, _latest_verdicts(ordered), answer_tasks
+        ),
         learner_texts=texts,
         first_turn=not any(e.type == "turn.committed" for e in ordered),
         repeated_failure=_repeated_failure(ordered, answer_tasks, skills),
@@ -344,6 +382,9 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
         return replace(
             journal,
             spoiler_tasks=[t for t in journal.spoiler_tasks if not (solved and t == task_id)],
+            spoiler_parts=[
+                (t, spec) for t, spec in journal.spoiler_parts if not (solved and t == task_id)
+            ],
             answered=AnsweredAction(kind="answer", task_id=task_id, solved=solved),
             answered_verdict=own[-1] if own else None,
             answer_seq=answer.seq,
@@ -583,13 +624,15 @@ class MemoryTurnContextSource:
         )
         return {UUID(str(r["payload"]["request_id"])) for r in rows if r["payload"]["ok"]}
 
-    async def _answers(self, learner_id: UUID, task_ids: Sequence[UUID]) -> list[str]:
+    async def _answers(self, learner_id: UUID, journal: SessionJournal) -> list[str]:
         found: list[str] = []
-        for task_id in task_ids:
+        for task_id in journal.spoiler_tasks:
             task = await get_task(self._db, learner_id=learner_id, task_id=task_id)
             if task is not None:
                 found.extend(answer_strings(task.answer_spec))
-        return found
+        for _task_id, spec in journal.spoiler_parts:
+            found.extend(answer_strings(spec))
+        return list(dict.fromkeys(found))
 
     async def _inline_verdict(
         self, request: TurnRequest, events: Sequence[StoredEvent], journal: SessionJournal
@@ -690,12 +733,22 @@ class MemoryTurnContextSource:
                 )
             }
         )
-        sliced, chunks, digest, completed, inline = await asyncio.gather(
+        hub_topics = [t.topic_id for hub in hubs for t in hub.topics]
+        label_topics: list[UUID] = list(
+            dict.fromkeys([*topics, *hub_topics, *(prep.coverage_topic_ids if prep else [])])
+        )
+        sliced, chunks, digest, completed, inline, cards = await asyncio.gather(
             self._slice(reader, request, read_focus),
             self._chunks(learner_id, read_focus.skill_ids),
             self._digest(learner_id, request.domain_id),
             self._completed(learner_id, journal.requests),
             self._inline_verdict(request, events, journal),
+            cards_for_turn(
+                db,
+                learner_id=learner_id,
+                topic_ids=label_topics[: settings.label_max_topics],
+                limit=settings.label_max_cards,
+            ),
         )
         memory_slice, unavailable, overlay_seqs = sliced
         verdict_frame: VerdictFrame | None = None
@@ -712,31 +765,32 @@ class MemoryTurnContextSource:
                 db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
             )
             journal = read_journal(events, request.action_seq)
-        answers = await self._answers(learner_id, journal.spoiler_tasks)
+        answers = await self._answers(learner_id, journal)
         unavailable = unavailable or memory_down
         freeze = snapshot is None
         frozen = frozen_slots(snapshot or snapshot_slots(now, timezone), now, timezone)
         skill_ids = list(
             dict.fromkeys([*read_focus.skill_ids, *(s.skill_id for s in memory_slice.skills)])
         )
-        hub_topics = [t.topic_id for hub in hubs for t in hub.topics]
         bank = {} if unavailable else await self._bank(reader, learner_id, review, targets)
         labels = LabelMap.build(
             settings,
             skills=skill_ids,
-            topics=list(
-                dict.fromkeys([*topics, *hub_topics, *(prep.coverage_topic_ids if prep else [])])
-            ),
+            topics=label_topics,
             tasks=[*journal.open_tasks, *(t.task_id for ts in bank.values() for t in ts)],
             misconceptions=[m.misconception_id for m in memory_slice.misconceptions],
             hubs=[hub.hub_id for hub in hubs],
             chunks=[chunk.chunk_id for chunk in chunks],
+            cards=[card.card_id for card in cards],
             requests=list(journal.requests),
         )
         names: dict[UUID, str] = {s.skill_id: s.name for s in memory_slice.skills if s.name}
         names.update({m.topic_id: m.name for m in memory})
         names.update({hub.hub_id: hub.name for hub in hubs})
         names.update({t.topic_id: t.name for hub in hubs for t in hub.topics})
+        card_names = {
+            card.card_id: card_label_line(names.get(card.topic_id), card.prompt) for card in cards
+        }
         picture = (
             MEMORY_UNAVAILABLE
             if unavailable
@@ -768,7 +822,7 @@ class MemoryTurnContextSource:
                 session_plan=_session_plan(journal.goal, plan, labels, prep, names, settings),
                 memory_picture=picture,
                 materials=render_materials(chunks, labels),
-                labels=render_labels(labels, names),
+                labels=render_labels(labels, {**names, **card_names}),
                 skill=skill,
             )
         )

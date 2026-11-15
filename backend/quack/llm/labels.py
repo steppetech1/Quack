@@ -2,7 +2,8 @@
 
 Models never see or write ids. Within one call skills get `S1…S15`, topics `T1…T8`, tasks
 `K1…K5`, misconceptions `M1…Mn`, in the order of importance given by the caller; beyond the
-limits (`candidate_skills_k`, `label_max_topics`, `label_max_tasks`) no labels are given.
+limits (`candidate_skills_k`, `label_max_topics`, `label_max_tasks`, `label_max_cards`) no labels
+are given.
 Code translates labels back before writing events; an unknown label is a labelling error.
 The table lives for one call and is written to the turn manifest (Т-§3.2, WP14.2).
 """
@@ -29,11 +30,12 @@ type LabelKind = Literal[
     "domain",
 ]
 
-# Phase 4 decision D-B-108: hubs `H`, material chunks `P`, cards `C`, pending agent
-# requests `R`, evidence `E` and canvas lines `L` get labels too (ТЗ Ф4 WP13.3, WP13.7,
-# WP14.4: deadlines, links, card series, cancelling requests, memory tool arguments);
-# like misconceptions, no limit of their own. D-B-131: domains `D` (Т-§4.9: the domain
-# classifier picks one of the learner's domains by label).
+# Phase 4 decision D-B-108: hubs `H`, material chunks `P`, cards `C` (limit
+# `label_max_cards`), pending agent requests `R`, evidence `E` and canvas lines `L` get labels
+# too (ТЗ Ф4 WP13.3, WP13.7, WP14.4: deadlines, links, card series, cancelling requests, memory
+# tool arguments); like misconceptions, no limit of their own (but the cards).
+# D-B-131: domains `D` (Т-§4.9: the domain classifier picks one of the learner's domains by
+# label).
 LABEL_PREFIX: dict[LabelKind, str] = {
     "skill": "S",
     "topic": "T",
@@ -87,18 +89,23 @@ class LabelMap:
         evidence: Sequence[UUID] = (),
         lines: Sequence[UUID] = (),
         domains: Sequence[UUID] = (),
+        skills_limit: int | None = None,
     ) -> LabelMap:
         """Labels in the given order, cut at the limits of `settings`. Misconceptions have
-        no limit of their own (`M1…Mn`, ТЗ §2.3 row 18)."""
+        no limit of their own (`M1…Mn`, ТЗ §2.3 row 18). `skills_limit` replaces
+        `candidate_skills_k` for a call that needs more skills than a teacher turn (the split of
+        a topic, `topic_split_skills_k`)."""
         return cls(
             {
-                "skill": _unique(skills)[: settings.candidate_skills_k],
+                "skill": _unique(skills)[
+                    : settings.candidate_skills_k if skills_limit is None else skills_limit
+                ],
                 "topic": _unique(topics)[: settings.label_max_topics],
                 "task": _unique(tasks)[: settings.label_max_tasks],
                 "misconception": _unique(misconceptions),
                 "hub": _unique(hubs),
                 "chunk": _unique(chunks),
-                "card": _unique(cards),
+                "card": _unique(cards)[: settings.label_max_cards],
                 "request": _unique(requests),
                 "evidence": _unique(evidence),
                 "line": _unique(lines),

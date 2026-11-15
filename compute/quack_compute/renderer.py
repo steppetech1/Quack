@@ -3,7 +3,9 @@
 Chromium starts on the first render job, serves the next jobs with new pages and closes after
 `chromium_idle_close_s` without jobs (Д-§4.1, `T-CM3`). One browser per service process.
 Visualizations get their param set as `window.QUACK_VIZ_PARAMS` (D-B-130). A printed page gets
-its formulas typeset by the pinned KaTeX of the service's own files (WP23.5, D-C-250).
+its formulas typeset by the pinned KaTeX of the service's own files (WP23.5, D-C-250). A
+visualization may load the pinned libraries (d3, plotly, KaTeX) at the base address of its
+request: those requests are answered from the same files, nothing else leaves the page.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import contextlib
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import cv2
 import numpy as np
@@ -48,6 +50,8 @@ _KATEX_TYPES = {
     ".woff": "font/woff",
     ".ttf": "font/ttf",
 }
+_LIBRARY_TYPES = {**_KATEX_TYPES, ".mjs": "text/javascript", ".json": "application/json"}
+SUMS_FILE = "SHA256SUMS"
 # A formula is `<span class="quack-math" data-display="true|false">TeX</span>`. A broken formula
 # stays on the page as its source (`throwOnError: false`): the sheet is still printed.
 _TYPESET_JS = """async () => {
@@ -64,15 +68,33 @@ _TYPESET_JS = """async () => {
 }"""
 
 
+def _libraries_base(url: str | None) -> str | None:
+    """The base address with a closing slash, or None: none given or not an http(s) address."""
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+        return None
+    return url.rstrip("/") + "/"
+
+
 def _console_error(errors: list[str], message: ConsoleMessage) -> None:
     if message.type == "error":
         errors.append(message.text)
 
 
 class Renderer:
-    def __init__(self, idle_close_s: int, katex_dir: str = ComputeSettings.katex_dir) -> None:
+    def __init__(
+        self,
+        idle_close_s: int,
+        katex_dir: str | None = None,
+        viz_libraries_dir: str | None = None,
+    ) -> None:
+        defaults = ComputeSettings()
         self._idle_close_s = idle_close_s
-        self._katex_dir = Path(katex_dir).resolve()
+        self._libraries_dir = Path(viz_libraries_dir or defaults.viz_libraries_dir).resolve()
+        self._katex_dir = Path(katex_dir or defaults.katex_dir).resolve()
+        self._library_names: frozenset[str] | None = None
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._lock = asyncio.Lock()
@@ -90,14 +112,16 @@ class Renderer:
         browser = await self._acquire()
         try:
             snapshots = [
-                await self._snapshot(browser, request.html, params)
+                await self._snapshot(browser, request.html, params, request.libraries_base_url)
                 for params in request.param_sets or [{}]
             ]
         finally:
             self._release()
         return RenderSnapshotsResponse(snapshots=snapshots)
 
-    async def _snapshot(self, browser: Browser, html: str, params: dict[str, Any]) -> Snapshot:
+    async def _snapshot(
+        self, browser: Browser, html: str, params: dict[str, Any], libraries_base_url: str | None
+    ) -> Snapshot:
         page = await browser.new_page()
         errors: list[str] = []
         page.on("console", lambda message: _console_error(errors, message))
@@ -106,8 +130,10 @@ class Renderer:
             await page.add_init_script(f"window.QUACK_VIZ_PARAMS = {json.dumps(params)};")
             # Init scripts run on navigation, not on `set_content`: the page is served from
             # memory at an internal address. The HTML is written by a model (untrusted): every
-            # other request of the page is refused, none reaches a network (Д-§3.2).
-            await page.route("**/*", lambda route: self._serve_viz_page(route, html))
+            # request but the page and the pinned libraries is refused, none reaches a network
+            # (Д-§3.2).
+            base = _libraries_base(libraries_base_url)
+            await page.route("**/*", lambda route: self._serve_viz_page(route, html, base))
             await page.goto(VIZ_PAGE_URL, wait_until="load")
             png = await page.screenshot(full_page=True)
         finally:
@@ -124,11 +150,50 @@ class Renderer:
             blank=bool((image == image[0, 0]).all()),
         )
 
-    async def _serve_viz_page(self, route: Route, html: str) -> None:
-        if route.request.url == VIZ_PAGE_URL:
+    async def _serve_viz_page(self, route: Route, html: str, libraries_base: str | None) -> None:
+        url = route.request.url
+        if url == VIZ_PAGE_URL:
             await route.fulfill(body=html, content_type="text/html; charset=utf-8")
+        elif libraries_base is not None and (file := self._library_file(url, libraries_base)):
+            # The page and the libraries are of different origins: the fonts of a CSS and
+            # `fetch` need the permission, the files are public libraries.
+            await route.fulfill(
+                path=file,
+                content_type=_LIBRARY_TYPES.get(file.suffix, "application/octet-stream"),
+                headers={"access-control-allow-origin": "*"},
+            )
         else:
             await route.abort()
+
+    def _pinned_names(self) -> frozenset[str]:
+        """The files of `SHA256SUMS` (`<digest> *<path>` per line): the only ones served."""
+        if self._library_names is None:
+            names: set[str] = set()
+            try:
+                text = (self._libraries_dir / SUMS_FILE).read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            for line in text.splitlines():
+                _, _, name = line.partition(" *")
+                if name:
+                    names.add(name)
+            self._library_names = frozenset(names)
+        return self._library_names
+
+    def _library_file(self, url: str, base: str) -> Path | None:
+        """The pinned file a request under the base address names; any other — a path out of the
+        directory, a missing file, a file that is not in `SHA256SUMS` — is None (refused)."""
+        if not url.startswith(base):
+            return None
+        relative = unquote(urlsplit(url[len(base) :]).path)
+        if not relative or relative.startswith("/") or "\\" in relative or "\0" in relative:
+            return None
+        file = (self._libraries_dir / relative).resolve()
+        if not file.is_relative_to(self._libraries_dir) or not file.is_file():
+            return None
+        if file.relative_to(self._libraries_dir).as_posix() not in self._pinned_names():
+            return None
+        return file
 
     async def pdf(self, request: RenderPdfRequest) -> RenderPdfResponse:
         """HTML → A4 PDF and its page count (Т-§17.6: the one-page check of a cheat sheet).

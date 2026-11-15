@@ -96,10 +96,23 @@ def tokens_ok(text: str) -> bool:
     return True
 
 
-def parse(text: str, variables: Mapping[str, Mapping[str, bool]] | None = None) -> Any:
+def is_euler(name: str, variables: Mapping[str, Mapping[str, bool]] | None) -> bool:
+    """The name `e` is Euler's number unless the spec names a variable `e`: one rule for the
+    grammar and for the LaTeX parser, for the learner's answer and for the reference alike."""
+    return name == "e" and "e" not in (variables or {})
+
+
+def parse(
+    text: str,
+    variables: Mapping[str, Mapping[str, bool]] | None = None,
+    *,
+    euler_e: bool = True,
+) -> Any:
     """SymPy object of `text`: an expression, a `Relation`, a tuple (comma list) or a list
     (square brackets). `variables` — name → SymPy assumptions (`{"real": True}`); other
-    identifiers are real symbols by default (Т-§6.6). `ParseRefused` on anything else."""
+    identifiers are real symbols by default (Т-§6.6), except `e`, Euler's number (`sympy.E`)
+    unless `variables` names a variable `e` (`euler_e=False`: always a symbol).
+    `ParseRefused` on anything else."""
     if not tokens_ok(text):
         raise ParseRefused(f"not a sequence of allowed tokens: {text!r}")
     for relation in _RELATIONS:
@@ -107,13 +120,20 @@ def parse(text: str, variables: Mapping[str, Mapping[str, bool]] | None = None) 
             lhs, sep, rhs = text.partition(relation)
             if any(r in rhs for r in _RELATIONS):
                 raise ParseRefused("more than one relation")
-            return Relation(_parse_side(lhs, variables), sep, _parse_side(rhs, variables))
-    return _parse_side(text, variables)
+            return Relation(
+                _parse_side(lhs, variables, euler_e), sep, _parse_side(rhs, variables, euler_e)
+            )
+    return _parse_side(text, variables, euler_e)
 
 
-def _parse_side(text: str, variables: Mapping[str, Mapping[str, bool]] | None) -> Any:
+def _parse_side(
+    text: str, variables: Mapping[str, Mapping[str, bool]] | None, euler_e: bool
+) -> Any:
     local: dict[str, Any] = dict(ALLOWED_NAMES)
     for name in set(_IDENTIFIER.findall(text)) - set(ALLOWED_NAMES):
+        if euler_e and is_euler(name, variables):
+            local[name] = sympy.E
+            continue
         assumptions = (variables or {}).get(name, {"real": True})
         local[name] = sympy.Symbol(name, **assumptions)
     try:

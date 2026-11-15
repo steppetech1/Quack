@@ -76,7 +76,8 @@ def _quantity(request: MathCheckRequest) -> MathCheckResponse:
             status="failed", reason="unparsed", detail="quantity needs the answer and the unit"
         )
     try:
-        reference = float(parse(request.reference.sympy).evalf())
+        # A quantity is not an expression of the spec: `e` is not read as Euler's number here.
+        reference = float(parse(request.reference.sympy, euler_e=False).evalf())
         verdict = compare_quantity(request.student_text, reference, request.unit, request.tolerance)
     except (ParseRefused, QuantityRefused, TypeError) as exc:
         return MathCheckResponse(status="failed", reason="unparsed", detail=str(exc))
