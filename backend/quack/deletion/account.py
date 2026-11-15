@@ -54,6 +54,7 @@ _DELETES = (
     "DELETE FROM ops.llm_usage WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.projector_failures WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.projector_offsets WHERE learner_id = %(learner_id)s",
+    "DELETE FROM ops.dispatcher_failures WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.dispatcher_offsets WHERE learner_id = %(learner_id)s",
     "DELETE FROM core.events WHERE learner_id = %(learner_id)s",
     "DELETE FROM core.learners WHERE learner_id = %(learner_id)s",

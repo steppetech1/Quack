@@ -39,7 +39,10 @@ async def test_migration_creates_contract_indexes(pg_db: Db) -> None:
         "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname IN ('core','ops','content')"
     )
     defs = {r["indexname"]: r["indexdef"] for r in rows}
-    assert "WHERE (status = 'running'::text)" in defs["uq_jobs_running_lock"]
+    # One job in work per lock_key: running and cancel_requested (bug audit 2026-11-15).
+    in_work = defs["uq_jobs_in_work_lock"]
+    assert "UNIQUE" in in_work and "cancel_requested" in in_work and "running" in in_work
+    assert "uq_jobs_running_lock" not in defs
     coalesce = defs["uq_jobs_queued_coalesce"]
     assert "WHERE (status = 'queued'::text)" in coalesce and "IS NOT NULL" not in coalesce
     assert "to_tsvector('english'" in defs["idx_events_fts_en"]

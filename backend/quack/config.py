@@ -326,6 +326,10 @@ class Settings(BaseSettings):
     dispatcher_concurrency: int = 8
     dispatcher_batch_size: int = 100
     dispatcher_restart_pause_s: float = 5.0
+    # Bug audit 2026-11-15: failures in a row on one event after which the dispatcher stops the
+    # learner's stream (`ops.dispatcher_failures`); the projector stops at the first failure of
+    # an event (`EventFailed`), a batch of the dispatcher may also fail for a temporary reason.
+    dispatcher_failure_limit: int = 10
     # Phase 4 (ТЗ Ф4 §6.7, stream A). Starting values: Т-§21.3, Т-§22.11, Д-§14.1.
     # `evidence_tier_weights`, `hint_step_penalty`, `hot_window_min` (stream C block) and
     # `episode_context_turns` (stream B block) already exist under these names (§6.7 «есть»).

@@ -38,6 +38,7 @@ HTTP_TIMEOUT_S = 5.0
 # Keys of the conditions; `since` and `notified` of a key that is no longer true are cleared.
 HEALTHZ_DOWN = "healthz_down"
 PROJECTOR_STOPPED = "projector_stopped"
+DISPATCHER_STOPPED = "dispatcher_stopped"
 BACKUP_STALE = "backup_stale"
 HOST_STATE_STALE = "host_state_stale"
 RESTART_LOOP = "restart_loop:"
@@ -100,6 +101,17 @@ def conditions(snapshot: Snapshot, settings: Settings) -> list[Alert]:
                 PROJECTOR_STOPPED,
                 "critical",
                 f"{stopped} projector stream(s) stopped: those learners get no memory updates",
+            )
+        )
+
+    dispatcher_stopped = _dig(status, "dispatcher", "stopped_streams")
+    if dispatcher_stopped:
+        found.append(
+            Alert(
+                DISPATCHER_STOPPED,
+                "critical",
+                f"{dispatcher_stopped} dispatcher stream(s) stopped: background work of those "
+                "learners is not running (`ops resume --learner` after the cause is fixed)",
             )
         )
 

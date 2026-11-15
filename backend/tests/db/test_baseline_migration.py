@@ -44,6 +44,9 @@ EXTENSIONS: tuple[frozenset[tuple[str, str]], ...] = (
     frozenset({("core", "pairing_tokens")}),  # D-A-128: WP22.1, Т-§16.1
     frozenset(),  # D-A-128: its index by learner, CONCURRENTLY (Д-§6.2)
     frozenset(),  # D-A-137: `ops.turn_manifests.frozen_slots` (Т-§10.1)
+    frozenset({("ops", "dispatcher_failures")}),  # bug audit 2026-11-15: stopped streams
+    frozenset(),  # its index `uq_jobs_in_work_lock` (running and cancel_requested), CONCURRENTLY
+    frozenset(),  # the drop of `uq_jobs_running_lock`, CONCURRENTLY
 )
 
 # dbmate keeps its own bookkeeping table in `public`; everything of ours is in core/content/ops.

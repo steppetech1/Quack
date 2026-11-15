@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import orjson
+import psycopg.errors
 import pytest
 from redis.asyncio import Redis
 
@@ -226,6 +227,26 @@ async def test_lock_is_held_while_cancel_is_requested(jobs_db: Db) -> None:
     await q.request_cancel(jobs_db, learner, [request])
     assert await _status(jobs_db, "a") == "cancel_requested"
     assert await q.claim_next(jobs_db, SETTINGS) is None  # the executor still works on `a`
+
+
+async def test_the_database_refuses_a_second_job_in_work_with_the_same_lock_key(
+    jobs_db: Db,
+) -> None:
+    """`uq_jobs_in_work_lock`: `running` and `cancel_requested` hold the `lock_key` alike — the
+    guard does not depend on the claim query. `running → cancel_requested` stays inside it."""
+    learner = await create_learner(jobs_db)
+    request = uuid4()
+    await q.enqueue(
+        jobs_db, _plan(learner, "a", lock_key="seq:1", payload={"request_id": str(request)})
+    )
+    await q.enqueue(jobs_db, _plan(learner, "b", lock_key="seq:1"))
+    assert await q.claim_next(jobs_db, SETTINGS) is not None
+    await q.request_cancel(jobs_db, learner, [request])  # running -> cancel_requested: allowed
+    assert await _status(jobs_db, "a") == "cancel_requested"
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        await jobs_db.execute("UPDATE ops.jobs SET status = 'running' WHERE job_key = 'b'")
+    await jobs_db.execute("UPDATE ops.jobs SET status = 'cancelled' WHERE job_key = 'a'")
+    await jobs_db.execute("UPDATE ops.jobs SET status = 'running' WHERE job_key = 'b'")
 
 
 async def test_kinds_filter(jobs_db: Db) -> None:
