@@ -84,7 +84,8 @@ def test_a_local_env_without_the_role_passwords_falls_back_to_postgres_password(
     example = (ROOT / ".env.example").read_text(encoding="utf-8")
     for name in ("APP_DB_PASSWORD", "READER_DB_PASSWORD", "MIGRATOR_DB_PASSWORD"):
         assert f"${{{name}:-${{POSTGRES_PASSWORD" in text, name
-        assert re.search(rf"^{name}=\S+$", example, re.MULTILINE), name
+        # Named in the example, with no value: a local stack falls back to POSTGRES_PASSWORD.
+        assert re.search(rf"^# {name}=$", example, re.MULTILINE), name
 
 
 # --- image -------------------------------------------------------------------------------
