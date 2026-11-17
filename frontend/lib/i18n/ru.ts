@@ -49,6 +49,7 @@ export const ru: Dict = {
     subjects: "Предметы",
     sessions: "Сессии",
     close: "Закрыть",
+    backToGraph: "Назад к графу",
     newSubject: "Новый предмет",
     suggestedSr: "(предложено)",
     suggested: "предложено",
@@ -1107,19 +1108,5 @@ export const ru: Dict = {
     loading: "Грузим твои конспекты",
     wait: "Секундочку",
     percent: (n: number) => `${n}%`,
-  },
-  menu: {
-    open: "Меню",
-    close: "Закрыть",
-    title: "Навигация",
-    items: {
-      graph: "Карта предмета",
-      canvases: "Канвасы",
-      library: "Библиотека",
-      newSubject: "Новый предмет",
-      settings: "Настройки",
-    },
-    language: "Язык",
-    footerHint: "Quack — объясни утке",
   },
 };

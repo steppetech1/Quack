@@ -48,6 +48,7 @@ export const en = {
     subjects: "Subjects",
     sessions: "Sessions",
     close: "Close",
+    backToGraph: "Back to graph",
     newSubject: "New subject",
     suggestedSr: "(suggested)",
     suggested: "suggested",
@@ -1105,19 +1106,5 @@ export const en = {
     loading: "Loading your notes",
     wait: "Hang on a sec",
     percent: (n: number) => `${n}%`,
-  },
-  menu: {
-    open: "Menu",
-    close: "Close",
-    title: "Navigation",
-    items: {
-      graph: "Subject map",
-      canvases: "Canvases",
-      library: "Library",
-      newSubject: "New subject",
-      settings: "Settings",
-    },
-    language: "Language",
-    footerHint: "Quack — explain it to the duck",
   },
 };
