@@ -194,11 +194,15 @@ async def run_split(
     written: list[str] = []
     if error is None and memory is not None and domain_id is not None:
         labels = LabelMap.build(
-            settings, skills=[s.skill_id for s in named], topics=[memory.topic_id]
+            settings,
+            skills=[s.skill_id for s in named],
+            topics=[memory.topic_id],
+            skills_limit=settings.topic_split_skills_k,
         )
-        # `candidate_skills_k` limits the labels (Т-§4.5): a topic with more skills shows the
-        # first ones to the model; the rest has no label and stays with the part that keeps the
-        # topic, like a skill without a name (D-B-213 п.4).
+        # `topic_split_skills_k` limits the labels (Т-§4.5; not `candidate_skills_k`: a topic
+        # that is asked to be split is a big one): a topic with more skills shows the first ones
+        # to the model; the rest has no label and stays with the part that keeps the topic, like
+        # a skill without a name (D-B-213 п.4, D-B-223 п.12).
         shown = [s for s in named if labels.label("skill", s.skill_id)]
         beyond = [s.skill_id for s in named if not labels.label("skill", s.skill_id)]
         answer = await ctx.llm.generate_structured(

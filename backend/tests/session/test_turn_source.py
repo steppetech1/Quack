@@ -10,6 +10,8 @@ from uuid import UUID, uuid4, uuid5
 
 import pytest
 
+from quack.artifacts.cards import write_system_cards
+from quack.artifacts.documents import Card
 from quack.compute_client.math_contracts import MathCheckResponse
 from quack.config import Settings
 from quack.db import Db
@@ -940,3 +942,271 @@ async def test_the_manifest_keeps_the_events_of_the_overlay(
     _slice, unavailable, seqs = await source._slice(fx.FixedGraphReader(), request, focus)  # pyright: ignore[reportPrivateUsage]
 
     assert not unavailable and seqs == [4, 5]
+
+
+# --- Q1: the answers of the parts are guarded too (Т-§12.4) ---
+
+
+def _two_parts(seq: int, task_id: UUID, *, choice: bool = False) -> StoredEvent:
+    part_b = (
+        AnswerSpec(
+            type="choice",
+            options=[
+                AnswerOption(option_id="A", text="converges absolutely", correct=True),
+                AnswerOption(option_id="B", text="diverges", correct=False),
+            ],
+        )
+        if choice
+        else AnswerSpec(type="number", value=MathValue(latex="\\frac{7}{9}", sympy="7/9"))
+    )
+    markup = _markup(uuid4()).model_copy(
+        update={
+            "parts": [
+                TaskPartRecord(
+                    part="a",
+                    answer=AnswerSpec(type="number", value=MathValue(latex="42", sympy="42")),
+                ),
+                TaskPartRecord(part="b", answer=part_b),
+            ]
+        }
+    )
+    return _event(
+        seq,
+        "task.created",
+        TaskCreated(
+            task_id=task_id,
+            family_id=uuid4(),
+            source="teacher",
+            markup=markup,
+            verification="unchecked",
+        ),
+    )
+
+
+def _guarded(journal: Any) -> list[str]:
+    return [s for _task, spec in journal.spoiler_parts for s in answer_strings(spec)]
+
+
+def test_the_answers_of_the_parts_are_guarded_until_the_part_is_solved() -> None:
+    """Q1: the answer of part b is a forbidden string; after a correct answer to part b it is
+    not (part a stays guarded, the whole task is not solved); a wrong one changes nothing."""
+    task = uuid4()
+    opened = [_two_parts(1, task), _message_event(2)]
+    assert _guarded(read_journal(opened, 2)) == ["42", "42", "\\frac{7}{9}", "7/9"]
+
+    wrong_b = [*opened, _answer(3, task), _verdict(4, 3, "incorrect", "b")]
+    assert "7/9" in _guarded(read_journal(wrong_b, 3))
+
+    right_b = [*opened, _answer(3, task), _verdict(4, 3, "correct", "b")]
+    journal = read_journal(right_b, 3)
+    assert _guarded(journal) == ["42", "42"] and task in journal.spoiler_tasks
+
+    both = [*right_b, _answer(5, task), _verdict(6, 5, "correct", "a")]
+    assert read_journal(both, 5).spoiler_parts == []
+
+
+def test_the_parts_of_a_task_with_a_solution_request_or_a_solved_whole_are_not_guarded() -> None:
+    task = uuid4()
+    asked = [_two_parts(1, task), _event(2, "solution.requested", {"task_id": str(task)})]
+    assert read_journal(asked, 2).spoiler_parts == []
+    whole = [_two_parts(1, task), _answer(2, task), _verdict(3, 2, "correct", "main")]
+    assert read_journal(whole, 2).spoiler_parts == []  # the task is solved as a whole
+    plain = [_task(1, task, uuid4())]
+    assert read_journal(plain, 1).spoiler_parts == []  # no parts, nothing added
+
+
+def test_the_correct_option_of_a_part_is_guarded() -> None:
+    task = uuid4()
+    journal = read_journal([_two_parts(1, task, choice=True), _message_event(2)], 2)
+    assert "converges absolutely" in _guarded(journal)
+    assert "diverges" not in _guarded(journal)
+
+
+def test_short_text_variants_of_a_part_are_not_guarded() -> None:
+    """The owner's decision: `accepted` wordings are short words of an ordinary explanation."""
+    spec = AnswerSpec(type="short_text", accepted=["limit", "the limit"])
+    assert answer_strings(spec) == []
+
+
+def _message_event(seq: int) -> StoredEvent:
+    return _event(seq, "message.sent", {"text": "go on"})
+
+
+async def test_the_guard_of_the_turn_catches_the_answer_of_a_part(pg_db: Db) -> None:
+    """Q1, through `assemble`: the text of the teacher with the answer of part b is a spoiler,
+    and not any more once part b has a correct verdict."""
+    learner_id = await create_learner(pg_db)
+    session_id, task_id = uuid4(), uuid4()
+    created = _two_parts(1, task_id)
+    markup = TaskCreated.model_validate(created.payload).markup
+    await create_task(
+        pg_db,
+        learner_id=learner_id,
+        task_id=task_id,
+        family_id=uuid4(),
+        source="teacher",
+        condition=TaskCondition(text="Find a and b", latex=None),
+        markup=markup,
+        verification="unchecked",
+        actor="teacher@2",
+        idempotency_key=f"task:{task_id}",
+        session_id=session_id,
+        domain_id=fx.DOMAIN,
+    )
+    seq = await _message(pg_db, learner_id, session_id, text="go on")
+    source = MemoryTurnContextSource(
+        db=pg_db,
+        gateway=LLMGateway(ScriptedLLMProvider(), SETTINGS, db=pg_db),
+        settings=SETTINGS,
+        reader=lambda _learner: fx.FixedGraphReader(),
+        clock=lambda: NOW_MS,
+    )
+    guard = (await source.assemble(_request(learner_id, session_id, seq))).assembled.guard
+    assert guard.has_spoiler("So part b is 7/9.")
+    assert not guard.has_spoiler("Part b is the one with the ratio.")
+
+    (answered,) = await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="answer.submitted",
+                payload=AnswerSubmitted(
+                    task_id=task_id,
+                    answer=LearnerAnswer(kind="number", value="7/9"),
+                    source="chat",
+                    part="b",
+                ),
+                actor="learner",
+                idempotency_key=f"answer:{uuid4()}",
+                session_id=session_id,
+                domain_id=fx.DOMAIN,
+            ),
+        ],
+    )
+    await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="verdict.recorded",
+                payload=Verdict(
+                    answer_seq=answered.seq,
+                    part="b",
+                    outcome="correct",
+                    method="exact",
+                    verification="code",
+                ),
+                actor="code",
+                idempotency_key=f"verdict:{answered.seq}:b",
+                session_id=session_id,
+                domain_id=fx.DOMAIN,
+                causation_seq=answered.seq,
+            ),
+        ],
+    )
+    later = (await source.assemble(_request(learner_id, session_id, answered.seq))).assembled.guard
+    assert not later.has_spoiler("So part b is 7/9.")
+    assert later.has_spoiler("And part a is 42.")
+
+
+async def _focus_card(db: Db, learner_id: UUID, topic_id: UUID, prompt: str) -> Card:
+    """A card of the topic: its task in the bank, the card in the cards artifact."""
+    task_id = uuid4()
+    await create_task(
+        db,
+        learner_id=learner_id,
+        task_id=task_id,
+        family_id=task_id,
+        source="generated",
+        condition=TaskCondition(text=prompt, latex=None),
+        markup=_markup(fx.SKILL_FAILED),
+        verification="unchecked",
+        actor="artifact_writer@1",
+        idempotency_key=f"card:{task_id}",
+    )
+    card = Card(card_id=task_id, kind="definition", prompt=prompt, owner="system")
+    await write_system_cards(
+        db, SETTINGS, learner_id=learner_id, topic_id=topic_id, cards=[card],
+        created_by="artifact_writer@1",
+    )  # fmt: skip
+    return card
+
+
+async def _topic_row(db: Db, learner_id: UUID, topic_id: UUID) -> None:
+    await append_events(
+        db,
+        learner_id,
+        [
+            NewEvent(
+                type="topic.created",
+                payload={
+                    "topic_id": topic_id,
+                    "domain_id": fx.DOMAIN,
+                    "name": "Fractions",
+                    "origin": "session",
+                },
+                actor="code",
+                idempotency_key=f"topic:{topic_id}",
+                domain_id=fx.DOMAIN,
+            )
+        ],
+    )
+
+
+async def test_the_turn_labels_the_cards_of_its_focus_and_shows_their_questions(
+    pg_db: Db,
+) -> None:
+    """Q1: a card of the focus topic gets a label `C1…` and slot 9 shows the topic and the
+    question behind it (the answer is not shown); a card of another topic or another learner
+    has none; `label_max_cards` cuts the list; no cards — no `C` lines."""
+    learner_id, stranger = await create_learner(pg_db), await create_learner(pg_db)
+    session_id = uuid4()
+    await _topic_row(pg_db, learner_id, fx.TOPIC_OPEN)
+    mine = await _focus_card(pg_db, learner_id, fx.TOPIC_OPEN, "What is a common denominator?")
+    second = await _focus_card(pg_db, learner_id, fx.TOPIC_OPEN, "When may fractions be added?")
+    elsewhere_topic = uuid4()
+    await _topic_row(pg_db, learner_id, elsewhere_topic)
+    elsewhere = await _focus_card(pg_db, learner_id, elsewhere_topic, "Not in the focus")
+    await _topic_row(pg_db, stranger, uuid4())
+    seq = await _message(
+        pg_db, learner_id, session_id, text="teach me", intent="learn", topic_id=fx.TOPIC_OPEN
+    )
+
+    def source_with(settings: Settings) -> MemoryTurnContextSource:
+        return MemoryTurnContextSource(
+            db=pg_db,
+            gateway=LLMGateway(ScriptedLLMProvider(), settings, db=pg_db),
+            settings=settings,
+            reader=lambda _learner: fx.FixedGraphReader(),
+            clock=lambda: NOW_MS,
+        )
+
+    setup = await source_with(SETTINGS).assemble(_request(learner_id, session_id, seq))
+
+    assert setup.labels.label("card", mine.card_id) == "C1"
+    assert setup.labels.label("card", second.card_id) == "C2"
+    assert setup.labels.label("card", elsewhere.card_id) is None
+    assert setup.manifest.label_table["C1"] == str(mine.card_id)
+    prompt = setup.assembled.request.base.prompt
+    assert "C1: " in prompt and "What is a common denominator?" in prompt
+    assert "C2: " in prompt and "When may fractions be added?" in prompt
+    assert "Not in the focus" not in prompt
+    assert setup.assembled.guard.labels is not None
+    assert setup.assembled.guard.labels.labels("card") == {
+        "C1": mine.card_id,
+        "C2": second.card_id,
+    }
+
+    capped = SETTINGS.model_copy(update={"label_max_cards": 1})
+    one = await source_with(capped).assemble(_request(learner_id, session_id, seq))
+    assert one.labels.labels("card") == {"C1": mine.card_id}
+    assert "When may fractions be added?" not in one.assembled.request.base.prompt
+
+    lonely = await create_learner(pg_db)
+    lonely_seq = await _message(
+        pg_db, lonely, session_id, text="hi", intent="learn", topic_id=fx.TOPIC_OPEN
+    )
+    none = await source_with(SETTINGS).assemble(_request(lonely, session_id, lonely_seq))
+    assert none.labels.labels("card") == {}
+    assert "C1: " not in none.assembled.request.base.prompt

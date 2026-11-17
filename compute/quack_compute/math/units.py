@@ -5,6 +5,7 @@ unit of the spec and compared with the tolerance of Т-§6.4; a different dimens
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -58,6 +59,12 @@ def compare_quantity(
         return QuantityVerdict(
             "correct" if diff <= tolerance.tol_rel * abs(target) else "incorrect"
         )
+    if tolerance.sig_digits is not None and target != 0:
+        # Half a unit of the `sig_digits`-th significant digit of the reference, exactly as the
+        # backend's own check of a numeric reference (`_spec_tolerance`); a hair of slack for
+        # the binary floats at the very edge.
+        half = 0.5 * 10.0 ** (math.floor(math.log10(abs(target))) - tolerance.sig_digits + 1)
+        return QuantityVerdict("correct" if diff <= half * (1 + 1e-9) else "incorrect")
     scale = value / float(given.magnitude) if given.magnitude else 1.0
     half_unit, digits = _precision(text, scale)
     if half_unit is None or diff > half_unit:

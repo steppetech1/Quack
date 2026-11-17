@@ -329,6 +329,33 @@ def test_proposed_topic_created_later_keeps_what_it_had() -> None:
     assert ("Domain", DOMAIN, "HAS_TOPIC", "Topic", TOPIC) not in rels  # not created twice
 
 
+def test_topic_proposed_does_not_touch_a_topic_that_lives() -> None:
+    """The second material on the same name (same id, Т-§4.4): an active topic is not lowered
+    to `proposed`, a hidden one does not revive, name and origin are not rewritten."""
+    payload = {"topic_id": TOPIC, "domain_id": DOMAIN, "name": "Fractions II", "origin": "material"}
+    for status in ("active", "hidden", "proposed"):
+        live = _node("Topic", TOPIC, domainId=DOMAIN, name="Fractions", origin="session",
+                     status=status, knownClaimedAtMs=0)  # fmt: skip
+        nodes, rels = _run([_event(2, "topic.proposed", payload)], [_DOMAIN, live])
+        assert nodes[("Topic", TOPIC)] == live.props
+        assert ("Domain", DOMAIN, "HAS_TOPIC", "Topic", TOPIC) not in rels
+
+
+@pytest.mark.parametrize("event_type", ["topic.created", "topic.proposed"])
+def test_topic_event_of_a_merged_id_changes_nothing(event_type: str) -> None:
+    """The id of a merged topic is an `Alias` of the target (Т-§2.8): a later event of the same
+    name does not rewrite name, status and origin of the target and creates no node."""
+    target = _node("Topic", TOPIC, domainId=DOMAIN, name="Fractions", origin="session",
+                   status="active", knownClaimedAtMs=0)  # fmt: skip
+    alias = _rel(("Alias", TOPIC_B), "ALIAS_OF", ("Topic", TOPIC))
+    payload = {"topic_id": TOPIC_B, "domain_id": DOMAIN, "name": "Ratios", "origin": "material"}
+    graph = ([_DOMAIN, target, NodeRecord("Alias", TOPIC_B, {"learnerId": L})], [alias])
+    nodes, rels = _run([_event(2, event_type, payload)], *graph)
+    assert nodes[("Topic", TOPIC)] == target.props
+    assert ("Topic", TOPIC_B) not in nodes
+    assert (nodes, rels) == _run([], *graph)
+
+
 def test_edge_between_merged_skills_is_not_a_loop() -> None:
     """After `skill.merged` both ends may resolve to one skill (Т-§2.8): no relation to itself."""
     edge = {"kind": "requires", "from_id": SKILL_OLD, "to_id": SKILL, "origin": "model",

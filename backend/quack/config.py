@@ -486,6 +486,15 @@ class Settings(BaseSettings):
     conversation_collapse_turns: int = 12
     # WP14.1 (Т-§4.5): label limits per call.
     candidate_skills_k: int = 15
+    # D-B-223 п.12 (decision of the owner 2026-11-15): the split of a topic shows the model the
+    # skills of the topic up to this limit, not `candidate_skills_k` (that one keeps the context
+    # of a teacher turn cheap; a topic that is asked to be split is a big one). Beyond it the
+    # skills stay with the part that keeps the topic. 60 lines of skill names fit the input of
+    # `builder` (output 8192 tokens; the answer repeats the labels once).
+    topic_split_skills_k: int = Field(default=60, ge=2)
+    # Т-§10.3, `teacher@2` «C1…»: the topic cards of the turn's focus that get a label, so that
+    # the teacher can show a card series.
+    label_max_cards: int = 12
     # WP12.7 (Т-§5.7 «LIMIT 5»): tasks returned by one selection.
     task_select_limit: int = 5
     label_max_topics: int = 8

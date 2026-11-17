@@ -146,7 +146,14 @@ def _topic_new_needs(event: StoredEvent) -> Need:
 
 def _topic_new(event: StoredEvent, view: SliceView) -> list[Mutation]:
     """`topic.proposed` / `topic.created` (Т-§4.3, Т-§4.7). A proposed topic that is created
-    later keeps what it had (`knownClaimedAtMs`); only name, origin and status change."""
+    later keeps what it had (`knownClaimedAtMs`); only name, origin and status change.
+
+    A late event of a topic that already lives changes nothing it must not: the id of a new
+    topic is the UUIDv5 of its name (Т-§4.4), so a second material or agent on the same name
+    sends the same id. `topic.proposed` never lowers the status nor rewrites the name and
+    origin of an existing topic (a worked one would turn pale, a hidden one would revive),
+    and an id that became an `Alias` of a merged topic (Т-§2.8) is left alone by both events:
+    the target keeps its name, status and origin. The event stays in the journal."""
     p = _payload(event, TopicCreated if event.type == "topic.created" else TopicProposed)
     domain, topic = str(p.domain_id), str(p.topic_id)
     if view.node("Domain", domain) is None:
@@ -155,6 +162,8 @@ def _topic_new(event: StoredEvent, view: SliceView) -> list[Mutation]:
     props: Props = {"name": p.name, "origin": p.origin, "status": status}
     live = view.resolve("Topic", topic)
     if live is not None:
+        if live != topic or event.type == "topic.proposed":
+            return []
         return [SetProps("Topic", live, props)]
     learner = str(event.learner_id)
     base: Props = {"learnerId": learner, "domainId": domain, "knownClaimedAtMs": 0}

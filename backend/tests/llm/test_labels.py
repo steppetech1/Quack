@@ -90,6 +90,20 @@ def test_label_map_follows_settings_limits(settings: Settings) -> None:
     assert sorted(labels.table()) == ["K1", "S1", "S2", "T1"]
 
 
+def test_skills_limit_replaces_the_turn_limit_for_one_call(settings: Settings) -> None:
+    """`skills_limit` (the split of a topic) lifts the skill limit of this call only; the other
+    kinds keep the limits of `Settings`, and `topic_split_skills_k` is its own parameter."""
+    skills, topics = _ids(70), _ids(10)
+    wide = LabelMap.build(
+        settings, skills=skills, topics=topics, skills_limit=settings.topic_split_skills_k
+    )
+    assert settings.topic_split_skills_k == 60
+    assert wide.label("skill", skills[59]) == "S60"
+    assert wide.label("skill", skills[60]) is None
+    assert wide.label("topic", topics[8]) is None  # the topic limit is unchanged
+    assert LabelMap.build(settings, skills=skills).label("skill", skills[15]) is None
+
+
 @pytest.mark.parametrize("ref", sorted(ALL_PROMPT_SCHEMAS))
 def test_prompt_mentions_only_declared_fields(ref: str) -> None:
     """T-M5: backticked names of `## Output contract` are fields of the role schema or
@@ -132,3 +146,17 @@ def test_prompt_has_owner_doctrine(ref: str) -> None:
 def test_prompt_contracts_file_is_current() -> None:
     """`backend/PROMPT_CONTRACTS.md` is built from code (§7.6, S4)."""
     assert CONTRACTS_PATH.read_text(encoding="utf-8") == render_contracts()
+
+
+def test_cards_are_labelled_up_to_their_limit(settings: Settings) -> None:
+    """Q1: the cards of the turn get `C1…Cn`, no more than `label_max_cards`, in the given
+    order; a card over the limit has no label, so the guard cannot let it into a series."""
+    small = settings.model_copy(update={"label_max_cards": 2})
+    cards = _ids(3)
+    labels = LabelMap.build(small, cards=cards)
+    assert labels.labels("card") == {"C1": cards[0], "C2": cards[1]}
+    assert labels.label("card", cards[2]) is None
+    assert labels.resolve("card", "C2") == cards[1]
+    with pytest.raises(UnknownLabelError):
+        labels.resolve("card", "C3")
+    assert settings.label_max_cards == 12

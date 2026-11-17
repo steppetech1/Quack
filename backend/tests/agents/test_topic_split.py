@@ -147,12 +147,58 @@ async def test_a_split_that_misses_a_skill_writes_nothing(pg_db: Db) -> None:
     assert (done["payload"]["ok"], done["payload"]["error"]) == (False, "split_not_valid")
 
 
-async def test_skills_beyond_the_label_limit_stay_with_the_keeper_part(pg_db: Db) -> None:
-    """`candidate_skills_k` labels the first skills only: the model sees no `None:` lines, the
-    check counts the shown skills, and the rest goes to the part that keeps the topic."""
+async def test_a_topic_over_the_turn_limit_is_shown_to_the_model_whole(pg_db: Db) -> None:
+    """The split has its own limit `topic_split_skills_k`, not `candidate_skills_k` of a teacher
+    turn: a topic of 20 skills shows all 20, and the check «every skill in exactly one part»
+    goes over all 20."""
     learner_id = await create_learner(pg_db)
-    limit = SETTINGS.candidate_skills_k
-    skills = [UUID(int=0x800 + i) for i in range(limit + 3)]
+    assert SETTINGS.topic_split_skills_k > SETTINGS.candidate_skills_k
+    skills = [UUID(int=0x800 + i) for i in range(20)]
+    assert len(skills) > SETTINGS.candidate_skills_k
+    builder = _Builder(
+        [
+            SplitPart(name="Tests", skills=["S1", "S2"]),
+            SplitPart(name="Sums", skills=[f"S{i}" for i in range(3, 21)]),
+        ]
+    )
+
+    written = await _run(pg_db, learner_id, builder, skills)
+
+    assert written == ["topic.split"]
+    assert len(builder.calls[0]["candidates"].splitlines()) == 20
+    split, done = await _types(pg_db, learner_id)
+    parts = split["payload"]["into"]
+    assert [len(p["skill_ids"]) for p in parts] == [2, 18]
+    assert sorted(s for p in parts for s in p["skill_ids"]) == sorted(str(s) for s in skills)
+    assert done["payload"]["ok"] is True
+
+
+async def test_a_part_that_misses_a_shown_skill_is_not_valid(pg_db: Db) -> None:
+    """20 skills are shown, so an answer that covers only the first 15 is not a split."""
+    learner_id = await create_learner(pg_db)
+    skills = [UUID(int=0x800 + i) for i in range(20)]
+    builder = _Builder(
+        [
+            SplitPart(name="Tests", skills=["S1"]),
+            SplitPart(
+                name="Sums", skills=[f"S{i}" for i in range(2, SETTINGS.candidate_skills_k + 1)]
+            ),
+        ]
+    )
+
+    assert await _run(pg_db, learner_id, builder, skills) == []
+    (done,) = await _types(pg_db, learner_id)
+    assert (done["payload"]["ok"], done["payload"]["error"]) == (False, "split_not_valid")
+
+
+async def test_skills_beyond_the_split_limit_stay_with_the_keeper_part(pg_db: Db) -> None:
+    """A topic of 61 skills: 60 are shown (`topic_split_skills_k`), the model sees no `None:`
+    lines, the check counts the shown skills, and the last one goes to the part that keeps the
+    topic (D-B-223 п.12)."""
+    learner_id = await create_learner(pg_db)
+    limit = SETTINGS.topic_split_skills_k
+    assert limit == 60
+    skills = [UUID(int=0x800 + i) for i in range(limit + 1)]
     builder = _Builder(
         [
             SplitPart(name="Tests", skills=["S1"]),
@@ -167,6 +213,7 @@ async def test_skills_beyond_the_label_limit_stay_with_the_keeper_part(pg_db: Db
     assert len(builder.calls[0]["candidates"].splitlines()) == limit
     split, done = await _types(pg_db, learner_id)
     parts = split["payload"]["into"]
-    assert [str(s) for s in skills[limit:]] == parts[1]["skill_ids"][-3:]  # with the keeper
+    assert parts[1]["topic_id"] == str(TOPIC)  # the bigger part keeps the topic
+    assert str(skills[limit]) == parts[1]["skill_ids"][-1]
     assert sorted(s for p in parts for s in p["skill_ids"]) == sorted(str(s) for s in skills)
     assert done["payload"]["ok"] is True

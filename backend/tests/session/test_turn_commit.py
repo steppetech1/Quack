@@ -17,6 +17,7 @@ import pytest
 from quack.config import Settings
 from quack.db.db import Db
 from quack.events import records
+from quack.events.event_types import TurnCommitted
 from quack.events.values import AnswerSpec, MathValue
 from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.llm.streaming import StreamUsage
@@ -678,3 +679,38 @@ def test_what_the_guard_leaves_the_write_can_resolve() -> None:
     assert violations(settled) == []
     batch = write(settled)
     assert [e.type for e in batch.events if e.type == "hub.deadline_set"] == ["hub.deadline_set"]
+
+
+def test_a_card_series_of_labelled_cards_is_committed_with_the_card_ids() -> None:
+    """Q1: the turn labels the cards of its focus, so `card_series` is no longer cut by the guard:
+    the guard passes it and `turn.committed` carries the ids of the cards."""
+    from quack.session.guards import markup_violations
+
+    card, other = uuid4(), uuid4()
+    labels = LabelMap.build(
+        SETTINGS,
+        skills=[SKILL],
+        topics=[TOPIC],
+        hubs=[HUB],
+        misconceptions=[MISCONCEPTION],
+        cards=[card, other],
+    )
+    output = _bare(elements=[{"element_id": "e1", "kind": "card_series", "cards": ["C2", "C1"]}])
+    assert (
+        markup_violations(
+            output.p3_markup, skill_labels={"S1"}, misconception_labels={"M1"}, labels=labels
+        )
+        == []
+    )
+    batch = turn_batch(
+        _turn(output),
+        labels,
+        manifest=_manifest(uuid4(), uuid4(), labels),
+        action_seq=1,
+        domain_id=DOMAIN,
+        settings=SETTINGS,
+        learner_texts=LEARNER,
+    )
+    committed = TurnCommitted.model_validate(batch.events[0].payload)
+    (element,) = committed.markup.elements
+    assert element.kind == "card_series" and element.card_ids == [str(other), str(card)]

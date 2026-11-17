@@ -23,6 +23,19 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-C-254. Решение владельца по D-C-252 (2026-11-15): библиотеки визуализаций в compute
+- Класс: B; меняет контекст сборки образа compute
+- WP / место: WP16.5, WP24; `compute/Dockerfile`, `compute/Dockerfile.dockerignore`, `compute/quack_compute/{app,contracts,renderer,settings}.py`, `quack/agents/viz.py`, `quack/compute_client/contracts.py`, `compose.yaml`, `.github/workflows/ci.yml`, `.gitattributes`
+- Контекст: владелец 2026-11-15 согласовал вариант для открытого пункта (в) D-C-252. Проверка визуализации снимком бракует любую страницу с d3, plotly или katex: у compute нет сети, библиотека не загружается.
+- Решение:
+  1. Образ compute собирается из корня репозитория и содержит `deploy/static/viz` (`VIZ_LIBRARIES_DIR=/app/viz`); отдельная копия KaTeX в `compute/quack_compute/katex/` удалена, `pdf()` читает тот же каталог.
+  2. `RenderSnapshotsRequest.libraries_base_url` (необязательное): запрос страницы под этим адресом обслуживается локальным файлом, только если он есть в `SHA256SUMS`; выход за каталог, чужой хост и отсутствующий файл обрываются. Сеть не используется (Д-§3.2).
+  3. `VIZ_LIBRARIES` из compose — единый список библиотек для промпта, CSP и compute.
+- Почему: Д-§3.2, Т-§13.6; ТЗ WP24
+- Обратимость: откат коммита; старый backend с новым compute работает (поле необязательное)
+- Тесты: `compute/tests/test_render_viz_libraries.py`, `tests/agents/test_viz.py`; образ собран локально, страница с d3 отрендерена в нём без ошибок консоли
+- Требует подтверждения владельцем: нет. Проверка визуализаций с библиотеками требует нового образа compute; шаги CI с новым контекстом сборки проверяет CI
+
 ### D-C-253. Решения владельца по D-C-252 (2026-11-15): роль приложения в Postgres, вход, Origin сокета, рендер `.env`, лимиты
 - Класс: B; п.1 меняет порядок выкатки и отменяет D-C-160 п.6; п.2 — отступление от буквы ТЗ WP18
 - WP / место: WP9.1, WP18, WP21; `compose.yaml`, `deploy/{deploy.sh,render-env.sh,README.md,env.example}`, `.env.example`, `quack/ops/{db_roles,commands}.py`, `quack/cli.py`, `quack/auth/{router,google}.py`, `quack/api/openapi.py`, `quack/canvas/router.py`, `frontend/app/api/auth/link/verify/route.ts`

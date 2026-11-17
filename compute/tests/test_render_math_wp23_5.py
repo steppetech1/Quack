@@ -93,7 +93,8 @@ def test_the_height_of_formulas_counts_in_the_page_count(client: TestClient) -> 
 
 
 def test_the_katex_files_are_the_pinned_ones() -> None:
-    """The copy in the image has the bytes of `deploy/static/viz` (one pin: `SHA256SUMS`)."""
+    """The KaTeX files the renderer reads (the libraries directory: `deploy/static/viz` in a
+    checkout, its copy in the image) have the pinned bytes (one pin: `SHA256SUMS`)."""
     pinned: dict[str, str] = {}
     for line in SUMS.read_text(encoding="utf-8").splitlines():
         digest, _, name = line.partition(" *")
