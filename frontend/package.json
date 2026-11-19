@@ -22,7 +22,7 @@
     "fzstd": "0.1.1",
     "katex": "^0.16.22",
     "lucide-react": "^1.63.0",
-    "next": "16.4.3",
+    "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "shadcn": "^4.23.0",
@@ -37,7 +37,7 @@
     "@types/react-dom": "^19",
     "@types/three": "^0.187.0",
     "eslint": "^9",
-    "eslint-config-next": "16.4.3",
+    "eslint-config-next": "16.4.6",
     "openapi-typescript": "^7.4.4",
     "tailwindcss": "^4",
     "typescript": "^5"
