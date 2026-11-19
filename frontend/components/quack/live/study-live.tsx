@@ -66,59 +66,6 @@ export function PracticeLive({ topicId }: { topicId: string }) {
   );
 }
 
-/** After "Finish session": the summary of the backend (`GET …/summary`): tasks, answers, skills that moved */
-export function SessionSummaryLive({ id }: { id: string }) {
-  const tx = useT();
-  const t = tx.stubs.summary;
-  const errorText = useErrorText();
-  const [summary, setSummary] = useState<S["SessionSummary"] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let off = false;
-    get<S["SessionSummary"]>(`/v1/sessions/${id}/summary`)
-      .then((s) => !off && setSummary(s))
-      .catch((e) => !off && setError(errorText(e)));
-    return () => {
-      off = true;
-    };
-    // load once per session
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  const rows: [string, number][] = [
-    [tx.live.summaryTasks, summary?.tasks.length ?? 0],
-    [tx.live.summaryAnswers, summary?.tasks.reduce((n, x) => n + x.answers, 0) ?? 0],
-    [tx.live.summarySkills, summary?.skills.filter((x) => x.changed).length ?? 0],
-  ];
-  return (
-    <PageShell>
-      <BackLink href="/">{tx.shell.subjects}</BackLink>
-      <StubHeader title={t.title} />
-      {summary && (
-        <dl className="mt-8 grid grid-cols-3 gap-3 sm:max-w-md">
-          {rows.map(([label, value]) => (
-            <div key={label} className="rounded-[2px] border border-seam p-4">
-              <dt className="caps text-paper-dim">{label}</dt>
-              <dd className="num mt-1 text-[28px] leading-none text-paper">{value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      <ErrorLine text={error} />
-      <p className="mt-6 text-body text-paper-dim">{t.cheat}</p>
-      <div className="mt-6 flex flex-wrap gap-2">
-        <Link href={`/session/${id}`} className={SECONDARY_BTN}>
-          {tx.live.openTranscript}
-        </Link>
-        <Link href="/" className={PRIMARY_BTN}>
-          {t.back}
-        </Link>
-      </div>
-    </PageShell>
-  );
-}
-
 /** Topics of the current subject (notes, cards and cheat sheets hang on them) and search across the learner's log (`GET /v1/search`) */
 export function LibraryLive() {
   const tx = useT();

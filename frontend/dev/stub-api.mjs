@@ -603,17 +603,12 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     S.events[s.session_id] = [{ seq: ++S.seq, type: "session.started", actor: "system", occurred_at: now(), payload: { intent: s.intent } }];
     return json(res, 201, s);
   }
-  if ((g = p.match(/^\/v1\/sessions\/([^/]+)(?:\/(actions|heartbeat|end|summary))?$/))) {
+  if ((g = p.match(/^\/v1\/sessions\/([^/]+)(?:\/(actions|heartbeat|summary))?$/))) {
     const s = S.sessions.find((x) => x.session_id === g[1]);
     if (!s) return err(res, "NOT_FOUND", 404, "no such session");
     if (!g[2]) return json(res, 200, { ...s, events: S.events[s.session_id] ?? [] });
     if (g[2] === "heartbeat") return json(res, 200, {});
     if (g[2] === "actions") return act(res, s, body);
-    if (g[2] === "end") {
-      s.status = "ended";
-      s.ended_at = now();
-      return json(res, 200, s);
-    }
     const topic = s.topic_id ? topicById(s.topic_id) : null;
     return json(res, 200, { before_seq: s.start_seq ?? 1, domain_id: s.domain_id, intent: s.intent ?? "free", session_id: s.session_id, started_seq: s.start_seq ?? 1, topic_id: s.topic_id, skills: (topic?.t.skills ?? ["Continuity at a point"]).map((_, i) => ({ skill_id: id("s" + i), changed: i === 0, topic_id: s.topic_id })), tasks: [{ task_id: randomUUID(), answers: 2, hint_step: 0 }, { task_id: randomUUID(), answers: 1, hint_step: 1 }] });
   }

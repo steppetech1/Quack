@@ -125,14 +125,24 @@ export function sse<P extends WritePath<"post">>(
   body: BodyOf<P, "post">,
   onEvent: (e: SseEvent) => void,
   signal?: AbortSignal,
+  onActivity?: () => void,
 ): Promise<void>;
-export function sse(method: "GET", path: string, body: undefined, onEvent: (e: SseEvent) => void, signal?: AbortSignal): Promise<void>;
+export function sse(
+  method: "GET",
+  path: string,
+  body: undefined,
+  onEvent: (e: SseEvent) => void,
+  signal?: AbortSignal,
+  onActivity?: () => void,
+): Promise<void>;
 export async function sse(
   method: "GET" | "POST",
   path: string,
   body: unknown,
   onEvent: (e: SseEvent) => void,
   signal?: AbortSignal,
+  /** Called on every chunk of the stream, keepalive comments included: the connection is alive */
+  onActivity?: () => void,
 ): Promise<void> {
   const res = await fetch(BASE + path, {
     method,
@@ -146,6 +156,7 @@ export async function sse(
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
+    onActivity?.();
     buf += value.replace(/\r\n/g, "\n");
     let cut: number;
     while ((cut = buf.indexOf("\n\n")) >= 0) {

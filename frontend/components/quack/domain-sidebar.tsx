@@ -3,11 +3,8 @@
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import type { Domain } from "@/lib/mock/types";
 import { usePathname } from "next/navigation";
-import { useRef } from "react";
-import { useShell } from "./app-shell";
 import { DomainTree } from "./domain-tree";
 import { IconButton } from "./icon-button";
-import { MenuToggle } from "./menu-toggle";
 import { ProfileMenu } from "./profile-menu";
 import { useT } from "@/lib/i18n/provider";
 
@@ -15,22 +12,17 @@ export function DomainSidebar({
   domains,
   activeId,
   onSelect,
-  withMenu = true,
   collapsed,
   onToggle,
 }: {
   domains: Domain[];
   activeId: string;
   onSelect: (id: string) => void;
-  /** Кнопка полноэкранного меню в шапке; в мобильной шторке её нет (там она в верхней полосе) */
-  withMenu?: boolean;
   /** Узкая полоса вместо панели (только десктопная колонка, на мобильной шторке не используется) */
   collapsed?: boolean;
   onToggle?: () => void;
 }) {
   const t = useT();
-  const { menuOpen, openMenu, closeMenu } = useShell();
-  const toggleRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
 
   if (collapsed) {
@@ -46,18 +38,8 @@ export function DomainSidebar({
 
   return (
     <nav aria-label={t.shell.subjects} className="flex h-full flex-col bg-cloth-deep px-3 pt-4 pb-3">
-      {/* шапка: кнопка меню слева, название антиквой капсом, справа — свернуть (десктоп) */}
+      {/* шапка: название антиквой капсом, справа — свернуть (десктоп) */}
       <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1">
-        {withMenu ? (
-          <div ref={toggleRef} data-menu-anchor>
-            <MenuToggle
-              open={menuOpen}
-              onClick={() => (menuOpen ? closeMenu() : openMenu(toggleRef.current?.querySelector("button") ?? null))}
-              labelOpen={t.menu.open}
-              labelClose={t.menu.close}
-            />
-          </div>
-        ) : null}
         <p className="display-caps flex-1 text-[1.375rem] text-paper">Quack!</p>
         {onToggle && (
           <IconButton label={t.shell.collapseSubjects} onClick={onToggle}>

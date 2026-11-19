@@ -260,14 +260,19 @@ function NewSession() {
   );
 }
 
-/** Реплика студента — строка на развороте: метка «Ты» на полях и тонкие швы */
+/** Реплика студента — контурный пузырь справа у края колонки */
 function StudentLine({ id, text }: { id?: string; text: string }) {
   const tx = useT();
   return (
-    <p id={id} className="flex scroll-mt-16 gap-4 border-y border-seam-soft py-3 whitespace-pre-wrap text-paper">
-      <span className="caps shrink-0 pt-1 text-paper-dim">{tx.session.you}</span>
-      <span>{text}</span>
-    </p>
+    <div id={id} className="flex scroll-mt-16 justify-end">
+      <p
+        role="group"
+        aria-label={tx.session.you}
+        className="max-w-[85%] min-w-0 rounded-[1rem] border border-seam bg-cloth-hover px-4 py-2.5 whitespace-pre-wrap text-paper [overflow-wrap:anywhere]"
+      >
+        {text}
+      </p>
+    </div>
   );
 }
 

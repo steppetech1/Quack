@@ -2,7 +2,7 @@
 
 import { History, PanelLeft, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Suspense, useContext, useEffect, useRef, useState } from "react";
 import type { GraphMode } from "@/lib/graph-layout";
 import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
@@ -13,10 +13,9 @@ import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
-import { MenuToggle } from "./menu-toggle";
-import { SiteMenu } from "./site-menu";
 import { IndicatorPills } from "./graph/indicator-pills";
 import { SessionsPanel } from "./sessions-panel";
+import { BackLink } from "./page-parts";
 import { SoonProvider } from "./soon";
 
 type Shell = {
@@ -35,10 +34,6 @@ type Shell = {
   closeDrawer: () => void;
   /** Сделать домен текущим без перехода (страница темы или сессии реального домена) */
   focusDomain: (id: string) => void;
-  /** Полноэкранное меню: открыть из кнопки-триггера (откуда берём место и куда вернуть фокус) или закрыть */
-  menuOpen: boolean;
-  openMenu: (trigger: HTMLElement | null) => void;
-  closeMenu: () => void;
 };
 
 const ShellContext = createContext<Shell | null>(null);
@@ -76,6 +71,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const inSettings = pathname.startsWith("/settings");
   const inSession = /^\/(session|topic|hub|canvas)\//.test(pathname);
+  const inSessionPage = pathname.startsWith("/session/");
   // Доска канваса занимает весь экран: ни панели доменов, ни панели сессий
   const fullscreen = pathname.startsWith("/canvas/");
   // Живой режим: пока данные грузятся (или «/» без предметов — сейчас уведёт на создание) — пустой центр; ошибка — плашка
@@ -91,10 +87,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
   const [drawer, setDrawer] = useState<"domains" | "sessions" | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuAnchor, setMenuAnchor] = useState<{ left: number; top: number } | null>(null);
-  const menuOpener = useRef<HTMLElement | null>(null);
-  const barToggle = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const closeBtn = useRef<HTMLButtonElement | null>(null);
   const openDrawer = (side: "domains" | "sessions", el: HTMLElement) => {
@@ -143,21 +135,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const openMenu = useCallback((el: HTMLElement | null) => {
-    menuOpener.current = el;
-    const r = el?.getBoundingClientRect();
-    setMenuAnchor(r ? { left: r.left, top: r.top } : null);
-    setMenuOpen(true);
-  }, []);
-  const closeMenu = useCallback(() => setMenuOpen(false), []);
-
-  // любой переход (в том числе «назад») закрывает меню
-  const [menuPath, setMenuPath] = useState(pathname);
-  if (menuPath !== pathname) {
-    setMenuPath(pathname);
-    setMenuOpen(false);
-  }
-
   const selectDomain = (id: string) => {
     setDomainId(id);
     setGraphMode({ kind: "overview" });
@@ -203,7 +180,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId, menuOpen, openMenu, closeMenu }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
         <a
           href="#main"
           onClick={(e) => {
@@ -214,7 +191,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           {t.shell.skip}
         </a>
-        <div inert={!!drawer || menuOpen} className="flex h-dvh">
+        <div inert={!!drawer} className="flex h-dvh">
           {!fullscreen && (
             <aside
               aria-label={t.shell.subjects}
@@ -239,19 +216,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </IconButton>
               )}
               <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
-              {/* на телефоне кнопка меню в верхней полосе */}
-              <div ref={barToggle} data-menu-anchor className="ml-auto">
-                <MenuToggle
-                  open={menuOpen}
-                  onClick={() => (menuOpen ? closeMenu() : openMenu(barToggle.current?.querySelector("button") ?? null))}
-                  labelOpen={t.menu.open}
-                  labelClose={t.menu.close}
-                />
-              </div>
-              {!inSettings && <IconButton label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
+              {!inSettings && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
                 <History />
               </IconButton>}
             </div>}
+            {/* Сессия: путь назад в граф домена; граф открывается по «/» */}
+            {inSessionPage && (
+              <div className="shrink-0 border-b border-seam-soft px-4 md:px-7">
+                <BackLink href="/">{t.shell.backToGraph}</BackLink>
+              </div>
+            )}
             {busy ? (
               <div className="flex-1" aria-busy="true" />
             ) : failed ? (
@@ -319,15 +293,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <X />
               </IconButton>
               {side === "domains" ? (
-                <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} withMenu={false} />
+                <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
               ) : (
                 panel()
               )}
             </div>
           );
         })}
-
-        <SiteMenu open={menuOpen && !fullscreen} onClose={closeMenu} anchor={menuAnchor} returnFocusRef={menuOpener} />
       </ShellContext.Provider>
     </SoonProvider>
   );

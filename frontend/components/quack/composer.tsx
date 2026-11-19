@@ -9,6 +9,7 @@ import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { IconButton } from "./icon-button";
+import { PixelDuck } from "./pixel-duck";
 import { useMaterialUpload } from "./live/use-material-upload";
 import { useSoon } from "./soon";
 import { useSkills } from "./use-skills";
@@ -31,6 +32,8 @@ type Props = {
   chip?: { label: string; onRemove: () => void };
   /** Голос в сессии (только режим API): запись с микрофона → WAV → `onClip`. Без пропса — кнопка-заглушка «скоро» */
   voice?: VoiceProps;
+  /** Пиксельная утка сидит на верхней кромке поля (в сессии) */
+  duck?: boolean;
 };
 
 export function Composer({
@@ -42,6 +45,7 @@ export function Composer({
   compact = false,
   chip,
   voice,
+  duck = false,
 }: Props) {
   const t = useT();
   placeholder ??= t.composer.placeholder;
@@ -325,6 +329,7 @@ export function Composer({
           {submitText}
         </button>
       </div>
+      {duck && <PixelDuck mode="perch" />}
     </form>
   );
 }

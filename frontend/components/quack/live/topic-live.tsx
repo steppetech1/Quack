@@ -141,6 +141,18 @@ export function TopicLive({ id }: { id: string }) {
   const otherSubject = active?.status === "active" && active.domain_id !== topic.domain_id ? active : null;
   const ask = (intent: Intent) => (otherSubject ? setConfirmIntent(intent) : void begin(intent));
 
+  const buildNotes = async () => {
+    setBusy(true);
+    try {
+      await post(`/v1/topics/${topic.topic_id}/notes`, { idempotency_key: idem() });
+      notice(t.notesQueued);
+    } catch (e) {
+      notice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const buildCheat = async () => {
     if (!data.hubId) return;
     setBusy(true);
@@ -561,18 +573,23 @@ export function TopicLive({ id }: { id: string }) {
               {deck.length > 0 && <DeckCard cards={deck} />}
             </div>
           )}
-          {data.hubId && (
-            <div className="mt-3 flex flex-wrap gap-x-2">
-              <button type="button" disabled={busy} onClick={() => void buildCheat()} className={cn(TEXT_BTN, "-ml-3")}>
-                {data.cheat ? t.refreshCheat : t.buildCheat}
-              </button>
-              {data.cheat && (
-                <button type="button" disabled={busy} onClick={() => void reviewCheat()} className={TEXT_BTN}>
-                  {busy ? tools.reviewing : tools.reviewCheat}
+          <div className="mt-3 flex flex-wrap gap-x-2">
+            <button type="button" disabled={busy} onClick={() => void buildNotes()} className={cn(TEXT_BTN, "-ml-3")}>
+              {data.notes && data.notes.blocks.length ? t.refreshNotes : t.buildNotes}
+            </button>
+            {data.hubId && (
+              <>
+                <button type="button" disabled={busy} onClick={() => void buildCheat()} className={TEXT_BTN}>
+                  {data.cheat ? t.refreshCheat : t.buildCheat}
                 </button>
-              )}
-            </div>
-          )}
+                {data.cheat && (
+                  <button type="button" disabled={busy} onClick={() => void reviewCheat()} className={TEXT_BTN}>
+                    {busy ? tools.reviewing : tools.reviewCheat}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </PageSection>
       </PageFrame>
     </ArtifactHost>
