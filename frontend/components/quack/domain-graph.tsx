@@ -133,8 +133,8 @@ const fade = "transition-opacity duration-(--dur-s) ease-(--ease-out) motion-red
 
 export const DomainGraph = forwardRef<
   GraphHandle,
-  { domain: Domain; mode: GraphMode; onModeChange: (m: GraphMode) => void }
->(function DomainGraph({ domain, mode, onModeChange }, ref) {
+  { domain: Domain; mode: GraphMode; onModeChange: (m: GraphMode) => void; center?: boolean; onCentered?: () => void }
+>(function DomainGraph({ domain, mode, onModeChange, center = false, onCentered }, ref) {
   const tx = useT();
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -591,6 +591,15 @@ export const DomainGraph = forwardRef<
       onModeChange(OVERVIEW);
     } else animateTo(fitView(size.w, size.h));
   };
+
+  // A click on the subject name: show the whole graph, centred
+  useEffect(() => {
+    if (!center || !size.w) return;
+    fitAll();
+    onCentered?.();
+    // fitAll closes over the current mode and size; it must run once per click
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [center, size.w]);
 
   const focusHub = focusIdx >= 0 ? domain.hubs[focusIdx] : null;
   const total = layout.topics.length;

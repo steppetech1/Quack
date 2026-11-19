@@ -7,9 +7,7 @@ import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { NewDomainLive } from "../live/domain-setup-live";
 import { BackLink, PageShell } from "../page-parts";
-import { DomainSteps } from "./domain-steps";
-import { NodeChains } from "./node-chain";
-import { PILL_FIELD, PRIMARY_BTN } from "./stub-parts";
+import { FIELD, Field, PRIMARY_BTN, StubHeader } from "./stub-parts";
 
 /** New subject on mocks: one input; submitting opens the app (the backend flow is NewDomainLive) */
 function NewDomainMock() {

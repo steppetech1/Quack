@@ -31,7 +31,8 @@
   /* индикаторы графа: свои цвета, не пересекаются с цветами состояний тем и с акцентом */
   --ind-new: #4f9dff;
   --ind-relevant: #a68bff;
-  --ind-deadline: #2ec4b6;
+  --ind-deadline: #b5384f; /* бордовый: классический #800020 на графите даёт 1.7:1, этот — 3.2:1, минимум для знака */
+  --ind-deadline-text: #d95b72; /* тот же бордовый, светлее, для текста: 5.0:1 на графите */
   --ind-weak: #e75cc4;
   --ind-review: #c6e35a;
 
@@ -104,6 +105,7 @@
   --color-ind-new: var(--ind-new);
   --color-ind-relevant: var(--ind-relevant);
   --color-ind-deadline: var(--ind-deadline);
+  --color-ind-deadline-text: var(--ind-deadline-text);
   --color-ind-weak: var(--ind-weak);
   --color-ind-review: var(--ind-review);
 

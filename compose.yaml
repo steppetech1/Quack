@@ -383,10 +383,13 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./deploy/static:/srv/static:ro
       - caddy-data:/data
+      # Other projects on this host put one `<name>.caddy` site file here (see deploy/README.md).
+      - ${EDGE_SITES_DIR:-/srv/edge/sites}:/etc/caddy/sites:ro
     depends_on:
       api:
         condition: service_healthy
-    networks: [backend, egress]
+    # `edge`: Caddy reaches the other projects' containers by name, they never see `backend`.
+    networks: [backend, egress, edge]
     stop_grace_period: 10s
     mem_limit: 128m
     memswap_limit: 160m
@@ -410,6 +413,10 @@ networks:
   backend:
     internal: true
   egress: {}
+  # Shared with other projects on this host; a fixed name so their compose files can join it
+  # as `external: true`.
+  edge:
+    name: edge
 
 volumes:
   postgres-data: {}

@@ -82,6 +82,29 @@ docker compose --env-file .env --env-file release.env ps
 
 Проверка: у `postgres`, `neo4j`, `redis` и `api` в колонке PORTS ничего нет, 80 и 443 только у `caddy`.
 
+## Сайты других проектов на этом сервере
+
+Порты 80 и 443 держит только `caddy` из этого compose. Другой проект на том же сервере не поднимает свой Caddy, а подключается к этому:
+
+- кладёт один файл `<проект>.caddy` со своим блоком сайта в `/srv/edge/sites` на сервере. Каталог монтируется в `caddy` как `/etc/caddy/sites` только для чтения, `Caddyfile` импортирует `*.caddy` оттуда. Пустой каталог ничего не добавляет;
+- подключает свои контейнеры к сети `edge` (в своём compose: `networks: { edge: { external: true } }`) и проксирует на них по имени контейнера. Сети `backend` и `egress` чужим контейнерам не видны;
+- после изменения своего файла перечитывает конфиг без перезапуска:
+
+```bash
+docker exec quack-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+Сеть `edge` создаёт этот compose. Пока к ней подключены чужие контейнеры, `docker compose down` не сможет её удалить: остановите сначала их.
+
+`deploy.sh` поднимает `caddy` с `--no-recreate`, поэтому новое монтирование и сеть появятся у работающего контейнера только после одного ручного пересоздания:
+
+```bash
+cd /srv/quack && export COMPOSE_FILE=compose.yaml
+docker compose --env-file .env --env-file release.env up -d --no-deps caddy
+```
+
+Локально каталог задаётся через `EDGE_SITES_DIR` (по умолчанию `/srv/edge/sites`).
+
 ## Восстановление
 
 Порядок — Д-§8.3. Команды `ops` запускаются так: `docker compose run --rm migrate ops <команда>` для тех, что читают только Postgres и Neo4j (`restore-check`, `resume`), и `docker compose run --rm --no-deps workers ops <команда>` для тех, что ходят в хранилища (`replay-deletions`, `orphan-objects`): у `workers` есть ключи `quack-learners` и `quack-deletions`.
@@ -105,5 +128,5 @@ docker compose --env-file .env --env-file release.env ps
 
 ## Таблица цен моделей (`LLM_PRICES`)
 
-В `ENV=prod` процессы `api` и `workers` не стартуют без таблицы цен (Т-§11.4, WP10.4): значения даёт владелец, в коде их нет. Это переменная `LLM_PRICES` окружения `production` (несекретная), JSON вида `{"<модель>": {"input": …, "cached_input": …, "output": …}}`, цены в долларах за 1 млн токенов. Ключи должны совпадать с именами моделей из таблицы ролей (`muse-wonder-1.0`, `muse-spark-1.3`). Пока она пуста, сборка `.env` в job выкатки отказывается работать, а сервер остаётся на прежнем релизе.
+В `ENV=prod` процессы `api` и `workers` не стартуют без таблицы цен (Т-§11.4, WP10.4): значения даёт владелец, в коде их нет. Это переменная `LLM_PRICES` окружения `production` (несекретная), JSON вида `{"<модель>": {"input": …, "cached_input": …, "output": …}}`, цены в долларах за 1 млн токенов. Значение должно быть записано строго в одну строку без переносов. Ключи должны совпадать с именами моделей из таблицы ролей (`muse-wonder-1.0`, `muse-spark-1.3`). Пока она пуста, сборка `.env` в job выкатки отказывается работать, а сервер остаётся на прежнем релизе.
 

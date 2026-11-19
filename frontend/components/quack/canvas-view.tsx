@@ -32,7 +32,7 @@ export function CanvasView({ id }: { id: string }) {
       focusBlock={blockParam}
       topLeft={
         <>
-          <Link href={`/?view=canvases&domain=${canvas.domainId}`} aria-label={tx.canvases.backToList} className={BACK_CLS}>
+          <Link href={`/domain?view=canvases&domain=${canvas.domainId}`} aria-label={tx.canvases.backToList} className={BACK_CLS}>
             <ArrowLeft aria-hidden />
           </Link>
           <div className="min-w-0 pr-3 pl-1">
@@ -74,7 +74,7 @@ export function NewCanvasView() {
       mode="edit"
       topLeft={
         <>
-          <Link href="/?view=canvases" aria-label={tx.canvases.backToList} className={BACK_CLS}>
+          <Link href="/domain?view=canvases" aria-label={tx.canvases.backToList} className={BACK_CLS}>
             <ArrowLeft aria-hidden />
           </Link>
           <div className="min-w-0 pr-3 pl-1">

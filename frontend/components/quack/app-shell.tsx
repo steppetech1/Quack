@@ -35,10 +35,9 @@ type Shell = {
   closeDrawer: () => void;
   /** Сделать домен текущим без перехода (страница темы или сессии реального домена) */
   focusDomain: (id: string) => void;
-  /** Полноэкранное меню: открыть из кнопки-триггера (откуда берём место и куда вернуть фокус) или закрыть */
-  menuOpen: boolean;
-  openMenu: (trigger: HTMLElement | null) => void;
-  closeMenu: () => void;
+  /** Клик по названию домена в левой панели: граф встаёт по центру экрана. Граф сбрасывает флаг, когда выровнялся */
+  centerPending: boolean;
+  consumeCenter: () => void;
 };
 
 const ShellContext = createContext<Shell | null>(null);
@@ -52,7 +51,10 @@ export function useShell() {
 /** Сессии пока есть только в матанализе */
 const SESSION_DOMAIN = "matan";
 
-/** «/?domain=» (ссылка из просмотра канваса) выбирает домен и убирает параметр из адреса */
+/** Вид домена (граф или канвасы) живёт здесь; «/» — экран «Все графы» */
+export const DOMAIN_PATH = "/domain";
+
+/** «/domain?domain=» (ссылка из просмотра канваса) выбирает домен и убирает параметр из адреса */
 function DomainFromQuery({ domains, onDomain }: { domains: Domain[]; onDomain: (id: string) => void }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -60,10 +62,10 @@ function DomainFromQuery({ domains, onDomain }: { domains: Domain[]; onDomain: (
   const param = search.get("domain");
   const view = search.get("view");
   useEffect(() => {
-    if (pathname !== "/" || !param) return;
+    if (pathname !== DOMAIN_PATH || !param) return;
     const id = domains.find((d) => d.id === param)?.id;
     if (id) onDomain(id);
-    router.replace(view === "canvases" ? "/?view=canvases" : "/", { scroll: false });
+    router.replace(view === "canvases" ? `${DOMAIN_PATH}?view=canvases` : DOMAIN_PATH, { scroll: false });
   }, [pathname, param, view, domains, onDomain, router]);
   return null;
 }
@@ -75,11 +77,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const inSettings = pathname.startsWith("/settings");
+  // «Все графы» (первый экран), как и настройки, не про один предмет: панели сессий нет
+  const noSessions = inSettings || pathname === "/";
   const inSession = /^\/(session|topic|hub|canvas)\//.test(pathname);
   // Доска канваса занимает весь экран: ни панели доменов, ни панели сессий
   const fullscreen = pathname.startsWith("/canvas/");
-  // Живой режим: пока данные грузятся (или «/» без предметов — сейчас уведёт на создание) — пустой центр; ошибка — плашка
+  // Живой режим: пока данные грузятся (или «/» без предметов — сейчас уведёт в чат) — пустой центр; ошибка — плашка
   const busy = API_MODE && (!data.ready || (!data.error && data.domains.length === 0 && pathname === "/"));
+  // Предметов нет: вместо пустых «Всех графов» — чат по умолчанию (вид домена с уткой и полем ввода)
+  const toChat = API_MODE && data.ready && !data.error && data.domains.length === 0 && pathname === "/";
+  useEffect(() => {
+    if (toChat) router.replace(DOMAIN_PATH);
+  }, [toChat, router]);
   const failed = API_MODE && !busy && !!data.error;
 
   const [domainId, setDomainId] = useState(domains[0].id);
@@ -91,10 +100,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
   const [drawer, setDrawer] = useState<"domains" | "sessions" | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuAnchor, setMenuAnchor] = useState<{ left: number; top: number } | null>(null);
-  const menuOpener = useRef<HTMLElement | null>(null);
-  const barToggle = useRef<HTMLDivElement>(null);
+  const [centerPending, setCenterPending] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
   const closeBtn = useRef<HTMLButtonElement | null>(null);
   const openDrawer = (side: "domains" | "sessions", el: HTMLElement) => {
@@ -147,13 +153,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setDomainId(id);
     setGraphMode({ kind: "overview" });
     setDrawer(null);
-    if (pathname !== "/") router.push("/");
+    setCenterPending(true);
+    if (pathname !== DOMAIN_PATH) router.push(DOMAIN_PATH);
   };
 
   const openGraph = (m: GraphMode) => {
     setGraphMode(m);
     setDrawer(null);
-    if (pathname !== "/" || window.location.search.includes("view=canvases")) router.push("/");
+    if (pathname !== DOMAIN_PATH || window.location.search.includes("view=canvases")) router.push(DOMAIN_PATH);
   };
 
   const startSession = (text: string, topicId: string | null = null) => {
@@ -188,7 +195,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId, menuOpen, openMenu, closeMenu }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId, centerPending, consumeCenter: () => setCenterPending(false) }}>
         <a
           href="#main"
           onClick={(e) => {
@@ -201,39 +208,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </a>
         <div inert={!!drawer || menuOpen} className="flex h-dvh">
           {!fullscreen && (
-            <aside
-              aria-label={t.shell.subjects}
-              className={cn("hidden shrink-0 border-r border-seam-soft transition-[width] duration-300 ease-out md:block", domainsCollapsed ? "w-14" : "w-62")}
-            >
-              <DomainSidebar
-                domains={domains}
-                activeId={activeId}
-                onSelect={selectDomain}
-                collapsed={domainsCollapsed}
-                onToggle={() => setDomainsCollapsed((v) => !v)}
-              />
+            <aside aria-label={t.shell.subjects} className="hidden w-62 shrink-0 border-r border-seam-soft md:block">
+              <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} />
             </aside>
           )}
 
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
             {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
-              {pathname !== "/" && (
-                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
-                  <PanelLeft />
-                </IconButton>
-              )}
+              <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
+                <PanelLeft />
+              </IconButton>
               <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
-              {/* на телефоне кнопка меню в верхней полосе */}
-              <div ref={barToggle} data-menu-anchor className="ml-auto">
-                <MenuToggle
-                  open={menuOpen}
-                  onClick={() => (menuOpen ? closeMenu() : openMenu(barToggle.current?.querySelector("button") ?? null))}
-                  labelOpen={t.menu.open}
-                  labelClose={t.menu.close}
-                />
-              </div>
-              {!inSettings && <IconButton label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
+              {!noSessions && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
                 <History />
               </IconButton>}
             </div>}
@@ -256,7 +243,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className={busy || failed ? "hidden" : "contents"}>{children}</div>
           </main>
 
-          {!inSettings && !fullscreen && <aside
+          {!noSessions && !fullscreen && <aside
             aria-label={t.shell.sessions}
             className={cn(
               "relative hidden shrink-0 border-l border-seam-soft transition-[width] duration-300 ease-out md:block",
@@ -284,7 +271,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             drawer ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         />
-        {(fullscreen ? ([] as const) : inSettings ? (["domains"] as const) : (["domains", "sessions"] as const)).map((side) => {
+        {(fullscreen ? ([] as const) : noSessions ? (["domains"] as const) : (["domains", "sessions"] as const)).map((side) => {
           const open = drawer === side;
           return (
             <div
@@ -304,7 +291,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <X />
               </IconButton>
               {side === "domains" ? (
-                <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} withMenu={false} />
+                <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} />
               ) : (
                 panel()
               )}
@@ -312,7 +299,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           );
         })}
 
-        <SiteMenu open={menuOpen && !fullscreen} onClose={closeMenu} anchor={menuAnchor} returnFocusRef={menuOpener} />
       </ShellContext.Provider>
     </SoonProvider>
   );

@@ -52,3 +52,8 @@
 		format json
 	}
 }
+
+# Sites of other projects on this host: one file per project in /srv/edge/sites, mounted at
+# /etc/caddy/sites. Each file holds its own site block and proxies to a container on the
+# `edge` network. An empty directory imports nothing.
+import /etc/caddy/sites/*.caddy

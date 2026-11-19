@@ -8,9 +8,7 @@ import { startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { BackLink, PageShell } from "../page-parts";
-import { NodeChains } from "../stubs/node-chain";
-import { DomainSteps } from "../stubs/domain-steps";
-import { PILL_FIELD, PRIMARY_BTN, SECONDARY_BTN } from "../stubs/stub-parts";
+import { AREA, FIELD, Field, PRIMARY_BTN, SECONDARY_BTN, StubHeader } from "../stubs/stub-parts";
 import { useErrorText } from "./error-text";
 
 /** The first message of a session started from an input box waits here while the page switches to the real id */
@@ -149,12 +147,17 @@ export function NewDomainLive() {
               onClick={() => void confirm()}
               className={PRIMARY_BTN}
             >
-              {heading}
-            </h1>
-            {suggestion && (
-              <p className="caps relative z-10 max-w-[420px] truncate text-paper-dim [text-shadow:0_0_10px_#141311,0_0_4px_#141311]" title={text.trim()}>
-                {live.domainYouWrote}: “{text.trim()}”
-              </p>
+              {suggestion.decision === "existing" ? live.domainOpen : live.domainCreate}
+            </button>
+            {suggestion.decision === "existing" && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setSuggestion({ decision: "unclear", name: "" })}
+                className={SECONDARY_BTN}
+              >
+                {live.domainOther}
+              </button>
             )}
             <form
               onSubmit={(e) => {

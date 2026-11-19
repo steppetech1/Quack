@@ -1,13 +1,10 @@
 "use client";
 
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ChevronRight, LayoutGrid } from "lucide-react";
+import Link from "next/link";
 import type { Domain } from "@/lib/mock/types";
 import { usePathname } from "next/navigation";
-import { useRef } from "react";
-import { useShell } from "./app-shell";
-import { DomainTree } from "./domain-tree";
-import { IconButton } from "./icon-button";
-import { MenuToggle } from "./menu-toggle";
+import { DOMAIN_PATH, useShell } from "./app-shell";
 import { ProfileMenu } from "./profile-menu";
 import { useT } from "@/lib/i18n/provider";
 
@@ -29,9 +26,10 @@ export function DomainSidebar({
   onToggle?: () => void;
 }) {
   const t = useT();
-  const { menuOpen, openMenu, closeMenu } = useShell();
-  const toggleRef = useRef<HTMLDivElement>(null);
+  const { graphMode, openGraph, closeDrawer } = useShell();
   const pathname = usePathname();
+  const onGraph = pathname === DOMAIN_PATH;
+  const onOverview = pathname === "/";
 
   if (collapsed) {
     return (
@@ -46,34 +44,66 @@ export function DomainSidebar({
 
   return (
     <nav aria-label={t.shell.subjects} className="flex h-full flex-col bg-cloth-deep px-3 pt-4 pb-3">
-      {/* шапка: кнопка меню слева, название антиквой капсом, справа — свернуть (десктоп) */}
-      <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1">
-        {withMenu ? (
-          <div ref={toggleRef} data-menu-anchor>
-            <MenuToggle
-              open={menuOpen}
-              onClick={() => (menuOpen ? closeMenu() : openMenu(toggleRef.current?.querySelector("button") ?? null))}
-              labelOpen={t.menu.open}
-              labelClose={t.menu.close}
-            />
-          </div>
-        ) : null}
-        <p className="display-caps flex-1 text-[1.375rem] text-paper">Qvack!</p>
-        {onToggle && (
-          <IconButton label={t.shell.collapseSubjects} onClick={onToggle}>
-            <PanelLeftClose />
-          </IconButton>
-        )}
+      <div className="flex min-h-10 items-center px-3 pb-1">
+        <p className="display-caps text-[1.375rem] text-paper">Qvack!</p>
       </div>
 
-      <p className="caps flex items-center justify-between px-3 pt-5 pb-2 text-paper-dim">
+      {/* первый экран: графы всех предметов сразу */}
+      <Link
+        href="/"
+        onClick={closeDrawer}
+        aria-current={onOverview ? "page" : undefined}
+        className={cn(row, "mt-3", onOverview ? "bg-cloth-raised font-medium text-paper" : "text-paper-dim")}
+      >
+        <LayoutGrid aria-hidden className="size-3.5 shrink-0" />
+        <span className="truncate">{t.shell.allGraphs}</span>
+      </Link>
+
+      <p className="caps flex items-center justify-between px-3 pt-4 pb-2 text-paper-dim">
         <span>{t.shell.subjects}</span>
         <span className="num">{domains.length}</span>
       </p>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <DomainTree domains={domains} activeId={activeId} onSelect={onSelect} />
-      </div>
+      <ul className="flex flex-col gap-0.5 overflow-y-auto">
+        {domains.map((d) => {
+          const on = d.id === activeId && !onOverview;
+          return (
+            <li key={d.id}>
+              <button
+                type="button"
+                aria-current={on ? "page" : undefined}
+                aria-expanded={on}
+                onClick={() => onSelect(d.id)}
+                className={cn(row, on ? "bg-cloth-raised font-medium text-paper" : "text-paper-dim")}
+              >
+                <ChevronRight
+                  aria-hidden
+                  className={cn("size-3.5 shrink-0 transition-transform duration-200", on && "rotate-90")}
+                />
+                <span className="truncate">{d.title}</span>
+              </button>
+              {on && (
+                <ul className="mt-0.5 mb-2 flex flex-col">
+                  {d.hubs.map((h) => (
+                    <li key={h.id}>
+                      <button
+                        type="button"
+                        onClick={() => goHub(h.id)}
+                        aria-current={hubOn(h.id) ? "true" : undefined}
+                        className={cn(row, sub, subOn(hubOn(h.id)))}
+                      >
+                        <span className="num w-12 shrink-0 whitespace-nowrap">§ {h.num}</span>
+                        <span className={cn("truncate", h.suggested && "italic")}>{h.title}</span>
+                        {h.suggested && <span className="sr-only">{t.shell.suggestedSr}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
 
       <ProfileMenu active={pathname.startsWith("/settings")} />
     </nav>

@@ -156,7 +156,7 @@ function SessionSummaryMock() {
         <Link href={`/topic/${summary.topicId}`} className={PRIMARY_BTN}>
           {tx.page.chipTopic(summary.title)}
         </Link>
-        <Link href="/" className={SECONDARY_BTN}>
+        <Link href="/domain" className={SECONDARY_BTN}>
           {t.back}
         </Link>
       </div>
