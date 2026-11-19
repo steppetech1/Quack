@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -43,6 +44,46 @@ class SessionJob(StrictModel):
 
 class SessionJobsResponse(StrictModel):
     jobs: list[SessionJob]
+
+
+class PlanLandmark(StrictModel):
+    """A landmark of the action graph: a skill or a topic of the session goal. The code builds
+    the set from memory and the learner's levels; `added_by_teacher` marks the ones the teacher
+    added (`landmark_edits`)."""
+
+    kind: Literal["skill", "topic"]
+    id: UUID
+    title: str
+    status: Literal["done", "current", "upcoming"]
+    added_by_teacher: bool
+
+
+class PlanStep(StrictModel):
+    """A step of the teacher: `id` is the stable slug of the step in the session, `landmark_id`
+    — the skill or topic it belongs to."""
+
+    id: str
+    text: str
+    landmark_id: UUID | None
+
+
+class PlanProgress(StrictModel):
+    """Landmarks whose required levels are reached, of all landmarks."""
+
+    done: int
+    total: int
+
+
+class SessionPlanView(StrictModel):
+    """`GET /v1/sessions/{id}/plan`: where the session is and where it goes. Read only; a graph
+    that cannot be read gives `landmarks = []` and `progress = null`, the rest still comes."""
+
+    goal: str | None
+    landmarks: list[PlanLandmark]
+    current_step: PlanStep | None
+    next_steps: list[PlanStep]
+    progress: PlanProgress | None
+    updated_at: datetime | None
 
 
 class HeartbeatResponse(StrictModel):

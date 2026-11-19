@@ -16,18 +16,21 @@ from quack.artifacts.documents import (
     ArtifactNotFound,
     NotASupplement,
     SystemBlock,
+    _split_markdown_blocks,
     accept_supplement,
     artifact_id_for,
     delete_block,
     edit_block,
     find_artifact,
     get_artifact,
+    save_topic_notes,
     version_blocks,
     write_system_blocks,
 )
 from quack.config import Settings
 from quack.db import Db
 from quack.events.log import NewEvent, append_events
+from quack.graph.ids import deterministic_id
 from tests.db.fixtures import create_learner
 from tests.support.auth import session_cookie, session_token
 from tests.support.resources import build_app_resources
@@ -422,3 +425,230 @@ async def test_repeated_generator_run_writes_nothing(pg_db: Db) -> None:
     )  # fmt: skip
     assert (first.version, again.version) == (2, 2)
     assert again.blocks == first.blocks
+
+
+def test_split_markdown_blocks_splits_headings_outside_fences() -> None:
+    artifact_id = uuid4()
+    md = (
+        "Intro line.\n\n"
+        "# First Section\nBody 1.\n"
+        "```python\n# not a heading\n## also not a heading\n```\n"
+        "## Second Section\nBody 2.\n"
+        "#### Deep Heading\nStays in second.\n"
+        "### Third Section\nBody 3."
+    )
+    blocks = _split_markdown_blocks(artifact_id, md)
+    assert [b.kind for b in blocks] == ["summary"] * 4
+    assert [b.owner for b in blocks] == ["learner"] * 4
+    assert [b.content for b in blocks] == [
+        "Intro line.",
+        "# First Section\nBody 1.\n```python\n# not a heading\n## also not a heading\n```",
+        "## Second Section\nBody 2.\n#### Deep Heading\nStays in second.",
+        "### Third Section\nBody 3.",
+    ]
+    assert blocks[0].block_id == _split_markdown_blocks(artifact_id, md)[0].block_id
+    assert _split_markdown_blocks(artifact_id, "Plain notes without headings.")[0].content == (
+        "Plain notes without headings."
+    )
+
+
+async def test_domain_of_owner_resolves_domain_all_merged_split_and_hint_topics(pg_db: Db) -> None:
+    learner_id = await create_learner(pg_db)
+    domain_id = uuid4()
+    merged_from, merged_into = uuid4(), uuid4()
+    split_into, placed_topic = uuid4(), uuid4()
+    [dom_ev, obs_ev, task_ev] = (
+        await append_events(
+            pg_db,
+            learner_id,
+            [
+                NewEvent(
+                    type="domain.created",
+                    payload={"domain_id": domain_id, "name": "Statistics"},
+                    actor="learner",
+                    idempotency_key="dom",
+                ),
+                NewEvent(
+                    type="observation.extracted",
+                    payload={
+                        "episode_seq": 1,
+                        "extractor": "extractor@3",
+                        "trigger_seq": 1,
+                        "elements": [
+                            {
+                                "kind": "evidence",
+                                "skill_id": None,
+                                "new_skill": {
+                                    "name": "Binomial",
+                                    "topic_hint": "  Binomial   Distribution ",
+                                },
+                                "skill_unclear": False,
+                                "level": 3,
+                                "outcome": "correct",
+                                "help": "none",
+                                "hint_step": None,
+                                "gap_type": "none",
+                                "misconception_id": None,
+                                "new_misconception": None,
+                                "root_cause": None,
+                                "quote": "q",
+                                "events": [1],
+                                "at_ms": 1000,
+                            }
+                        ],
+                    },
+                    actor="extractor@3",
+                    idempotency_key="obs",
+                    domain_id=domain_id,
+                ),
+                NewEvent(
+                    type="task.created",
+                    payload={
+                        "task_id": str(uuid4()),
+                        "family_id": str(uuid4()),
+                        "source": "teacher",
+                        "verification": "unchecked",
+                        "markup": {
+                            "tests": [],
+                            "parts": [
+                                {
+                                    "part": "a",
+                                    "answer": {
+                                        "type": "number",
+                                        "value": {"latex": "1", "sympy": "1"},
+                                    },
+                                    "tests": [
+                                        {
+                                            "skill_id": None,
+                                            "new_skill": {
+                                                "name": "Normal",
+                                                "topic_hint": "Normal Distribution",
+                                            },
+                                            "level": 3,
+                                        }
+                                    ],
+                                }
+                            ],
+                            "method_named": False,
+                            "answer": {"type": "number", "value": {"latex": "1", "sympy": "1"}},
+                        },
+                    },
+                    actor="teacher@3",
+                    idempotency_key="task",
+                    domain_id=domain_id,
+                ),
+                NewEvent(
+                    type="topic.merged",
+                    payload={"from_id": str(merged_from), "into_id": str(merged_into)},
+                    actor="builder@1",
+                    idempotency_key="merge",
+                    domain_id=domain_id,
+                ),
+                NewEvent(
+                    type="topic.split",
+                    payload={
+                        "topic_id": str(uuid4()),
+                        "into": [
+                            {"topic_id": str(split_into), "name": "Part 1", "skill_ids": []},
+                            {"topic_id": str(uuid4()), "name": "Part 2", "skill_ids": []},
+                        ],
+                    },
+                    actor="builder@1",
+                    idempotency_key="split",
+                    domain_id=domain_id,
+                ),
+                NewEvent(
+                    type="skill.placed",
+                    payload={
+                        "skill_id": str(uuid4()),
+                        "topic_id": str(placed_topic),
+                        "domain_id": str(domain_id),
+                    },
+                    actor="builder@1",
+                    idempotency_key="placed",
+                    domain_id=domain_id,
+                ),
+            ],
+        )
+    )[:3]
+
+    domain_all_hub = UUID(deterministic_id(learner_id, dom_ev.seq, 0))
+    obs_topic = UUID(deterministic_id(learner_id, obs_ev.seq, "topic:binomial distribution"))
+    task_topic = UUID(deterministic_id(learner_id, task_ev.seq, "topic:normal distribution"))
+
+    sheet = await get_artifact(
+        pg_db, learner_id=learner_id, kind="cheatsheet", owner_id=domain_all_hub
+    )
+    assert sheet.domain_id == domain_id and sheet.hub_id == domain_all_hub
+
+    for topic in (obs_topic, task_topic, merged_from, merged_into, split_into, placed_topic):
+        notes = await get_artifact(pg_db, learner_id=learner_id, kind="notes", owner_id=topic)
+        assert notes.domain_id == domain_id and notes.topic_id == topic
+
+    saved = await save_topic_notes(
+        pg_db,
+        learner_id=learner_id,
+        topic_id=placed_topic,
+        content="# Part 1\nText 1\n## Part 2\nText 2",
+        idempotency_key="save-1",
+    )
+    assert saved.version == 1 and len(saved.blocks) == 2
+
+
+async def test_put_and_post_topic_notes_routes(
+    pg_db: Db, notes_client: Callable[[UUID], Awaitable[httpx.AsyncClient]]
+) -> None:
+    learner_id, other = await create_learner(pg_db), await create_learner(pg_db)
+    topic_id = await _topic(pg_db, learner_id)
+    async with await notes_client(learner_id) as client:
+        put_body = {
+            "content": "# Overview\nKey idea\n## Examples\nOne example",
+            "idempotency_key": "put-notes-1",
+        }
+        first = await client.put(f"/v1/topics/{topic_id}/notes", json=put_body)
+        assert first.status_code == 200, first.text
+        data = first.json()
+        assert data["version"] == 1 and data["kind"] == "notes"
+        assert [b["content"] for b in data["blocks"]] == [
+            "# Overview\nKey idea",
+            "## Examples\nOne example",
+        ]
+        assert all(b["owner"] == "learner" and b["kind"] == "summary" for b in data["blocks"])
+
+        again = await client.put(f"/v1/topics/{topic_id}/notes", json=put_body)
+        assert again.json() == data
+        conflict = await client.put(
+            f"/v1/topics/{topic_id}/notes",
+            json={**put_body, "content": "# Different"},
+        )
+        assert conflict.status_code == 409
+
+        second = await client.put(
+            f"/v1/topics/{topic_id}/notes",
+            json={"content": "# Updated\nNew body", "idempotency_key": "put-notes-2"},
+        )
+        assert second.status_code == 200
+        assert second.json()["version"] == 2
+        assert [b["content"] for b in second.json()["blocks"]] == ["# Updated\nNew body"]
+
+        consent_body = {"idempotency_key": "req-notes-1"}
+        consent = await client.post(f"/v1/topics/{topic_id}/notes", json=consent_body)
+        assert consent.status_code == 202, consent.text
+        again_consent = await client.post(f"/v1/topics/{topic_id}/notes", json=consent_body)
+        assert again_consent.json() == consent.json()
+        rows = await pg_db.fetch_all(
+            "SELECT payload FROM core.events WHERE learner_id = %(learner_id)s "
+            "AND type = 'agent.requested'",
+            {"learner_id": learner_id},
+        )
+        assert len(rows) == 1
+        assert rows[0]["payload"]["kind"] == "artifact"
+        assert rows[0]["payload"]["params"]["artifact"] == "notes"
+        assert rows[0]["payload"]["params"]["topic_id"] == str(topic_id)
+        assert rows[0]["payload"]["needed_in_session"] is False
+
+    async with await notes_client(other) as foreign:
+        assert (await foreign.put(f"/v1/topics/{topic_id}/notes", json=put_body)).status_code == 404
+        assert (
+            await foreign.post(f"/v1/topics/{topic_id}/notes", json={"idempotency_key": "x"})
+        ).status_code == 404

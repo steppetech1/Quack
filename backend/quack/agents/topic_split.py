@@ -34,6 +34,7 @@ from quack.events.event_types import AgentRequested, SkillPart, SkillSplit, Topi
 from quack.events.log import NewEvent, append_events
 from quack.graph.read import GraphReader, create_graph_reader
 from quack.graph.read.models import SkillFact
+from quack.graph.topic_names import canonical_topic_name
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob, JobFailedPermanently
 from quack.llm.labels import LabelMap, UnknownLabelError
@@ -78,7 +79,9 @@ def split_problem(output: SplitOutput, labels: LabelMap, skill_count: int) -> st
 
 def plan_parts(output: SplitOutput, labels: LabelMap) -> list[PartPlan]:
     return [
-        PartPlan(" ".join(p.name.split()), tuple(labels.resolve("skill", s) for s in p.skills))
+        PartPlan(
+            canonical_topic_name(p.name), tuple(labels.resolve("skill", s) for s in p.skills)
+        )
         for p in output.parts
     ]
 

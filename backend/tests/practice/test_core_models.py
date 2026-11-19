@@ -26,13 +26,19 @@ SHARED = [
     (check, "RubricItemResult"),
     (check, "Verdict"),
     (check, "CheckFailed"),
-    (markup, "NewSkill"),
 ]
 
 
 @pytest.mark.parametrize(("module", "name"), SHARED, ids=[name for _, name in SHARED])
 def test_practice_models_are_the_core_objects(module: object, name: str) -> None:
     assert getattr(module, name) is getattr(values, name)
+
+
+def test_new_skill_model_omits_topic_hint_while_record_keeps_optional_legacy_hint() -> None:
+    assert set(markup.NewSkill.model_fields) == {"name"}
+    assert set(values.NewSkill.model_fields) == {"name", "topic_hint"}
+    assert values.NewSkill(name="x").topic_hint is None
+    assert values.NewSkill(name="x", topic_hint="legacy").topic_hint == "legacy"
 
 
 def test_registered_payloads_are_the_practice_models() -> None:

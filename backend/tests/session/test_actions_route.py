@@ -1,7 +1,8 @@
 """ТЗ Ф4 §4.7, WP13.1, WP13.2 over HTTP: `POST /v1/sessions/{id}/actions` — the action is
 written, a kind with a teacher turn answers SSE frames in the order of §4.7 (`action_recorded`
-first), a kind without a turn answers `201 {seq}`; a session the sweeper ended comes back;
-an error before the write is an `error` frame and no turn in the log (`Т-§12.1`).
+first), a kind without a turn answers `201 {seq}`; a closed session comes back (only the sweep
+closes one, an action refreshes its activity); an error before the write is an `error` frame and
+no turn in the log (`Т-§12.1`).
 
 The context of the turn (WP14) is the port `TurnContextSource`; here a fixed one over the
 seam S13 provider (D-B-156)."""
@@ -9,7 +10,7 @@ seam S13 provider (D-B-156)."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -25,14 +26,15 @@ from quack.api.auth import SESSION_COOKIE
 from quack.auth.sessions import open_session
 from quack.config import Settings
 from quack.db.db import Db
-from quack.events.event_types import DomainCreated, VoiceTranscribed
+from quack.events.event_types import DomainCreated, SessionEnded, VoiceTranscribed
 from quack.events.log import NewEvent, append_events
 from quack.llm.labels import LabelMap
 from quack.llm.provider import ProviderRequest
 from quack.llm.streaming import StreamRequest
 from quack.session.action_turn import TurnRequest, TurnSetup
 from quack.session.router import get_turn_context_source
-from quack.session.sessions import StartSession, end_if_inactive, end_session, start_session
+from quack.session.sessions import StartSession, end_if_inactive, get_session, start_session
+from quack.session.spoiler_guard import spoiler_hits
 from quack.session.turn_commit import TurnManifestRow
 from quack.session.turn_graph import AssembledTurn, GuardInputs
 from tests.session.helpers import parse_sse
@@ -62,9 +64,10 @@ def _turn() -> dict[str, Any]:
             "exposures": [{"skill": "S1", "kind": "explained", "approach": "example_first"}],
             "targetsMisconception": None,
             "planUpdate": {
-                "completed_steps": [],
-                "current_step": "geometric sum",
+                "goal": None,
+                "current_step": {"id": "geometric-sum", "text": "geometric sum", "landmark": None},
                 "next_steps": [],
+                "landmark_edits": None,
                 "branches": [],
                 "cancel_requests": [],
             },
@@ -351,16 +354,62 @@ async def test_session_ended_by_the_sweeper_comes_back(
     )
 
 
-async def test_session_ended_by_the_learner_takes_no_action(
+async def test_session_closed_with_the_retired_reason_learner_comes_back(
     client: httpx.AsyncClient, source: FixedSource, pg_db: Db, settings: Settings
 ) -> None:
+    """Any closed session comes back (WP13.10); an old log with `session.ended {reason:
+    learner}` is read like the others."""
     who = await _learner(pg_db, settings)
-    await end_session(pg_db, learner_id=who.learner_id, session_id=who.session_id)
+    await pg_db.execute(
+        "UPDATE content.sessions SET status = 'ended', ended_at = now() WHERE session_id = %(s)s",
+        {"s": who.session_id},
+    )
+    await append_events(
+        pg_db,
+        who.learner_id,
+        [
+            NewEvent(
+                type="session.ended",
+                payload=SessionEnded(session_id=who.session_id, reason="learner"),
+                actor="learner",
+                idempotency_key=f"old-end:{who.session_id}",
+                session_id=who.session_id,
+            )
+        ],
+    )
 
-    response = await _post(client, who, {"kind": "message", "text": "hi"})
+    response = await _post(client, who, {"kind": "message", "text": "still here"})
 
-    assert response.status_code == 404
-    assert "message.sent" not in await _types(pg_db, who.learner_id)
+    assert response.status_code == 200, response.text
+    assert "message.sent" in await _types(pg_db, who.learner_id)
+    row = await get_session(pg_db, learner_id=who.learner_id, session_id=who.session_id)
+    assert row.status == "active" and row.ended_at is None
+
+
+async def test_an_action_refreshes_the_activity_so_the_sweep_keeps_the_session(
+    client: httpx.AsyncClient, source: FixedSource, pg_db: Db, settings: Settings
+) -> None:
+    """WP13.10: a message counts as activity; a session with a recent message is not closed
+    by the sweep even if the last heartbeat is old."""
+    who = await _learner(pg_db, settings)
+    old = datetime.now(UTC) - timedelta(minutes=settings.session_inactivity_timeout_min - 1)
+    await pg_db.execute(
+        "UPDATE content.sessions SET last_activity_at = %(old)s WHERE session_id = %(s)s",
+        {"old": old, "s": who.session_id},
+    )
+
+    response = await _post(client, who, {"kind": "message", "text": "thinking aloud"})
+
+    assert response.status_code == 200, response.text
+    row = await get_session(pg_db, learner_id=who.learner_id, session_id=who.session_id)
+    assert row.last_activity_at > old + timedelta(minutes=10)
+    later = datetime.now(UTC) + timedelta(minutes=settings.session_inactivity_timeout_min - 1)
+    assert not await end_if_inactive(
+        pg_db, learner_id=who.learner_id, session_id=who.session_id, settings=settings, now=later
+    )
+    assert (
+        await get_session(pg_db, learner_id=who.learner_id, session_id=who.session_id)
+    ).status == "active"
 
 
 async def test_error_before_the_write_is_a_frame_and_no_turn(
@@ -471,3 +520,194 @@ async def test_spoken_message_with_text_is_rejected(
 
     assert response.status_code == 422
     assert "message.sent" not in await _types(pg_db, who.learner_id)
+
+
+class SpoilerSource(FixedSource):
+    """The same turn context, with the answer `1/3` of an active task guarded."""
+
+    async def assemble(self, request: TurnRequest) -> TurnSetup:
+        setup = await super().assemble(request)
+        guard = replace(
+            setup.assembled.guard,
+            has_spoiler=lambda t: "1/3" in t,
+            spoiler_hits=lambda t: spoiler_hits(t, ["1/3"], self.settings),
+        )
+        return replace(setup, assembled=replace(setup.assembled, guard=guard))
+
+
+async def test_a_shadow_spoiler_hit_is_kept_after_the_turn_and_changes_nothing(
+    client: httpx.AsyncClient, app: FastAPI, pg_db: Db, settings: Settings
+) -> None:
+    """Through the route, in `shadow`: the reply with the answer is streamed and committed whole;
+    the hit is in `turn.committed.guard_events` and the matched sentence in `ops.guard_samples`
+    (not the whole reply)."""
+    spoiled = f"{TEXT} The sum is 1/3. Check it."
+    source = SpoilerSource(settings)
+    turn = _turn()
+    turn["p2_body"]["blocks"][0]["text"] = spoiled
+    source.provider.respond(SCHEMA, lambda _r: turn)
+    app.dependency_overrides[get_turn_context_source] = lambda: source
+    who = await _learner(pg_db, settings)
+
+    response = await _post(client, who, {"kind": "message", "text": "what is the sum?"})
+
+    assert response.status_code == 200, response.text
+    frames = parse_sse(response.text)
+    assert "reset" not in _names(frames) and len(source.asked) == 1
+    assert "".join(d["text"] for n, d in frames if n == "token") == spoiled
+    committed = await pg_db.fetch_one(
+        "SELECT seq, payload FROM core.events WHERE learner_id = %(l)s AND type = 'turn.committed'",
+        {"l": who.learner_id},
+    )
+    assert committed is not None and committed["payload"]["text"] == spoiled
+    assert committed["payload"]["guard_events"] == [
+        {"rule": "spoiler", "reason": "answer_in_text", "phase": "spoiler_shadow", "retried": False}
+    ]
+    [sample] = await pg_db.fetch_all(
+        "SELECT * FROM ops.guard_samples WHERE learner_id = %(l)s", {"l": who.learner_id}
+    )
+    assert sample["session_id"] == who.session_id and sample["turn_seq"] == committed["seq"]
+    assert (sample["rule"], sample["reason"]) == ("spoiler", "shadow")
+    assert (sample["sentence"], sample["answer_token"]) == ("The sum is 1/3.", "1/3")
+
+
+async def test_the_route_logs_and_commits_the_turn_timings(
+    client: httpx.AsyncClient, app: FastAPI, pg_db: Db, settings: Settings
+) -> None:
+    """A turn through the route: `turn.committed.timings` and the `turn_timings` log carry the
+    same numbers (the log adds the write), no text of the dialogue."""
+    from structlog.testing import capture_logs
+
+    source = SpoilerSource(settings)
+    source.provider.respond(SCHEMA, lambda _r: _turn())
+    app.dependency_overrides[get_turn_context_source] = lambda: source
+    who = await _learner(pg_db, settings)
+
+    with capture_logs() as logs:
+        response = await _post(client, who, {"kind": "message", "text": "what is the sum?"})
+
+    assert response.status_code == 200, response.text
+    committed = await pg_db.fetch_one(
+        "SELECT seq, payload FROM core.events WHERE learner_id = %(l)s AND type = 'turn.committed'",
+        {"l": who.learner_id},
+    )
+    assert committed is not None
+    timings = committed["payload"]["timings"]
+    assert {"slot_wait_ms", "admit_ms", "assemble_total_ms", "ttft_ms", "total_ms"} <= set(timings)
+    assert all(isinstance(v, int) and v >= 0 for v in timings.values())
+    [entry] = [e for e in logs if e["event"] == "turn_timings"]
+    assert entry["turn_seq"] == committed["seq"] and entry["commit_ms"] >= 0
+    assert {k: entry[k] for k in timings} == timings
+    assert "what is the sum?" not in str(entry)
+
+
+async def test_element_response_streams_verdict_and_persists_it_for_reload(
+    client: httpx.AsyncClient, source: FixedSource, pg_db: Db, settings: Settings
+) -> None:
+    """`POST /v1/sessions/{id}/actions` with `element_response` (no `answer`) streams the
+    instant verdict in `action_recorded` and persists `element.responded`, `answer.submitted`
+    and `verdict.recorded` so `GET /v1/sessions/{id}` restores the verdict on reload."""
+    from quack.events import records
+    from quack.events.values import AnswerSpec, MathValue
+    from quack.practice.role_outputs import TaskCondition
+    from quack.practice.task_store import create_task
+
+    who = await _learner(pg_db, settings)
+    task_id = uuid4()
+    spec = AnswerSpec(type="number", value=MathValue(latex="1/2", sympy="1/2"))
+    await create_task(
+        pg_db,
+        learner_id=who.learner_id,
+        task_id=task_id,
+        family_id=task_id,
+        source="teacher",
+        condition=TaskCondition(text="1/4 + 1/4?", latex=None),
+        markup=records.TaskMarkupRecord(
+            tests=[records.TestedLevelRecord(skill_id=SKILL, level=2)],
+            method_named=False,
+            answer=spec,
+        ),
+        verification="unchecked",
+        actor="teacher@3",
+        idempotency_key=f"task:{task_id}",
+    )
+    markup = records.TaskMarkupRecord(
+        tests=[records.TestedLevelRecord(skill_id=SKILL, level=2)],
+        method_named=False,
+        answer=spec,
+    )
+    [turn] = await append_events(
+        pg_db,
+        who.learner_id,
+        [
+            NewEvent(
+                type="turn.committed",
+                payload={
+                    "action_seq": 1,
+                    "text": "Compute 1/4 + 1/4.",
+                    "blocks": [{"block_id": "b1", "text": None, "element_id": "e1"}],
+                    "head": {
+                        "intent": "practice",
+                        "target_skill_ids": [str(SKILL)],
+                        "verdict_stance": None,
+                        "branch_type": None,
+                        "approach": "none",
+                    },
+                    "markup": {
+                        "tasks": [
+                            {
+                                **markup.model_dump(mode="json"),
+                                "element_id": "e1",
+                                "task_id": str(task_id),
+                            }
+                        ],
+                        "elements": [],
+                        "exposures": [],
+                        "targets_misconception_id": None,
+                        "plan_update": {
+                            "goal": None,
+                            "current_step": None,
+                            "next_steps": None,
+                            "landmark_edits": None,
+                            "branches": [],
+                            "cancel_request_ids": [],
+                        },
+                        "agent_requests": [],
+                        "corrections_acknowledged": [],
+                        "decision_reason": "r",
+                        "deadline": None,
+                    },
+                    "role": "teacher",
+                    "model": "m",
+                    "effort": "low",
+                    "degraded_mode": None,
+                    "guard_retries": 0,
+                    "manifest_id": str(uuid4()),
+                },
+                actor="teacher@3",
+                idempotency_key=f"turn:{uuid4()}",
+                session_id=who.session_id,
+            )
+        ],
+    )
+
+    response = await _post(
+        client,
+        who,
+        {"kind": "element_response", "turn_seq": turn.seq, "element_id": "e1", "response": "0.5"},
+    )
+
+    assert response.status_code == 200, response.text
+    frames = parse_sse(response.text)
+    assert frames[0][0] == "action_recorded"
+    assert frames[0][1]["verdict"]["outcome"] == "correct"
+
+    detail = (await client.get(f"/v1/sessions/{who.session_id}", cookies=who.cookies)).json()
+    responded = next(e for e in detail["events"] if e["type"] == "element.responded")
+    verdict = next(e for e in detail["events"] if e["type"] == "verdict.recorded")
+    assert responded["turn_seq"] == turn.seq
+    assert responded["element_id"] == "e1"
+    assert responded["outcome"] == "correct"
+    assert verdict["turn_seq"] == turn.seq
+    assert verdict["element_id"] == "e1"
+    assert verdict["outcome"] == "correct"

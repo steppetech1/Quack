@@ -66,6 +66,7 @@ CATALOG: dict[str, tuple[bool, bool]] = {
     "topic.renamed": (True, False),
     "topic.hidden": (True, False),
     "skill.created": (True, True),
+    "skill.placed": (True, False),
     "skill.merged": (True, True),
     "skill.split": (True, True),
     "skill.merge_suggested": (False, False),
@@ -91,6 +92,7 @@ CATALOG: dict[str, tuple[bool, bool]] = {
     "consent.revoked": (False, False),
     "session.started": (False, True),
     "session.ended": (True, True),
+    "session.titled": (False, False),
     "hint.shown": (False, True),
     "today.shown": (False, True),
     "task.closed": (True, True),
@@ -129,7 +131,10 @@ def _loaded() -> dict[tuple[str, int], Any]:
 def test_catalog_matches_spec() -> None:
     registry = _loaded()
     assert {t for t, _ in registry} == set(CATALOG)
-    assert {v for _, v in registry} == {SCHEMA_VERSION} == {1}
+    assert SCHEMA_VERSION == 1
+    # every type is version 1; `turn.committed` also has 2 (the plan graph, tests/events/
+    # test_plan_update_record.py)
+    assert {k for k in registry if k[1] != 1} == {("turn.committed", 2)}
     # No type of С-§5 that §6.3 does not name (names §6.3 reuses are new definitions).
     assert not REMOVED_PHASE_1_3_TYPES & {t for t, _ in registry}
     for name in NOT_REGISTERED:

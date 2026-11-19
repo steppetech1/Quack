@@ -40,7 +40,6 @@ from quack.events.event_types import (
     TaskCreated,
 )
 from quack.events.log import StoredEvent
-from quack.events.records import PlanUpdateRecord
 from quack.events.values import AnswerSpec, Level, Verdict
 from quack.graph.overlay import SessionOverlay
 from quack.graph.overlay_build import build_session_overlay, empty_overlay
@@ -56,18 +55,25 @@ from quack.graph.read import (
 )
 from quack.graph.read.materials import materials_prefetch, materials_search
 from quack.graph.read.neo4j_reader import Neo4jGraphReader
+from quack.graph.topic_names import canonical_topic_name
 from quack.llm.gateway import LLMGateway
 from quack.llm.labels import LabelMap
+from quack.llm.provider import ProviderRequest
+from quack.llm.streaming import StreamRequest
+from quack.llm.strict_schema import to_strict_json_schema
+from quack.llm.tool_loop import stream_step
 from quack.logging import get_logger
 from quack.practice.answer_spec import SLOW_TYPES, LearnerAnswer
 from quack.practice.answers import DEFAULT_PART, help_in_session, part_spec
 from quack.practice.check import check
 from quack.practice.model_check import record_verdict
 from quack.practice.repo import session_events_of_action
+from quack.practice.session_plan import PlanDoc
 from quack.practice.task_store import get_task
 from quack.session.action_turn import TurnRequest, TurnSetup
 from quack.session.actions import VerdictFrame
 from quack.session.conversation import render_conversation
+from quack.session.elements import TASK_ELEMENT_KINDS, Element
 from quack.session.memory_picture import (
     MEMORY_UNAVAILABLE,
     PictureInputs,
@@ -75,9 +81,18 @@ from quack.session.memory_picture import (
     RevisedCheck,
     render_memory_picture,
 )
+from quack.session.plan_view import (
+    apply_edits,
+    landmark_ref,
+    points_from_memory,
+    resolve_added_points,
+    view_of,
+    visited_landmarks,
+)
 from quack.session.prep_mode import prep_for_turn, render_prep
 from quack.session.review_turn import bank_for_review, review_for_turn
-from quack.session.spoiler_guard import answer_in_text, remove_answer_sentences
+from quack.session.schemas import PlanLandmark
+from quack.session.spoiler_guard import answer_in_text, remove_answer_sentences, spoiler_hits
 from quack.session.teacher_context import (
     LearnerState,
     Profile,
@@ -92,7 +107,7 @@ from quack.session.teacher_context import (
     snapshot_slots,
     teacher_variables,
 )
-from quack.session.teacher_output import TeacherOutputV2
+from quack.session.teacher_output import TurnTask, teacher_schema_for_prompt
 from quack.session.tools import (
     TOOLS,
     CanvasLine,
@@ -104,15 +119,17 @@ from quack.session.tools import (
     tool_definition,
 )
 from quack.session.turn_commit import AnsweredAction, LearnerText, TurnManifestRow
-from quack.session.turn_graph import AssembledTurn, Effort, GuardInputs, Role
+from quack.session.turn_graph import AssembledTurn, Effort, GuardInputs, MarkupFix, Role
 from quack.session.turn_inputs import (
     cards_for_turn,
+    has_topic_notes,
     learner_state,
     load_learner_skill,
     load_plan,
     load_snapshot,
 )
 from quack.session.turn_policy import resolve_degraded_mode
+from quack.session.turn_timings import now_ns, put_since, timed
 
 log = get_logger(__name__)
 
@@ -441,16 +458,79 @@ def _goal_topics(goal: SessionGoal, hubs: Sequence[HubGoal]) -> list[UUID]:
     return []
 
 
+def _plan_refs(plan: PlanDoc | None) -> tuple[list[UUID], list[UUID]]:
+    """Skill and topic ids referenced in `plan` so `LabelMap` and `slice_for_turn` see them."""
+    if plan is None:
+        return [], []
+    skill_ids: list[UUID] = []
+    topic_ids: list[UUID] = []
+    for add in plan.landmark_edits.added:
+        (skill_ids if add.kind == "skill" else topic_ids).append(add.id)
+    steps = ([plan.current_step] if plan.current_step is not None else []) + list(plan.next_steps)
+    for step in steps:
+        if step.landmark is not None:
+            (skill_ids if step.landmark.kind == "skill" else topic_ids).append(step.landmark.id)
+    return list(dict.fromkeys(skill_ids)), list(dict.fromkeys(topic_ids))
+
+
+def _fix_markup_request(
+    base: ProviderRequest, fix: MarkupFix
+) -> tuple[StreamRequest, type[TurnTask] | type[Element]]:
+    """Build the follow-up `fix_markup` request reusing the turn's context and label table."""
+    is_task = fix.task is not None or fix.element.kind in TASK_ELEMENT_KINDS
+    target_model: type[TurnTask] | type[Element] = TurnTask if is_task else type(fix.element)
+    problems = "; ".join(fix.problems)
+    current = (
+        f"Current task markup: {fix.task.model_dump_json()}"
+        if is_task and fix.task is not None
+        else f"Current element: {fix.element.model_dump_json()}"
+    )
+    kind_note = (
+        f"Return only the fixed `TurnTask` JSON object for element_id={fix.element.element_id!r}."
+        if is_task
+        else (
+            f"Return only the fixed `{target_model.__name__}` JSON object for "
+            f"element_id={fix.element.element_id!r} and kind={fix.element.kind!r}."
+        )
+    )
+    note = (
+        f"The turn body already shown to the learner (keep it as is):\n{fix.text}\n\n"
+        f"Element {fix.element.element_id!r} (kind {fix.element.kind!r}) failed the markup check "
+        f"({problems}).\n{current}\n"
+        f"{kind_note} Use ONLY labels present in the Label table above."
+    )
+    req = StreamRequest(
+        base=replace(
+            base,
+            json_schema=to_strict_json_schema(target_model),
+            schema_name=target_model.__name__,
+            repair_hint=None,
+        ),
+        input_items=(
+            {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type": "input_text", "text": note}],
+            },
+        ),
+        tools=(),
+    )
+    return req, target_model
+
+
 def _session_plan(
     goal: SessionGoal,
-    plan: PlanUpdateRecord | None,
+    plan: PlanDoc | None,
     labels: LabelMap,
     prep: PrepContext | None,
     names: dict[UUID, str],
     settings: Settings,
+    landmarks: Sequence[PlanLandmark] = (),
+    *,
+    has_topic_notes: bool = False,
 ) -> str:
-    """Slot 6: the goal and the plan, and in the preparation mode what the hub needs (WP17.4)."""
-    text = render_session_plan(goal, plan, labels)
+    """Slot 6: goal, landmarks, plan, and in preparation mode what the hub needs (WP17.4)."""
+    text = render_session_plan(goal, plan, labels, landmarks, has_topic_notes=has_topic_notes)
     return text if prep is None else f"{text}\n{render_prep(prep, labels, names, settings)}"
 
 
@@ -693,21 +773,30 @@ class MemoryTurnContextSource:
         settings, db = self._settings, self._db
         learner_id, session_id = request.learner_id, request.session_id
         reader = self._reader(learner_id)
+        # The milliseconds of the stages of the assembly (`turn_timings.py`); the parts of the
+        # parallel gather are each its own wait, the wall time of the gather is `parallel_ms`.
+        parts: dict[str, int] = {}
+        started = now_ns()
         events = await session_events_of_action(
             db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
         )
         journal = read_journal(events, request.action_seq)
-        plan, timezone, snapshot, skill = await asyncio.gather(
+        put_since(parts, "journal_ms", started)
+        started = now_ns()
+        plan, timezone, snapshot, skill, topic_has_notes = await asyncio.gather(
             load_plan(db, learner_id=learner_id, session_id=session_id),
             learner_timezone(db, learner_id=learner_id),
             load_snapshot(db, learner_id=learner_id, session_id=session_id),
             load_learner_skill(db, learner_id=learner_id, name=journal.skill_invocation)
             if journal.skill_invocation
             else _none(),
+            has_topic_notes(db, learner_id=learner_id, topic_id=journal.goal.topic_id),
         )
+        put_since(parts, "reads_ms", started)
         # Neo4j down: slots 3, 4 and 7 are empty and the turn says so (`memory_unavailable`,
         # Т-§20.7, D-B-221); the session overlay and the journal still work.
         memory_down = False
+        started = now_ns()
         try:
             now = await learner_state(reader, learner_id=learner_id, domain_id=request.domain_id)
             hubs = await reader.domain_goals(request.domain_id)
@@ -716,6 +805,7 @@ class MemoryTurnContextSource:
         except NEO4J_UNAVAILABLE:
             memory_down = True
             now, hubs, topics, memory = LearnerState(profile=Profile()), [], [], []
+        put_since(parts, "memory_ms", started)
         topic_skills = [s.skill_id for m in memory for s in m.skills]
         targets = target_levels(hubs, memory)
         focus = SliceFocus(
@@ -723,34 +813,70 @@ class MemoryTurnContextSource:
             topic_ids=topics,
             domain_id=request.domain_id,
         )
+        started = now_ns()
         review = await self._review(reader, request, journal, topic_skills)
         prep = await self._prep(reader, request, journal)
+        put_since(parts, "review_prep_ms", started)
         prep_skills = [c.skill_id for c in prep.candidates] if prep else []
+        plan_skills, plan_topics = _plan_refs(plan)
         read_focus = focus.model_copy(
             update={
                 "skill_ids": list(
-                    dict.fromkeys([*focus.skill_ids, *(c.skill_id for c in review), *prep_skills])
+                    dict.fromkeys(
+                        [
+                            *focus.skill_ids,
+                            *(c.skill_id for c in review),
+                            *prep_skills,
+                            *plan_skills,
+                        ]
+                    )
                 )
             }
         )
         hub_topics = [t.topic_id for hub in hubs for t in hub.topics]
         label_topics: list[UUID] = list(
-            dict.fromkeys([*topics, *hub_topics, *(prep.coverage_topic_ids if prep else [])])
+            dict.fromkeys(
+                [*topics, *hub_topics, *(prep.coverage_topic_ids if prep else []), *plan_topics]
+            )
         )
+        started = now_ns()
         sliced, chunks, digest, completed, inline, cards = await asyncio.gather(
-            self._slice(reader, request, read_focus),
-            self._chunks(learner_id, read_focus.skill_ids),
-            self._digest(learner_id, request.domain_id),
-            self._completed(learner_id, journal.requests),
-            self._inline_verdict(request, events, journal),
-            cards_for_turn(
-                db,
-                learner_id=learner_id,
-                topic_ids=label_topics[: settings.label_max_topics],
-                limit=settings.label_max_cards,
+            timed(parts, "slice_ms", self._slice(reader, request, read_focus)),
+            timed(parts, "chunks_ms", self._chunks(learner_id, read_focus.skill_ids)),
+            timed(parts, "digest_ms", self._digest(learner_id, request.domain_id)),
+            timed(parts, "completed_ms", self._completed(learner_id, journal.requests)),
+            # the wait for the fast verdict: ~0 when the action has none to wait for
+            timed(parts, "inline_verdict_ms", self._inline_verdict(request, events, journal)),
+            timed(
+                parts,
+                "cards_ms",
+                cards_for_turn(
+                    db,
+                    learner_id=learner_id,
+                    topic_ids=label_topics[: settings.label_max_topics],
+                    limit=settings.label_max_cards,
+                ),
             ),
         )
+        put_since(parts, "parallel_ms", started)
         memory_slice, unavailable, overlay_seqs = sliced
+        known_topics = {m.topic_id for m in memory}
+        extra_topic_ids = (
+            list(
+                dict.fromkeys(
+                    a.id
+                    for a in plan.landmark_edits.added
+                    if a.kind == "topic" and a.id not in known_topics
+                )
+            )
+            if plan is not None
+            else []
+        )
+        if not memory_down and extra_topic_ids:
+            try:
+                memory.extend(await reader.topic_memory(extra_topic_ids))
+            except NEO4J_UNAVAILABLE:
+                memory_down = True
         verdict_frame: VerdictFrame | None = None
         if inline is not None:
             # The verdict came in time: the context, the guard and `solved` see it.
@@ -784,10 +910,17 @@ class MemoryTurnContextSource:
             cards=[card.card_id for card in cards],
             requests=list(journal.requests),
         )
+        domain_name = next((h.name for h in hubs if h.kind == "domain_all"), None)
         names: dict[UUID, str] = {s.skill_id: s.name for s in memory_slice.skills if s.name}
-        names.update({m.topic_id: m.name for m in memory})
+        names.update({m.topic_id: canonical_topic_name(m.name, domain_name) for m in memory})
         names.update({hub.hub_id: hub.name for hub in hubs})
-        names.update({t.topic_id: t.name for hub in hubs for t in hub.topics})
+        names.update(
+            {
+                t.topic_id: canonical_topic_name(t.name, domain_name)
+                for hub in hubs
+                for t in hub.topics
+            }
+        )
         card_names = {
             card.card_id: card_label_line(names.get(card.topic_id), card.prompt) for card in cards
         }
@@ -815,11 +948,43 @@ class MemoryTurnContextSource:
                 self._clock(),
             )
         )
+        landmarks: list[PlanLandmark] = []
+        if not unavailable:
+            memories_by_id = {m.topic_id: m for m in memory}
+            fresh_by_id = {s.skill_id: s for s in memory_slice.skills}
+            current_ref = (
+                None
+                if plan is None or plan.current_step is None
+                else landmark_ref(plan.current_step.landmark)
+            )
+            points = points_from_memory(
+                journal.goal.hub_id,
+                journal.goal.topic_id,
+                hubs,
+                memories_by_id,
+                settings,
+                current=current_ref,
+                fresh_skills=fresh_by_id,
+            )
+            if plan is not None and (plan.landmark_edits.added or plan.landmark_edits.removed):
+                resolved = resolve_added_points(plan, memories_by_id, fresh_by_id, settings)
+                points = apply_edits(points, plan, resolved)
+            visited = visited_landmarks([e.payload for e in events if e.type == "turn.committed"])
+            landmarks = view_of(points, current_ref, visited=visited)
         variables = teacher_variables(
             TeacherSlots(
                 frozen=frozen,
                 conversation=render_conversation(events, labels, settings),
-                session_plan=_session_plan(journal.goal, plan, labels, prep, names, settings),
+                session_plan=_session_plan(
+                    journal.goal,
+                    plan,
+                    labels,
+                    prep,
+                    names,
+                    settings,
+                    landmarks,
+                    has_topic_notes=topic_has_notes,
+                ),
                 memory_picture=picture,
                 materials=render_materials(chunks, labels),
                 labels=render_labels(labels, {**names, **card_names}),
@@ -827,15 +992,16 @@ class MemoryTurnContextSource:
             )
         )
         role = request.role
-        prompt_version = settings.llm_roles[role].prompt or "teacher@2"
+        prompt_version = settings.llm_roles[role].prompt or "teacher@3"
         prompt_name, version = prompt_version.rsplit("@", 1)
         template = self._gateway.prompts.load(prompt_name, int(version))
         variables = fit_budget(template.render, variables, settings.teacher_context_max_tokens)
         effort = turn_effort(role, journal)
+        output_schema, parse_output = teacher_schema_for_prompt(prompt_name, int(version))
         stream, prompt = self._gateway.stream_request(
             role,
             int(version),
-            TeacherOutputV2,
+            output_schema,
             variables,
             prompt_role=prompt_name,
             reasoning_effort=effort,
@@ -857,6 +1023,21 @@ class MemoryTurnContextSource:
         async def execute_tool(name: str, arguments: str) -> str:
             return await run_tool(name, arguments, tools)
 
+        streaming = self._gateway.streaming(
+            role,
+            prompt,
+            learner_id=learner_id,
+            session_id=session_id,
+            turn_id=request.manifest_id,
+        )
+
+        async def fix_markup(fix: MarkupFix) -> TurnTask | Element | None:
+            fix_request, target_model = _fix_markup_request(stream.base, fix)
+            step = await stream_step(streaming, fix_request, _ignore_text)
+            if step.completed.status == "incomplete" or not step.text.strip():
+                return None
+            return target_model.model_validate_json(step.text)
+
         degraded = resolve_degraded_mode(
             budget_exceeded=False,
             llm_unavailable=False,
@@ -877,18 +1058,14 @@ class MemoryTurnContextSource:
                         answer_in_text(text, answer, settings) for answer in answers
                     ),
                     remove_spoiler=lambda text: remove_answer_sentences(text, answers, settings),
+                    spoiler_hits=lambda text: spoiler_hits(text, answers, settings),
                 ),
                 effort=effort,
                 degraded_mode=degraded,
                 verdict=verdict_frame,
+                parse_output=parse_output,
             ),
-            provider=self._gateway.streaming(
-                role,
-                prompt,
-                learner_id=learner_id,
-                session_id=session_id,
-                turn_id=request.manifest_id,
-            ),
+            provider=streaming,
             labels=labels,
             manifest=TurnManifestRow(
                 manifest_id=request.manifest_id,
@@ -920,10 +1097,16 @@ class MemoryTurnContextSource:
             learner_texts=journal.learner_texts,
             learner_timezone=timezone,
             answered=journal.answered,
+            timings=parts,
+            fix_markup=fix_markup,
         )
 
 
 async def _none() -> None:
+    return None
+
+
+async def _ignore_text(_text: str) -> None:
     return None
 
 

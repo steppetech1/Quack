@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from quack.events.values import (
     AnswerSpec,
@@ -117,6 +117,18 @@ class TurnHeadRecord(_Record):
     verdict_stance: VerdictStance | None
     branch_type: BranchType | None
     approach: Approach
+
+
+class GuardEventRecord(_Record):
+    """One firing of a code rule of the teacher turn (Т-§12.4), for the analysis of the guard:
+    names only — the rule (`head`, `boundary`, `markup`, `element_markup`, `task_markup`,
+    `spoiler`, `incomplete`), the reason (`GuardReason` or a rule of `validate_markup`), the phase
+    and whether the firing returned the turn to the model. Never a text, a label or an answer."""
+
+    rule: str
+    reason: str
+    phase: Literal["head", "markup", "spoiler", "spoiler_shadow", "cut"]
+    retried: bool = False
 
 
 class BodyBlockRecord(_Record):
@@ -266,14 +278,77 @@ class BranchRecord(_Record):
     type: BranchType
 
 
-class PlanUpdateRecord(_Record):
-    """Т-§12.5; `cancel_request_ids` — agent requests no longer needed (Т-§13.7)."""
+class LandmarkRefRecord(_Record):
+    """A landmark of the session plan: a skill or a topic by id (labels are turn-local, so the
+    journal keeps ids only)."""
 
-    completed_steps: list[str]
-    current_step: str
-    next_steps: list[str] = Field(max_length=2)
+    kind: Literal["skill", "topic"]
+    id: UUID
+
+
+class PlanStepRecord(_Record):
+    """A step of the session plan. `id` is the teacher's slug of the step, stable within the
+    session; events written before schema version 2 have the step text there (`upcast_plan_update`),
+    so the id is not checked as a slug here — the guard of the turn checks it."""
+
+    id: str
+    text: str
+    landmark: LandmarkRefRecord | None = None
+
+
+class LandmarkAddRecord(_Record):
+    """A landmark the teacher inserts before another one (`before_*` null: at the end)."""
+
+    kind: Literal["skill", "topic"]
+    id: UUID
+    before_kind: Literal["skill", "topic"] | None = None
+    before_id: UUID | None = None
+
+
+class LandmarkEditsRecord(_Record):
+    add: list[LandmarkAddRecord]
+    remove: list[LandmarkRefRecord]
+
+
+def upcast_plan_update(data: object) -> object:
+    """Upcaster of `turn.committed` (Т-§2.1: old events are lifted when read, never rewritten).
+
+    Schema version 1 wrote `{completed_steps, current_step: str, next_steps: [str], branches,
+    cancel_request_ids}`. The same plan in the form of version 2: a step is its own text (the
+    key of the old episode boundary), the history of done steps is not kept, there is no goal, no
+    landmark and no edits of landmarks."""
+    if not isinstance(data, dict) or "completed_steps" not in data:
+        return data
+
+    def step(text: str) -> dict[str, object]:
+        return {"id": text, "text": text, "landmark": None}
+
+    return {
+        "goal": None,
+        "current_step": step(data["current_step"]),
+        "next_steps": [step(t) for t in data["next_steps"]],
+        "landmark_edits": None,
+        "branches": data["branches"],
+        "cancel_request_ids": data["cancel_request_ids"],
+    }
+
+
+class PlanUpdateRecord(_Record):
+    """Т-§12.5 with ids; `cancel_request_ids` — agent requests no longer needed (Т-§13.7).
+    `None` is «no change» (the turn did not touch it): `goal`, `current_step`, `next_steps`,
+    `landmark_edits`. The record accepts the form of schema version 1 too (`upcast_plan_update`)."""
+
+    goal: str | None
+    current_step: PlanStepRecord | None
+    next_steps: list[PlanStepRecord] | None
+    landmark_edits: LandmarkEditsRecord | None
     branches: list[BranchRecord]
     cancel_request_ids: list[UUID]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upcast(cls, data: object) -> object:
+        return upcast_plan_update(data)
 
 
 class AgentParamsRecord(_Record):

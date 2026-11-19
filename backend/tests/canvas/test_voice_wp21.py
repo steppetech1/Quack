@@ -379,3 +379,74 @@ async def test_voice_over_the_upload_limit_is_413_before_any_call(
     assert answer.status_code == 413 and answer.json()["error"]["code"] == "UPLOAD_REJECTED"
     assert provider.transcribe_calls == []
     assert await _voice_events(pg_db, learner) == []
+
+
+async def test_voice_segment_brings_a_closed_session_back(
+    pg_db: Db, settings: Settings, client: httpx.AsyncClient
+) -> None:
+    """WP13.10: a segment of a closed session opens it again before the event is written and
+    counts as an activity; a session of another learner stays unknown (404)."""
+    from datetime import timedelta
+
+    from quack.events.event_types import DomainCreated
+    from quack.session.sessions import (
+        StartSession,
+        end_if_inactive,
+        get_session,
+        start_session,
+    )
+
+    learner = await create_learner(pg_db)
+    domain_id = uuid4()
+    await append_events(
+        pg_db,
+        learner,
+        [
+            NewEvent(
+                type="domain.created",
+                payload=DomainCreated(domain_id=domain_id, name="Calculus"),
+                actor="learner",
+                idempotency_key=f"domain:{domain_id}",
+            )
+        ],
+    )
+    started = await start_session(
+        pg_db,
+        learner_id=learner,
+        body=StartSession(domain_id=domain_id, intent="learn", idempotency_key=uuid4()),
+    )
+    late = datetime.now(UTC) + timedelta(minutes=settings.session_inactivity_timeout_min + 1)
+    assert await end_if_inactive(
+        pg_db, learner_id=learner, session_id=started.session_id, settings=settings, now=late
+    )
+    laptop = await _cookie(pg_db, settings, learner)
+
+    answer = await client.post(
+        f"/v1/sessions/{started.session_id}/voice",
+        data=_form(),
+        files={"audio": ("segment.wav", WAV, "audio/wav")},
+        headers=laptop,
+    )
+
+    assert answer.status_code == 201, answer.text
+    row = await get_session(pg_db, learner_id=learner, session_id=started.session_id)
+    assert row.status == "active" and row.ended_at is None
+    types = await pg_db.fetch_all(
+        "SELECT type FROM core.events WHERE learner_id = %(l)s AND session_id = %(s)s ORDER BY seq",
+        {"l": learner, "s": started.session_id},
+    )
+    assert [t["type"] for t in types] == [
+        "session.started",
+        "session.ended",
+        "session.started",
+        "voice.transcribed",
+    ]
+
+    stranger = await create_learner(pg_db)
+    foreign = await client.post(
+        f"/v1/sessions/{started.session_id}/voice",
+        data=_form(7000, 9000),
+        files={"audio": ("segment.wav", WAV, "audio/wav")},
+        headers=await _cookie(pg_db, settings, stranger),
+    )
+    assert foreign.status_code == 404

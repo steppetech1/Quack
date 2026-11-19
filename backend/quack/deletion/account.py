@@ -51,6 +51,7 @@ _DELETES = (
     "DELETE FROM ops.jobs WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.coverage WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.turn_manifests WHERE learner_id = %(learner_id)s",
+    "DELETE FROM ops.guard_samples WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.llm_usage WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.projector_failures WHERE learner_id = %(learner_id)s",
     "DELETE FROM ops.projector_offsets WHERE learner_id = %(learner_id)s",

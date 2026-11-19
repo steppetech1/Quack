@@ -1808,16 +1808,48 @@
         "type": "object"
       },
       "FeedEvent": {
-        "description": "An event of the session feed (`GET /v1/sessions/{id}`, D-B-210).",
+        "description": "An event of the session feed (`GET /v1/sessions/{id}`, D-B-210).\n\n`causation_seq` is the causal parent in `core.events`; `turn_seq`, `element_id` and\n`outcome` link element responses, submitted answers and verdicts back to their exact\nturn and element without guessing by order.",
         "properties": {
           "actor": {
             "title": "Actor",
             "type": "string"
           },
+          "causation_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Causation Seq"
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
           "occurred_at": {
             "format": "date-time",
             "title": "Occurred At",
             "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Outcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "payload": {
             "additionalProperties": true,
@@ -1827,6 +1859,17 @@
           "seq": {
             "title": "Seq",
             "type": "integer"
+          },
+          "turn_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Seq"
           },
           "type": {
             "title": "Type",
@@ -3370,6 +3413,104 @@
         "title": "Place",
         "type": "object"
       },
+      "PlanLandmark": {
+        "additionalProperties": false,
+        "description": "A landmark of the action graph: a skill or a topic of the session goal. The code builds\nthe set from memory and the learner's levels; `added_by_teacher` marks the ones the teacher\nadded (`landmark_edits`).",
+        "properties": {
+          "added_by_teacher": {
+            "title": "Added By Teacher",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "skill",
+              "topic"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "done",
+              "current",
+              "upcoming"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "title",
+          "status",
+          "added_by_teacher"
+        ],
+        "title": "PlanLandmark",
+        "type": "object"
+      },
+      "PlanProgress": {
+        "additionalProperties": false,
+        "description": "Landmarks whose required levels are reached, of all landmarks.",
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "total"
+        ],
+        "title": "PlanProgress",
+        "type": "object"
+      },
+      "PlanStep": {
+        "additionalProperties": false,
+        "description": "A step of the teacher: `id` is the stable slug of the step in the session, `landmark_id`\n— the skill or topic it belongs to.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "landmark_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landmark Id"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "landmark_id"
+        ],
+        "title": "PlanStep",
+        "type": "object"
+      },
       "PlotSpec": {
         "additionalProperties": false,
         "description": "A simple plot of one function (Т-§12.3 «простой график»).",
@@ -3662,6 +3803,27 @@
         "title": "ReviewResponse",
         "type": "object"
       },
+      "SaveTopicNotesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "content"
+        ],
+        "title": "SaveTopicNotesRequest",
+        "type": "object"
+      },
       "Scaffold": {
         "additionalProperties": false,
         "description": "A scaffold of the solution with gaps the learner fills with the pen (П-9.5).",
@@ -3886,6 +4048,17 @@
             "title": "Status",
             "type": "string"
           },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "topic_id": {
             "anyOf": [
               {
@@ -3910,6 +4083,7 @@
           "ended_at",
           "last_activity_at",
           "start_seq",
+          "title",
           "events"
         ],
         "title": "SessionDetail",
@@ -3987,6 +4161,79 @@
           "sessions"
         ],
         "title": "SessionListResponse",
+        "type": "object"
+      },
+      "SessionPlanView": {
+        "additionalProperties": false,
+        "description": "`GET /v1/sessions/{id}/plan`: where the session is and where it goes. Read only; a graph\nthat cannot be read gives `landmarks = []` and `progress = null`, the rest still comes.",
+        "properties": {
+          "current_step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanStep"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "landmarks": {
+            "items": {
+              "$ref": "#/components/schemas/PlanLandmark"
+            },
+            "title": "Landmarks",
+            "type": "array"
+          },
+          "next_steps": {
+            "items": {
+              "$ref": "#/components/schemas/PlanStep"
+            },
+            "title": "Next Steps",
+            "type": "array"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "goal",
+          "landmarks",
+          "current_step",
+          "next_steps",
+          "progress",
+          "updated_at"
+        ],
+        "title": "SessionPlanView",
         "type": "object"
       },
       "SessionSummary": {
@@ -4077,6 +4324,7 @@
         "type": "object"
       },
       "SessionView": {
+        "description": "`title` — the name of the session: the one the job `session.title` wrote, else the first\nwords of the learner (a provisional name, the old sessions too), else `None` (nobody has said\nanything yet: the client names the session by its intent and topic).",
         "properties": {
           "domain_id": {
             "format": "uuid",
@@ -4152,6 +4400,17 @@
             "title": "Status",
             "type": "string"
           },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "topic_id": {
             "anyOf": [
               {
@@ -4175,7 +4434,8 @@
           "started_at",
           "ended_at",
           "last_activity_at",
-          "start_seq"
+          "start_seq",
+          "title"
         ],
         "title": "SessionView",
         "type": "object"
@@ -4917,6 +5177,20 @@
           "display"
         ],
         "title": "TopicNodeView",
+        "type": "object"
+      },
+      "TopicNotesConsentResponse": {
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "TopicNotesConsentResponse",
         "type": "object"
       },
       "TopicRequires": {
@@ -9842,7 +10116,7 @@
     },
     "/v1/sessions/{session_id}/actions": {
       "post": {
-        "description": "ТЗ Ф4 WP13.1 (`Т-§1.4`): one learner action of an open session of the learner. A kind\nwithout a teacher turn answers `201 {seq}`; a kind with one — SSE frames of §4.7 (D-B-156);\na session the inactivity sweep ended comes back first (WP13.10). The learner is the one of\nthe session cookie (Т-§19.1).",
+        "description": "ТЗ Ф4 WP13.1 (`Т-§1.4`): one learner action of an open session of the learner. A kind\nwithout a teacher turn answers `201 {seq}`; a kind with one — SSE frames of §4.7 (D-B-156);\na closed session comes back first (WP13.10: only the inactivity sweep closes). The learner is\nthe one of the session cookie (Т-§19.1).",
         "operationId": "post_action_v1_sessions__session_id__actions_post",
         "parameters": [
           {
@@ -10134,97 +10408,6 @@
         ]
       }
     },
-    "/v1/sessions/{session_id}/end": {
-      "post": {
-        "description": "`session.ended {reason: learner}` (WP13.10); the learner's end is final, a repeat changes\nnothing.",
-        "operationId": "end_session_v1_sessions__session_id__end_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "session_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Session Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "VALIDATION_ERROR"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "RATE_LIMITED; details.retry_after_sec"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
-          }
-        },
-        "summary": "End Session"
-      }
-    },
     "/v1/sessions/{session_id}/events": {
       "get": {
         "operationId": "session_events_v1_sessions__session_id__events_get",
@@ -10445,6 +10628,77 @@
           }
         },
         "summary": "Session Jobs"
+      }
+    },
+    "/v1/sessions/{session_id}/plan": {
+      "get": {
+        "description": "The action graph of the session: the goal, the landmarks the code builds from memory,\nthe current step and the next ones. Reads only; a session of another learner or none is a\n`404` (as `/jobs`); a Neo4j outage gives the plan without landmarks, not an error. The\nreader has no `db`: it does not wait for the journal (law 9).",
+        "operationId": "session_plan_v1_sessions__session_id__plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPlanView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Session Plan"
       }
     },
     "/v1/sessions/{session_id}/summary": {
@@ -11508,6 +11762,188 @@
           }
         },
         "summary": "Topic Notes",
+        "tags": [
+          "artifacts"
+        ]
+      },
+      "post": {
+        "operationId": "request_topic_notes_v1_topics__topic_id__notes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicNotesConsentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Request Topic Notes",
+        "tags": [
+          "artifacts"
+        ]
+      },
+      "put": {
+        "operationId": "put_topic_notes_v1_topics__topic_id__notes_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveTopicNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Put Topic Notes",
         "tags": [
           "artifacts"
         ]

@@ -503,7 +503,7 @@ class ExtraReads:
         def remember(rows: Sequence[Record]) -> None:
             for r in rows:
                 skill, topic = _uuid(r["id"]), _uuid(r["topic"])
-                if skill is not None and topic is not None:
+                if skill is not None:
                     info.setdefault(
                         str(skill),
                         CandidateSkill(skill_id=skill, name=str(r["name"] or ""), topic_id=topic),
@@ -530,9 +530,10 @@ class ExtraReads:
             remember(
                 await self._xrun(
                     "MATCH (seed:Skill) WHERE seed.learnerId = $l AND seed.id IN $seeds "
-                    "MATCH (t:Topic)-[:COVERS]->(seed) WHERE t.learnerId = $l "
-                    "MATCH (t)-[:COVERS]->(s:Skill) WHERE s.learnerId = $l "
-                    "RETURN DISTINCT s.id AS id, s.name AS name, t.id AS topic",
+                    "OPTIONAL MATCH (t:Topic)-[:COVERS]->(seed) WHERE t.learnerId = $l "
+                    "OPTIONAL MATCH (t)-[:COVERS]->(s:Skill) WHERE s.learnerId = $l "
+                    "WITH coalesce(s, seed) AS out, t "
+                    "RETURN DISTINCT out.id AS id, out.name AS name, t.id AS topic",
                     l=lid,
                     seeds=sorted(seeds),
                 )
@@ -545,7 +546,7 @@ class ExtraReads:
             near = await self._xrun(
                 "CYPHER 25 MATCH (s:Skill) SEARCH s IN (VECTOR INDEX skill_emb FOR $vector "
                 f"WHERE s.learnerId = $l LIMIT {reserve}) SCORE AS score "
-                "MATCH (t:Topic)-[:COVERS]->(s) WHERE t.learnerId = $l "
+                "OPTIONAL MATCH (t:Topic)-[:COVERS]->(s) WHERE t.learnerId = $l "
                 "RETURN s.id AS id, s.name AS name, t.id AS topic "
                 "ORDER BY score DESC, s.id LIMIT $k",
                 vector=list(vector),

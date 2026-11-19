@@ -9,7 +9,7 @@ new version and `artifact.updated` (`quack.artifacts.documents`).
 from __future__ import annotations
 
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,7 +26,10 @@ from quack.artifacts.documents import (
     delete_block,
     edit_block,
     get_artifact,
+    save_topic_notes,
 )
+from quack.events.log import NewEvent, append_events
+from quack.graph.ids import QUACK_UUID_NS
 
 # Router-level auth: 401 before body validation (ТЗ Фазы 3 WP1.2, T-A2).
 router = APIRouter(
@@ -49,6 +52,14 @@ class KeyedRequest(BaseModel):
 
 class BlockEdit(KeyedRequest):
     content: str
+
+
+class SaveTopicNotesRequest(KeyedRequest):
+    content: str = Field(min_length=1)
+
+
+class TopicNotesConsentResponse(BaseModel):
+    request_id: UUID
 
 
 class ArtifactResponse(BaseModel):
@@ -88,6 +99,69 @@ async def topic_notes(
     except ArtifactNotFound as exc:
         raise _not_found(exc) from exc
     return _response(notes)
+
+
+@router.put("/topics/{topic_id}/notes", response_model=ArtifactResponse)
+async def put_topic_notes(
+    topic_id: UUID,
+    body: SaveTopicNotesRequest,
+    learner_id: CurrentLearnerId,
+    resources: Resources,
+) -> ArtifactResponse:
+    try:
+        notes = await save_topic_notes(
+            resources.db,
+            learner_id=learner_id,
+            topic_id=topic_id,
+            content=body.content,
+            idempotency_key=body.idempotency_key,
+            redis=resources.redis,
+        )
+    except ArtifactNotFound as exc:
+        raise _not_found(exc) from exc
+    return _response(notes)
+
+
+@router.post(
+    "/topics/{topic_id}/notes",
+    response_model=TopicNotesConsentResponse,
+    status_code=202,
+)
+async def request_topic_notes(
+    topic_id: UUID,
+    body: KeyedRequest,
+    learner_id: CurrentLearnerId,
+    resources: Resources,
+) -> TopicNotesConsentResponse:
+    try:
+        notes = await get_artifact(
+            resources.db, learner_id=learner_id, kind="notes", owner_id=topic_id
+        )
+    except ArtifactNotFound as exc:
+        raise _not_found(exc) from exc
+    request_id = uuid5(
+        QUACK_UUID_NS, f"notes-request:{learner_id}:{topic_id}:{body.idempotency_key}"
+    )
+    await append_events(
+        resources.db,
+        learner_id,
+        [
+            NewEvent(
+                type="agent.requested",
+                payload={
+                    "request_id": request_id,
+                    "kind": "artifact",
+                    "params": {"artifact": "notes", "topic_id": topic_id},
+                    "needed_in_session": False,
+                },
+                actor="learner",
+                idempotency_key=f"topic-notes:{topic_id}:{body.idempotency_key}",
+                domain_id=notes.domain_id,
+            )
+        ],
+        redis=resources.redis,
+    )
+    return TopicNotesConsentResponse(request_id=request_id)
 
 
 @router.put("/artifacts/{artifact_id}/blocks/{block_id}", response_model=ArtifactResponse)

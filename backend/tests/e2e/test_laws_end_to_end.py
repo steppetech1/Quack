@@ -1,8 +1,8 @@
 """E2E: laws 1, 7, 9, 4 and 10 on the stand (ТЗ Ф4 §8.14: T-E4, T-E5, T-E10, T-E14).
 
-The text journey of `tests/e2e/text_journey.py` writes the log; the tests end the session to
-close the episode (the boundary `session.ended`), so they do not depend on the close of a solved
-task (D-C-191)."""
+The text journey of `tests/e2e/text_journey.py` writes the log; the tests close the session by
+the inactivity sweep (the only way a session closes) to close the episode (the boundary
+`session.ended`), so they do not depend on the close of a solved task (D-C-191)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from tests.e2e.system import QUIET_ANALYST, System
 from tests.e2e.text_journey import (
     Journey,
     act,
+    close_by_inactivity,
     event_types,
     run_text_journey,
     script_extractor,
@@ -31,10 +32,7 @@ STRENGTH_WORDS = ("strength", "weight", "mastery", "probability", "stability")
 
 
 async def end_session(system: System, journey: Journey) -> None:
-    ended = await system.client.post(
-        f"/v1/sessions/{journey.session_id}/end", headers=journey.learner.headers
-    )
-    assert ended.status_code == 200, ended.text
+    await close_by_inactivity(system, journey.session_id)
 
 
 async def count_of(system: System, journey: Journey, type_: str) -> int:

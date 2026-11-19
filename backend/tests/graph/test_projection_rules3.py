@@ -863,6 +863,54 @@ def test_task_checks_set_verification_and_correct_the_markup() -> None:
     assert nodes[("Task", TASK)]["verification"] == "checked"
 
 
+def test_new_skill_without_topic_hint_is_unassigned_until_skill_placed() -> None:
+    """New skills without `topic_hint` create no temporary topic; `skill.placed` later links
+    them to their canonical home topic and replaces any prior `COVERS`."""
+    seq = 70
+    markup = _MARKUP | {
+        "tests": _tests(({"name": "Binomial variance"}, 3)),
+        "options": None,
+        "parts": None,
+        "answer": {"type": "number"},
+    }
+    created = _event(
+        seq, "task.created", _TASK_CREATED | {"markup": markup}, domain_id=UUID(DOMAIN)
+    )
+    skill_id = deterministic_id(LEARNER, seq, "skill:binomial variance")
+    nodes, rels = _run([created], *_task_graph())
+    assert ("Skill", skill_id) in nodes
+    assert [k for k in nodes if k[0] == "Topic"] == [("Topic", TOPIC)]
+    assert not any(k[2] == "COVERS" and k[4] == skill_id for k in rels)
+
+    other_topic = str(UUID(int=0x99))
+    placed_nodes, placed_rels = _run(
+        [
+            created,
+            _event(
+                71,
+                "topic.created",
+                {
+                    "topic_id": other_topic,
+                    "domain_id": DOMAIN,
+                    "name": "Probability",
+                    "origin": "session",
+                },
+                domain_id=UUID(DOMAIN),
+            ),
+            _event(72, "skill.placed", {
+                "skill_id": skill_id, "topic_id": other_topic, "domain_id": DOMAIN
+            }, domain_id=UUID(DOMAIN)),
+            _event(73, "skill.placed", {
+                "skill_id": skill_id, "topic_id": TOPIC, "domain_id": DOMAIN
+            }, domain_id=UUID(DOMAIN)),
+        ],
+        *_task_graph(),
+    )
+    assert ("Topic", other_topic) in placed_nodes
+    covers = [(k[1], k[4]) for k in placed_rels if k[2] == "COVERS" and k[4] == skill_id]
+    assert covers == [(TOPIC, skill_id)]
+
+
 # --- events in the slice (T-P3; Т-§2.4: folds read events through the view) ------------------
 
 ANSWER_SEQ = 70

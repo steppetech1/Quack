@@ -191,8 +191,8 @@ def default_llm_roles() -> dict[str, RoleConfig]:
     Output limits of ten roles are set by the stand measurement with `effort` (D-B-134): the
     Т-§11.1 figure of 4096 came from a spike without a reasoning level."""
     return {
-        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@2", 45.0),
-        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@2", 30.0),
+        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@3", 45.0),
+        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@3", 30.0),
         "extractor": _role(SPARK, "high", 16384, "P2", "extractor@3"),
         "verdict_free": _role(SPARK, "high", 8192, "P1", "verdict_free@1"),
         "verdict_proof": _role(WONDER, "high", 8192, "P1", "verdict_proof@1"),
@@ -219,6 +219,7 @@ def default_llm_roles() -> dict[str, RoleConfig]:
         "artifact_writer": _role(SPARK, "high", 4096, "P2", "artifact_writer@1"),
         "today_planner": _role(SPARK, "high", 4096, "P2", "today_planner@1"),
         "domain_classifier": _role(SPARK, "low", 4096, "P1", "domain_classifier@1"),
+        "session_titler": _role(SPARK, "low", 4096, "P3", "session_titler@1"),
         "release_judge": _role(WONDER, "high", 8192, "P3", "release_judge@1"),
         "illustrator": _role("muse-image-1.0", None, None, "P2", None),
     }
@@ -479,6 +480,17 @@ class Settings(BaseSettings):
     # GET /v1/sessions: session history page size (frontend sessions panel).
     session_list_default_limit: int = 50
     session_list_max_limit: int = 200
+    # The name of a session (owner decision 2026-11-19): until the job `session.title` has named it,
+    # the first learner message cut to this many characters at a word boundary is shown; the job
+    # reads the first `session_title_messages` messages (each cut to `session_title_message_chars`)
+    # and the name it writes is cut to `session_title_max_chars`. Starting values.
+    session_title_provisional_chars: int = Field(default=40, ge=1)
+    session_title_messages: int = Field(default=3, ge=1)
+    session_title_message_chars: int = Field(default=300, ge=1)
+    session_title_max_chars: int = Field(default=60, ge=1)
+    # GET /v1/sessions/{id}/plan: the most landmarks (skills or topics) of the action graph the
+    # code builds from memory. Owner decision 2026-11-19 (3-7 big nodes); starting value 7.
+    plan_landmarks_max: int = 7
     # WP6.3: SSE keepalive comment interval. Phase 3 decision (ТЗ §6.2).
     sse_keepalive_s: float = 15.0
     # WP13 (Т-§10.3): verbatim window and batch collapse into episode lines.
@@ -518,6 +530,11 @@ class Settings(BaseSettings):
     # WP15 (Т-§12.1, Т-§12.4): spoiler guard retries; numbers with |x| below this are not checked.
     guard_max_retries: int = 2
     spoiler_ignore_abs_below: int = 10
+    # Plan graph of the session: the teacher names at most this many next steps in `planUpdate`
+    # (the headlights of the graph: the current step and one or two after it). A parameter, not
+    # a schema limit: a limit in the strict schema fails the whole answer, the guard settles the
+    # plan by code (a slug, the cut list) and logs it.
+    plan_next_steps_max: int = Field(default=2, ge=0)
     # --- Phase 4, stream B (ТЗ Ф4 §6.7; starting values Т-§21.3, Т-§22.11) ---
     # WP10.1: the role table Т-§11.1, one row per role.
     llm_roles: dict[str, RoleConfig] = Field(default_factory=default_llm_roles)
@@ -544,6 +561,15 @@ class Settings(BaseSettings):
     meta_judge_preference_key: str = "meta_judge"
     # WP13.4 (Т-§12.2).
     spoiler_holdback_chars: int = 120
+    # Owner decision (2026-11-19): the spoiler guard runs in `shadow` — the check is computed on
+    # the finished body, the hit is recorded (`turn.committed.guard_events`, `ops.guard_samples`)
+    # and changes nothing in the turn: no stop of the stream, no `reset`, no new attempt, no cut
+    # sentence, no holdback of the text. `enforce` is the guard of WP15 (Т-§12.1, Т-§12.4).
+    spoiler_guard_mode: Literal["enforce", "shadow"] = "shadow"
+    # `ops.guard_samples`: the matched sentence of the teacher reply (never the whole reply, never
+    # a learner's text) is cut to this many characters; the rows live this many days.
+    guard_sample_max_chars: int = Field(default=300, ge=1)
+    guard_samples_retention_days: int = Field(default=14, ge=1)
     # WP14.5 (Т-§10.1).
     teacher_context_target_tokens: int = 30000
     teacher_context_max_tokens: int = 60000

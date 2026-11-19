@@ -28,7 +28,7 @@ from quack.practice import role_outputs
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.registry import PromptRegistry
 from quack.session.schemas import ExtractorOutputV2, TeacherOutput
-from quack.session.teacher_output import TeacherOutputV2
+from quack.session.teacher_output import TeacherOutputLegacyV2, TeacherOutputV2
 from quack.session.turn_policy import MEMORY_UNAVAILABLE_MARKER
 
 CONTRACTS_PATH = Path(__file__).resolve().parents[2] / "PROMPT_CONTRACTS.md"
@@ -50,7 +50,8 @@ PROMPT_SCHEMAS: dict[str, type[BaseModel]] = {
 # mode (`builder@1`: reconciliation, hygiene and split, D-B-140, D-B-213). The roles whose
 # layer 2 stream C writes (§7.3 п.2) are added with their prompts.
 PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
-    "teacher@2": (TeacherOutputV2,),
+    "teacher@2": (TeacherOutputLegacyV2,),
+    "teacher@3": (TeacherOutputV2,),
     "extractor@3": (agents.ExtractorOutputV3,),
     "verdict_free@1": (role_outputs.ModelVerdictOutput,),
     "verdict_proof@1": (role_outputs.ModelVerdictOutput,),
@@ -60,10 +61,16 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     "task_arbiter@1": (role_outputs.TaskCheckOutput,),
     "solution_space@1": (role_outputs.SolutionSpace,),
     "analyst@1": (agents.AnalystOutput,),
-    "builder@1": (agents.BuilderOutput, agents.HygieneOutput, agents.SplitOutput),
+    "builder@1": (
+        agents.BuilderOutput,
+        agents.HygieneOutput,
+        agents.SplitOutput,
+        agents.TopicsOutput,
+    ),
     "misconception_describer@1": (agents.MisconceptionDescription,),
     "today_planner@1": (agents.TodayPlannerOutput,),
     "domain_classifier@1": (agents.DomainClassifierOutput,),
+    "session_titler@1": (role_outputs.SessionTitleOutput,),
     "viz_builder@1": (agents.VizBuilderOutput,),
     "release_judge@1": (agents.ReleaseJudgeOutput,),
     # Stream C, layer 2 by §7.3 п.2 (D-C-123).
@@ -113,6 +120,28 @@ LABEL_FIELDS: dict[str, list[str]] = {
         "p3_markup.deadline.hub_label",
         "p3_markup.deadline.coverage",
     ],
+    "teacher@3": [
+        "p1_head.targetSkills",
+        "p1_head.topicLabel",
+        "p3_markup.tasks.tests.skill",
+        "p3_markup.tasks.variantOf",
+        "p3_markup.tasks.options.misconception",
+        "p3_markup.tasks.pairTaskId",
+        "p3_markup.exposures.skill",
+        "p3_markup.targetsMisconception",
+        "p3_markup.planUpdate.cancel_requests",
+        "p3_markup.planUpdate.current_step.landmark",
+        "p3_markup.planUpdate.next_steps.landmark",
+        "p3_markup.planUpdate.landmark_edits.add.label",
+        "p3_markup.planUpdate.landmark_edits.add.before",
+        "p3_markup.planUpdate.landmark_edits.remove",
+        "p3_markup.agentRequests.params.skill",
+        "p3_markup.agentRequests.params.topic",
+        "p3_markup.agentRequests.params.task",
+        "p3_markup.agentRequests.params.misconception",
+        "p3_markup.deadline.hub_label",
+        "p3_markup.deadline.coverage",
+    ],
     "extractor@3": ["elements.skill", "elements.misconception", "elements.root_cause.skill"],
     "verdict_free@1": ["misconception"],
     "verdict_proof@1": ["misconception"],
@@ -144,6 +173,10 @@ LABEL_FIELDS: dict[str, list[str]] = {
         "pairs.first",
         "pairs.second",
         "parts.skills",
+        "placements.skill",
+        "placements.topic",
+        "merges.from_topic",
+        "merges.into_topic",
     ],
     "today_planner@1": ["items.tasks"],
     "canvas_diagnoser@1": ["misconception", "root_cause"],
@@ -155,6 +188,7 @@ VIZ_PARAMS_MARKER = "window.QUACK_VIZ_PARAMS"
 MARKERS: dict[str, list[str]] = {
     "teacher@1": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@2": [MEMORY_UNAVAILABLE_MARKER],
+    "teacher@3": [MEMORY_UNAVAILABLE_MARKER],
     "viz_builder@1": [VIZ_PARAMS_MARKER],
 }
 
@@ -165,7 +199,7 @@ EDIT_POINTS = [
     "`gap_type` values of `extractor@2` (П-6.4);",
     f"the marker of unavailable memory (`{MEMORY_UNAVAILABLE_MARKER}`);",
     "the reply language of the teacher from the profile.",
-    "Phase 4: `intent` and `approach` lists of `teacher@2` (D-B-104, owner's doctrine);",
+    "Phase 4: `intent` and `approach` lists of `teacher@3` (D-B-104, owner's doctrine);",
     "Phase 4: names of the input blocks of the Phase 4 roles, until their context builders"
     " (WP11.6, WP12.4–12.6, WP13–WP16) are written (D-B-138);",
     "Phase 4: the domain label of `domain_classifier@1` (no `LabelMap` kind yet, WP16.4);",

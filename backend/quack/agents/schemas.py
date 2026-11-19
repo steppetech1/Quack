@@ -156,6 +156,31 @@ class SplitOutput(_Strict):
     parts: list[SplitPart]
 
 
+class TopicPlacement(_Strict):
+    """Place an unassigned skill `skill` (label `S…`) into an existing topic (`topic` `T…`) or
+    a new topic (`new_topic`, canonical short name without domain prefix). Exactly one of
+    `topic` or `new_topic` is set."""
+
+    skill: str
+    topic: str | None
+    new_topic: str | None
+
+
+class TopicMergeDecision(_Strict):
+    """Merge duplicate topic `from_topic` (`T…`) into canonical topic `into_topic` (`T…`)."""
+
+    from_topic: str
+    into_topic: str
+
+
+class TopicsOutput(_Strict):
+    """Output of `builder@1` in Mode `Topics`: topic placements for unassigned skills and
+    merges of duplicate topics."""
+
+    placements: list[TopicPlacement]
+    merges: list[TopicMergeDecision]
+
+
 # --- misconception_describer@1 (Т-§9.3) ---
 
 

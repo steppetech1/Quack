@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import orjson
+import pytest
 
 from quack.config import Settings
 from quack.db import Db
@@ -48,9 +49,10 @@ def _turn_output(text: str) -> dict[str, Any]:
             "exposures": [],
             "targetsMisconception": None,
             "planUpdate": {
-                "completed_steps": [],
-                "current_step": "fractions",
+                "goal": None,
+                "current_step": {"id": "fractions", "text": "fractions", "landmark": None},
                 "next_steps": [],
+                "landmark_edits": None,
                 "branches": [],
                 "cancel_requests": [],
             },
@@ -60,6 +62,21 @@ def _turn_output(text: str) -> dict[str, Any]:
             "deadline": None,
         },
     }
+
+
+def _legacy_turn_output(text: str) -> dict[str, Any]:
+    out = _turn_output(text)
+    out["p3_markup"] = {
+        **out["p3_markup"],
+        "planUpdate": {
+            "completed_steps": ["Warm up"],
+            "current_step": "Solve the first task",
+            "next_steps": ["Try another"],
+            "branches": [],
+            "cancel_requests": [],
+        },
+    }
+    return out
 
 
 class _Judge:
@@ -77,11 +94,23 @@ async def _journal(db: Db, learner_id: UUID) -> list[dict[str, Any]]:
     )
 
 
+@pytest.mark.parametrize(
+    ("teacher_ref", "schema_name", "make_output"),
+    [
+        ("teacher@3", "TeacherOutputV2", _turn_output),
+        ("teacher@2", "TeacherOutputLegacyV2", _legacy_turn_output),
+    ],
+)
 async def test_replay_builds_the_turn_offline_and_writes_no_event(
-    pg_db: Db, tmp_path: Path
+    pg_db: Db,
+    tmp_path: Path,
+    teacher_ref: str,
+    schema_name: str,
+    make_output: Any,
 ) -> None:
-    """The old turn (one guard retry) is replayed by `teacher@2` with a scripted model: the
-    report has both texts, the violation shares, the judge's winner; the journal is unchanged."""
+    """The old turn (one guard retry) is replayed by `teacher@3` and legacy `teacher@2` with a
+    scripted model: the report has both texts, 0 failed turns, 0 residual guard violations, the
+    judge's winner; the journal is unchanged."""
     learner_id, session_id = await create_learner(pg_db), uuid4()
     (action,) = await append_events(
         pg_db,
@@ -133,7 +162,7 @@ async def test_replay_builds_the_turn_offline_and_writes_no_event(
     before = await _journal(pg_db, learner_id)
 
     provider = ScriptedLLMProvider()
-    provider.respond("TeacherOutputV2", lambda _r: _turn_output(NEW_TEXT))
+    provider.respond(schema_name, lambda _r: make_output(NEW_TEXT))
     out = tmp_path / "report.json"
 
     def reader(_learner: UUID) -> GraphReader:
@@ -143,7 +172,7 @@ async def test_replay_builds_the_turn_offline_and_writes_no_event(
         pg_db,
         learner_id=learner_id,
         session_id=session_id,
-        teacher="teacher@2",
+        teacher=teacher_ref,
         llm=LLMGateway(provider, SETTINGS, db=pg_db),
         settings=SETTINGS,
         reader=reader,
@@ -159,5 +188,6 @@ async def test_replay_builds_the_turn_offline_and_writes_no_event(
     assert summary["violation_share"] == {"old": 1.0, "new": 0.0}
     assert summary["violations_not_grown"] is True and summary["judge"]["new"] == 1
     [turn] = report["turns"]
+    assert turn["new"]["residual_violations"] == [] and not turn["new"]["violated"]
     assert turn["old"]["text"] == OLD_TEXT and turn["new"]["text"] == NEW_TEXT
     assert any("renderer@2" in note for note in report["not_restored"])

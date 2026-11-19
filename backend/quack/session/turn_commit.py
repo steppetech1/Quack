@@ -46,12 +46,25 @@ from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.logging import get_logger
 from quack.practice.markup import markup_record
 from quack.practice.role_outputs import TaskCondition
+from quack.practice.session_plan import merge_plan
 from quack.practice.task_store import get_task, insert_task_document, task_created_event
 from quack.session.elements import Element
-from quack.session.teacher_output import AgentRequest, DeadlineFromTalk, TurnHead, TurnMarkup
-from quack.session.turn_graph import TurnToCommit
+from quack.session.guards import landmark_kind
+from quack.session.teacher_output import (
+    AgentRequest,
+    DeadlineFromTalk,
+    LandmarkEdits,
+    PlanUpdate,
+    Step,
+    TurnHead,
+    TurnMarkup,
+)
+from quack.session.turn_graph import GuardSample, TurnToCommit
 
 log = get_logger(__name__)
+
+# `turn.committed` is written in schema version 2: the plan graph (`markup.plan_update`).
+TURN_COMMITTED_VERSION = 2
 
 _ELEMENT_RECORD: TypeAdapter[records.ElementRecord] = TypeAdapter(records.ElementRecord)
 
@@ -71,6 +84,8 @@ ON CONFLICT (manifest_id) DO NOTHING
 
 # WP13.6: the plan document of the session follows the turn; a session of another learner
 # is never touched (no row comes back).
+# The document is the old one merged with the update of the turn (`merge_plan`, read with
+# `_CURRENT_PLAN` under the row lock in the same transaction): the upsert writes the result.
 _UPSERT_PLAN = """
 INSERT INTO content.session_plans (session_id, learner_id, plan, status, updated_at)
 VALUES (%(session_id)s, %(learner_id)s, %(plan)s, 'active', now())
@@ -175,7 +190,7 @@ class TurnBatch:
     manifest: TurnManifestRow
     domain_id: UUID | None
     common: dict[str, Any] = field(default_factory=dict)
-    plan: dict[str, Any] = field(default_factory=dict)
+    plan: records.PlanUpdateRecord | None = None
     hint_task_id: UUID | None = None
     close: tuple[UUID, Literal["solved", "skipped", "solution_shown"]] | None = None
 
@@ -270,10 +285,18 @@ def turn_batch(
         degraded_mode=turn.degraded_mode,
         guard_retries=turn.guard_retries,
         manifest_id=manifest.manifest_id,
+        guard_events=list(turn.guard_events),
+        timings=dict(turn.timings),
     )
     events = [
         *task_events,
-        NewEvent(type="turn.committed", payload=committed, idempotency_key=key, **common),
+        NewEvent(
+            type="turn.committed",
+            payload=committed,
+            idempotency_key=key,
+            schema_version=TURN_COMMITTED_VERSION,
+            **common,
+        ),
     ]
     for index, request in enumerate(requests):
         payload = AgentRequested(**request.model_dump())
@@ -306,7 +329,7 @@ def turn_batch(
         manifest=manifest,
         domain_id=domain_id,
         common=common,
-        plan=markup.plan_update.model_dump(mode="json"),
+        plan=markup.plan_update,
         hint_task_id=hint_task_id,
         close=close,
     )
@@ -412,6 +435,40 @@ def _zone(name: str | None) -> ZoneInfo | None:
         return None
 
 
+_INSERT_GUARD_SAMPLE = (
+    "INSERT INTO ops.guard_samples "
+    "(learner_id, session_id, turn_seq, rule, reason, sentence, answer_token) "
+    "VALUES (%(learner_id)s, %(session_id)s, %(turn_seq)s, %(rule)s, %(reason)s, %(sentence)s, "
+    "%(answer_token)s)"
+)
+
+
+async def record_guard_samples(
+    db: Db, *, learner_id: UUID, session_id: UUID, turn_seq: int, samples: Sequence[GuardSample]
+) -> None:
+    """The spoiler sentences of a committed turn into `ops.guard_samples`, for the review of false
+    and true hits. Best effort (law 7): a failure is logged and never reaches the turn."""
+    if not samples:
+        return
+    try:
+        async with db.transaction():
+            for sample in samples:
+                await db.execute(
+                    _INSERT_GUARD_SAMPLE,
+                    {
+                        "learner_id": learner_id,
+                        "session_id": session_id,
+                        "turn_seq": turn_seq,
+                        "rule": sample.rule,
+                        "reason": sample.reason,
+                        "sentence": sample.sentence,
+                        "answer_token": sample.answer_token,
+                    },
+                )
+    except Exception as exc:
+        log.warning("guard_samples_failed", turn_seq=turn_seq, error=type(exc).__name__)
+
+
 async def commit_turn(
     db: Db, batch: TurnBatch, *, learner_id: UUID, redis: Redis | None = None
 ) -> int:
@@ -441,22 +498,13 @@ async def commit_turn(
         await db.execute(_INSERT_MANIFEST, _manifest_params(manifest))
         keys = {"session_id": manifest.session_id, "learner_id": learner_id}
         current = await db.fetch_one(_CURRENT_PLAN, keys)
-        plan = _with_history(batch.plan, current["plan"] if current else None)
-        planned = await db.fetch_one(_UPSERT_PLAN, {**keys, "plan": Jsonb(plan)})
-        if planned is None:
-            raise LookupError(f"session {manifest.session_id} is not the learner's")
+        if batch.plan is not None:
+            plan = merge_plan(current["plan"] if current else None, batch.plan)
+            planned = await db.fetch_one(_UPSERT_PLAN, {**keys, "plan": Jsonb(plan.to_json())})
+            if planned is None:
+                raise LookupError(f"session {manifest.session_id} is not the learner's")
     [turn] = [event for event in stored if event.type == "turn.committed"]
     return turn.seq
-
-
-def _with_history(plan: dict[str, Any], current: dict[str, Any] | None) -> dict[str, Any]:
-    """П-4.6: done steps are a history that does not change — the done steps of the document
-    stay in order, the turn only adds new ones."""
-    if current is None:
-        return plan
-    done = list(current.get("completed_steps", []))
-    done += [s for s in plan["completed_steps"] if s not in done]
-    return {**plan, "completed_steps": done}
 
 
 async def _help_events(db: Db, batch: TurnBatch, learner_id: UUID) -> list[NewEvent]:
@@ -573,17 +621,55 @@ def _turn_markup(
             for e in markup.exposures
         ],
         targets_misconception_id=_optional(labels, "misconception", markup.targets_misconception),
-        plan_update=records.PlanUpdateRecord(
-            completed_steps=plan.completed_steps,
-            current_step=plan.current_step,
-            next_steps=plan.next_steps,
-            branches=[records.BranchRecord(**b.model_dump()) for b in plan.branches],
-            cancel_request_ids=[labels.resolve("request", r) for r in plan.cancel_requests],
-        ),
+        plan_update=_plan_record(plan, labels),
         agent_requests=requests,
         corrections_acknowledged=markup.corrections_acknowledged,
         decision_reason=markup.decision_reason,
         deadline=deadline,
+    )
+
+
+def _landmark(labels: LabelMap, label: str) -> records.LandmarkRefRecord:
+    """A landmark label of the plan as `{kind, id}`: `T…` a topic, `S…` a skill (labels are
+    turn-local, the journal keeps ids)."""
+    kind = landmark_kind(label)
+    return records.LandmarkRefRecord(kind=kind, id=labels.resolve(kind, label))
+
+
+def _step_record(step: Step, labels: LabelMap) -> records.PlanStepRecord:
+    landmark = None if step.landmark is None else _landmark(labels, step.landmark)
+    return records.PlanStepRecord(id=step.id, text=step.text, landmark=landmark)
+
+
+def _plan_record(plan: PlanUpdate, labels: LabelMap) -> records.PlanUpdateRecord:
+    edits = plan.landmark_edits
+    return records.PlanUpdateRecord(
+        goal=plan.goal,
+        current_step=None if plan.current_step is None else _step_record(plan.current_step, labels),
+        next_steps=None
+        if plan.next_steps is None
+        else [_step_record(s, labels) for s in plan.next_steps],
+        landmark_edits=None if edits is None else _edits_record(edits, labels),
+        branches=[records.BranchRecord(**b.model_dump()) for b in plan.branches],
+        cancel_request_ids=[labels.resolve("request", r) for r in plan.cancel_requests],
+    )
+
+
+def _edits_record(edits: LandmarkEdits, labels: LabelMap) -> records.LandmarkEditsRecord:
+    add: list[records.LandmarkAddRecord] = []
+    for a in edits.add:
+        point = _landmark(labels, a.label)
+        before = None if a.before is None else _landmark(labels, a.before)
+        add.append(
+            records.LandmarkAddRecord(
+                kind=point.kind,
+                id=point.id,
+                before_kind=None if before is None else before.kind,
+                before_id=None if before is None else before.id,
+            )
+        )
+    return records.LandmarkEditsRecord(
+        add=add, remove=[_landmark(labels, label) for label in edits.remove]
     )
 
 

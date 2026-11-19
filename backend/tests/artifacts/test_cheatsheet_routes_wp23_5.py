@@ -147,3 +147,32 @@ async def test_review_route_of_a_foreign_hub_is_404(pg_db: Db, client_for: Clien
     client = await client_for(stranger, hub)
     response = await client.post(f"/v1/hubs/{hub}/cheatsheet/review", json={"idempotency_key": "k"})
     assert response.status_code == 404
+
+
+async def test_domain_all_hub_cheatsheet_get_and_post(pg_db: Db, client_for: ClientFor) -> None:
+    from quack.events.log import NewEvent, append_events
+    from quack.graph.ids import deterministic_id
+
+    learner = await create_learner(pg_db)
+    domain_id = uuid4()
+    [dom] = await append_events(
+        pg_db,
+        learner,
+        [
+            NewEvent(
+                type="domain.created",
+                payload={"domain_id": domain_id, "name": "Calculus"},
+                actor="learner",
+                idempotency_key=f"dom:{domain_id}",
+            )
+        ],
+    )
+    domain_all_hub = UUID(deterministic_id(learner, dom.seq, 0))
+    client = await client_for(learner, domain_all_hub)
+    got = await client.get(f"/v1/hubs/{domain_all_hub}/cheatsheet")
+    assert got.status_code == 200, got.text
+    assert got.json()["hub_id"] == str(domain_all_hub)
+    posted = await client.post(
+        f"/v1/hubs/{domain_all_hub}/cheatsheet", json={"idempotency_key": "domain-all-1"}
+    )
+    assert posted.status_code == 202, posted.text

@@ -52,6 +52,7 @@ JOB_KINDS: tuple[str, ...] = (
     "export.data",
     "second_opinion.diagnosis",
     "canvas.rediagnose",
+    "session.title",
 )
 
 # WP5.3/T-Q10: the roles whose models a kind calls; a kind waits while any of them is pressured.
@@ -86,6 +87,7 @@ KIND_LLM_ROLES: dict[str, tuple[str, ...]] = {
     "export.data": (),
     "second_opinion.diagnosis": ("second_opinion",),
     "canvas.rediagnose": ("canvas_diagnoser",),
+    "session.title": ("session_titler",),
 }
 
 

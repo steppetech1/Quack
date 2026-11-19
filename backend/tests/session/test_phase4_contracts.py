@@ -12,11 +12,12 @@ from quack.llm.strict_schema import to_strict_json_schema
 from quack.practice import role_outputs
 from quack.session.actions import ACTION_EVENT_TYPES, TURN_ACTION_KINDS, Action
 from quack.session.elements import Element
-from quack.session.teacher_output import TeacherOutputV2
+from quack.session.teacher_output import TeacherOutputLegacyV2, TeacherOutputV2
 from quack.session.tools import TOOLS, tool_definition
 
 ROLE_SCHEMAS: list[type[BaseModel]] = [
     TeacherOutputV2,
+    TeacherOutputLegacyV2,
     role_outputs.ModelVerdictOutput,
     role_outputs.SolutionSpace,
     role_outputs.TaskGeneratorOutput,

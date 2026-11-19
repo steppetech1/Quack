@@ -190,6 +190,11 @@ SAMPLES: dict[str, dict[str, Any]] = {
         ],
     },
     "skill.merge_suggested": {"from_id": uid("skill2"), "into_id": uid("skill")},
+    "skill.placed": {
+        "skill_id": uid("skill"),
+        "topic_id": uid("topic"),
+        "domain_id": uid("domain"),
+    },
     "edge.added": {
         "kind": "requires",
         "from_id": uid("skill"),
@@ -250,6 +255,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "intent": "learn",
     },
     "session.ended": {"session_id": uid("session"), "reason": "learner"},
+    "session.titled": {"session_id": uid("session"), "title": "Limits of sequences"},
     "hint.shown": {"task_id": uid("task"), "step": 1, "source": "teacher"},
     "today.shown": {
         "domain_id": uid("domain"),

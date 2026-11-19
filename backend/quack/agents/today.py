@@ -19,7 +19,7 @@ from uuid import UUID, uuid5
 from quack.agents.schemas import TodayPlannerOutput
 from quack.events.event_types import AgentRequested, TodayItem, TodayShown
 from quack.events.log import NewEvent, append_events
-from quack.events.records import AgentParamsRecord, PlanUpdateRecord
+from quack.events.records import AgentParamsRecord, LandmarkRefRecord, PlanStepRecord
 from quack.events.values import Level
 from quack.graph.read import GraphReader, HubGoal, create_graph_reader
 from quack.jobs.runner import JobContext, register_job_handler
@@ -28,6 +28,7 @@ from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.logging import get_logger
 from quack.practice.repo import event_by_seq
 from quack.practice.select import select_tasks
+from quack.practice.session_plan import prepared_plan
 from quack.practice.task_store import get_task
 from quack.practice.today_plan import prepared_session_id
 
@@ -137,18 +138,19 @@ async def prepare_today(
                 steps.append(f"Task: {doc.condition.text}")
         if not steps:
             continue
-        plan = PlanUpdateRecord(
-            completed_steps=[],
-            current_step=steps[0],
-            next_steps=steps[1:3],
-            branches=[],
-            cancel_request_ids=[],
-        )
+        # The draft is a plan of version 2 (`prepared_plan`): the steps of the planner, each at the
+        # skill of the item (the landmark of the graph); the goal the teacher states in its
+        # first turn.
+        point = LandmarkRefRecord(kind="skill", id=item.skill_id)
+        draft = [
+            PlanStepRecord(id=f"draft-{n}", text=text, landmark=point)
+            for n, text in enumerate(steps[: 1 + settings.plan_next_steps_max], start=1)
+        ]
         plans.append(
             {
                 "session_id": prepared_session_id(learner_id, trigger_seq, item.skill_id),
                 "learner_id": learner_id,
-                "plan": json.dumps(plan.model_dump(mode="json")),
+                "plan": json.dumps(prepared_plan(draft).to_json()),
             }
         )
         if planned.generate:

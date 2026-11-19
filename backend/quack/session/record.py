@@ -25,9 +25,11 @@ from quack.events.event_types import (
 )
 from quack.events.log import NewEvent, append_events
 from quack.events.registry import EventPayload
+from quack.events.values import AnswerSpec, LearnerAnswer
 from quack.practice.answers import part_spec, record_answer
 from quack.practice.check import Verdict
 from quack.practice.repo import event_by_seq
+from quack.practice.session_resume import touch_session
 from quack.practice.task_store import TaskDocument, get_task
 from quack.session.actions import (
     ACTION_EVENT_TYPES,
@@ -65,8 +67,32 @@ async def record_action(
     settings: Settings,
     redis: Redis | None = None,
 ) -> RecordedAction:
-    """Write the action's event(s); `LookupError` — the task or the turn element it names
-    is not the learner's."""
+    """Write the action's event(s) and refresh `last_activity_at` of the session, so the
+    inactivity sweep does not close it in the middle of a talk (WP13.10); `LookupError` — the
+    task or the turn element it names is not the learner's."""
+    recorded = await _write_action(
+        db,
+        action,
+        learner_id=learner_id,
+        session_id=session_id,
+        domain_id=domain_id,
+        settings=settings,
+        redis=redis,
+    )
+    await touch_session(db, learner_id=learner_id, session_id=session_id)
+    return recorded
+
+
+async def _write_action(
+    db: Db,
+    action: Action,
+    *,
+    learner_id: UUID,
+    session_id: UUID,
+    domain_id: UUID | None,
+    settings: Settings,
+    redis: Redis | None,
+) -> RecordedAction:
     starts_turn = action.kind in TURN_ACTION_KINDS
     key = str(action.idempotency_key)
     if isinstance(action, AnswerAction):
@@ -94,13 +120,22 @@ async def record_action(
             ],
             redis=redis,
         )
-        if not (isinstance(action, ElementResponseAction) and action.answer is not None):
+        if not isinstance(action, ElementResponseAction):
             return RecordedAction(event.seq, starts_turn)
+        prefetched_task: TaskDocument | None = None
+        if action.answer is not None:
+            task_id = await _element_task(db, learner_id, action.turn_seq, action.element_id)
+            learner_answer = action.answer
+        else:
+            task_id = await _find_element_task(db, learner_id, action.turn_seq, action.element_id)
+            if task_id is None:
+                return RecordedAction(event.seq, starts_turn)
+            prefetched_task = await _own_task(db, learner_id, task_id)
+            learner_answer = _answer_from_response(action.response, prefetched_task.answer_spec)
         # WP13.1: an element that is a task also writes `answer.submitted`.
-        task_id = await _element_task(db, learner_id, action.turn_seq, action.element_id)
         answer = AnswerSubmitted(
             task_id=task_id,
-            answer=action.answer,
+            answer=learner_answer,
             text=action.text,
             confidence=action.confidence,
             element_id=action.element_id,
@@ -116,6 +151,7 @@ async def record_action(
             settings,
             redis,
             causation_seq=event.seq,
+            task=prefetched_task,
         )
     return RecordedAction(event.seq, starts_turn, recorded.verdict)
 
@@ -165,10 +201,11 @@ async def _answer(
     settings: Settings,
     redis: Redis | None,
     causation_seq: int | None = None,
+    task: TaskDocument | None = None,
 ) -> RecordedAction:
-    task = await _own_task(db, learner_id, answer.task_id)
+    resolved_task = task if task is not None else await _own_task(db, learner_id, answer.task_id)
     # Т-§6.2: a part of a task is checked by the spec of that part.
-    spec = await part_spec(db, learner_id=learner_id, task=task, part=answer.part)
+    spec = await part_spec(db, learner_id=learner_id, task=resolved_task, part=answer.part)
     recorded = await record_answer(
         db,
         learner_id=learner_id,
@@ -182,6 +219,31 @@ async def _answer(
         causation_seq=causation_seq,
     )
     return RecordedAction(recorded.answer_seq, True, recorded.verdict)
+
+
+def _answer_from_response(response: str, spec: AnswerSpec) -> LearnerAnswer:
+    """Build a `LearnerAnswer` from a plain-text element response when the client sent only
+    `response` (no structured `answer`)."""
+    value = response.strip()
+    if spec.type == "choice" and spec.options:
+        exact = [o.option_id for o in spec.options if o.option_id == value]
+        if len(exact) == 1:
+            value = exact[0]
+        else:
+            ci_id = [
+                o.option_id for o in spec.options if o.option_id.casefold() == value.casefold()
+            ]
+            if len(ci_id) == 1:
+                value = ci_id[0]
+            else:
+                by_text = [
+                    o.option_id
+                    for o in spec.options
+                    if o.text.strip().casefold() == value.casefold()
+                ]
+                if len(by_text) == 1:
+                    value = by_text[0]
+    return LearnerAnswer(kind=spec.type, value=value)
 
 
 async def _own_task(db: Db, learner_id: UUID, task_id: UUID) -> TaskDocument:
@@ -200,13 +262,22 @@ async def _own_voice(db: Db, learner_id: UUID, session_id: UUID, seq: int) -> No
         raise LookupError(f"no voice segment at seq {seq} in session {session_id}")
 
 
-async def _element_task(db: Db, learner_id: UUID, turn_seq: int, element_id: str) -> UUID:
-    """The task the turn's markup put behind `element_id` (`TurnTaskRecord`, WP2.2)."""
+async def _find_element_task(
+    db: Db, learner_id: UUID, turn_seq: int, element_id: str
+) -> UUID | None:
+    """The task the turn's markup put behind `element_id`, or `None` when `turn_seq` is not a
+    committed turn or the element has no task."""
     event = await event_by_seq(db, learner_id=learner_id, seq=turn_seq)
     if event is None or event.type != "turn.committed":
-        raise LookupError(f"no turn at seq {turn_seq}")
+        return None
     turn = TurnCommitted.model_validate(event.payload)
     task = next((t for t in turn.markup.tasks if t.element_id == element_id), None)
-    if task is None:
+    return None if task is None else task.task_id
+
+
+async def _element_task(db: Db, learner_id: UUID, turn_seq: int, element_id: str) -> UUID:
+    """The task the turn's markup put behind `element_id` (`TurnTaskRecord`, WP2.2)."""
+    task_id = await _find_element_task(db, learner_id, turn_seq, element_id)
+    if task_id is None:
         raise LookupError(f"no task behind element {element_id!r} of turn {turn_seq}")
-    return task.task_id
+    return task_id
