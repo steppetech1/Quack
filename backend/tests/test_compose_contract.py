@@ -160,3 +160,37 @@ def test_the_learners_bucket_name_reaches_api_and_workers(compose: dict[str, Any
 
 def test_the_price_table_reaches_the_processes_that_call_models(compose: dict[str, Any]):
     assert _holders(compose, "LLM_PRICES") == {"api", "workers"}
+
+
+def test_the_session_cookie_domain_reaches_every_process_that_reads_settings(
+    compose: dict[str, Any],
+):
+    """A local stand sets `SESSION_COOKIE_DOMAIN=localhost`, else the browser drops
+    `quack_session`; on the server the default is `qvack.online` (WP9.1)."""
+    assert _holders(compose, "SESSION_COOKIE_DOMAIN") == {"api", "workers", "projector"}
+    for name in ("api", "workers", "projector"):
+        value = compose["services"][name]["environment"]["SESSION_COOKIE_DOMAIN"]
+        assert value == "${SESSION_COOKIE_DOMAIN:-qvack.online}", name
+
+
+# Set by compose itself (fixed address, port or limit), so the developer's list does not carry them.
+_FIXED_BY_COMPOSE = {
+    "API_HOST",
+    "API_PORT",
+    "API_WORKERS",
+    "API_GRACEFUL_SHUTDOWN_S",
+    "QUACK_VERSION",
+}
+
+
+def test_backend_env_example_lists_every_variable_api_reads(compose: dict[str, Any]):
+    """`backend/.env.example` is the developer's list (names only, Д-§7): it must not fall behind
+    the `api` service of `compose.yaml`."""
+    path = COMPOSE.parent / "backend" / ".env.example"
+    listed = {
+        line.split("=", 1)[0]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.startswith("#")
+    }
+    wanted = set(compose["services"]["api"]["environment"]) - _FIXED_BY_COMPOSE
+    assert wanted <= listed, sorted(wanted - listed)

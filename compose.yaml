@@ -39,6 +39,9 @@ x-db-env: &db-env
   NEO4J_USER: neo4j
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
   REDIS_URL: redis://redis:6379/0
+  # Domain of the `quack_session` cookie (Т-§19.1, WP9.1): `qvack.online` on the server; a local
+  # stand sets `localhost`, else the browser drops the cookie. Not secret.
+  SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-qvack.online}
 
 # WP9.2, WP16.5 (Т-§13.6 п.1, D-C-218): the libraries a visualization page may load, name -> path
 # under VIZ_STATIC_BASE_URL. Caddy serves deploy/static/viz/ at /static/viz/ of the API domain;
