@@ -45,6 +45,23 @@ def test_up_to_constant() -> None:
     assert not _eq("x**3", "x**3/3", mode="up_to_constant").equivalent
 
 
+@pytest.mark.parametrize(
+    ("student", "reference", "expected"),
+    [
+        # The constant is a symbol named before the variable: it must not be taken as the
+        # variable of differentiation.
+        ("x**3/3 + C", "x**3/3", True),
+        ("x**3/3 + A", "x**3/3", True),
+        ("x**3 + C", "x**3/3", False),
+        # A parameter of the reference named before the variable.
+        ("a*x**2/2 + C", "a*x**2/2", True),
+        ("a*x**2 + C", "a*x**2/2", False),
+    ],
+)
+def test_up_to_constant_symbolic_constant(student: str, reference: str, expected: bool) -> None:
+    assert _eq(student, reference, mode="up_to_constant").equivalent is expected
+
+
 def test_solution_set() -> None:
     assert _eq("2, -2", "x**2 = 4", mode="solution_set").equivalent
     assert _eq("-2, 2", "x**2 - 4", mode="solution_set").equivalent

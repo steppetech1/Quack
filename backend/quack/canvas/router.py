@@ -24,6 +24,7 @@ from quack.api.errors import ApiError
 from quack.api.resources import AppResources, get_resources
 from quack.canvas import boards, photos, recognition, replay, socket, voice
 from quack.canvas.board import BoardDoc
+from quack.storage.uploads import check_upload_size
 
 router = APIRouter(prefix="/v1", tags=["canvas"])
 
@@ -204,14 +205,19 @@ async def upload_voice(
 ) -> VoiceView:
     """WP21.6: one segment of speech (WAV) with its start and end by the device clock; the
     audio is not stored (П-14.1). The companion has no voice (T-CP1: 403). A session of another
-    learner is 404; compressed audio is 415; the same segment again gives the same answer."""
+    learner is 404; compressed audio is 415; the same segment again gives the same answer.
+    Larger than `upload_max_mb` is 413 before the body is read (Т-§19.8, as photos)."""
+    max_mb = resources.settings.upload_max_mb
+    check_upload_size(audio.size, max_mb=max_mb)
+    data = await audio.read()
+    check_upload_size(len(data), max_mb=max_mb)
     try:
         heard = await voice.transcribe_segment(
             resources.db,
             resources.llm,
             learner_id=session.learner_id,
             session_id=session_id,
-            audio=await audio.read(),
+            audio=data,
             started_at_ms=started_at_ms,
             ended_at_ms=ended_at_ms,
             redis=resources.redis,

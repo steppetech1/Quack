@@ -44,8 +44,24 @@ export function DomainSidebar({
 
   return (
     <nav aria-label={t.shell.subjects} className="flex h-full flex-col bg-cloth-deep px-3 pt-4 pb-3">
-      <div className="flex min-h-10 items-center px-3 pb-1">
-        <p className="display-caps text-[1.375rem] text-paper">Qvack!</p>
+      {/* шапка: кнопка меню слева, название антиквой капсом, справа — свернуть (десктоп) */}
+      <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1">
+        {withMenu ? (
+          <div ref={toggleRef} data-menu-anchor>
+            <MenuToggle
+              open={menuOpen}
+              onClick={() => (menuOpen ? closeMenu() : openMenu(toggleRef.current?.querySelector("button") ?? null))}
+              labelOpen={t.menu.open}
+              labelClose={t.menu.close}
+            />
+          </div>
+        ) : null}
+        <p className="display-caps flex-1 text-[1.375rem] text-paper">Quack!</p>
+        {onToggle && (
+          <IconButton label={t.shell.collapseSubjects} onClick={onToggle}>
+            <PanelLeftClose />
+          </IconButton>
+        )}
       </div>
 
       {/* первый экран: графы всех предметов сразу */}

@@ -35,7 +35,7 @@ const caveat = Caveat({
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = getDict(await getLocale());
-  return { title: "Qvack!", description: t.meta.description };
+  return { title: "Quack!", description: t.meta.description };
 }
 
 export const viewport: Viewport = {

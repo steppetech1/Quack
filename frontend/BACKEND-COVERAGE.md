@@ -1,6 +1,6 @@
 # Фронт и бэк: что подключено
 
-Состояние на 2026-11-04 (ветка `front-for-vercel`, поддержка Фазы 3 и готовность к Фазе 4).
+Состояние на 2026-11-05 (с пометками о PR, ещё не слитых: #319, #322, #324). Фронт теперь на контракте **Фазы 4** (65 путей `lib/api/openapi.json`, снимок из `backend/openapi.json` ветки `phase-4`), не Фазы 3: вход — `quack_session` cookie вместо JWT, ход сессии — `POST /v1/sessions/{id}/actions` вместо `/turns`, новый предмет — `POST /v1/domains/classify` вместо `structure/propose`.
 
 ## Как запустить
 
@@ -29,45 +29,65 @@
 
 ## Как устроено во фронте
 
-- `lib/api/client.ts` — запросы, токен (`localStorage`, ключ `quack.token`), сессионная cookie (`credentials: "include"`), ошибки, SSE через `fetch`. `post`, `patch`, `del` и `sse` типизированы по контракту. Предусмотрены хелперы Фазы 4: `fetchMe` (`/v1/me` с фоллбэком на `/v1/auth/me`), `sendMagicLink`, `verifyMagicLink`, `logoutApi`.
-- `lib/api/schema.d.ts` — типы, сгенерированные из `lib/api/openapi.json`.
-- `lib/api/adapters.ts` — переводит ответы бэка в типы интерфейса (`lib/mock/types.ts`) и адаптирует ответы графа в `GraphModel` (`graphModelFromApi`) для нового графа `LayeredGraph` с индикаторами.
-- `lib/api/data.tsx` — `DataProvider`: проверка входа, профиль и настройки, список предметов, графы, активная сессия, история сессий, живые обновления (`appliedSeq`). В `DataContext` экспортируются сырые графы и история сессий для сборки `GraphModel`.
-- `lib/graph/use-graph-model.ts` — хук графа: на моках возвращает моковую модель, в `API_MODE` собирает живую `GraphModel` через `graphModelFromApi`.
-- `components/quack/graph/layered-graph.tsx` — новый слоёный DAG-граф с индикаторами («Новые», «Актуальные», «Дедлайн», «Слабые места», «Повторение»), историей посещений и связью с карточками «Сегодня».
-- `components/quack/live/use-start-session.ts` — запуск сессии по теме: карточка темы, страница главы, «Сегодня».
-- `components/quack/live/*` — экраны на данных бэка. Маршруты выбирают живой экран или моковый по `API_MODE`.
+- Относительные даты («через 3 дня», «вчера») считаются от настоящего «сегодня» в часовом поясе пользователя (`todayIso()`, `localIso()` в `lib/format.ts`); на моках «сегодня» — фиксированный день `MOCK_TODAY` (PR #319, до слияния они везде считались от него).
+- `lib/api/client.ts` — запросы, cookie-сессия, ошибки, SSE через `fetch`. `post`, `patch`, `del` и `sse` типизированы по контракту.
+- `lib/api/schema.d.ts` — типы из `lib/api/openapi.json` (`npm run api:types` после обновления снимка).
+- `lib/api/adapters.ts` — бэк → типы интерфейса (`lib/mock/types.ts`, `lib/graph/types.ts`).
+- `lib/api/data.tsx` — `DataProvider`: вход, профиль и настройки, предметы, графы, «Сегодня», активная сессия, история, живые обновления (`appliedSeq`). На моках — моки.
+- `components/quack/live/*` — экраны на данных бэка; маршруты и `today-cards.tsx`/`domain-view.tsx` выбирают живые данные или моковые по `API_MODE`.
+- `dev/stub-api.mjs` (`npm run dev:stub`) — Node-заглушка под контракт Фазы 4 для быстрой работы над экраном без бэка. Реализует меньше путей, чем настоящий бэк (ниже), — расхождение стоит иметь в виду при переносе проверки со стенда на стаб.
 
 ## Что подключено
 
 | Экран | Эндпоинты |
 |---|---|
-| Вход, регистрация, выход | `POST /v1/auth/login`, `POST /v1/auth/register`, `GET /v1/auth/me` (Фаза 3); `POST /auth/link`, `POST /auth/link/verify`, `GET /v1/me`, `POST /auth/logout` (Фаза 4) |
-| Левая панель, вкладка «Предметы» в настройках | `GET /v1/domains` |
-| Граф предмета (LayeredGraph + индикаторы) | `GET /v1/domains/{id}/graph` |
-| Новый предмет | `POST /v1/domains`, `POST …/structure/propose` |
-| Темы предмета: пропустить, добавить, подтвердить, архив | `POST …/structure/confirm`, `PATCH …/structure`, `PATCH …/topics/{id}/status`, `POST …/archive` |
-| Диагностика | `POST …/diagnostic/start`, `…/answer`, `…/finish` |
-| Страница темы: навыки, заблуждения, заметки, шпаргалка | `GET /v1/topics/{id}`, `GET /v1/artifacts?topic_id=`, `GET /v1/topics/{id}/cheatsheet`, `POST …/cheatsheet/refresh` (тело `{domain_id}`) |
-| Сессия: история, ответ учителя потоком, «учитель думает» (`status`), задачи, присутствие, конец | `POST /v1/sessions`, `GET /v1/sessions/{id}`, `POST …/actions` с фоллбэком на `POST …/turns` (SSE), `POST …/heartbeat`, `POST …/finish`, `GET /v1/sessions/active` |
-| Итог сессии | данные из `finish` |
-| Практика | `POST /v1/sessions` (practice), `POST …/tasks/next`, `…/hint`, `…/submit` |
-| Заметки и шпаргалки, поиск, выгрузка | `GET /v1/artifacts`, `GET /v1/artifacts/search`, `GET /v1/domains/{id}/export` |
-| Заметка | `POST /v1/artifacts/notes`, `PATCH …/{id}`, `DELETE …/{id}` |
-| Удаление аккаунта | `DELETE /v1/learner` (без тела) |
-| Настройки «Общие» и «Язык»: имя, обращение, курс, язык ответов | `PATCH /v1/learner/preferences`, чтение из `GET /v1/auth/me` / `GET /v1/me` |
-| Панель сессий справа: все сессии предмета, новые сверху | `GET /v1/sessions` |
-| Карточка темы на графе: «Изучать», «Повторять»; поле ввода на странице темы | `POST /v1/sessions` с `topic_id` и `mode` |
-| Страница главы: «Изучать всё», «Практика», «Повторение», «Вперемешку» | `POST /v1/sessions`, экран практики |
-| «Сегодня» под графом: до трёх тем, у которых срок повторения (`nearest_review_at` / `nearest_due_at_ms`) до конца дня; клик открывает повторение, наведение подсвечивает узел на графе | `GET /v1/domains/{id}/graph`, `POST /v1/sessions` (review) |
-| Плашка «граф догоняет» при `lag_degraded`; граф перечитывается каждые 5 с, пока бэк не догонит | `GET /v1/domains/{id}/graph` |
-| Живые обновления: список предметов, графы на экране, история сессий, страница темы | `GET /v1/learner/stream` (SSE `projection_advanced`, данные — обычными GET) |
+| Вход по ссылке на почту, Google, выход | `POST /auth/link`, `GET /auth/link/verify`, `GET /auth/google/start`, `GET /auth/google/callback`, `POST /auth/logout`, `GET /v1/me` |
+| Гейт согласия | `POST /v1/consents` (`kind: "terms"`) |
+| Левая панель, вкладка «Предметы» | `GET /v1/domains` |
+| Новый предмет: один ввод текста | `POST /v1/domains/classify`, `POST /v1/domains` |
+| Граф предмета, главы | `GET /v1/domains/{id}/graph`, `GET /v1/domains/{id}/hubs` |
+| **«Сегодня» под графом** | `GET /v1/domains/{id}/today` (`items` → карточки с действием по `reasons`, `pace_warnings` → карточка без действия); **новое** — раньше тут была клиентская догадка по `nearest_due_at_ms` из графа, теперь реальные рекомендации бэка |
+| Страница темы: навыки, заметки (блоки), карточки для повторения | `GET /v1/topics/{id}`, `GET/POST /v1/topics/{id}/notes`, `PUT/DELETE /v1/artifacts/{id}/blocks/{id}`, `GET /v1/topics/{id}/cards` |
+| Шпаргалка главы | `GET/POST /v1/hubs/{id}/cheatsheet` (страница главы и страница темы) |
+| Страница главы: материалы, режим подготовки, дедлайн | `GET /v1/domains/{id}/materials` (список), `POST /v1/hubs/{id}/prep-mode` (только включение), `PATCH /v1/hubs/{id}` (`deadline_at_ms`: сменить или убрать); хук `components/quack/live/use-hub-api.ts` |
+| Оценка после дедлайна (PR #322, до слияния не подключено) | `grade_hub_ids` из `GET /v1/domains/{id}/today` и `POST /v1/hubs/{id}/grade`; блок «Как прошло?» на странице главы, «Не сейчас» хранится в `localStorage` (у бэка нет события отказа) |
+| Страница темы: «Я это уже знаю», «Эта тема мне не нужна» | `POST /v1/topics/{id}/known`, `POST /v1/topics/{id}/hide` (после «не нужна» граф перечитывается) |
+| Карточки: правка и удаление (PR #324, до слияния не подключено) | `PATCH /v1/cards/{id}` (текст лицевой стороны), `DELETE /v1/cards/{id}`; оба отвечают всей колодой, у правленой карточки новый id |
+| Skills пользователя | `GET/POST/PATCH/DELETE /v1/learner-skills` (вкладка «Skills», меню `/` в поле ввода); вызов `/имя` в сообщении сессии уходит как `skill_invocation`. У бэка нет выключателя и отдельного имени: имя и есть команда (`[\w-]{1,40}`), один скилл на тип артефакта, поэтому в режиме API переключатель скрыт, а «вызывать через /» всегда включено |
+| Поиск | `GET /v1/search` |
+| Сессия: история, ход (SSE), присутствие, конец, итог | `POST/GET /v1/sessions`, `GET /v1/sessions/active`, `GET /v1/sessions/{id}`, `POST …/actions`, `POST …/heartbeat`, `POST …/end`, `GET …/summary` |
+| Панель сессий справа | `GET /v1/sessions` |
+| Настройки «Общие»: имя, предпочтения | `PATCH /v1/learner/preferences` |
+| Удаление аккаунта | `DELETE /v1/learner` (на этом стенде падает 500: `quack/storage/deletions.py::write` тоже `NotImplementedError` — журнал удалений в S3 не доведён, см. WP25 в `STATUS.md`) |
+| Живые обновления | `GET /v1/learner/stream` (SSE `projection_advanced`, сами данные — обычными `GET`) |
 
 ## Готовность к Фазе 4 (Phase 4 Readiness)
 
-1. **Ходы и действия сессии (`actions` vs `turns`)**:
-   `SessionLive` настроен на двойной протокол: отправляет `POST /v1/sessions/{id}/actions` с телом `{ kind: "message", text, ... }`. В случае 404/405 автоматически откатывается на Phase 3 `POST /v1/sessions/{id}/turns`. Поддерживаются SSE фреймы обоих стандартов (`token` с `text` или `delta`, `action_recorded` и `turn_started`, `verdict` и `task_evaluated`, `turn_committed` и `turn_completed`).
-2. **Сессионные cookie и аутентификация**:
-   Все запросы `api` и `sse` выполняются с `credentials: "include"`, поэтому cookie `quack_session` передаётся прозрачно. Хелпер `fetchMe` пробует `GET /v1/me` и откатывается на `GET /v1/auth/me`. Добавлены функции для входа по magic link (`/auth/link`, `/auth/link/verify`) и логаута (`/auth/logout`).
-3. **Граф и схема связей**:
-   Адаптер `graphModelFromApi` умеет читать как структуру Phase 3 (`prereqs: [{from_topic_id, to_topic_id}]`, `display_state`), так и структуру Phase 4 (`requires: [{topic_id, requires_topic_id}]`, `display`, `nearest_due_at_ms`, `hubs`).
+Контракт даёт 65 путей, из них не вызывается ни один из этих (все — реальные модули бэка, большинство «влит» по `STATUS.md` §4):
+
+- **Материалы** — подключён только список на странице главы (`GET /v1/domains/{id}/materials`). Не вызываются `POST /v1/domains/{id}/materials` (загрузка лекций: на странице главы и в поле ввода нет прикрепления) и `GET /v1/materials/{id}` (состояние разбора).
+- **Канвас, что ещё не подключено** — распознавание строк и пометки учителя (`line_ready`, `mark`, `hint`), `POST /v1/canvases/{id}/photos`, `.../pairing`, `.../lines/{id}/correct`, блоки задач (`task_id`, слой учителя). Формулы, тексты и картинки на доске остаются в браузере (у бэка для них нет позиции), название тоже (в `CanvasView` нет поля). Подключено: создание в сессии, список, `GET /v1/canvases/{id}`, чат с учителем (`message` с `canvas_refs`), штрихи по `WS /v1/canvases/{id}/ws` (пачки с подтверждением и повтором) и их возврат из `/replay`. Сокет ходит напрямую к API: в проде нужен `NEXT_PUBLIC_QUACK_WS` (например `wss://api.qvack.online`); чанки replay браузер читает по подписанным ссылкам хранилища, ему нужен CORS для origin фронта.
+- **Компаньон** — `POST /auth/link` (companion scope), фото через телефон.
+- **Режим подготовки и «Сегодня», что осталось** — `POST /v1/hubs/{id}/prep-mode {enabled: false}` (выключить режим: кнопки нет), `minutes` из `TodayView` не показан (только `items`, `pace_warnings`, `grade_hub_ids`). Оценку, введённую после дедлайна, прочитать нельзя: у бэка нет `GET` (issue #323 — и про то, что вес дедлайна после `grade.reported` не снимается).
+- **Правки темы, что осталось** — `POST /v1/topics/{id}/merge`, `GET /v1/topics/{id}/why`, `POST /v1/disputes`, `POST /v1/verdicts/{seq}/typo`, `POST /v1/episodes/{seq}/reassign`: разделение темы, «почему эта тема здесь», оспаривание вердикта — нет кнопок (пункты «переименовать / слить / перенести» меню страницы темы на моках).
+- **Skills, что осталось** — `GET /v1/system-templates` не вызывается; помощник «Создать скилл» остаётся на моках; чат канваса не передаёт `skill_invocation`; скиллы, сохранённые раньше в `localStorage`, не переносятся на бэк.
+- **Карточки, ответы на них** — оценки в окне колоды остаются в браузере и пропадают, до модели ученика они не доходят. Бэк принимает ответ на карточку только как действие `answer` с `source: "card"` внутри активной сессии, а текста ответа карточки API не отдаёт (в ответе только `prompt`), поэтому «Показать ответ» в режиме API пустой. Вопрос к потоку B — issue #325.
+- **Блоки конспекта и шпаргалка, что осталось** — `POST /v1/artifacts/{id}/blocks/{block_id}/accept` (принять «дополнение» к блоку), `POST /v1/hubs/{id}/cheatsheet/review`.
+- **Экспорт и данные** — `GET /v1/topics/{id}/export/anki|obsidian`, `GET /v1/learner/exports/{id}`: кнопка «Экспорт» в «Данные и аккаунт» показывает «скоро»; `PATCH /v1/learner/settings` не вызывается (настройки идут через `PATCH /v1/learner/preferences`).
+- **Визуализации** — `GET /v1/viz/{id}`.
+- **Голос в сессии** — `POST /v1/sessions/{id}/voice`.
+- **Видимость фоновых задач** — `GET /v1/sessions/{id}/jobs`.
+- **Бюджет LLM** — `GET /v1/llm/access`.
+- **Исследовательское согласие** — `POST/DELETE /v1/consents/research` (только `terms` подключён).
+- Не подключено и раньше: `GET /v1/sessions/{id}/events`.
+
+## Состояния тем
+
+У бэка восемь кодов `display_state` (Т-§22.2, `DisplayCode` в `lib/graph/types.ts`), в дизайне четыре (`topicState()` в `lib/api/adapters.ts`):
+
+- `solved_independently` → «решаешь сам»;
+- `inconsistent`, `in_progress` → «пора повторить»;
+- `confused_with`, `persistent_error`, `struggling` → «путаешь»;
+- `not_tested`, `known_from_other_domain`, нет кода → «ещё не изучал».
+
+Пропущенные и архивные темы (`status`) на граф не попадают; `visibility: "hidden"` тоже скрыта.

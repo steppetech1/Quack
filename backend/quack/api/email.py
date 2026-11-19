@@ -17,9 +17,9 @@ log = get_logger(__name__)
 
 RESEND_EMAILS_URL = "https://api.resend.com/emails"
 
-LOGIN_SUBJECT = "Your Qvack! sign-in link"
+LOGIN_SUBJECT = "Your Quack! sign-in link"
 LOGIN_TEXT = (
-    "Open this link to sign in to Qvack!:\n\n{link}\n\n"
+    "Open this link to sign in to Quack!:\n\n{link}\n\n"
     "The link works once and expires in {ttl_min} minutes. "
     "If you did not ask for it, ignore this email."
 )

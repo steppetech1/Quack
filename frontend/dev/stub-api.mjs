@@ -12,7 +12,9 @@
 // Shapes follow lib/api/openapi.json; when the backend contract changes, regenerate the types (npm run api:types)
 // and adjust the fixtures here: tsc on the frontend does not check this file.
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { zstdCompressSync } from "node:zlib";
+import { encode } from "@msgpack/msgpack";
 import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.STUB_PORT ?? 8001);
@@ -232,6 +234,77 @@ async function act(res, session, body) {
   res.end();
 }
 
+// ---- canvas socket (WP21.2) -----------------------------------------------------------------------------------------
+// The first point of a stroke absolute, the next ones deltas, as the journal writes them (quack/canvas/strokes.py)
+function toRawBatch(b) {
+  return {
+    batch_no: b.batch_no,
+    strokes: b.strokes.map((s) => ({ stroke_id: s.stroke_id, points: s.points.map((q, i, a) => (i ? [q[0] - a[i - 1][0], q[1] - a[i - 1][1], q[2] - a[i - 1][2], q[3]] : q)) })),
+    erasures: b.erasures,
+  };
+}
+
+/** One client frame out of the buffer, or null while it is incomplete (client frames are masked) */
+function readFrame(buf) {
+  if (buf.length < 2) return null;
+  const op = buf[0] & 0x0f;
+  let len = buf[1] & 0x7f;
+  let at = 2;
+  if (len === 126) {
+    if (buf.length < 4) return null;
+    len = buf.readUInt16BE(2);
+    at = 4;
+  } else if (len === 127) {
+    if (buf.length < 10) return null;
+    len = Number(buf.readBigUInt64BE(2));
+    at = 10;
+  }
+  const masked = (buf[1] & 0x80) !== 0;
+  if (buf.length < at + (masked ? 4 : 0) + len) return null;
+  const mask = masked ? buf.subarray(at, at + 4) : null;
+  const start = at + (masked ? 4 : 0);
+  const payload = Buffer.from(buf.subarray(start, start + len));
+  if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+  return { op, payload, used: start + len };
+}
+
+function frame(text) {
+  const p = Buffer.from(text);
+  const head = p.length < 126 ? Buffer.from([0x81, p.length]) : Buffer.from([0x81, 126, p.length >> 8, p.length & 255]);
+  return Buffer.concat([head, p]);
+}
+
+// `STUB_ACK_MS` delays the acknowledgement, to see the "Saving…" state
+const ACK_MS = Number(process.env.STUB_ACK_MS ?? 0);
+
+function onUpgrade(req, socket) {
+  const m = new URL(req.url ?? "/", "http://stub").pathname.match(/^\/v1\/canvases\/([^/]+)\/ws$/);
+  const canvas = m && (S.canvases ?? []).find((x) => x.canvas_id === m[1]);
+  if (!canvas || !req.headers["sec-websocket-key"]) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+  const accept = createHash("sha1").update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  console.log(`WS open ${canvas.canvas_id}`);
+  const seen = new Set();
+  let buf = Buffer.alloc(0);
+  socket.on("data", (d) => {
+    buf = Buffer.concat([buf, d]);
+    for (let f; (f = readFrame(buf)); ) {
+      buf = buf.subarray(f.used);
+      if (f.op === 8) return void socket.end();
+      if (f.op !== 1) continue;
+      const msg = JSON.parse(f.payload.toString());
+      if (msg.type !== "stroke_batch") continue;
+      console.log(`WS batch ${msg.batch_no}: ${msg.strokes.length} strokes, ${msg.erasures.reduce((n, e) => n + e.stroke_ids.length, 0)} erased`);
+      if (!seen.has(msg.batch_no)) {
+        seen.add(msg.batch_no);
+        ((S.journal ??= {})[canvas.canvas_id] ??= []).push(msg);
+      }
+      setTimeout(() => socket.writable && socket.write(frame(JSON.stringify({ type: "ack", batch_no: msg.batch_no }))), ACK_MS);
+    }
+  });
+  socket.on("error", () => {});
+}
+
 // ---- routes ---------------------------------------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://stub");
@@ -301,6 +374,25 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const name = String(body.text).trim().split(/\s+/).slice(0, 3).join(" ");
     return json(res, 200, { decision: "new", name: name.charAt(0).toUpperCase() + name.slice(1), domain_id: null, confidence: 0.8 });
   }
+  if ((g = p.match(/^\/v1\/domains\/([^/]+)\/today$/))) {
+    const d = domainById(g[1]);
+    if (!d) return err(res, "NOT_FOUND", 404, "no such subject");
+    const endOfDay = new Date().setHours(24, 0, 0, 0);
+    // t.state here is already STATE[...] (e.g. "inconsistent" for the mock's "review"), not the mock's own word
+    const items = allTopics(d)
+      .filter((t) => t.state === STATE.review && dueMs(t) > 0 && dueMs(t) < endOfDay)
+      .sort((a, b) => dueMs(a) - dueMs(b))
+      .map((t, i, arr) => ({ skill_id: id(`s-${t.key}-0`), topic_id: id("t-" + t.key), score: arr.length - i, reasons: ["due"] }));
+    // one hub past its deadline with unfinished topics gets a pace warning, so the stub exercises that card too
+    const overdue = d.hubs.find((h) => h.deadlineMs && h.deadlineMs < Date.now() && h.topics.some((t) => t.state !== STATE.solid));
+    const pace_warnings = overdue
+      ? [{ hub_id: id("h-" + overdue.key), ready: overdue.topics.filter((t) => t.state === STATE.solid).length, not_ready: overdue.topics.filter((t) => t.state !== STATE.solid).length, forecast: 3 }]
+      : [];
+    // hubs whose date is before today and that have no mark yet (the offer to enter it)
+    const startOfDay = new Date().setHours(0, 0, 0, 0);
+    const grade_hub_ids = d.hubs.filter((h) => h.deadlineMs && h.deadlineMs < startOfDay && !(S.graded ??= new Set()).has(h.key)).map((h) => id("h-" + h.key));
+    return json(res, 200, { items, minutes: items.length * 10, grade_hub_ids, pace_warnings });
+  }
   if ((g = p.match(/^\/v1\/domains\/([^/]+)\/(graph|hubs)$/))) {
     const d = domainById(g[1]);
     if (!d) return err(res, "NOT_FOUND", 404, "no such subject");
@@ -330,8 +422,10 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     };
     const skills = hit.t.skills?.length ? hit.t.skills : [hit.t.name];
     const withAnswers = process.env.STUB_CARD_ANSWERS === "1";
-    const cards = skills.flatMap((sk, i) => [KINDS[i % 4], KINDS[(i + 2) % 4]].map((kind, j) => ({ card_id: id(`c-${hit.t.key}-${i}-${j}`), kind, prompt: ask[kind](sk), owner: "system", ...(withAnswers ? { answer: hit.t.about || hit.t.simple || hit.t.line } : {}) })));
-    return json(res, 200, { artifact_id: id("a-cards-" + hit.t.key), topic_id: g[1], version: 1, cards });
+    const fresh = skills.flatMap((sk, i) => [KINDS[i % 4], KINDS[(i + 2) % 4]].map((kind, j) => ({ card_id: id(`c-${hit.t.key}-${i}-${j}`), kind, prompt: ask[kind](sk), owner: "system", ...(withAnswers ? { answer: hit.t.about || hit.t.simple || hit.t.line } : {}) })));
+    // the deck is kept once it is built, so that an edit or a delete (PATCH/DELETE /v1/cards/:id) sticks
+    const deck = (S.decks ??= {})[hit.t.key] ?? ((S.decks[hit.t.key] = { artifact_id: id("a-cards-" + hit.t.key), topic_id: g[1], version: 1, cards: fresh }));
+    return json(res, 200, deck);
   }
   if ((g = p.match(/^\/v1\/hubs\/([^/]+)\/cheatsheet$/))) {
     const hit = hubById(g[1]);
@@ -341,6 +435,74 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     }
     const blocks = S.cheats[hit.h.key];
     return blocks ? json(res, m === "POST" ? 201 : 200, { artifact_id: id("a-ch-" + hit.h.key), kind: "cheatsheet", topic_id: null, hub_id: g[1], version: 1, offer: false, blocks }) : err(res, "NOT_FOUND", 404, "no cheat sheet yet");
+  }
+  // Skills of the learner: same rules as the backend (name `[\w-]{1,40}` unique, one skill per artifact type)
+  if ((g = p.match(/^\/v1\/learner-skills(?:\/([^/]+))?$/))) {
+    const list = (S.learnerSkills ??= []);
+    const view = (k) => ({ skill_id: k.skill_id, version: k.version, name: k.name, instruction: k.instruction, bindings: k.bindings });
+    const bad = (self, name, types) => {
+      if (!/^[\p{L}\p{N}_-]{1,40}$/u.test(name)) return [422, "VALIDATION_ERROR", "the name is 1-40 letters, digits, '_' or '-'"];
+      const other = list.find((k) => k.skill_id !== self && k.name === name);
+      if (other) return [409, "IDEMPOTENCY_CONFLICT", `the name /${name} is taken by another skill`];
+      const clash = list.find((k) => k.skill_id !== self && k.bindings.artifact_types.some((t) => types.includes(t)));
+      if (clash) return [409, "IDEMPOTENCY_CONFLICT", `${types.join(", ")} already has the skill /${clash.name}`];
+      return null;
+    };
+    if (m === "GET" && !g[1]) return json(res, 200, { skills: list.map(view) });
+    if (m === "POST" && !g[1]) {
+      const name = String(body.name ?? "").trim().toLowerCase().replace(/^\//, "");
+      const types = body.bindings?.artifact_types ?? [];
+      const e = bad(null, name, types);
+      if (e) return err(res, e[1], e[0], e[2]);
+      const k = { skill_id: id("sk-" + body.idempotency_key), version: 1, name, instruction: String(body.instruction ?? ""), bindings: { artifact_types: types } };
+      list.push(k);
+      return json(res, 201, view(k));
+    }
+    const k = list.find((x) => x.skill_id === g[1]);
+    if (!k) return err(res, "NOT_FOUND", 404, "skill not found");
+    if (m === "PATCH") {
+      const name = body.name == null ? k.name : String(body.name).trim().toLowerCase().replace(/^\//, "");
+      const types = body.bindings?.artifact_types ?? k.bindings.artifact_types;
+      const e = bad(k.skill_id, name, types);
+      if (e) return err(res, e[1], e[0], e[2]);
+      Object.assign(k, { name, instruction: body.instruction ?? k.instruction, bindings: { artifact_types: types }, version: k.version + 1 });
+      return json(res, 200, view(k));
+    }
+    if (m === "DELETE") {
+      S.learnerSkills = list.filter((x) => x !== k);
+      return json(res, 200, { skills: S.learnerSkills.map(view) });
+    }
+  }
+  // one card of a deck: new text (the card gets a new id and `owner: learner`, like the backend's successor task) or delete; both answer with the deck
+  if ((g = p.match(/^\/v1\/cards\/([^/]+)$/)) && (m === "PATCH" || m === "DELETE")) {
+    const deck = Object.values(S.decks ?? {}).find((d) => d.cards.some((c) => c.card_id === g[1]));
+    if (!deck) return err(res, "NOT_FOUND", 404, "no such card");
+    const i = deck.cards.findIndex((c) => c.card_id === g[1]);
+    if (m === "PATCH") {
+      if (!String(body.prompt ?? "").trim()) return err(res, "VALIDATION_ERROR", 422, "the text of the card is empty");
+      deck.cards[i] = { ...deck.cards[i], card_id: id(`card-edit-${g[1]}-${body.idempotency_key}`), prompt: String(body.prompt), owner: "learner" };
+    } else deck.cards.splice(i, 1);
+    deck.version += 1;
+    return json(res, 200, deck);
+  }
+  // "I know this" / "not needed": 202 with the seq of the event (the stub keeps no state for them)
+  if (m === "POST" && (g = p.match(/^\/v1\/topics\/([^/]+)\/(known|hide)$/))) {
+    S.seq += 1;
+    for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
+    return json(res, 202, { seq: S.seq });
+  }
+  // a chapter: deadline (PATCH), prep mode and the mark after the deadline (POST), all 202 with the seq of the event
+  if ((g = p.match(/^\/v1\/hubs\/([^/]+)(?:\/(prep-mode|grade))?$/)) && (m === "PATCH" || (m === "POST" && g[2]))) {
+    const hit = hubById(g[1]);
+    if (!hit || !hit.d.hubs.includes(hit.h)) return err(res, "NOT_FOUND", 404, "no such chapter");
+    if (m === "PATCH") hit.h.deadlineMs = body.deadline_at_ms ?? null;
+    if (g[2] === "grade") {
+      if (!body.grade || !body.scale || String(body.grade).length > 40 || String(body.scale).length > 40) return err(res, "VALIDATION_ERROR", 422, "grade and scale: 1-40 characters");
+      (S.graded ??= new Set()).add(hit.h.key);
+    }
+    S.seq += 1;
+    for (const r of streams) r.write(`event: projection_advanced\ndata: ${JSON.stringify({ applied_seq: S.seq })}\n\n`);
+    return json(res, 202, { seq: S.seq });
   }
   if ((g = p.match(/^\/v1\/artifacts\/([^/]+)\/blocks\/([^/]+)$/))) {
     for (const [key, blocks] of Object.entries(S.notes)) {
@@ -358,6 +520,52 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     const hits = [];
     for (const [sid, evs] of Object.entries(S.events)) for (const e of evs) if (typeof e.payload.text === "string" && e.payload.text.toLowerCase().includes(q)) hits.push({ seq: e.seq, session_id: sid, snippet: e.payload.text.slice(0, 160), type: e.type });
     return json(res, 200, { hits });
+  }
+
+  // a stroke chunk of the replay (a real backend serves a signed link of the object store): zstd over MessagePack
+  if ((g = p.match(/^\/_chunks\/([^/]+)\/(\d+)\.bin$/))) {
+    const buf = (S.chunks ?? {})[`${g[1]}/${g[2]}`];
+    if (!buf) return err(res, "NOT_FOUND", 404, "no such chunk");
+    res.writeHead(200, { "Content-Type": "application/octet-stream", "Access-Control-Allow-Origin": "*" });
+    return res.end(buf);
+  }
+  if ((g = p.match(/^\/v1\/canvases\/([^/]+)\/replay$/)) && m === "GET") {
+    if (!(S.canvases ?? []).some((x) => x.canvas_id === g[1])) return err(res, "NOT_FOUND", 404, "no such canvas");
+    const journal = (S.journal ?? {})[g[1]] ?? [];
+    // two chunks when there are several batches, so a later chunk can erase a stroke of an earlier one
+    const cut = journal.length > 1 ? Math.ceil(journal.length / 2) : journal.length;
+    const parts = [journal.slice(0, cut), journal.slice(cut)].filter((x) => x.length);
+    S.chunks ??= {};
+    const chunks = parts.map((batches, n) => {
+      const buf = zstdCompressSync(Buffer.from(encode({ batches: batches.map(toRawBatch) })));
+      S.chunks[`${g[1]}/${n}`] = buf;
+      return { url: `http://localhost:${PORT}/_chunks/${g[1]}/${n}.bin`, size: buf.length };
+    });
+    return json(res, 200, { chunks, expires_in_s: 60 });
+  }
+
+  // canvases (WP21): a canvas lives in a session; the doc has no strokes (they are in the journal), here it is empty
+  if ((g = p.match(/^\/v1\/sessions\/([^/]+)\/canvases$/)) && m === "POST") {
+    const s = S.sessions.find((x) => x.session_id === g[1]);
+    if (!s) return err(res, "NOT_FOUND", 404, "no such session");
+    const c = {
+      canvas_id: randomUUID(),
+      session_id: s.session_id,
+      task_id: body.task_id ?? null,
+      doc: { blocks: [], learner: { drawings: [], typed_formulas: [] }, teacher: { hints: [], marks: [], scaffolds: [], visualizations: [] } },
+      version: 1,
+      updated_at: now(),
+    };
+    (S.canvases ??= []).push(c);
+    return json(res, 201, c);
+  }
+  if ((g = p.match(/^\/v1\/canvases\/([^/]+)$/)) && m === "GET") {
+    const c = (S.canvases ?? []).find((x) => x.canvas_id === g[1]);
+    return c ? json(res, 200, c) : err(res, "NOT_FOUND", 404, "no such canvas");
+  }
+  if ((g = p.match(/^\/v1\/domains\/([^/]+)\/canvases$/)) && m === "GET") {
+    const ids = new Set(S.sessions.filter((s) => s.domain_id === g[1]).map((s) => s.session_id));
+    return json(res, 200, { canvases: (S.canvases ?? []).filter((c) => ids.has(c.session_id)).reverse() });
   }
 
   // sessions
@@ -388,4 +596,5 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
   err(res, "NOT_FOUND", 404, `stub: no route ${m} ${p}`);
 });
 
+server.on("upgrade", onUpgrade);
 server.listen(PORT, () => console.log(`Quack stub API on http://localhost:${PORT}  scenario=${SCENARIO}`));

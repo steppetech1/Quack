@@ -157,10 +157,15 @@ _MISSING = frozenset({"NoSuchKey", "404"})
 
 @asynccontextmanager
 async def _unavailable_on_failure() -> AsyncIterator[None]:
-    """Connection errors, timeouts and 5xx of the storage → `StorageUnavailable`."""
+    """Connection errors, timeouts and 5xx of the storage → `StorageUnavailable`. A `ValueError`
+    here is aiobotocore rejecting the client configuration itself (for example
+    `endpoint_url=""`, raised by `create_endpoint` on first use): storage that cannot be
+    reached because it is unset is "does not answer" the same as a connection failure, so it
+    gets the same `StorageUnavailable` (Т-§20.7) instead of crashing the caller (WS canvas
+    socket included)."""
     try:
         yield
-    except (BotoCoreError, OSError) as exc:
+    except (BotoCoreError, OSError, ValueError) as exc:
         raise StorageUnavailable(f"object storage request failed: {exc!r}") from exc
     except ClientError as exc:
         status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))

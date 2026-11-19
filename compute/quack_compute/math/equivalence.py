@@ -138,11 +138,19 @@ def _equal(
 
 
 def _up_to_constant(a: sympy.Expr, b: sympy.Expr, rng: random.Random, params: Params) -> Equivalent:
-    symbols = _symbols(a, b)
-    if not symbols:
+    # `a` is the learner's answer, `b` the reference. Symbols that only the answer has (`C`) are
+    # the constant; the difference must not depend on any symbol of the reference. Taking the
+    # alphabetically first symbol of both would differentiate by `C` itself.
+    variables = _symbols(b) or _symbols(a)
+    if not variables:
         raise _Unsupported("up_to_constant needs a variable")
-    variable = symbols[0]
-    return _equal(sympy.diff(a, variable), sympy.diff(b, variable), rng, params, hint=False)
+    numeric_only = False
+    for variable in variables:
+        result = _equal(sympy.diff(a, variable), sympy.diff(b, variable), rng, params, hint=False)
+        if not result.equivalent:
+            return result
+        numeric_only = numeric_only or result.numeric_only
+    return Equivalent(True, numeric_only=numeric_only)
 
 
 def _solution_sets(a: Any, b: Any, rng: random.Random, params: Params) -> Result:

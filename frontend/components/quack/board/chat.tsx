@@ -2,10 +2,13 @@
 
 import { ChevronUp, SendHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { askTeacher } from "@/lib/api/canvases";
+import { ApiError, get, type S } from "@/lib/api/client";
 import { useMocks, useT } from "@/lib/i18n/provider";
 import type { ChatMsg, ChatPart } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { Duck } from "../duck";
+import { useErrorText } from "../live/error-text";
 import { Inline } from "../rich-text";
 import { useSoon } from "../soon";
 
@@ -33,10 +36,12 @@ function Parts({ parts, onJump }: { parts: ChatPart[]; onJump: (ref: string) => 
 }
 
 /** Разговор с учителем про канвас: свёрнутая строка внизу и панель с историей */
-export function BoardChat({ canvasId, onJump }: { canvasId: string; onJump: (ref: string) => void }) {
+export function BoardChat({ canvasId, sessionId, onJump }: { canvasId: string; sessionId?: string; onJump: (ref: string) => void }) {
   const tx = useT();
+  const errorText = useErrorText();
   const { canvasChat, canvasReplies, genericReply } = useMocks();
   const soon = useSoon();
+  const live = !!sessionId; // a canvas of the backend: the answer is a real turn of the session
   const known = canvasId in canvasChat;
   const [msgs, setMsgs] = useState<ChatMsg[]>(canvasChat[canvasId] ?? []);
   const [open, setOpen] = useState(false);
@@ -44,6 +49,68 @@ export function BoardChat({ canvasId, onJump }: { canvasId: string; onJump: (ref
   const thread = useRef<HTMLDivElement>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const replyN = useRef(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const abort = useRef<AbortController | null>(null);
+
+  // the conversation so far: the feed of the session (text is in `message.sent` and `turn.committed`)
+  useEffect(() => {
+    if (!sessionId) return;
+    let off = false;
+    get<S["SessionDetail"]>(`/v1/sessions/${sessionId}`)
+      .then((d) => {
+        if (off) return;
+        const past: ChatMsg[] = [];
+        for (const ev of d.events) {
+          const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
+          if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", parts: [text.replace(/\$/g, "")] });
+          else if (ev.type === "turn.committed" && text) past.push({ id: `e-${ev.seq}`, role: "teacher", parts: [text] });
+        }
+        // what was typed while this loaded stays after the history
+        setMsgs((m) => [...past, ...m]);
+      })
+      .catch(() => {});
+    return () => {
+      off = true;
+    };
+  }, [sessionId]);
+  useEffect(() => () => abort.current?.abort(), []);
+
+  const ask = async (v: string) => {
+    if (!sessionId) return;
+    const ctl = new AbortController();
+    abort.current = ctl;
+    const tid = `t${Date.now()}`;
+    let reply = "";
+    const show = () =>
+      setMsgs((m) => {
+        const rest = m.filter((x) => x.id !== tid);
+        return reply ? [...rest, { id: tid, role: "teacher", parts: [reply] }] : rest;
+      });
+    setBusy(true);
+    setError(null);
+    try {
+      await askTeacher(
+        sessionId,
+        canvasId,
+        v,
+        ({ event, data }) => {
+          if (event === "token") {
+            reply += String(data.text ?? "");
+            show();
+          } else if (event === "reset") {
+            reply = "";
+            show();
+          } else if (event === "error") throw new ApiError(500, String(data.code ?? "ERROR"), String(data.message ?? ""));
+        },
+        ctl.signal,
+      );
+    } catch (e) {
+      if (!ctl.signal.aborted) setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? tx.live.turnLocked : errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     const ts = timers.current;
@@ -66,11 +133,15 @@ export function BoardChat({ canvasId, onJump }: { canvasId: string; onJump: (ref
   const send = (e: React.FormEvent) => {
     e.preventDefault();
     const v = text.trim();
-    if (!v) return;
+    if (!v || busy) return;
     const id = `u${Date.now()}`;
     setMsgs((m) => [...m, { id, role: "student", parts: [v.replace(/\$/g, "")] }]);
     setText("");
     setOpen(true);
+    if (live) {
+      void ask(v);
+      return;
+    }
     if (!known) {
       soon(tx.board.chat.newSoon);
       return;
@@ -127,6 +198,11 @@ export function BoardChat({ canvasId, onJump }: { canvasId: string; onJump: (ref
           </button>
         )
       )}
+      {error && (
+        <p role="alert" className="px-4 pt-2 text-small text-st-confused">
+          {error}
+        </p>
+      )}
       <form onSubmit={send} className="flex items-center gap-1.5 p-2 pl-2.5">
         <button
           type="button"
@@ -147,7 +223,7 @@ export function BoardChat({ canvasId, onJump }: { canvasId: string; onJump: (ref
         <button
           type="submit"
           aria-label={tx.board.chat.send}
-          disabled={!text.trim()}
+          disabled={!text.trim() || busy}
           className="inline-flex size-10 shrink-0 items-center justify-center rounded-pill bg-ribbon text-on-ribbon transition-colors duration-(--dur-s) ease-out enabled:hover:bg-ribbon-hover disabled:cursor-default disabled:bg-cloth-hover disabled:text-paper-dim"
         >
           <SendHorizontal aria-hidden className="size-[18px]" />

@@ -9,6 +9,10 @@ export const API_MODE = process.env.NEXT_PUBLIC_QUACK_API === "1";
 /** Requests go through the Next.js proxy (`next.config.ts` rewrites `/api/*` to the backend), so no CORS */
 const BASE = "/api";
 
+/** A direct backend URL for a resource fetched by the browser itself (an `<iframe src>`, for example),
+ * through the same proxy and cookie auth as every other request. */
+export const apiUrl = (path: string) => BASE + path;
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -89,6 +93,13 @@ export type ResponseOf<P extends string, M extends WriteMethod> =
     : never;
 /** The body argument is optional only where the endpoint takes none */
 type BodyArg<P extends string, M extends WriteMethod> = undefined extends BodyOf<P, M> ? [body?: BodyOf<P, M>] : [body: BodyOf<P, M>];
+
+/** A file to the backend (multipart): the browser sets the boundary, so no Content-Type here */
+export async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(BASE + path, { method: "POST", body: form });
+  if (!res.ok) throw await toError(res);
+  return (await res.json()) as T;
+}
 
 export const get = <T>(path: string) => api<T>("GET", path);
 export const post = <P extends WritePath<"post">>(path: P, ...[body]: BodyArg<P, "post">) =>

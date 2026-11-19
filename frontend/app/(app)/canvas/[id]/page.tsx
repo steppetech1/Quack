@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { CanvasView } from "@/components/quack/canvas-view";
+import { CanvasLive } from "@/components/quack/live/canvas-live";
+import { API_MODE } from "@/lib/api/client";
 import { getDict, getLocale, getMocks } from "@/lib/i18n/server";
 
 
@@ -27,6 +29,7 @@ export default function CanvasRoute({ params }: PageProps<"/canvas/[id]">) {
 
 async function Inner({ params }: { params: PageProps<"/canvas/[id]">["params"] }) {
   const { id } = await params;
+  if (API_MODE) return <CanvasLive id={id} />;
   if (!getMocks(await getLocale()).getCanvas(id)) notFound();
   return <CanvasView id={id} />;
 }

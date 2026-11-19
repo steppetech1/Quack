@@ -147,6 +147,30 @@ async def test_a_live_file_named_by_any_source_is_never_deleted(
     assert (lost in store.objects) is (not apply)
 
 
+async def test_an_illustration_named_only_by_agent_completed_is_kept(pg_db: Db) -> None:
+    """`illustrations/` has no column and no key helper in `storage/keys.py`: the file is named
+    only by `agent.completed.result_ref`, which the `events` source finds (D-C-241, Q-C-1)."""
+    learner = await create_learner(pg_db)
+    store = InMemoryObjectStore()
+    kept = f"learners/{learner}/illustrations/{uuid4()}-01J0.png"
+    lost = f"learners/{learner}/illustrations/{uuid4()}-01J1.png"
+    await pg_db.execute(
+        "INSERT INTO core.events (learner_id, seq, type, schema_version, actor, "
+        "idempotency_key, payload_hash, occurred_at, payload) "
+        "VALUES (%(l)s, 1, 'agent.completed', 1, 'system', 'k-ill', 'h', now(), "
+        "jsonb_build_object('ok', true, 'result_ref', %(k)s::text))",
+        {"l": learner, "k": kept},
+    )
+    await _put(store, kept)
+    await _put(store, lost)
+
+    report = await orphan_objects(pg_db, store, LONG_AGO, apply=True)
+
+    assert report.orphans == [lost]
+    assert kept in store.objects
+    assert lost not in store.objects
+
+
 async def test_orphan_objects_lists_what_postgres_does_not_know(pg_db: Db) -> None:
     """T-OPS4: an object newer than the mark without a reference is listed; with a reference,
     not; an older one is not looked at. Without `apply` nothing is deleted (D-C-215)."""

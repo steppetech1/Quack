@@ -411,17 +411,29 @@ async def serve_canvas(
     except WebSocketDisconnect:
         pass
     finally:
-        if pending:  # lines already sent are still recognized and written
-            await asyncio.gather(*pending, return_exceptions=True)
-        if ticking is not None:
-            ticking.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await ticking
-        if relay is not None:
-            relay.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await relay
-        await journal.flush()  # the client is gone: written, but nobody to acknowledge
+        try:
+            if pending:  # lines already sent are still recognized and written
+                await asyncio.gather(*pending, return_exceptions=True)
+            await stop_task(ticking, canvas_id=canvas.canvas_id)
+            await stop_task(relay, canvas_id=canvas.canvas_id)
+        finally:
+            await journal.flush()  # the client is gone: written, but nobody to acknowledge
+
+
+async def stop_task(task: asyncio.Task[Any] | None, *, canvas_id: UUID) -> None:
+    """Cancel a helper task of the socket and wait for it without raising.
+
+    A task that has already ended with an error (the relay sending on a closed socket, a DB
+    error in the ticker) would re-raise it on `await`; then the stroke batches still waiting
+    in the journal would never be written. The error is logged instead."""
+    if task is None:
+        return
+    task.cancel()
+    (outcome,) = await asyncio.gather(task, return_exceptions=True)
+    if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
+        log.warning(
+            "canvas_socket_task_failed", canvas_id=str(canvas_id), error=type(outcome).__name__
+        )
 
 
 def _mark_message(line_id: str, kind: str | None) -> dict[str, Any]:

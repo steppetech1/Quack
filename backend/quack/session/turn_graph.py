@@ -76,6 +76,8 @@ from quack.session.elements import TASK_ELEMENT_KINDS, Element
 from quack.session.guards import (
     Boundary,
     GuardViolation,
+    drop_unknown_head_labels,
+    drop_unknown_markup_labels,
     head_violations,
     markup_violations,
     settle_stance,
@@ -260,7 +262,9 @@ class _Attempt:
             raise _HeadRejected(violations)
         if violations:
             log.warning("guard_violation", rule="head", reasons=[v.reason for v in violations])
-        self.head = settle_stance(head, guard.answered_verdict)
+        self.head = drop_unknown_head_labels(
+            settle_stance(head, guard.answered_verdict), guard.skill_labels
+        )
         self.head_violations = violations
         self.head_checked = True
         pending, self._pending = self._pending, []
@@ -458,6 +462,15 @@ async def _guard(state: _State, config: RunnableConfig) -> _Update:
         return _retry(run, state, violations)
     if violations:
         log.warning("guard_violation", rule="markup", reasons=[v.reason for v in violations])
+        output = output.model_copy(
+            update={
+                "p3_markup": drop_unknown_markup_labels(
+                    output.p3_markup,
+                    skill_labels=guard.skill_labels,
+                    misconception_labels=guard.misconception_labels,
+                )
+            }
+        )
     text = attempt.body
     if attempt.spoiled:
         output = _without_spoiler(output, guard.remove_spoiler)

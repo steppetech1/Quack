@@ -2,10 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
+import { apiUrl, ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
 import { useT } from "@/lib/i18n/provider";
+import { skillInvocation } from "@/lib/skills";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { Composer } from "../composer";
@@ -17,7 +18,7 @@ import { useErrorText } from "./error-text";
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
 
-type Line = { id: string; role: "student" | "teacher"; text: string; degraded?: string | null };
+type Line = { id: string; role: "student" | "teacher"; text: string; degraded?: string | null; interrupted?: boolean };
 /** An interactive element of a turn (task, question…): comes as an `element` frame and is answered with an `element_response` action */
 type Elem = { blockId: string; element: S["Element"]; turnSeq: number | null; answered: boolean };
 type Outcome = "correct" | "incorrect" | "partial" | "unclear";
@@ -131,7 +132,8 @@ export function SessionLive({ id }: { id: string }) {
         if (fresh.length) setElems((e) => [...e.map((x) => ({ ...x })), ...fresh.map((x) => ({ ...x, turnSeq: committed }))]);
       } catch (e) {
         setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e));
-        if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply }]);
+        // what was already shown stays on screen, marked: this part is not committed and is gone after a reload
+        if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply, interrupted: true }]);
       } finally {
         setStreaming(null);
         setThinking(false);
@@ -142,7 +144,7 @@ export function SessionLive({ id }: { id: string }) {
     [busy, id, t.turnLocked, errorText],
   );
 
-  const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text }, text) : undefined), [act]);
+  const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
 
   const respond = (el: Elem, response: string) => {
     if (!response.trim() || el.turnSeq === null) return;
@@ -161,12 +163,23 @@ export function SessionLive({ id }: { id: string }) {
         // a session opened from a topic page becomes the active one in the sessions panel
         if (d.status === "active") setActive(d);
         const past: Line[] = [];
+        const pastElems: Elem[] = [];
         for (const ev of d.events) {
           const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
           if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
-          else if (ev.type === "turn.committed" && text) past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null });
+          else if (ev.type === "turn.committed" && text) {
+            past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null });
+            // committed elements carry `request_id` (resolved from the live frame's `R…` label, ТЗ §12.3): the only
+            // point a `visualization` element becomes renderable, so history is where it actually shows up
+            const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
+            for (const el of markup?.elements ?? []) {
+              const e = el as { element_id?: string; kind?: string };
+              if (e.kind) pastElems.push({ blockId: `e-${ev.seq}-${e.element_id}`, element: e as S["Element"], turnSeq: ev.seq, answered: false });
+            }
+          }
         }
         setLines(past);
+        if (pastElems.length) setElems((cur) => [...pastElems, ...cur]);
         scrollDown();
       })
       .catch((e) => {
@@ -276,6 +289,7 @@ export function SessionLive({ id }: { id: string }) {
               <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper">
                 <RichText text={l.text} />
                 {l.degraded && <p className="mt-2 text-small text-paper-dim">{t.degraded}</p>}
+                {l.interrupted && <p className="mt-2 text-small text-paper-dim">{t.interrupted}</p>}
               </article>
             ),
           )}
@@ -325,8 +339,9 @@ export function SessionLive({ id }: { id: string }) {
 function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean; onRespond: (text: string) => void }) {
   const tx = useT();
   const [text, setText] = useState("");
-  const e = el.element as { kind: string; prompt?: string };
+  const e = el.element as { kind: string; prompt?: string; request?: string | null; request_id?: string | null; plot?: unknown };
   const answerable = ANSWERABLE.has(e.kind) && el.turnSeq !== null;
+  const viz = e.kind === "visualization" ? e : null;
   return (
     <section aria-label={tx.live.taskFromTeacher} className="rounded-[2px] border border-seam p-4">
       <p className="caps text-paper-dim">{e.kind === "task" ? tx.live.taskFromTeacher : e.kind.replace(/_/g, " ")}</p>
@@ -335,6 +350,19 @@ function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean;
           <RichText text={e.prompt} />
         </div>
       )}
+      {viz &&
+        // `request_id` is resolved only once the turn is committed (ТЗ §12.3): a live `element` frame still
+        // carries the raw `request` label and has nothing fetchable yet (Д-B-178 serves by `request_id`)
+        (viz.request_id ? (
+          <iframe
+            src={apiUrl(`/v1/viz/${viz.request_id}`)}
+            sandbox="allow-scripts"
+            title={tx.live.taskFromTeacher}
+            className="mt-2 h-80 w-full rounded-[2px] border border-seam-soft bg-paper"
+          />
+        ) : (
+          <p className="mt-2 text-small text-paper-dim">{viz.plot ? tx.live.vizPlotUnsupported : tx.live.vizPreparing}</p>
+        ))}
       {answerable && (
         <form
           className="mt-3"

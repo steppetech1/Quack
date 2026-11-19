@@ -8,7 +8,7 @@ import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useT } from "@/lib/i18n/provider";
-import { MOCK_TODAY } from "@/lib/mock";
+import { todayIso } from "@/lib/format";
 import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
@@ -174,7 +174,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sessions: Session[] =
     // С бэкендом новая сессия появляется в списке сама, как только создана
     pending && !API_MODE && domain.id === SESSION_DOMAIN
-      ? [{ id: "new", href: "/session/new", date: MOCK_TODAY, title: pending, topics: [] }, ...domain.sessions]
+      ? [{ id: "new", href: "/session/new", date: todayIso(), title: pending, topics: [] }, ...domain.sessions]
       : domain.sessions;
 
   const toggleSessions = () =>
@@ -216,11 +216,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
             {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
-              <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
-                <PanelLeft />
-              </IconButton>
-              <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
-              {!noSessions && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
+              {pathname !== "/" && (
+                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
+                  <PanelLeft />
+                </IconButton>
+              )}
+              <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
+              {/* на телефоне кнопка меню в верхней полосе */}
+              <div ref={barToggle} data-menu-anchor className="ml-auto">
+                <MenuToggle
+                  open={menuOpen}
+                  onClick={() => (menuOpen ? closeMenu() : openMenu(barToggle.current?.querySelector("button") ?? null))}
+                  labelOpen={t.menu.open}
+                  labelClose={t.menu.close}
+                />
+              </div>
+              {!inSettings && <IconButton label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
                 <History />
               </IconButton>}
             </div>}

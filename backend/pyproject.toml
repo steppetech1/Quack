@@ -9,6 +9,7 @@ dependencies = [
     "authlib>=1.9.2",
     "fastapi>=0.162.0",
     "fsrs==6.3.2",
+    "genanki>=0.13.1",
     "httpx>=0.28.1",
     "langchain-core>=1.7.4",
     "langgraph>=1.2.19",

@@ -34,3 +34,6 @@ backend/quack/prompts/**/*.md text eol=lf
 
 # pinned third-party libraries are served byte for byte (deploy/static/viz/SHA256SUMS)
 deploy/static/viz/** -text
+
+# the KaTeX copy of the compute image is served byte for byte too (compute/tests/test_render_math_wp23_5.py)
+compute/quack_compute/katex/** -text

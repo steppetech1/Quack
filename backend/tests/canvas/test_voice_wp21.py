@@ -350,3 +350,32 @@ async def test_voice_refusals_leave_no_trace(
 
     assert await _voice_events(pg_db, learner) == []
     assert await _voice_events(pg_db, stranger) == []
+
+
+async def test_voice_over_the_upload_limit_is_413_before_any_call(
+    pg_db: Db, settings: Settings, store: InMemoryObjectStore, provider: ScriptedLLMProvider
+) -> None:
+    """Т-§19.8: a segment larger than `upload_max_mb` is 413 `UPLOAD_REJECTED`, as a photo, and
+    is never decoded or sent to the model; no event is written."""
+    limited = settings.model_copy(update={"upload_max_mb": 1})
+    resources = build_app_resources(
+        limited, None, None,
+        db=pg_db, provider=provider, storage=store,
+    )  # fmt: skip
+    app = create_app(limited, resources=resources)
+    learner = await create_learner(pg_db)
+    session_id = await _session(pg_db, learner)
+    laptop = await _cookie(pg_db, limited, learner)
+    big = WAV + b"\x00" * (1024 * 1024)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as test_client:
+        answer = await test_client.post(
+            f"/v1/sessions/{session_id}/voice",
+            data=_form(),
+            files={"audio": ("s.wav", big, "audio/wav")},
+            headers=laptop,
+        )
+    assert answer.status_code == 413 and answer.json()["error"]["code"] == "UPLOAD_REJECTED"
+    assert provider.transcribe_calls == []
+    assert await _voice_events(pg_db, learner) == []

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { NewCanvasView } from "@/components/quack/canvas-view";
+import { NewCanvasLive } from "@/components/quack/live/canvas-live";
+import { API_MODE } from "@/lib/api/client";
 import { getDict, getLocale } from "@/lib/i18n/server";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -8,5 +10,5 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default function NewCanvasRoute() {
-  return <NewCanvasView />;
+  return API_MODE ? <NewCanvasLive /> : <NewCanvasView />;
 }
