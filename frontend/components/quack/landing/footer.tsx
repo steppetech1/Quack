@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useT } from "@/lib/i18n/provider";
-import { onAnchor } from "./scenes/story";
 
 const LINK =
   "inline-flex min-h-10 items-center rounded-[6px] font-mono text-[0.9375rem] text-[#bba995] outline-none transition-colors duration-(--dur-s) hover:text-[#f6eadc] focus-visible:ring-2 focus-visible:ring-[#ff8a2a]/60";
@@ -35,11 +34,14 @@ export function LandingFooter() {
           </div>
           <nav aria-label={t.footer.product} className="flex flex-col items-start">
             <p className="mb-2 text-[0.8125rem] text-[#8d8273]">{t.footer.product}</p>
-            <a href="#efficiency" onClick={onAnchor("efficiency")} className={LINK}>
+            <a href="#compare" className={LINK}>
               {t.nav.why}
             </a>
-            <a href="#how" onClick={onAnchor("how")} className={LINK}>
+            <a href="#pluses" className={LINK}>
               {t.nav.pluses}
+            </a>
+            <a href="#features" className={LINK}>
+              {t.nav.features}
             </a>
           </nav>
           <nav aria-label={t.footer.account} className="flex flex-col items-start">

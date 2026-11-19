@@ -143,21 +143,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const openMenu = useCallback((el: HTMLElement | null) => {
-    menuOpener.current = el;
-    const r = el?.getBoundingClientRect();
-    setMenuAnchor(r ? { left: r.left, top: r.top } : null);
-    setMenuOpen(true);
-  }, []);
-  const closeMenu = useCallback(() => setMenuOpen(false), []);
-
-  // любой переход (в том числе «назад») закрывает меню
-  const [menuPath, setMenuPath] = useState(pathname);
-  if (menuPath !== pathname) {
-    setMenuPath(pathname);
-    setMenuOpen(false);
-  }
-
   const selectDomain = (id: string) => {
     setDomainId(id);
     setGraphMode({ kind: "overview" });

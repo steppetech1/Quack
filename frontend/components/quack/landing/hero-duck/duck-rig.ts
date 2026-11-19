@@ -30,10 +30,6 @@ export type DuckPose = {
   flap: number;
   /** Время, с: дыхание и мелкие движения */
   time: number;
-  /** 0..1: полёт — крылья раскрыты и машут, шея вытянута вперёд, лапы поджаты. Без неё утка стоит */
-  flight?: number;
-  /** Подъём над землёй, мировые единицы (в полёте — покачивание) */
-  y?: number;
 };
 
 export const GROUND = -0.82; // короткие лапы: у настоящей утки видна только цевка
@@ -183,8 +179,7 @@ export function createDuckRig(): DuckRig {
     }
     bodyGeo.setAttribute("color", new THREE.BufferAttribute(col, 3));
   }
-  const bodyMesh = mesh(bodyGeo, bodyMat);
-  body.add(bodyMesh);
+  body.add(mesh(bodyGeo, bodyMat));
 
   // хвост
   const tail = new THREE.Group();
@@ -228,27 +223,6 @@ export function createDuckRig(): DuckRig {
   };
   const wingNear = makeWing(1);
   const wingFar = makeWing(-1);
-
-  // раскрытые крылья для полёта: размах вдоль Z, к кончику сужаются и загибаются вверх и назад
-  const SPAN = 1.55;
-  const flightWingMat = mat(0x0000e8, 0.8); // ярче сложенного крыла: раскрытое освещено сверху и спереди
-  const makeSpread = (side: 1 | -1) => {
-    const g = blob(0.5, 0.04, SPAN, (v) => {
-      const t = clamp01((v.z * side + SPAN) / (2 * SPAN)); // 0 — у корпуса, 1 — кончик
-      v.x = v.x * (1 - 0.5 * t) - 0.34 * t * t; // хорда сужается, задняя кромка уходит назад
-      v.y += 0.14 * t * t; // кончик чуть загнут вверх
-      v.y += 0.03 * Math.sin(v.x * 14 + v.z * side * 3) * t; // перьевая рябь
-    }, 64, 0.02, 3, 3.1);
-    g.translate(0, 0, side * SPAN); // корень крыла — в начале координат
-    const pivot = new THREE.Group();
-    pivot.position.set(0.28, 0.36, 0.22 * side);
-    pivot.add(mesh(g, flightWingMat));
-    body.add(pivot);
-    pivot.visible = false;
-    return pivot;
-  };
-  const spreadNear = makeSpread(1);
-  const spreadFar = makeSpread(-1);
 
   // --- шея и голова ---
   const neck = new THREE.Group();
@@ -371,34 +345,6 @@ export function createDuckRig(): DuckRig {
     const beat = Math.sin(p.time * 22) * flap;
     wingNear.rotation.x = -(0.9 * flap + 0.4 * beat);
     wingFar.rotation.x = 0.9 * flap + 0.4 * beat;
-
-    // полёт: поверх обычной позы. Сложенные крылья убираются, раскрытые машут (вверх до ~65°, вниз ниже корпуса)
-    const f = p.flight ?? 0;
-    root.position.y = p.y ?? 0;
-    const flying = f > 0.02;
-    bodyMesh.scale.set(1, 1 - 0.3 * f, 1 - 0.24 * f); // в полёте корпус стройнее: вытянутый, а не «шар»
-    spreadNear.visible = flying;
-    spreadFar.visible = flying;
-    wingNear.visible = f < 0.5;
-    wingFar.visible = f < 0.5;
-    if (flying) {
-      // взмахи сериями: несколько неспешных (~1,5 в секунду), потом парение с поднятыми и почти неподвижными крыльями
-      const m = (p.time % 4.4) / 4.4; // цикл 4,4 с: первая половина — взмахи, вторая — парение
-      const env = Math.sin(Math.PI * Math.min(1, m / 0.5)) * (m < 0.5 ? 1 : 0); // 0..1..0 в первой половине цикла
-      const w = Math.sin(p.time * 9.4) * env;
-      const up = 0.3 + 0.85 * w + 0.04 * Math.sin(p.time * 1.7); // в парении крылья чуть приподняты и еле заметно играют
-      for (const [sp, sd] of [[spreadNear, 1], [spreadFar, -1]] as const) {
-        sp.scale.setScalar(Math.max(0.001, f));
-        sp.rotation.x = -sd * up * f;
-        sp.rotation.y = -0.16 * sd * f; // крыло чуть подано вперёд
-      }
-      body.position.y += 0.14 * w * f; // корпус вздымается с каждым взмахом
-      body.rotation.z = body.rotation.z * (1 - f) + (0.04 - 0.07 * w) * f;
-      neck.rotation.z = neck.rotation.z * (1 - f) - 1.18 * f;
-      head.rotation.z = head.rotation.z * (1 - f) + (1.18 - 0.08 + p.headPitch) * f;
-      tail.rotation.z = tail.rotation.z * (1 - f) - 0.02 * f;
-    }
-    for (const leg of legs) leg.hip.scale.setScalar(Math.max(0.001, 1 - f)); // в полёте лапы поджаты
 
     // ноги: бедро привязано к корпусу, стопа — к земле; голень тянется, когда утка поднимается
     for (const leg of legs) {

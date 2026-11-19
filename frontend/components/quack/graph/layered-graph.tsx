@@ -6,9 +6,9 @@ import { useRouter } from "next/navigation";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { GAP_X, GAP_Y, layoutGraph, loadPositions, savePositions } from "@/lib/graph/layout";
 import { onGraph, type GraphModel, type GraphTopic } from "@/lib/graph/types";
-import { clearIndicators, flashIndicator, getIndicators, getIndicatorsServer, publishIndicators, subscribeIndicators, unmountIndicators } from "@/lib/graph/indicator-store";
+import { clearIndicators, getIndicators, getIndicatorsServer, publishIndicators, subscribeIndicators, unmountIndicators } from "@/lib/graph/indicator-store";
 import { computeIndicators, INDICATORS, type IndicatorId } from "@/lib/graph/indicators";
-import { enterDomain, getVisit, LEARNER, leaveDomain, saveAllVisits, subscribeVisit, takeBlink, updateDomain } from "@/lib/graph/visit-store";
+import { enterDomain, getVisit, LEARNER, leaveDomain, saveAllVisits, subscribeVisit, updateDomain } from "@/lib/graph/visit-store";
 import { loadCamera, restoreCenter, saveCamera, type SavedCamera } from "@/lib/graph/visit";
 import { useT } from "@/lib/i18n/provider";
 import type { Domain, TopicState } from "@/lib/mock/types";
@@ -23,8 +23,9 @@ type Colors = Record<"paper" | "dim" | "ribbon" | "cloth" | TopicState, string> 
 type Arrow = { id: string; dir: "up" | "down" | "left" | "right"; ind: IndicatorId; n: number; x: number; y: number; key: string };
 const IND_VAR: Record<IndicatorId, string> = { new: "var(--ind-new)", relevant: "var(--ind-relevant)", deadline: "var(--ind-deadline)", weak: "var(--ind-weak)", review: "var(--ind-review)" };
 
-/** The card of a topic opens this long after the pointer comes to it (ms): a pointer passing by does not flash cards */
-const CARD_DELAY = 220;
+/** The forms of the canvas rings, as far as a CSS border can draw them: for the left column, which has no canvas node */
+const RING_STYLE: Record<IndicatorId, string> = { new: "solid", relevant: "dashed", deadline: "solid", weak: "double", review: "dotted" };
+
 const K_MIN = 0.04;
 const K_MAX = 2.4;
 const FIT_K_MAX = 1.2;
@@ -139,7 +140,6 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
   const activeRef = useRef<ReadonlySet<IndicatorId>>(new Set());
   const before = useRef<View | null>(null);
   const prevActive = useRef<ReadonlySet<IndicatorId>>(new Set());
-  const prevBlink = useRef(false);
   const arrowSig = useRef("");
   const arrowAt = useRef(0);
   const camTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -151,11 +151,6 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
   const loop = useRef<FrameRequestCallback>(() => {});
   const colors = useRef<Colors | null>(null);
   const hoverKey = useRef<string | null>(null);
-  const showTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  /** A card is on screen: moving to the next topic swaps it at once, only the first one waits */
-  const cardOn = useRef(false);
-  /** Where the pointer is over the canvas (null: not over it, or dragging). Topics near it show their names */
-  const pointer = useRef<Pt | null>(null);
   const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const fitted = useRef(false);
@@ -535,7 +530,7 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
     const unit = GAP_X * k;
     const fadeTopic = smooth(40, 78, unit);
     const fadeHub = smooth(8, 26, unit);
-    type Label = { key: string; text: string; x: number; y: number; above: boolean; prio: number; away?: number; fade: number; deg: number; fill: string; font: string };
+    type Label = { key: string; text: string; x: number; y: number; above: boolean; prio: number; fade: number; deg: number; fill: string; font: string };
     const labels: Label[] = [];
     const hubFont = `500 12px ${col.label}`;
     const topicFont = `400 11px ${col.body}`;
@@ -555,15 +550,9 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
       const hot = n.key === hovered;
       // The label of a node an indicator lights is shown at any zoom
       const pin = marks.current.has(n.key);
-      // Near the pointer a name shows at any zoom. The reach follows the spacing of the nodes on screen (about two steps),
-      // so only a few names come at once, and the label pass below keeps every name off the others: nearest first, none on top of another
-      const ptr = pointer.current;
-      const away = ptr ? Math.hypot(x - ptr.x, y - ptr.y) : Infinity;
-      const reach = clamp(GAP_X * k * 2.2, 60, 130);
-      const closeBy = 1 - smooth(reach * 0.55, reach, away);
-      labels.push({ key: n.key, text: t.name, x, y: y + rT + 4, above: false, prio: pin ? 3 : hot ? 2 : closeBy > 0 ? 2 : 1, away, fade: pin || hot ? 1 : Math.max(fadeTopic, closeBy), deg: links.degree.get(n.id) ?? 0, fill: hot ? col.paper : col.dim, font: topicFont });
+      labels.push({ key: n.key, text: t.name, x, y: y + rT + 4, above: false, prio: pin ? 3 : hot ? 2 : 1, fade: pin || hot ? 1 : fadeTopic, deg: links.degree.get(n.id) ?? 0, fill: hot ? col.paper : col.dim, font: topicFont });
     }
-    labels.sort((a, b) => b.prio - a.prio || (a.away ?? Infinity) - (b.away ?? Infinity) || b.deg - a.deg || (a.key < b.key ? -1 : 1));
+    labels.sort((a, b) => b.prio - a.prio || b.deg - a.deg || (a.key < b.key ? -1 : 1));
     // Boxes already taken, in a coarse grid so a crowded graph stays cheap
     const CELL = 80;
     const grid = new Map<string, { x0: number; y0: number; x1: number; y1: number }[]>();
@@ -827,14 +816,6 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
   }, [model.domainId, selections]);
   useEffect(() => () => unmountIndicators(model.domainId), [model.domainId]);
 
-  // Coming to the graph after something changed: "New" blinks for a moment, so the learner knows the graph was updated
-  // The blink belongs to the entry only: it is spent at the first look even when there is nothing to show, so a change that
-  // comes while the learner is here does not blink (it pulses on the graph instead)
-  useEffect(() => {
-    if (!visit.entered || !takeBlink(model.domainId)) return;
-    if (visit.baseline && selections.new.topics.length + selections.new.hubs.length > 0) flashIndicator("new");
-  }, [model.domainId, visit, selections]);
-
   useEffect(() => {
     const m = new Map<string, IndicatorId[]>();
     for (const id of ind.active) {
@@ -851,9 +832,7 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
   useEffect(() => {
     const act = ind.active;
     const was = prevActive.current;
-    const wasBlink = prevBlink.current;
     prevActive.current = act;
-    prevBlink.current = ind.flashing;
     if (act === was) return;
     if (act.size === 0) {
       if (before.current) {
@@ -862,9 +841,7 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
       }
       return;
     }
-    // a blink on entering does not move the camera
-    if (ind.flashing) return;
-    if ((was.size === 0 || wasBlink) && !before.current) before.current = viewTween.current?.to ?? view.current;
+    if (was.size === 0 && !before.current) before.current = viewTween.current?.to ?? view.current;
     const pts: Pt[] = [];
     for (const id of act) {
       const s = ind.selections[id];
@@ -974,23 +951,9 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
     hoverKey.current = key;
     schedule();
     clearTimeout(hideTimer.current);
-    clearTimeout(showTimer.current);
-    if (key && !key.startsWith("h:")) {
-      const show = () => {
-        cardOn.current = true;
-        setHover({ id: key, x: px, y: py });
-      };
-      if (cardOn.current) show();
-      else showTimer.current = setTimeout(show, CARD_DELAY);
-    } else if (key) {
-      cardOn.current = false;
-      setHover(null);
-    } else {
-      hideTimer.current = setTimeout(() => {
-        cardOn.current = false;
-        setHover(null);
-      }, 220);
-    }
+    if (key && !key.startsWith("h:")) setHover({ id: key, x: px, y: py });
+    else if (key) setHover(null);
+    else hideTimer.current = setTimeout(() => setHover(null), 220);
   };
 
   const local = (e: React.PointerEvent) => {
@@ -1012,9 +975,6 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
     if (d) {
       if (!d.moved && Math.hypot(p.x - d.x, p.y - d.y) > 4) {
         d.moved = true;
-        pointer.current = null;
-        clearTimeout(showTimer.current);
-        cardOn.current = false;
         setHoverKey(null);
         setHover(null);
       }
@@ -1025,8 +985,6 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
       return;
     }
     if (e.pointerType === "touch") return;
-    pointer.current = p;
-    schedule();
     const key = hitTest(p.x, p.y);
     setHoverKey(key, p.x, p.y);
     canvas.current!.style.cursor = key ? "pointer" : "grab";
@@ -1144,46 +1102,43 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
         </div>
       </div>
 
-      <div
-        ref={wrap}
-        tabIndex={0}
-        role="application"
-        aria-label={tx.graph.ariaGraph(domain.title)}
-        className="relative min-h-0 flex-1 overflow-hidden rounded-[2px] outline-none select-none focus-visible:ring-2 focus-visible:ring-ribbon/60"
-        onKeyDown={(e) => {
-          if (e.target !== e.currentTarget) return;
-          const pan = (dx: number, dy: number) => moveView({ ...view.current, tx: view.current.tx + dx, ty: view.current.ty + dy }, false);
-          const map: Record<string, () => void> = {
-            ArrowLeft: () => pan(60, 0),
-            ArrowRight: () => pan(-60, 0),
-            ArrowUp: () => pan(0, 60),
-            ArrowDown: () => pan(0, -60),
-            "+": () => zoomAt(cx, size.h / 2, 1.25),
-            "=": () => zoomAt(cx, size.h / 2, 1.25),
-            "-": () => zoomAt(cx, size.h / 2, 0.8),
-            "0": fitAll,
-          };
-          const fn = map[e.key];
-          if (fn) {
-            e.preventDefault();
-            fn();
-          }
-        }}
-      >
-        <canvas
-          ref={canvas}
-          className="absolute inset-0 cursor-grab touch-none"
-          style={{ width: size.w, height: size.h }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onPointerLeave={() => {
-            pointer.current = null;
-            schedule();
-            if (!drag.current) setHoverKey(null);
+      <div className="flex min-h-0 flex-1">
+        <div
+          ref={wrap}
+          tabIndex={0}
+          role="application"
+          aria-label={tx.graph.ariaGraph(domain.title)}
+          className="relative min-h-0 min-w-0 flex-1 overflow-hidden rounded-[2px] outline-none select-none focus-visible:ring-2 focus-visible:ring-ribbon/60"
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            const pan = (dx: number, dy: number) => moveView({ ...view.current, tx: view.current.tx + dx, ty: view.current.ty + dy }, false);
+            const map: Record<string, () => void> = {
+              ArrowLeft: () => pan(60, 0),
+              ArrowRight: () => pan(-60, 0),
+              ArrowUp: () => pan(0, 60),
+              ArrowDown: () => pan(0, -60),
+              "+": () => zoomAt(cx, size.h / 2, 1.25),
+              "=": () => zoomAt(cx, size.h / 2, 1.25),
+              "-": () => zoomAt(cx, size.h / 2, 0.8),
+              "0": fitAll,
+            };
+            const fn = map[e.key];
+            if (fn) {
+              e.preventDefault();
+              fn();
+            }
           }}
-        />
+        >
+          <canvas
+            ref={canvas}
+            className="absolute inset-0 cursor-grab touch-none"
+            style={{ width: size.w, height: size.h }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onPointerLeave={() => !drag.current && setHoverKey(null)}
+          />
 
         {arrows.length > 0 && (
           <ul className="pointer-events-none absolute inset-0 z-[6]">
@@ -1220,57 +1175,22 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
           </nav>
         )}
 
-        {/* Real links for keyboard and screen readers. Small graphs only: 500 tab stops would be worse than none */}
-        {layout.nodes.size <= 150 && (
-          <ul className="sr-only">
-            {layout.hubs.map((n) => (
-              <li key={n.key}>
-                <Link href={`/hub/${n.id}`}>{hubMap.get(n.id)?.name}</Link>
-              </li>
-            ))}
-            {layout.topics.map((n) => (
-              <li key={n.key}>
-                <Link href={`/topic/${n.id}`}>{topicMap.get(n.id)?.name}</Link>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {hover && hoverTopic && (
-          <div
-            data-card
-            onPointerEnter={() => clearTimeout(hideTimer.current)}
-            onPointerLeave={() => {
-              hoverKey.current = null;
-              hideTimer.current = setTimeout(() => {
-                cardOn.current = false;
-                setHover(null);
-              }, 220);
-            }}
-            className="absolute z-10 rounded-[2px] border border-seam bg-cloth-raised p-4 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.7)]"
-            style={{
-              width: CARD_W,
-              left: hover.x + 18 + CARD_W < size.w ? hover.x + 18 : Math.max(8, hover.x - 18 - CARD_W),
-              top: clamp(hover.y - 36, 8, Math.max(8, size.h - 280)),
-            }}
-          >
-            {hoverMock ? (
-              <TopicCardBody topic={hoverMock} hubLabel={domain.hubs.find((h) => h.id === hoverMock.hubId)?.title} />
-            ) : (
-              <>
-                <h3 className="display-caps text-[1.0625rem]">
-                  <Link href={`/topic/${hoverTopic.id}`} className="text-paper underline decoration-seam decoration-1 underline-offset-4 hover:decoration-rule">
-                    {hoverTopic.name}
-                  </Link>
-                </h3>
-                <p className="caps mt-3 flex items-center gap-2 text-paper">
-                  <StateDot state={stateOf(hoverTopic, model.nowMs)} />
-                  {tx.states[stateOf(hoverTopic, model.nowMs)]}
-                </p>
-              </>
-            )}
-          </div>
-        )}
+        {/* The indicators and the count have a column of their own: nothing of the graph or of its controls lies under them */}
+        <div className="hidden w-32 shrink-0 flex-col gap-3 overflow-y-auto pt-2 pl-2 md:flex">
+          <IndicatorPills />
+          {allHub && (
+            <Link
+              href={`/hub/${allHub.id}`}
+              aria-label={tx.graph.allTopicsPillAria}
+              className="caps inline-flex h-10 w-full shrink-0 items-center justify-center rounded-pill border border-seam px-3 whitespace-nowrap text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-rule hover:bg-cloth-hover"
+            >
+              {tx.graph.allTopicsPill}
+            </Link>
+          )}
+          <p aria-live="polite" className="caps px-1 text-paper-dim">
+            {tx.graph.status(hubCount, topicCount)}
+          </p>
+        </div>
       </div>
     </div>
   );

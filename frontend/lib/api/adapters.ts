@@ -1,5 +1,5 @@
 import type { Domain, Hub, Session, TodayItem, Topic, TopicState } from "@/lib/mock/types";
-import { type GraphHub, type GraphModel, type GraphTopic, type TodayRec } from "@/lib/graph/types";
+import { type GraphHub, type GraphModel, type GraphTopic, onGraph } from "@/lib/graph/types";
 import type { S } from "./client";
 
 /** Backend → the shapes the UI was built on (lib/mock/types.ts). The UI itself does not change. */

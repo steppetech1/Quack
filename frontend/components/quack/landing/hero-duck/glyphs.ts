@@ -7,7 +7,6 @@
 export type Shape = "dot" | "star" | "y" | "yInv";
 
 export const BUCKETS = 10;
-const SHAPE_INDEX: Record<Shape, number> = { dot: 0, star: 1, y: 2, yInv: 3 };
 
 // янтарная шкала бренда: от тёплой тени до почти белого блика
 export type Ramp = [number, [number, number, number]][];
@@ -118,7 +117,7 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, r: number, lw: n
 export class GlyphSprites {
   readonly cell: number; // шаг решётки в device px
   readonly box: number;
-  private sprites: (HTMLCanvasElement | undefined)[] = []; // индекс: форма * BUCKETS + ступень (без строковых ключей: отрисовка идёт тысячи раз за кадр)
+  private sprites = new Map<string, HTMLCanvasElement>();
 
   /**
    * `proportional`: толщина линий — постоянная доля шага (как на весь экран 1920px: 1px при шаге ~6,8px),
@@ -140,37 +139,26 @@ export class GlyphSprites {
         ctx.translate(this.box / 2, this.box / 2);
         const r = glyphSize(s, b) * cellDevicePx;
         drawShape(ctx, s, r, proportional ? cellDevicePx * 0.147 : Math.max(1, cellDevicePx * 0.13));
-        this.sprites[SHAPE_INDEX[s] * BUCKETS + b] = c;
+        this.sprites.set(`${s}${b}`, c);
       }
     }
   }
 
   draw(ctx: CanvasRenderingContext2D, shape: Shape, bucket: number, x: number, y: number, scale = 1) {
-    const img = this.sprites[SHAPE_INDEX[shape] * BUCKETS + bucket];
+    const img = this.sprites.get(`${shape}${bucket}`);
     if (!img) return;
     const s = this.box * scale;
     ctx.drawImage(img, x - s / 2, y - s / 2, s, s);
   }
 }
 
-export type Glyph = { shape: Shape; bucket: number; alpha: number };
-
-// Знаков всего несколько десятков (форма × ступень × прозрачность): раздаём готовые общие объекты,
-// а не создаём новый на каждую ячейку каждого кадра (десятки тысяч за кадр) — меньше мусора для сборщика
-const GLYPH_POOL: (Glyph | undefined)[] = [];
-function glyph(shape: Shape, bucket: number, alpha: number): Glyph {
-  const tier = alpha === 1 ? 0 : alpha === 0.95 ? 1 : alpha === 0.85 ? 2 : 3;
-  const k = SHAPE_INDEX[shape] * (BUCKETS * 4) + bucket * 4 + tier;
-  return (GLYPH_POOL[k] ??= { shape, bucket, alpha });
-}
-
-/** Знак и ступень по яркости ячейки `l` (0..1) и её постоянному случайному числу `h`. Возвращённый объект общий: не менять */
-export function pickGlyph(l: number, h: number): Glyph | null {
+/** Знак и ступень по яркости ячейки `l` (0..1) и её постоянному случайному числу `h` */
+export function pickGlyph(l: number, h: number): { shape: Shape; bucket: number; alpha: number } | null {
   if (l < 0.07) return null; // зрачок, глубокая тень
   const bucket = Math.min(BUCKETS - 1, Math.max(0, Math.round(l * (BUCKETS - 1))));
-  if (l > 0.8) return glyph(h < 0.85 ? "dot" : "star", bucket, 1);
-  if (l > 0.6) return glyph(h < 0.5 ? "star" : "dot", bucket, 1);
-  if (l > 0.42) return glyph(h < 0.35 ? "star" : h < 0.7 ? (h < 0.52 ? "y" : "yInv") : "dot", bucket, 0.95);
-  if (l > 0.2) return glyph(h < 0.5 ? "y" : "yInv", bucket, 0.85);
-  return glyph(h < 0.5 ? "yInv" : "dot", Math.max(1, bucket), 0.55);
+  if (l > 0.8) return { shape: h < 0.85 ? "dot" : "star", bucket, alpha: 1 };
+  if (l > 0.6) return { shape: h < 0.5 ? "star" : "dot", bucket, alpha: 1 };
+  if (l > 0.42) return { shape: h < 0.35 ? "star" : h < 0.7 ? (h < 0.52 ? "y" : "yInv") : "dot", bucket, alpha: 0.95 };
+  if (l > 0.2) return { shape: h < 0.5 ? "y" : "yInv", bucket, alpha: 0.85 };
+  return { shape: h < 0.5 ? "yInv" : "dot", bucket: Math.max(1, bucket), alpha: 0.55 };
 }

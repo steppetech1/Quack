@@ -11,20 +11,20 @@
 
 import { BUCKETS, GlyphSprites, type Ramp } from "./glyphs";
 
-export type RGB = [number, number, number];
+type RGB = [number, number, number];
 // «ночной пруд», сильно приглушённый: оттенки те же, насыщенность и яркость ниже, ближе к тёплому графиту сцены
 const VIOLET: RGB = [146, 134, 184]; // #9286b8
 const MINT: RGB = [126, 168, 148]; // #7ea894
 const SKY: RGB = [122, 150, 180]; // #7a96b4
-export const PALETTE = [VIOLET, MINT, SKY];
+const PALETTE = [VIOLET, MINT, SKY];
 
-export const ramp = (c: RGB): Ramp => [
+const ramp = (c: RGB): Ramp => [
   [0, [Math.round(c[0] * 0.25), Math.round(c[1] * 0.25), Math.round(c[2] * 0.28)]],
   [0.55, [Math.round(c[0] * 0.7), Math.round(c[1] * 0.7), Math.round(c[2] * 0.72)]],
   [0.8, c],
   [1, [Math.round(c[0] + (255 - c[0]) * 0.55), Math.round(c[1] + (255 - c[1]) * 0.55), Math.round(c[2] + (255 - c[2]) * 0.55)]],
 ];
-export const css = (c: RGB, a: number) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const css = (c: RGB, a: number) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
 type Node = {
   // дом — смещение от якоря (над головой утки) в долях ширины утки

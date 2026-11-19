@@ -16,6 +16,7 @@ import { DomainTree } from "./domain-tree";
 import { LayeredGraph } from "./graph/layered-graph";
 import { NumText } from "./num-text";
 import { EmptyDomain } from "./empty-domain";
+import { NEW_DOMAIN_TEXT_KEY } from "./live/domain-setup-live";
 import { TodayCards } from "./today-cards";
 import { TopicSearch } from "./topic-search";
 
@@ -147,6 +148,28 @@ export function DomainView() {
   if (seenDomain !== domain.id) {
     setSeenDomain(domain.id);
     setQuery("");
+  }
+
+  // No subject yet: just the chat, the duck and the input, like in an empty subject
+  if (!domain.id) {
+    return (
+      <>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4 pb-3 md:px-7 md:pt-5">
+          <EmptyDomain titleDat="" />
+        </div>
+        <div className="px-4 pb-4 md:px-7 md:pb-5">
+          <Composer
+            label={tx.domain.composerLabelNew}
+            onSend={(text) => {
+              try {
+                sessionStorage.setItem(NEW_DOMAIN_TEXT_KEY, text);
+              } catch {}
+              router.push("/domains/new");
+            }}
+          />
+        </div>
+      </>
+    );
   }
 
   return (

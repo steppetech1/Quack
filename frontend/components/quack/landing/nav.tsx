@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useRef, type RefObject } from "react";
 import { useT } from "@/lib/i18n/provider";
-import { onAnchor } from "./scenes/story";
 
 const LINK =
   "inline-flex h-10 items-center rounded-pill px-3 font-mono text-[0.9375rem] text-[#bba995] outline-none transition-colors duration-(--dur-s) hover:text-[#f6eadc] focus-visible:ring-2 focus-visible:ring-[#ff8a2a]/60";
@@ -37,17 +36,19 @@ export function LandingNav({ scrollRef }: { scrollRef: RefObject<HTMLElement | n
       <div className="flex items-center gap-2 sm:gap-6">
         <a
           href="#top"
-          onClick={onAnchor("top")}
           className="inline-flex h-10 items-center rounded-pill px-1 font-mono text-[1.375rem] font-extrabold tracking-[-0.06em] text-[#f6eadc] outline-none focus-visible:ring-2 focus-visible:ring-[#ff8a2a]/60"
         >
           Qvack<span className="text-[#ff8a2a]">!</span>
         </a>
         <div className="hidden items-center md:flex">
-          <a href="#efficiency" onClick={onAnchor("efficiency")} className={LINK}>
+          <a href="#compare" className={LINK}>
             {t.nav.why}
           </a>
-          <a href="#how" onClick={onAnchor("how")} className={LINK}>
+          <a href="#pluses" className={LINK}>
             {t.nav.pluses}
+          </a>
+          <a href="#features" className={LINK}>
+            {t.nav.features}
           </a>
         </div>
       </div>

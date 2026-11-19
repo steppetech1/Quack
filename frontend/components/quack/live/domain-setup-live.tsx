@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { idem, post, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
@@ -17,6 +17,9 @@ import { useErrorText } from "./error-text";
 export const firstTurnKey = (id: string) => `quack.firstTurn.${id}`;
 
 type Suggestion = S["DomainSuggestion"];
+
+/** The message typed into the default chat (no subjects yet) waits here while the page switches to the subject check */
+export const NEW_DOMAIN_TEXT_KEY = "quack.newDomain.text";
 
 /**
  * New subject: only an input, like a normal chat. The first message is classified (`POST /v1/domains/classify`):
@@ -37,11 +40,11 @@ export function NewDomainLive() {
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [name, setName] = useState("");
 
-  const classify = async () => {
+  const classify = async (message = text) => {
     setBusy(true);
     setError(null);
     try {
-      const s = await post("/v1/domains/classify", { text: text.trim() });
+      const s = await post("/v1/domains/classify", { text: message.trim() });
       setSuggestion(s);
       setName(s.name ?? "");
     } catch (e) {
@@ -50,6 +53,22 @@ export function NewDomainLive() {
       setBusy(false);
     }
   };
+
+  // A message from the default chat: check it at once, once per visit
+  const handedOver = useRef(false);
+  useEffect(() => {
+    if (handedOver.current) return;
+    handedOver.current = true;
+    let first: string | null = null;
+    try {
+      first = sessionStorage.getItem(NEW_DOMAIN_TEXT_KEY);
+      sessionStorage.removeItem(NEW_DOMAIN_TEXT_KEY);
+    } catch {}
+    if (!first?.trim()) return;
+    setText(first);
+    void classify(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Opens the session in `domainId` and leaves the typed message as its first turn */
   const begin = async (domainId: string) => {
@@ -81,39 +100,54 @@ export function NewDomainLive() {
 
   const existing = suggestion?.decision === "existing" ? domains.find((d) => d.id === suggestion.domain_id) : undefined;
 
-  const unclearOrNew = suggestion !== null && suggestion.decision !== "existing";
-  const step = suggestion ? 2 : 1;
-  // заголовок на месте «New subject»: на втором шаге это вопрос по результату разбора
-  const heading = !suggestion
-    ? t.title
-    : suggestion.decision === "existing"
-      ? live.domainExisting(existing?.title ?? suggestion.name ?? "")
-      : suggestion.decision === "new"
-        ? live.domainNewCheck
-        : live.domainUnclear;
-  const submit = () => {
-    if (!suggestion) {
-      if (text.trim()) void classify();
-    } else if (!busy && (!unclearOrNew || name.trim())) {
-      void confirm();
-    }
-  };
-
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <NodeChains />
-      <PageShell width={960} className="relative z-10 flex flex-col [&>div]:flex [&>div]:flex-1 [&>div]:flex-col">
-        <BackLink href="/">{tx.shell.subjects}</BackLink>
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-2 text-center">
-          <DomainSteps step={step} onBack={suggestion ? () => { setSuggestion(null); setError(null); } : undefined} />
-          {/* при смене шага содержимое появляется шторкой (key пересоздаёт блок) */}
-          <div key={suggestion ? `s2-${suggestion.decision}` : "s1"} className="mask-wipe animate-wipe-in flex w-full flex-col items-center gap-4">
-            <h1
-              aria-live="polite"
-              className={cn(
-                "display-caps relative z-10 text-balance text-paper [text-shadow:0_0_10px_#141311,0_0_4px_#141311]",
-                suggestion ? "max-w-[640px] text-[clamp(1.5rem,3.4vw,2.5rem)]" : "text-[clamp(2rem,4.5vw,3.25rem)]",
-              )}
+    <PageShell>
+      <BackLink href="/">{tx.shell.subjects}</BackLink>
+      <StubHeader title={t.title} body={t.body} />
+      {!suggestion ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) void classify();
+          }}
+        >
+          <Field id={`${id}-text`} label={live.domainAsk}>
+            <textarea id={`${id}-text`} value={text} onChange={(e) => setText(e.target.value)} required placeholder={live.domainAskPh} className={AREA} />
+          </Field>
+          {error && (
+            <p role="alert" className="mt-4 text-small text-st-confused">
+              {error}
+            </p>
+          )}
+          <button type="submit" disabled={busy || !text.trim()} className={cn(PRIMARY_BTN, "mt-6")}>
+            {busy ? live.domainChecking : live.domainFind}
+          </button>
+        </form>
+      ) : (
+        <section aria-live="polite" className="mt-6">
+          <p className="text-body text-paper">
+            {suggestion.decision === "existing"
+              ? live.domainExisting(existing?.title ?? suggestion.name ?? "")
+              : suggestion.decision === "new"
+                ? live.domainNew(name)
+                : live.domainUnclear}
+          </p>
+          {suggestion.decision !== "existing" && (
+            <Field id={`${id}-name`} label={live.domainName}>
+              <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} className={FIELD} />
+            </Field>
+          )}
+          {error && (
+            <p role="alert" className="mt-4 text-small text-st-confused">
+              {error}
+            </p>
+          )}
+          <div className="mt-6 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy || (suggestion.decision !== "existing" && !name.trim())}
+              onClick={() => void confirm()}
+              className={PRIMARY_BTN}
             >
               {heading}
             </h1>
@@ -182,8 +216,8 @@ export function NewDomainLive() {
               </div>
             </form>
           </div>
-        </div>
-      </PageShell>
-    </div>
+        </section>
+      )}
+    </PageShell>
   );
 }

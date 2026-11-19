@@ -8,7 +8,6 @@ import { drawShore } from "./lake";
 import { drawFlowers, drawPads } from "./flowers";
 import { drawReeds } from "./reeds";
 import { NodeField } from "./nodes";
-import { storyStore } from "../scenes/story";
 
 /**
  * Утка первого экрана. 3D-модель (duck-rig) рендерится в маленькую текстуру, плотная гекс-решётка читает из неё
@@ -44,10 +43,7 @@ const LAYER_STYLE = [
 const DUCK_WORLD_W = 3.4; // примерная ширина утки в мире: по ней считаем масштаб
 
 // j — индекс пикселя ячейки в холстах растений, i — в вырезке 3D-рендера утки (−1, если ячейка вне утки)
-// axis и zone — затухание у центра и в овале вокруг утки; считаются один раз на раскладку, а не на каждую ячейку каждого кадра
-type Cell = { x: number; y: number; h: number; h2: number; dx: number; dy: number; delay: number; j: number; i: number; axis: number; zone: number };
-// яркость точки растения по значению пикселя слоя: заранее, без Math.pow в горячем цикле
-const PLANT_L = Float32Array.from({ length: 256 }, (_, v) => Math.pow(v / 255, 0.85) * 0.92);
+type Cell = { x: number; y: number; h: number; h2: number; dx: number; dy: number; delay: number; j: number; i: number };
 type Spark = { x: number; y: number; vx: number; vy: number; age: number; life: number; shape: Shape; bucket: number; scale: number };
 /** Точка облака «Quack!»: m — глубина внутри штриха (1 — середина буквы, 0 — край) */
 type TextPt = { ox: number; oy: number; m: number; sx: number; sy: number; delay: number; vx: number; vy: number; blue: boolean; shape: Shape; bucket: number };
@@ -70,8 +66,6 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const backRef = useRef<HTMLCanvasElement>(null);
-  const backBRef = useRef<HTMLCanvasElement>(null); // вторая пара холстов растений: рисуем в скрытый, потом меняем местами
-  const frontBRef = useRef<HTMLCanvasElement>(null);
   // свечение утки: её же размытые копии под ней — каждая точка светится своим цветом, а не общим оранжевым
   const glowNearRef = useRef<HTMLCanvasElement>(null);
   const glowFarRef = useRef<HTMLCanvasElement>(null);
@@ -87,29 +81,16 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
     const hit = hitRef.current;
     if (!wrap || !canvas || !hit) return;
     const ctx = canvas.getContext("2d");
-    const back0 = backRef.current;
-    const back1 = backBRef.current;
-    const front0 = frontRef.current;
-    const front1 = frontBRef.current;
-    const bctx0 = back0?.getContext("2d");
-    const bctx1 = back1?.getContext("2d");
-    const fctx0 = front0?.getContext("2d");
-    const fctx1 = front1?.getContext("2d");
+    const back = backRef.current;
+    const front = frontRef.current;
+    const bctx = back?.getContext("2d");
     const glows = [glowNearRef.current, glowFarRef.current].filter((g): g is HTMLCanvasElement => !!g);
     const glowCtx = glows.map((g) => g.getContext("2d"));
     const farCtx = glowFarRef.current?.getContext("2d") ?? null;
+    const fctx = front?.getContext("2d");
     const nodesCv = nodesRef.current;
     const nctx = nodesCv?.getContext("2d");
-    if (!ctx || !back0 || !back1 || !front0 || !front1 || !bctx0 || !bctx1 || !fctx0 || !fctx1 || !nodesCv || !nctx) return;
-    // видимая пара и рабочая (в неё рисуем очередной кадр растений); готовый кадр показываем сменой видимости, без копирования
-    let back = back0;
-    let wback = back1;
-    let front = front0;
-    let wfront = front1;
-    let bctx = bctx0;
-    let wbctx = bctx1;
-    let fctx = fctx0;
-    let wfctx = fctx1;
+    if (!ctx || !back || !front || !bctx || !fctx || !nodesCv || !nctx) return;
     const field = new NodeField();
     let nodesTop = 0; // насколько холст узлов поднимается над полосой утки, CSS px
     let ptrPx: { x: number; y: number } | null = null; // курсор в координатах сцены
@@ -158,8 +139,10 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
     let duckOff = 0; // левый край холста утки внутри сцены, CSS px
     let lastPlant = -1;
     let stage = 0; // этап поэтапного обновления растений
-    let cycle = 0; // номер цикла поэтапного обновления растений
-    let zoneReady = false; // axis/zone ячеек посчитаны под текущую раскладку
+    const workB = document.createElement("canvas");
+    const workF = document.createElement("canvas");
+    const wbctx = workB.getContext("2d");
+    const wfctx = workF.getContext("2d");
     // холсты растений — в своём, меньшем разрешении: точки берут по одному пикселю на ячейку, больше не нужно
     let PS = 0.5;
     let ptw = 2;
@@ -288,12 +271,15 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
       nodesCv.style.height = `${nodesTop + H * 0.8}px`;
       nodesCv.style.left = `${duckOff}px`;
       nodesCv.style.top = `${-nodesTop}px`;
-      for (const cv of [back0, back1, front0, front1]) {
+      for (const cv of [back, front]) {
         cv.width = Math.round(W * dpr);
         cv.height = Math.round(Ht * dpr);
         cv.style.height = `${Ht}px`;
       }
-      zoneReady = false;
+      for (const cv of [workB, workF]) {
+        cv.width = back.width;
+        cv.height = back.height;
+      }
       stage = 0;
       wrap.style.height = `${H}px`;
       hit.style.width = `${duckPx * 0.75}px`;
@@ -356,7 +342,7 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
           const i = inDuck ? ((th - 1 - drow) * duckTW + dpx) * 4 : -1;
           const ppx = Math.min(ptw - 1, (x * PS) | 0);
           const prow = Math.min(ph - 1, (y * PS) | 0);
-          cells.push({ x, y, h: hash(x, y), h2: hash(x + 31, y + 17), dx: Math.cos(a) * d, dy: Math.sin(a) * d * 0.6, delay: hash(x + 3, y + 11) * 0.45, j: (prow * ptw + ppx) * 4, i, axis: 0, zone: 0 });
+          cells.push({ x, y, h: hash(x, y), h2: hash(x + 31, y + 17), dx: Math.cos(a) * d, dy: Math.sin(a) * d * 0.6, delay: hash(x + 3, y + 11) * 0.45, j: (prow * ptw + ppx) * 4, i });
         }
       }
       duckCells = cells.filter((cl) => cl.i >= 0);
@@ -594,35 +580,10 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
       pose.time = now;
     };
 
-    let awayCleared = false;
     const draw = (now: number, dt: number) => {
       if (!sprites) return;
       const scroller = scrollRef.current;
-      // закреплённый режим: собранность первого экрана ведёт контроллер сцен; иначе — по прокрутке
-      const away = scroller?.dataset.pinned === "true" ? 1 - storyStore.forms[0] : scroller ? smoothstep(0.04, 0.55, scroller.scrollTop / Math.max(1, scroller.clientHeight)) : 0;
-      // сцена полностью рассыпалась и погасла: один раз стираем холсты и больше ничего не считаем и не рисуем
-      if (away > 0.995) {
-        if (!awayCleared) {
-          awayCleared = true;
-          for (const [cv, cx] of [
-            [canvas, ctx],
-            [back, bctx],
-            [front, fctx],
-            [wback, wbctx],
-            [wfront, wfctx],
-            [nodesCv, nctx],
-          ] as const) {
-            cx.setTransform(1, 0, 0, 1, 0, 0);
-            cx.clearRect(0, 0, cv.width, cv.height);
-          }
-          for (const g of glowCtx) g?.clearRect(0, 0, canvas.width, canvas.height);
-          lastPlant = -1; // при возвращении растения нарисуются заново за один кадр
-          hit.style.pointerEvents = "none";
-        }
-        return;
-      }
-      awayCleared = false;
-      hit.style.pointerEvents = away > 0.3 ? "none" : "";
+      const away = scroller ? smoothstep(0.04, 0.55, scroller.scrollTop / Math.max(1, scroller.clientHeight)) : 0;
       if (!reduced) update(now, dt);
       rig.apply(pose);
 
@@ -748,17 +709,6 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
       };
 
       const duckVis = duckPx * 0.6; // видимая ширина утки анфас
-      if (!zoneReady) {
-        zoneReady = true;
-        const zy = c.y - duckPx * 0.2;
-        const zh = Math.max(Ht, window.innerHeight) * 0.55;
-        for (const cl of cells) {
-          cl.axis = smoothstep(duckVis * 0.6, duckVis * 1.6, Math.abs(cl.x - c.x));
-          const ex = (cl.x - c.x) / (duckPx * 1.4);
-          const ey = (cl.y - zy) / zh;
-          cl.zone = smoothstep(0.82, 1.1, Math.sqrt(ex * ex + ey * ey));
-        }
-      }
       let tgtB = bctx;
       let tgtF = fctx;
       const plantCell = (li: number, cell: Cell, j: number, flick: number) => {
@@ -766,25 +716,27 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
         if (!data || data[j + 3] < 90) return false;
         const st = LAYER_STYLE[li];
         // дальние планы у центра прозрачнеют: от ~0,6 до ~1,6 ширины утки от оси полностью исчезают к утке
-        const axis = st.fade ? cell.axis : 1;
+        const axis = st.fade ? smoothstep(duckVis * 0.6, duckVis * 1.6, Math.abs(cell.x - c.x)) : 1;
         // овал вокруг утки (от заголовка до низа экрана, ≈1,4 утки в каждую сторону): внутри все планы тусклее
         // и прозрачнее, за его краем яркость быстро нарастает. Глубина сохраняется: внутри передний план
         // остаётся заметнее камышей, а камыши — заметнее дальнего плана
-        const zone = cell.zone;
+        const ex = (cell.x - c.x) / (duckPx * 1.4);
+        const ey = (cell.y - (c.y - duckPx * 0.2)) / (Math.max(Ht, window.innerHeight) * 0.55);
+        const zone = smoothstep(0.82, 1.1, Math.sqrt(ex * ex + ey * ey));
         const floor = li === 3 ? 0.42 : li === 2 ? 0.3 : 0.22;
         const inZone = floor + (1 - floor) * zone;
         const fade = axis * inZone;
         if (fade <= 0.02) return false;
         const marked = data[j + 1] - data[j] > 60; // рябь у берега (метка в зелёном канале)
         if (marked && cell.h > (data[j] / 255) * 1.5) return true;
-        const pl = PLANT_L[data[j]] * st.dim * (0.7 + 0.3 * inZone) + flick;
+        const pl = Math.pow(data[j] / 255, 0.85) * 0.92 * st.dim * (0.7 + 0.3 * inZone) + flick;
         const pg = pickGlyph(pl, cell.h);
         if (!pg) return true;
         const set = marked && blueSprites ? blueSprites : layerSprites[st.ramp];
         if (!set) return true;
         const spread = away * away;
         const pc = li === 3 ? tgtF : tgtB; // цветы над уткой, всё остальное под ней
-        const a = pg.alpha * st.alpha * fade * (1 - away);
+        const a = pg.alpha * st.alpha * fade * (1 - away * 0.85);
         if (a < 0.06) return true; // почти невидимые точки не рисуем
         pc.globalAlpha = a;
         set.draw(pc, pg.shape, pg.bucket, ((cell.x + cell.dx * spread * 2) * dpr) | 0, ((cell.y + (cell.dy - duckPx * 0.3) * spread) * dpr) | 0);
@@ -807,45 +759,35 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
         bctx.clearRect(0, 0, back.width, back.height);
         fctx.clearRect(0, 0, front.width, front.height);
         plantPass(0, cells.length);
-      } else {
+      } else if (wbctx && wfctx) {
         // выросшие растения: обновление растянуто на 4 кадра (~15 раз в секунду), чтобы не было тяжёлого кадра.
         // 0 и 1 — планы, 2 и 3 — половины расстановки точек в рабочие холсты; в конце подменяем видимую картинку
         const half = cells.length >> 1;
-        // векторные слои перерисовываются по очереди: дальние планы в чётных циклах, ближние в нечётных (качание медленное,
-        // этого не видно), а расстановка точек — каждый цикл; так тяжёлый этап не сваливается в один и тот же кадр
         if (stage === 0) {
-          if ((cycle & 1) === 0) {
-            drawLayer(0);
-            drawLayer(1);
-          }
+          drawLayer(0);
+          drawLayer(1);
         } else if (stage === 1) {
-          if ((cycle & 1) === 1) {
-            drawLayer(2);
-            drawLayer(3);
-          }
+          drawLayer(2);
+          drawLayer(3);
         } else {
           tgtB = wbctx;
           tgtF = wfctx;
           if (stage === 2) {
-            wbctx.clearRect(0, 0, wback.width, wback.height);
-            wfctx.clearRect(0, 0, wfront.width, wfront.height);
+            wbctx.clearRect(0, 0, workB.width, workB.height);
+            wfctx.clearRect(0, 0, workF.width, workF.height);
             plantPass(0, half);
           } else {
             plantPass(half, cells.length);
-            // кадр готов в рабочих холстах: показываем их, а прежние видимые становятся рабочими (без копирования картинки)
-            wback.style.visibility = "visible";
-            wfront.style.visibility = "visible";
-            back.style.visibility = "hidden";
-            front.style.visibility = "hidden";
-            [back, wback] = [wback, back];
-            [front, wfront] = [wfront, front];
-            [bctx, wbctx] = [wbctx, bctx];
-            [fctx, wfctx] = [wfctx, fctx];
+            bctx.globalAlpha = 1;
+            fctx.globalAlpha = 1;
+            bctx.clearRect(0, 0, back.width, back.height);
+            fctx.clearRect(0, 0, front.width, front.height);
+            bctx.drawImage(workB, 0, 0);
+            fctx.drawImage(workF, 0, 0);
             lastPlant = now;
           }
         }
         stage = (stage + 1) % 4;
-        if (stage === 0) cycle++;
       }
 
       const step = Math.max(1, Math.round(cellCss * RS * 1.2));
@@ -890,7 +832,7 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
         const spread = Math.max(1 - p, away * away);
         const x = (cell.x + cell.dx * spread * (1 + away)) * dpr;
         const y = (cell.y + (cell.dy - duckPx * 0.3 * away) * spread) * dpr;
-        const alpha = g.alpha * Math.min(1, p * 1.4) * (1 - away);
+        const alpha = g.alpha * Math.min(1, p * 1.4) * (1 - away * 0.85);
         if (alpha <= 0.01) continue;
         ctx.globalAlpha = alpha;
         set.draw(ctx, p < 0.92 ? "dot" : g.shape, g.bucket, x, y, p < 0.92 ? 0.6 : 1);
@@ -1092,11 +1034,6 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 block w-full [filter:drop-shadow(0_0_2px_rgba(255,232,200,0.38))_drop-shadow(0_0_9px_rgba(255,200,150,0.18))]"
       />
-      <canvas
-        ref={backBRef}
-        aria-hidden
-        className="pointer-events-none invisible absolute inset-x-0 top-0 block w-full [filter:drop-shadow(0_0_2px_rgba(255,232,200,0.38))_drop-shadow(0_0_9px_rgba(255,200,150,0.18))]"
-      />
       <canvas ref={glowFarRef} aria-hidden className="pointer-events-none absolute top-0 block opacity-50 [filter:blur(12px)]" />
       <canvas ref={glowNearRef} aria-hidden className="pointer-events-none absolute top-0 block opacity-60 [filter:blur(2px)]" />
       <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute top-0 block" />
@@ -1105,11 +1042,6 @@ export function HeroDuck({ scrollRef, label }: { scrollRef: RefObject<HTMLElemen
         ref={frontRef}
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 block w-full [filter:drop-shadow(0_0_2px_rgba(255,232,200,0.38))_drop-shadow(0_0_9px_rgba(255,200,150,0.18))]"
-      />
-      <canvas
-        ref={frontBRef}
-        aria-hidden
-        className="pointer-events-none invisible absolute inset-x-0 top-0 block w-full [filter:drop-shadow(0_0_2px_rgba(255,232,200,0.38))_drop-shadow(0_0_9px_rgba(255,200,150,0.18))]"
       />
       {/* утку можно тыкнуть: она ещё раз скажет «Quack!»; кнопка ездит за уткой */}
       <button
