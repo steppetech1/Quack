@@ -187,3 +187,54 @@ def test_param_sets_and_libraries() -> None:
         update={"viz_static_base_url": "https://x/static/", "viz_libraries": {"D3": "/d3.js"}}
     )
     assert libraries_block(libs) == "D3: https://x/static/d3.js"
+
+
+async def test_a_set_without_a_snapshot_is_not_a_pass(pg_db: Db) -> None:
+    """Compute returned one snapshot for two parameter sets: the second set was not checked,
+    which is an error of the round (law 8), not a pass."""
+    learner_id = await create_learner(pg_db)
+    request_id = await _requested(pg_db, learner_id)
+    gateway = _Gateway([_page("<p>v1</p>", ['{"a": 1}', '{"a": 2}']), _page("<p>v2</p>")])
+    compute = _Compute([[GOOD], [GOOD]])
+
+    done = await _build(
+        pg_db, gateway, compute, InMemoryObjectStore(), learner_id=learner_id, request_id=request_id
+    )
+
+    assert gateway.calls[1]["variables"]["previous_errors"] == 'no snapshot at {"a": 2}'
+    assert done.payload["ok"] is True
+
+
+async def test_the_request_carries_the_libraries_base_address(pg_db: Db) -> None:
+    """Compute has no network: it serves the libraries under the base address the model was
+    given, so the render request names it (without it a page with d3 never passes)."""
+    learner_id = await create_learner(pg_db)
+    request_id = await _requested(pg_db, learner_id)
+    compute = _Compute([[GOOD]])
+    settings = SETTINGS.model_copy(
+        update={"viz_static_base_url": "https://x/static/viz", "viz_libraries": {"d3": "d3.js"}}
+    )
+
+    await build_viz(
+        pg_db,
+        cast(LLMGateway, _Gateway([_page()])),
+        cast(ComputeClient, compute),
+        InMemoryObjectStore(),
+        settings,
+        learner_id=learner_id,
+        request_id=request_id,
+    )
+
+    assert [r.libraries_base_url for r in compute.requests] == ["https://x/static/viz"]
+
+    plain = _Compute([[GOOD]])
+    other = await _requested(pg_db, learner_id)
+    await _build(
+        pg_db,
+        _Gateway([_page()]),
+        plain,
+        InMemoryObjectStore(),
+        learner_id=learner_id,
+        request_id=other,
+    )
+    assert [r.libraries_base_url for r in plain.requests] == [None]  # no address configured

@@ -11,7 +11,13 @@ import pytest
 
 from quack.api.app import create_app
 from quack.api.ratelimit import enforce_action_rate_limit
-from quack.artifacts.cards import delete_card, edit_card, topic_cards, write_system_cards
+from quack.artifacts.cards import (
+    card_answers,
+    delete_card,
+    edit_card,
+    topic_cards,
+    write_system_cards,
+)
 from quack.artifacts.documents import ArtifactNotFound, Card
 from quack.config import Settings
 from quack.db import Db
@@ -20,6 +26,7 @@ from quack.events.log import NewEvent, append_events
 from quack.events.values import AnswerSpec, MathValue
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.task_store import create_task, get_task
+from quack.session.turn_inputs import cards_for_turn
 from tests.db.fixtures import create_learner
 from tests.support.auth import session_cookie, session_token
 from tests.support.resources import build_app_resources
@@ -154,7 +161,7 @@ async def test_cards_routes(
         assert listed["cards"] == [
             {
                 "card_id": str(card.card_id), "kind": "sign_to_method", "prompt": "Root test when?",
-                "owner": "system", "generatedBy": None,
+                "owner": "system", "generatedBy": None, "answer": "$\\frac{1}{3}$",
             }
         ]  # fmt: skip
         edit = {"prompt": "When the root test?", "idempotency_key": "p1"}
@@ -163,6 +170,8 @@ async def test_cards_routes(
         assert (await client.patch(f"/v1/cards/{card.card_id}", json=edit)).json() == (
             patched.json()
         )
+        # the successor task keeps the markup, so the edited card shows the same answer
+        assert patched.json()["cards"][0]["answer"] == "$\\frac{1}{3}$"
         new_id = patched.json()["cards"][0]["card_id"]
         drop = {"idempotency_key": "x1"}
         deleted = await client.request("DELETE", f"/v1/cards/{new_id}", json=drop)
@@ -171,3 +180,71 @@ async def test_cards_routes(
         assert (await client.get(f"/v1/topics/{topic_id}/cards")).status_code == 404
         foreign = {"prompt": "x", "idempotency_key": "p1"}
         assert (await client.patch(f"/v1/cards/{card.card_id}", json=foreign)).status_code == 404
+
+
+async def test_card_answer_is_null_without_a_short_answer(pg_db: Db) -> None:
+    """The answer of a card is the reference answer of its task for the reveal; a task with no short
+    answer (a bare proof) or a card with no task in the bank gives `None`."""
+    learner = await create_learner(pg_db)
+    card = await _card(pg_db, learner, "Prove it")
+    bare = records.TaskMarkupRecord(
+        tests=MARKUP.tests, method_named=False, answer=AnswerSpec(type="proof")
+    )
+    proof_id = uuid4()
+    await create_task(
+        pg_db, learner_id=learner, task_id=proof_id, family_id=proof_id, source="generated",
+        condition=TaskCondition(text="Prove it", latex=None), markup=bare,
+        verification="unchecked", actor=WRITER, idempotency_key=f"card:{proof_id}",
+    )  # fmt: skip
+    proof = card.model_copy(update={"card_id": proof_id})
+    ghost = card.model_copy(update={"card_id": uuid4()})
+    answers = await card_answers(pg_db, learner_id=learner, cards=[card, proof, ghost])
+    assert answers == {card.card_id: "$\\frac{1}{3}$", proof_id: None, ghost.card_id: None}
+    other = await create_learner(pg_db)
+    assert await card_answers(pg_db, learner_id=other, cards=[card]) == {card.card_id: None}
+
+
+async def test_cards_for_turn_are_the_learners_own_of_the_topics_in_a_fixed_order(
+    pg_db: Db, settings: Settings
+) -> None:
+    """Q1: the cards behind the labels `C1…` — the current cards of the given topics only, the
+    oldest task first (not the order of the artifact), at most `limit`; a deleted card, another
+    topic's card and another learner's card never come."""
+    learner, stranger = await create_learner(pg_db), await create_learner(pg_db)
+    topic, elsewhere, foreign = (
+        await _topic(pg_db, learner),
+        await _topic(pg_db, learner),
+        await _topic(pg_db, stranger),
+    )
+    first, second, third, gone = [await _card(pg_db, learner, f"question {i}") for i in range(4)]
+    await write_system_cards(
+        pg_db, settings, learner_id=learner, topic_id=topic,
+        cards=[third, first, gone, second], created_by=WRITER,
+    )  # fmt: skip
+    await delete_card(pg_db, learner_id=learner, card_id=gone.card_id, idempotency_key="d1")
+    other_topic = await _card(pg_db, learner, "other topic")
+    await write_system_cards(
+        pg_db, settings, learner_id=learner, topic_id=elsewhere, cards=[other_topic],
+        created_by=WRITER,
+    )  # fmt: skip
+    foreign_card = await _card(pg_db, stranger, "not yours")
+    await write_system_cards(
+        pg_db, settings, learner_id=stranger, topic_id=foreign, cards=[foreign_card],
+        created_by=WRITER,
+    )  # fmt: skip
+
+    found = await cards_for_turn(pg_db, learner_id=learner, topic_ids=[topic, foreign], limit=10)
+
+    assert [c.card_id for c in found] == [first.card_id, second.card_id, third.card_id]
+    assert [c.prompt for c in found] == ["question 0", "question 1", "question 2"]
+    assert {c.topic_id for c in found} == {topic}
+    again = await cards_for_turn(pg_db, learner_id=learner, topic_ids=[foreign, topic], limit=10)
+    assert again == found  # the order of the topics does not matter
+    capped = await cards_for_turn(pg_db, learner_id=learner, topic_ids=[topic], limit=2)
+    assert [c.card_id for c in capped] == [first.card_id, second.card_id]
+    assert await cards_for_turn(pg_db, learner_id=learner, topic_ids=[], limit=5) == []
+    assert await cards_for_turn(pg_db, learner_id=learner, topic_ids=[topic], limit=0) == []
+    both = await cards_for_turn(pg_db, learner_id=learner, topic_ids=[topic, elsewhere], limit=10)
+    assert [c.card_id for c in both] == [
+        first.card_id, second.card_id, third.card_id, other_topic.card_id
+    ]  # fmt: skip

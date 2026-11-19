@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import uuid4
 
@@ -18,8 +19,9 @@ from structlog.testing import capture_logs
 
 from quack.config import Settings
 from quack.graph.read.models import RequiresLink
+from quack.llm.labels import LabelMap
 from quack.llm.provider import ProviderRequest
-from quack.llm.streaming import StreamRequest
+from quack.llm.streaming import StreamCompleted, StreamEvent, StreamRequest
 from quack.practice.check import Verdict
 from quack.session.actions import (
     ElementFrame,
@@ -127,7 +129,11 @@ def _remove_spoiler(text: str) -> str:
     return " ".join(s for s in sentences if ANSWER not in s).strip()
 
 
-def _guard(verdict: Verdict | None = None, boundary: Boundary | None = None) -> GuardInputs:
+def _guard(
+    verdict: Verdict | None = None,
+    boundary: Boundary | None = None,
+    labels: LabelMap | None = None,
+) -> GuardInputs:
     return GuardInputs(
         answered_verdict=verdict,
         skill_labels=frozenset({"S1", "S2"}),
@@ -136,6 +142,7 @@ def _guard(verdict: Verdict | None = None, boundary: Boundary | None = None) -> 
         has_spoiler=_has_spoiler,
         remove_spoiler=_remove_spoiler,
         boundary=boundary,
+        labels=labels,
     )
 
 
@@ -210,11 +217,12 @@ def _ports(
     verdict: Verdict | None = None,
     frame: VerdictFrame | None = None,
     boundary: Boundary | None = None,
+    labels: LabelMap | None = None,
 ) -> Ports:
     return Ports(
         AssembledTurn(
             request=_request(),
-            guard=_guard(verdict, boundary),
+            guard=_guard(verdict, boundary, labels),
             effort="low",
             degraded_mode=None,
             verdict=frame,
@@ -631,3 +639,114 @@ async def test_new_action_cancels_turn() -> None:
     assert first.committed == []
     assert not [f for f in first.frames if isinstance(f, TokenFrame | TurnCommittedFrame)]
     assert len(second.committed) == 1
+
+
+# --- labels the write resolves, orphan tasks, a cut step (review of 2026-11-13) ---
+
+
+def _label_table() -> LabelMap:
+    return LabelMap.build(_settings(), skills=[uuid4()], requests=[uuid4()])
+
+
+def _with_link(turn: dict[str, Any], chunk: str) -> dict[str, Any]:
+    """`turn` with one more block: a `material_link` element `e2` of the chunk `chunk`."""
+    turn["p2_body"]["blocks"].append({"block_id": "b3", "text": None, "element_id": "e2"})
+    turn["p3_markup"]["elements"].append(
+        {"element_id": "e2", "kind": "material_link", "chunk": chunk, "page": None}
+    )
+    return turn
+
+
+async def test_unresolvable_labels_are_retried_then_dropped_from_the_turn() -> None:
+    """`cancel_requests: ["R9"]`, a request of an unknown topic and a link to an unknown chunk
+    used to reach `turn_batch` after the text was shown (`UnknownLabelError`, `SERVICE_UNAVAILABLE`,
+    no turn in the journal). Now the guard returns the turn to the model naming the labels and,
+    after the retries, takes them out of what is committed; the element goes with its block."""
+    plan = _markup()["planUpdate"] | {"cancel_requests": ["R1", "R9"]}
+    request = {
+        "kind": "viz",
+        "params": {
+            "skill": None,
+            "level": None,
+            "topic": "T9",
+            "task": None,
+            "misconception": None,
+            "description": "d",
+        },
+        "needed_in_session": True,
+    }
+    bad = _with_link(_turn(planUpdate=plan, agentRequests=[request]), "P9")
+    provider = ScriptedLLMProvider()
+    _answers(provider, bad)
+    ports = _ports(labels=_label_table())
+
+    await _run(ports, provider, guard_max_retries=1)
+
+    assert len(provider.stream_calls) == 2
+    retry_input = str(provider.stream_calls[1].input_items)
+    assert "unknown_label" in retry_input and "R9" in retry_input and "P9" in retry_input
+    [turn] = ports.committed
+    markup = turn.output.p3_markup
+    assert markup.plan_update.cancel_requests == ["R1"]
+    assert markup.agent_requests == []
+    assert [e.element_id for e in markup.elements] == ["e1"]
+    assert [b.block_id for b in turn.output.p2_body.blocks] == ["b1", "b2"]
+    assert [f.block_id for f in ports.frames if isinstance(f, ElementFrame)] == ["b2"]
+
+
+async def test_task_markup_without_a_block_is_checked_too() -> None:
+    """Т-§5.3: a task of `p3_markup.tasks` that no block points at went to the commit unchecked.
+    A bad one (level 1 without options, an unknown skill label) is dropped; a good one stays."""
+    provider = ScriptedLLMProvider()
+    orphan = {"element_id": "e5", "kind": "short_answer", "prompt": "p", "ask_confidence": False}
+    good = {**_task(), "element_id": "e6"}
+    bad_level = {**_task(level=1), "element_id": "e7"}
+    bad_label = {**_task(), "element_id": "e8", "tests": [{"skill": "S9", "level": 3}]}
+    _answers(
+        provider,
+        _turn(
+            tasks=[_task(), good, bad_level, bad_label],
+            elements=[_markup()["elements"][0], orphan],
+        ),
+    )
+    ports = _ports()
+
+    await _run(ports, provider)
+
+    [turn] = ports.committed
+    assert [t.element_id for t in turn.output.p3_markup.tasks] == ["e1", "e6"]
+    assert [e.element_id for e in turn.output.p3_markup.elements] == ["e1", "e5"]
+
+
+class _CutSecondStep:
+    """The second streamed step ends `incomplete` (Т-§11.1): the text came, the answer did not."""
+
+    def __init__(self, inner: ScriptedLLMProvider) -> None:
+        self._inner = inner
+        self._calls = 0
+
+    async def stream_structured(self, request: StreamRequest) -> AsyncIterator[StreamEvent]:
+        self._calls += 1
+        async for event in self._inner.stream_structured(request):
+            if self._calls == 2 and isinstance(event, StreamCompleted):
+                event = replace(event, status="incomplete")
+            yield event
+
+
+async def test_a_cut_step_after_tools_leaves_no_shown_text_behind() -> None:
+    """The client dropped the cut step's text (`reset {guard}`); the next step starts clean, so a
+    spoiler held back in its buffer is not announced with a second, pointless `reset`."""
+    provider = ScriptedLLMProvider()
+    provider.script_tools(SCHEMA, ScriptedToolStep((ScriptedToolCall("skill_history", {}),)))
+    _answers(provider, _turn(), _turn(f"The sum is {ANSWER}."), _turn())
+    ports = _ports()
+
+    cut = _CutSecondStep(provider)
+    await run_turn(
+        ports, cut, settings=_settings(spoiler_holdback_chars=20), cancel=asyncio.Event()
+    )
+
+    resets = [f for f in ports.frames if isinstance(f, ResetFrame)]
+    assert resets == [ResetFrame(reason="guard")]
+    [turn] = ports.committed
+    assert ANSWER not in turn.text

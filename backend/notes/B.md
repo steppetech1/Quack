@@ -23,6 +23,56 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-B-225. Решения владельца по D-B-223 (2026-11-15): карточки в ходе учителя, ответы частей, число Эйлера, значащие цифры, большие темы
+- Класс: B; п.3 — правка Т-§6.5 по смыслу (в документ не внесена)
+- WP / место: WP11–WP14, WP16; `quack/session/{turn_source,turn_inputs,teacher_context}.py`, `quack/llm/labels.py`, `quack/practice/check.py`, `quack/compute_client/math_contracts.py`, `quack/agents/topic_split.py`, `quack/config.py`, `compute/quack_compute/math/{grammar,latex,schemas,service,units}.py`
+- Контекст: владелец 2026-11-15 согласовал варианты по открытым пунктам D-B-223 (а), (б), (г) и по п.12, п.13.
+- Решение:
+  1. Метки карточек `C…`: в метки хода идут карточки тем из фокуса хода, не больше `label_max_cards = 12`, по `created_seq` задачи карточки, затем по id (срока повторения у карточек нет, Т-§14.3). В контексте учителя — строка «тема: вопрос» без ответа. Чтение — `session/turn_inputs.cards_for_turn` (слой `session` не импортирует `artifacts`).
+  2. Спойлер-гард знает ответы частей задачи (`parts[i].answer`, для `choice` — текст верного варианта), кроме частей с последним вердиктом `correct`; `solution.requested` и решённая задача снимают запрет целиком. Варианты `short_text.accepted` не добавлены.
+  3. `e` — число Эйлера в обоих входах (SymPy-строка и LaTeX, включая `\mathrm{e}`), если в переменных спецификации нет переменной `e`; правило одно для ответа и эталона. В режиме величин не меняется. Т-§6.5 называет числом только `E`.
+  4. Уточнение п.13 D-B-223: `sig_digits` спецификации уходит в compute отдельным полем `Tolerance.sig_digits` (половина единицы N-й значащей цифры эталона), вердикты для числового эталона и эталона-выражения совпадают. Поле не отправляется, когда не задано, поэтому старый compute принимает обычные запросы.
+  5. Уточнение п.12 D-B-223: для разделения темы свой лимит `topic_split_skills_k = 60`; сверх него навыки остаются с сохраняющей частью.
+- Почему: Т-§5.3, Т-§6.4, Т-§6.5, Т-§12.4; П-§7.6, П-§11.2
+- Обратимость: правки кода; новые параметры `label_max_cards`, `topic_split_skills_k`
+- Тесты: `tests/session/{test_turn_source,test_turn_commit}.py`, `tests/llm/test_labels.py`, `tests/artifacts/test_cards_wp23.py`, `tests/practice/test_check_fast.py`, `tests/agents/test_topic_split.py`, `compute/tests/math/{test_service,test_grammar}.py`
+- Требует подтверждения владельцем: нет. Не проверено на живой модели. Серия карточек на экране ученика требует данных карточек по id во фронтенде
+
+### D-B-224. Решение владельца по D-B-223 (2026-11-15): лимит запросов внутри SSE-потока
+- Класс: B
+- WP / место: WP10; `quack/llm/responses_client.py`
+- Контекст: владелец 2026-11-15 поручил принять решение по открытому пункту (в) D-B-223 самостоятельно. Формата события в документах и в записях спайка нет.
+- Решение: события `error` и `response.failed` с `rate_limit` в `code` или `type`, либо со статусом 429 (на корне, в `error`, в `response.error`) поднимают `ProviderRateLimitedError`, как HTTP 429: шлюз ставит флаг давления (Т-§22.5) и не засчитывает отказ размыкателю. `retry_after` берётся из события, если есть. Остальные `error` — по-прежнему отказ провайдера.
+- Почему: Т-§22.5 (реактивные лимиты), WP5.5
+- Обратимость: правка разбора
+- Тесты: `tests/llm/test_phase4_stream_adapter.py`, `tests/llm/test_gateway_stream.py`
+- Требует подтверждения владельцем: нет, но формат события взят по общему виду Responses API и **не подтверждён живым прогоном** — сверить при первом реальном 429 в потоке
+
+### D-B-223. Волна исправлений по аудиту багов (2026-11-13): ход учителя, проверка ответов, шлюз моделей, агенты
+- Класс: B (обратимо, внутри контрактов)
+- WP / место: WP10–WP14, WP16; `quack/session/{action_turn,guards,record,replay,review_turn,turn_graph,turn_source}.py`, `quack/practice/{answers,repo,symbolic_job,jobs,check}.py`, `quack/llm/{gateway,errors,responses_client}.py`, `quack/agents/{topic_split,today,viz}.py`, `compute/quack_compute/math/{latex,service}.py`, `quack/config.py`
+- Контекст: аудит 2026-11-10 (ветка `local/work`, `18608f8`); каждый дефект проверен по коду и документам перед правкой.
+- Решение:
+  1. Guard считает «метка существует» как «`labels.resolve` не бросит» для `agent_requests.params`, `cancel_requests`, элементов `card_series` / `visualization` / `material_link`, `deadline.hub_label` / `coverage`: повтор с причиной `unknown_label`, затем удаление (Т-§12.4).
+  2. Спойлер-гард не проверяет задачу, по которой было `solution.requested`, и задачу, которую ответ закрывает как решённую (WP13.5); знает текст верного варианта `choice`.
+  3. Ответ на часть задачи проверяется по `parts[i].answer` (`answers.part_spec`) — мгновенно, символьно и моделью (`check.model`).
+  4. `answer.submitted` от `element_response` пишется с `causation_seq` = seq `element.responded`; события хода читаются на два уровня причинности.
+  5. Сборка хода ждёт быстрый вердикт не дольше `symbolic_inline_timeout_ms` (Т-§6.1); не успел или compute недоступен — ничего не пишется, остаётся страховка.
+  6. Задачи `markup.tasks` без блока в теле проверяются `validate_markup`; невалидная отбрасывается (Т-§5.3).
+  7. «Только `verification = checked`» (WP13.5) применено на пути повторения (`review_turn`) и в «Сегодня» (`agents/today.py`); `select_tasks` остаётся сортировкой (Т-§5.7, D-B-169).
+  8. Задача с частями `solved`, когда последний вердикт каждой части `correct`.
+  9. Замок хода продлевается фоном (`turn_lock_renew_sec = 20`, Lua compare-and-expire) вместо роста TTL.
+  10. Проба размыкателя освобождается всегда, когда закончилась без вердикта (WP5.5).
+  11. Учёт: после неразобранного повтора лишняя строка `ok` не пишется; обрезанный ответ (`incomplete`) учитывается с токенами провайдера; стрим без завершающего события пишет строку `incomplete` с нулями (WP10.4, Т-§11.4).
+  12. Расширение D-B-213 п.4: навыки сверх `candidate_skills_k` при разделении темы остаются с сохраняющей частью.
+  13. `number` с эталоном-выражением и десятичным ответом проверяется в compute в режиме `quantity` с единицей `dimensionless` и допусками спецификации (Т-§6.4); `sig_digits` в этой связке не применяется.
+  14. Символы LaTeX-ответа получают допущения переменных спецификации.
+  15. «Сегодня» не пишет план, если число пунктов не равно числу рекомендаций; набор параметров визуализации без снимка — ошибка, а не «прошёл».
+- Почему: Т-§5.3, Т-§5.7, Т-§6.1–6.4, Т-§11.4, Т-§12.4; ТЗ WP13.5, WP10.4; законы 5 и 8
+- Обратимость: правки кода; новый параметр `turn_lock_renew_sec`
+- Тесты: `tests/session/{test_head_guards,test_record_action,test_review_turn,test_turn_commit,test_turn_graph,test_turn_lock,test_turn_source}.py`, `tests/practice/{test_check_symbolic_job,test_check_fast}.py`, `tests/test_llm_runtime.py`, `tests/llm/test_gateway_stream.py`, `tests/agents/{test_topic_split,test_today,test_viz}.py`, `compute/tests/math/test_service.py`
+- Требует подтверждения владельцем: да — не исправлено и ждёт решения: (а) метки карточек `C…` в `LabelMap` хода не строятся, `card_series` теперь удаляется guard-ом; (б) спойлер-гард не знает ответов частей и `short_text.accepted`; (в) событие `error` с rate-limit внутри SSE (формат не описан); (г) считать ли `e` числом Эйлера (Т-§6.5 называет только `E`); п.12 и п.13 — подтвердить
+
 ### D-B-222. Q-A-4 (A → B): `target_seq` самооценки, `sourceSeq` свидетельства, порог `calibrated`
 - Класс: B
 - WP / место: WP5.3 (A), WP13.1, WP12.1; `quack/session/actions.py` (`ConfidenceAction`, `ActionRecordedFrame`), `quack/session/extraction.py`, `quack/graph/evidence_validation.py`

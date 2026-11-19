@@ -2,6 +2,8 @@
 D-B-174.
 
 - **Plan** (slot 6): the document `content.session_plans` of the session (WP13.6).
+- **Cards** (`teacher@2` «C1…»): the cards of the focus topics behind the labels, read by own SQL
+  from the current version of the cards artifact (no import of `artifacts`, as for the skill).
 - **Learner skill** (Т-§17.8): `/name` gives the instruction of the last version of the skill of
   that name, read by own SQL (no import of `artifacts`, WP14.1).
 
@@ -15,6 +17,8 @@ D-B-180.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from uuid import UUID
 
 from quack.db.db import Db
@@ -104,3 +108,44 @@ async def load_snapshot(db: Db, *, learner_id: UUID, session_id: UUID) -> dict[s
     """The slots 3 and 4 frozen on the session; `None` — the session has no turn yet."""
     row = await db.fetch_one(_SNAPSHOT, {"learner_id": learner_id, "session_id": session_id})
     return None if row is None else dict(row["frozen_slots"])
+
+
+# The cards of the current versions of the learner's cards artifacts of the given topics, in the
+# order of their tasks (the card has no schedule, Т-§14.3): the oldest task first, then the id.
+_CARDS_OF_TOPICS = (
+    "SELECT a.topic_id, c.card ->> 'card_id' AS card_id, c.card ->> 'prompt' AS prompt "
+    "FROM content.artifacts a JOIN content.artifact_versions v "
+    "ON v.artifact_id = a.artifact_id AND v.version = a.current_version "
+    "AND v.learner_id = %(learner_id)s "
+    "CROSS JOIN LATERAL jsonb_array_elements(v.content -> 'cards') AS c(card) "
+    "LEFT JOIN content.tasks t ON t.learner_id = %(learner_id)s "
+    "AND t.task_id = (c.card ->> 'card_id')::uuid "
+    "WHERE a.learner_id = %(learner_id)s AND a.kind = 'cards' "
+    "AND a.topic_id = ANY(%(topic_ids)s::uuid[]) "
+    "ORDER BY t.created_seq NULLS LAST, (c.card ->> 'card_id')::uuid LIMIT %(limit)s"
+)
+
+
+@dataclass(frozen=True)
+class TurnCard:
+    """A card the teacher may show in a series: what stands behind its label (WP14.1)."""
+
+    card_id: UUID
+    topic_id: UUID
+    prompt: str
+
+
+async def cards_for_turn(
+    db: Db, *, learner_id: UUID, topic_ids: Sequence[UUID], limit: int
+) -> list[TurnCard]:
+    """The learner's own cards of the topics, at most `limit`, in a fixed order: the oldest card
+    first (the card has no due date: the skill is repeated, Т-§14.3), then the id. A card the
+    learner deleted is not in the current version; another learner's or another topic's card
+    never comes (the filter is the learner and the topics)."""
+    if not topic_ids or limit <= 0:
+        return []
+    rows = await db.fetch_all(
+        _CARDS_OF_TOPICS,
+        {"learner_id": learner_id, "topic_ids": list(topic_ids), "limit": limit},
+    )
+    return [TurnCard(UUID(str(r["card_id"])), r["topic_id"], str(r["prompt"] or "")) for r in rows]

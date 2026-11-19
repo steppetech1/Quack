@@ -24,6 +24,7 @@ PUBLIC_ROUTES = frozenset(
     {
         ("post", "/auth/link"),
         ("get", "/auth/link/verify"),
+        ("post", "/auth/link/verify"),
         ("get", "/auth/google/start"),
         ("get", "/auth/google/callback"),
         # WP22.1: the phone has no session yet; the pairing token is its credential.

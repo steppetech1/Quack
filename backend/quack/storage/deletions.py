@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol, cast, get_args, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 from uuid import UUID
 
 import aioboto3  # pyright: ignore[reportMissingTypeStubs]
@@ -51,14 +51,13 @@ class DeletionJournal(Protocol):
 class R2DeletionJournal:
     """`DeletionJournal` on the S3 API of R2, key only for `quack-deletions` (Д-§7). WP25.
 
-    One object per deletion, key `{deleted_at}-{deletion_id}.json` where `deleted_at` is a
-    fixed-width UTC time (`_KEY_TIME`), so key order is time order and `list_since` can start the
-    listing after the key prefix of `since` (Д-§8.5: "по порядку времени"). The body carries the
-    identifiers only. Objects are never deleted here (bucket lock without a term). Anything that
-    stops the journal answering (no endpoint configured, connection, timeout, a refusal of the
-    bucket, a record that does not parse) is `DeletionJournalUnavailable`: the deletion must not
-    run (Т-§19.5, Т-§20.7) and the API answers `SERVICE_UNAVAILABLE`.
-    """
+    One object per deletion: key `{deleted_at}-{deletion_id}.json`, body — the identifiers of
+    `DeletionRecord` and nothing else (Д-§8.5). `deleted_at` is written in UTC with a fixed width
+    (`2026-11-13T10:00:00.123456Z`), so the listing order of the bucket is the time order. The same
+    record gives the same key: a repeated write replaces the object with itself. The client is one
+    per process, created on the first call and closed by `aclose`. A bucket that does not answer
+    (connection, timeout, 5xx, no endpoint configured) is `DeletionJournalUnavailable` (Т-§20.7):
+    the deletion does not run. The region is the botocore default, as in `S3ObjectStore`."""
 
     def __init__(self, *, endpoint: str, access_key: str, secret_key: str, bucket: str) -> None:
         self._endpoint = endpoint
@@ -70,9 +69,6 @@ class R2DeletionJournal:
 
     async def _s3(self) -> Any:
         if self._client is None:
-            if not self._endpoint:
-                # An empty `endpoint_url` makes botocore talk to AWS: never write there.
-                raise DeletionJournalUnavailable("deletions_s3_endpoint is not configured")
             session = aioboto3.Session(
                 aws_access_key_id=self._access_key, aws_secret_access_key=self._secret_key
             )
@@ -85,102 +81,80 @@ class R2DeletionJournal:
         return self._client
 
     async def write(self, record: DeletionRecord) -> None:
-        body = json.dumps(_to_payload(record), separators=(",", ":")).encode()
+        body = json.dumps(
+            {
+                "deletion_id": str(record.deletion_id),
+                "learner_id": str(record.learner_id),
+                "kind": record.kind,
+                "target_id": str(record.target_id),
+                "deleted_at": _stamp(record.deleted_at),
+            },
+            sort_keys=True,
+        ).encode()
         async with _unavailable_on_failure():
             s3 = await self._s3()
             await s3.put_object(
                 Bucket=self._bucket,
-                Key=deletion_key(record),
+                Key=_key(record),
                 Body=body,
                 ContentType="application/json",
             )
 
     async def list_since(self, since: datetime) -> list[DeletionRecord]:
-        after = _utc(since).strftime(_KEY_TIME)
+        """Records with `deleted_at >= since`, oldest first. The listing starts at the key stamp of
+        `since`, so older objects are not even listed; the body of every object is read."""
         records: list[DeletionRecord] = []
         async with _unavailable_on_failure():
             s3 = await self._s3()
             paginator = s3.get_paginator("list_objects_v2")
-            # `StartAfter` is exclusive: the key of a record at exactly `since` is
-            # `{since}-{id}.json`, which sorts after the bare `{since}`.
-            async for page in paginator.paginate(Bucket=self._bucket, StartAfter=after):
+            async for page in paginator.paginate(Bucket=self._bucket, StartAfter=_stamp(since)):
                 for item in page.get("Contents", []):
-                    key: str = item["Key"]
-                    if not key.endswith(".json"):
-                        continue
-                    response = await s3.get_object(Bucket=self._bucket, Key=key)
+                    response = await s3.get_object(Bucket=self._bucket, Key=item["Key"])
                     async with response["Body"] as stream:
-                        raw = await stream.read()
-                    record = _from_payload(key, raw)
-                    if record.deleted_at >= _utc(since):
-                        records.append(record)
-        return sorted(records, key=lambda r: (r.deleted_at, str(r.deletion_id)))
+                        records.append(_parse(item["Key"], await stream.read()))
+        return sorted((r for r in records if r.deleted_at >= since), key=lambda r: r.deleted_at)
 
     async def aclose(self) -> None:
         await self._stack.aclose()
         self._client = None
 
 
-# Fixed width, UTC, sorts as time: `20261105T101500.123456Z` (microseconds as `datetime` has).
-_KEY_TIME = "%Y%m%dT%H%M%S.%fZ"
-_KINDS = frozenset(get_args(DeletionKind.__value__))
+def _stamp(moment: datetime) -> str:
+    """UTC, fixed width: string order is time order (a naive time is taken as UTC)."""
+    utc = moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
+    return utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _utc(moment: datetime) -> datetime:
-    if moment.tzinfo is None:
-        raise ValueError("deletion time must be timezone-aware")
-    return moment.astimezone(UTC)
+def _key(record: DeletionRecord) -> str:
+    return f"{_stamp(record.deleted_at)}-{record.deletion_id}.json"
 
 
-def deletion_key(record: DeletionRecord) -> str:
-    """`{deleted_at}-{deletion_id}.json` (Д-§8.5)."""
-    return f"{_utc(record.deleted_at).strftime(_KEY_TIME)}-{record.deletion_id}.json"
-
-
-def _to_payload(record: DeletionRecord) -> dict[str, str]:
-    return {
-        "deletion_id": str(record.deletion_id),
-        "learner_id": str(record.learner_id),
-        "kind": record.kind,
-        "target_id": str(record.target_id),
-        "deleted_at": _utc(record.deleted_at).isoformat(),
-    }
-
-
-def _from_payload(key: str, raw: bytes) -> DeletionRecord:
+def _parse(key: str, body: bytes) -> DeletionRecord:
     try:
-        data = json.loads(raw)
-        kind = data["kind"]
-        if kind not in _KINDS:
-            raise ValueError(f"unknown kind {kind!r}")
+        data = json.loads(body)
         return DeletionRecord(
             deletion_id=UUID(data["deletion_id"]),
             learner_id=UUID(data["learner_id"]),
-            kind=kind,
+            kind=data["kind"],
             target_id=UUID(data["target_id"]),
-            deleted_at=_utc(datetime.fromisoformat(data["deleted_at"])),
+            deleted_at=datetime.fromisoformat(data["deleted_at"]),
         )
     except (ValueError, KeyError, TypeError) as exc:
-        # A record that cannot be read must not be skipped silently: it is a deletion the
-        # reconcile would miss. Fail the whole read (the job retries; an operator looks).
-        raise DeletionJournalUnavailable(f"deletion journal record {key!r} is unreadable") from exc
+        # A record that cannot be read is a deletion that cannot be repeated: stop and say so
+        # instead of skipping it (Т-§19.5).
+        raise DeletionJournalUnavailable(f"journal object {key} is not a deletion record") from exc
 
 
 @asynccontextmanager
 async def _unavailable_on_failure() -> AsyncIterator[None]:
-    """Connection errors, timeouts and any refusal of the bucket → `DeletionJournalUnavailable`.
-
-    Unlike `S3ObjectStore`, 4xx is mapped too: a wrong key or a missing bucket means the fact of
-    deletion is not recorded, which for the caller is the same as R2 being down (503, not 500)."""
+    """Connection errors, timeouts, 5xx and a client that cannot be configured (an unset
+    endpoint is a bare `ValueError` of aiobotocore) → `DeletionJournalUnavailable`. Other S3
+    errors (access denied, a missing bucket) are the same for the caller: the deletion must not
+    run without its record."""
     try:
         yield
-    except DeletionJournalUnavailable:
-        raise
-    except (BotoCoreError, OSError) as exc:
+    except (BotoCoreError, ClientError, OSError, ValueError) as exc:
         raise DeletionJournalUnavailable(f"deletion journal request failed: {exc!r}") from exc
-    except ClientError as exc:
-        status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
-        raise DeletionJournalUnavailable(f"deletion journal returned HTTP {status}") from exc
 
 
 def create_deletion_journal(settings: Settings) -> DeletionJournal:

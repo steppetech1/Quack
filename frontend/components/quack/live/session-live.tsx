@@ -5,6 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl, ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
+import { useSessionJobs } from "@/lib/api/use-session-jobs";
+import { uploadVoice } from "@/lib/api/voice";
+import type { VoiceClip } from "@/lib/audio/voice-recorder";
 import { useT } from "@/lib/i18n/provider";
 import { skillInvocation } from "@/lib/skills";
 import { cn } from "@/lib/utils";
@@ -14,6 +17,7 @@ import { RichText } from "../rich-text";
 import { PRIMARY_BTN, AREA } from "../stubs/stub-parts";
 import { firstTurnKey } from "./domain-setup-live";
 import { useErrorText } from "./error-text";
+import { JobsPlaque } from "./jobs-plaque";
 
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
@@ -85,13 +89,42 @@ export function SessionLive({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const sentFirst = useRef(false);
+  /** bumped by "Try again" when the history could not be read */
+  const [historyTry, setHistoryTry] = useState(0);
+
+  /** A finished background job (a demo, say) leaves its result in the committed turn: re-read it, a visualization gets its `request_id` there */
+  const refreshElements = useCallback(() => {
+    get<S["SessionDetail"]>(`/v1/sessions/${id}`)
+      .then((d) => {
+        const resolved = new Map<string, S["Element"]>();
+        for (const ev of d.events) {
+          if (ev.type !== "turn.committed") continue;
+          const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
+          for (const el of markup?.elements ?? []) {
+            const e = el as { element_id?: string; kind?: string; request_id?: string | null };
+            if (e.kind === "visualization" && e.request_id && e.element_id) resolved.set(`${ev.seq}:${e.element_id}`, e as S["Element"]);
+          }
+        }
+        if (!resolved.size) return;
+        setElems((all) =>
+          all.map((x) => {
+            const e = x.element as { kind: string; element_id?: string; request_id?: string | null };
+            const next = e.kind === "visualization" && !e.request_id && x.turnSeq !== null ? resolved.get(`${x.turnSeq}:${e.element_id}`) : undefined;
+            return next ? { ...x, element: next } : x;
+          }),
+        );
+      })
+      .catch(() => {});
+  }, [id]);
+  const bg = useSessionJobs(id, { onDone: refreshElements });
+  const refreshJobs = bg.refresh;
 
   const scrollDown = () => requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
 
   /** One action of the learner; the answer of the teacher streams back as frames (ТЗ Ф4 §4.7) */
   const act = useCallback(
-    async (body: Record<string, unknown>, studentText?: string) => {
-      if (busy) return;
+    async (body: Record<string, unknown>, studentText?: string): Promise<boolean> => {
+      if (busy) return false;
       setBusy(true);
       setError(null);
       setVerdict(null);
@@ -128,31 +161,64 @@ export function SessionLive({ id }: { id: string }) {
             } else if (event === "error") throw new ApiError(500, String(data.code ?? "ERROR"), String(data.message ?? ""));
           },
         );
+        // the stream closed with no `turn_committed` and no `error` frame (proxy cut, server restart): the turn is not saved
+        if (committed === null) {
+          if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply, interrupted: true }]);
+          else setError(t.interrupted);
+          return false;
+        }
         if (reply) setLines((l) => [...l, { id: `t-${committed ?? Date.now()}`, role: "teacher", text: reply, degraded }]);
         if (fresh.length) setElems((e) => [...e.map((x) => ({ ...x })), ...fresh.map((x) => ({ ...x, turnSeq: committed }))]);
+        return true;
       } catch (e) {
         setError(e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e));
         // what was already shown stays on screen, marked: this part is not committed and is gone after a reload
         if (reply) setLines((l) => [...l, { id: `t-${Date.now()}`, role: "teacher", text: reply, interrupted: true }]);
+        return false;
       } finally {
         setStreaming(null);
         setThinking(false);
         setBusy(false);
         scrollDown();
+        // a turn queues background agents (demo, tasks, checks) shortly after it is committed
+        refreshJobs();
       }
     },
-    [busy, id, t.turnLocked, errorText],
+    [busy, id, t.turnLocked, t.interrupted, errorText, refreshJobs],
   );
 
   const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
 
-  const respond = (el: Elem, response: string) => {
+  /** A recorded clip → the recognized text goes to the teacher once: the message points at the recorded voice segment (`voice_seq`) and carries no text. Returns an error text, or null */
+  const sendVoice = useCallback(
+    async (clip: VoiceClip): Promise<string | null> => {
+      try {
+        const heard = await uploadVoice(id, clip);
+        if (!heard.text.trim()) return tx.voiceSession.nothingHeard;
+        if (heard.seq === null) return tx.voiceSession.nothingHeard;
+        void act({ kind: "message", voice_seq: heard.seq }, heard.text);
+        return null;
+      } catch (e) {
+        if (e instanceof ApiError) {
+          if (e.status === 413) return tx.voiceSession.tooLong;
+          if (e.status === 415) return tx.voiceSession.badFormat;
+          if (e.status === 403) return tx.voiceSession.notAllowed;
+        }
+        return errorText(e);
+      }
+    },
+    [id, act, errorText, tx.voiceSession],
+  );
+
+  const respond = async (el: Elem, response: string) => {
     if (!response.trim() || el.turnSeq === null) return;
     setElems((all) => all.map((x) => (x.blockId === el.blockId ? { ...x, answered: true } : x)));
-    return act({ kind: "element_response", turn_seq: el.turnSeq, element_id: el.element.element_id, response }, response);
+    const ok = await act({ kind: "element_response", turn_seq: el.turnSeq, element_id: el.element.element_id, response }, response);
+    // a failed send (network, locked turn, 5xx) must not eat the task: it comes back so the answer can be sent again
+    if (!ok) setElems((all) => all.map((x) => (x.blockId === el.blockId ? { ...x, answered: false } : x)));
   };
 
-  // History: the feed of the session; text lives in `message.sent` (student) and `turn.committed` (teacher)
+  // History: the feed of the session; text lives in `message.sent` / `voice.transcribed` (student) and `turn.committed` (teacher)
   useEffect(() => {
     let off = false;
     get<S["SessionDetail"]>(`/v1/sessions/${id}`)
@@ -166,7 +232,8 @@ export function SessionLive({ id }: { id: string }) {
         const pastElems: Elem[] = [];
         for (const ev of d.events) {
           const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
-          if (ev.type === "message.sent" && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
+          // a spoken message: its words are the `voice.transcribed` event, the `message.sent` after it has none
+          if ((ev.type === "message.sent" || ev.type === "voice.transcribed") && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
           else if (ev.type === "turn.committed" && text) {
             past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null });
             // committed elements carry `request_id` (resolved from the live frame's `R…` label, ТЗ §12.3): the only
@@ -179,7 +246,8 @@ export function SessionLive({ id }: { id: string }) {
           }
         }
         setLines(past);
-        if (pastElems.length) setElems((cur) => [...pastElems, ...cur]);
+        // a cached route shown again reads the history anew: the elements already on the page must not double
+        if (pastElems.length) setElems((cur) => [...pastElems, ...cur.filter((c) => !pastElems.some((p) => p.blockId === c.blockId))]);
         scrollDown();
       })
       .catch((e) => {
@@ -190,9 +258,9 @@ export function SessionLive({ id }: { id: string }) {
     return () => {
       off = true;
     };
-    // load once per session
+    // load once per session (and again on "Try again")
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, historyTry]);
 
   // The message typed in the input box before the session existed; or, for a fresh learn/practice/review session, its intent
   useEffect(() => {
@@ -240,9 +308,21 @@ export function SessionLive({ id }: { id: string }) {
   }
   if (!detail) {
     return error ? (
-      <p role="alert" className={cn("px-4 pt-6 text-st-confused", MEASURE)}>
-        {error}
-      </p>
+      <div className={cn("px-4 pt-6", MEASURE)}>
+        <p role="alert" className="text-st-confused">
+          {error}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setHistoryTry((n) => n + 1);
+          }}
+          className={cn(PRIMARY_BTN, "mt-3")}
+        >
+          {t.retry}
+        </button>
+      </div>
     ) : (
       <div className="flex-1" aria-busy="true" />
     );
@@ -286,7 +366,7 @@ export function SessionLive({ id }: { id: string }) {
             l.role === "student" ? (
               <StudentLine key={l.id} text={l.text} />
             ) : (
-              <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper">
+              <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper [overflow-wrap:anywhere]">
                 <RichText text={l.text} />
                 {l.degraded && <p className="mt-2 text-small text-paper-dim">{t.degraded}</p>}
                 {l.interrupted && <p className="mt-2 text-small text-paper-dim">{t.interrupted}</p>}
@@ -294,7 +374,7 @@ export function SessionLive({ id }: { id: string }) {
             ),
           )}
           {streaming !== null && (
-            <article aria-label={tx.session.teacherTurn} aria-busy="true" className="text-paper">
+            <article aria-label={tx.session.teacherTurn} aria-busy="true" className="text-paper [overflow-wrap:anywhere]">
               {streaming ? (
                 <RichText text={streaming} />
               ) : (
@@ -321,6 +401,12 @@ export function SessionLive({ id }: { id: string }) {
         </div>
       </div>
 
+      {(bg.jobs.length > 0 || bg.finished.length > 0) && (
+        <div className="px-4 pb-2 md:px-7">
+          <JobsPlaque jobs={bg.jobs} finished={bg.finished} topicId={detail.topic_id} className={MEASURE} />
+        </div>
+      )}
+
       {live && (
         <div className="px-4 pb-4 md:px-7 md:pb-5">
           <Composer
@@ -328,6 +414,7 @@ export function SessionLive({ id }: { id: string }) {
             placeholder={tx.session.replyPlaceholder}
             submitText={tx.session.send}
             onSend={(text) => void send(text)}
+            voice={{ onClip: sendVoice, disabled: busy }}
           />
         </div>
       )}

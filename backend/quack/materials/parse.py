@@ -69,6 +69,7 @@ SHEET_MODE = "sheet"
 PAGE_MIME = "image/webp"
 PDF_MIME = "application/pdf"
 STATUS_PARSED = "parsed"
+STATUS_FAILED = "failed"
 STEP_STRUCTURE = "structure"
 HUB_CONTROL_TYPE = "no_goal"
 HUB_NAME_FALLBACK = "Untitled material"
@@ -306,6 +307,32 @@ async def _set_parsed(db: Db, learner_id: UUID, material_id: UUID, pages: int) -
     )
 
 
+_SET_FAILED = (
+    "UPDATE content.materials SET status = %(status)s WHERE learner_id = %(learner_id)s "
+    "AND material_id = %(material_id)s AND status <> %(parsed)s"
+)
+
+
+async def mark_failed(db: Db, job: ClaimedJob) -> None:
+    """The parse of the material is over for good (a permanent error or the last attempt): the
+    status is `failed`, so the client stops waiting. A parsed material keeps its status."""
+    await mark_material_failed(db, job.learner_id, job.payload)
+
+
+async def mark_material_failed(db: Db, learner_id: UUID | None, payload: dict[str, Any]) -> None:
+    if learner_id is None or "material_id" not in payload:
+        return
+    await db.execute(
+        _SET_FAILED,
+        {
+            "status": STATUS_FAILED,
+            "parsed": STATUS_PARSED,
+            "learner_id": learner_id,
+            "material_id": UUID(str(payload["material_id"])),
+        },
+    )
+
+
 # --- step 1: pages, chunks, marks -------------------------------------------------------------
 
 
@@ -400,22 +427,29 @@ async def _extract_pages(
 async def _store_pages(
     ctx: JobContext, learner_id: UUID, material_id: UUID, pages: Sequence[tuple[int, str, bytes]]
 ) -> None:
+    """The images first (objects are immutable and a repeat after a crash finds its own), then
+    every row of `content.material_pages` in one transaction: a step that died halfway leaves
+    no pages, so the repeat extracts the file again instead of taking a part of it for the
+    whole material (law 7, WP20.2)."""
     prefix = material_page_key(learner_id, material_id, 0).rsplit("/", 1)[0] + "/"
     present = {o.key for o in await ctx.storage.list_objects(prefix)}
-    for page, text, image in pages:
-        key = material_page_key(learner_id, material_id, page)
-        if key not in present:  # objects are immutable; a repeat after a crash finds its own
-            await ctx.storage.put(key, image, PAGE_MIME)
-        await ctx.db.execute(
-            _INSERT_PAGE,
-            {
-                "material_id": material_id,
-                "page": page,
-                "learner_id": learner_id,
-                "text": text,
-                "image_key": key,
-            },
-        )
+    keys: dict[int, str] = {}
+    for page, _, image in pages:
+        keys[page] = material_page_key(learner_id, material_id, page)
+        if keys[page] not in present:
+            await ctx.storage.put(keys[page], image, PAGE_MIME)
+    async with ctx.db.transaction():
+        for page, text, _ in pages:
+            await ctx.db.execute(
+                _INSERT_PAGE,
+                {
+                    "material_id": material_id,
+                    "page": page,
+                    "learner_id": learner_id,
+                    "text": text,
+                    "image_key": keys[page],
+                },
+            )
 
 
 def _names(values: Sequence[str], limit: int) -> list[str]:

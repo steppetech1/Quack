@@ -230,6 +230,22 @@ def test_edges_added_and_removed() -> None:
     assert ("Skill", SKILL, "REQUIRES", "Skill", SKILL_B) not in rels
 
 
+@pytest.mark.parametrize(("stored", "removed"), [((SKILL, SKILL_B), (SKILL_B, SKILL)),
+                                                 ((SKILL, SKILL_B), (SKILL, SKILL_B))])  # fmt: skip
+def test_same_idea_is_removed_whichever_way_it_was_stored(
+    stored: tuple[str, str], removed: tuple[str, str]
+) -> None:
+    """Т-§3.4.3: `SAME_IDEA` is stored one way and read without a direction — `edge.removed`
+    names the pair in any order and removes the relation."""
+    payload = {"kind": "same_idea", "from_id": removed[0], "to_id": removed[1]}
+    _, rels = _run(
+        [_event(9, "edge.removed", payload)],
+        [_SKILL, _SKILL_B],
+        [_rel(("Skill", stored[0]), "SAME_IDEA", ("Skill", stored[1]), confidence=0.8)],
+    )
+    assert not [k for k in rels if k[2] == "SAME_IDEA"]
+
+
 def test_hub_created_deadline_and_topics() -> None:
     created = {"hub_id": HUB, "domain_id": DOMAIN, "name": "Exam", "kind": "request",
                "origin": "learner", "control_type": "tasks"}  # fmt: skip
@@ -311,6 +327,33 @@ def test_proposed_topic_created_later_keeps_what_it_had() -> None:
     nodes, rels = _run([_event(2, "topic.created", payload)], [_DOMAIN, proposed])
     assert nodes[("Topic", TOPIC)] == proposed.props | {"status": "active", "origin": "learner"}
     assert ("Domain", DOMAIN, "HAS_TOPIC", "Topic", TOPIC) not in rels  # not created twice
+
+
+def test_topic_proposed_does_not_touch_a_topic_that_lives() -> None:
+    """The second material on the same name (same id, Т-§4.4): an active topic is not lowered
+    to `proposed`, a hidden one does not revive, name and origin are not rewritten."""
+    payload = {"topic_id": TOPIC, "domain_id": DOMAIN, "name": "Fractions II", "origin": "material"}
+    for status in ("active", "hidden", "proposed"):
+        live = _node("Topic", TOPIC, domainId=DOMAIN, name="Fractions", origin="session",
+                     status=status, knownClaimedAtMs=0)  # fmt: skip
+        nodes, rels = _run([_event(2, "topic.proposed", payload)], [_DOMAIN, live])
+        assert nodes[("Topic", TOPIC)] == live.props
+        assert ("Domain", DOMAIN, "HAS_TOPIC", "Topic", TOPIC) not in rels
+
+
+@pytest.mark.parametrize("event_type", ["topic.created", "topic.proposed"])
+def test_topic_event_of_a_merged_id_changes_nothing(event_type: str) -> None:
+    """The id of a merged topic is an `Alias` of the target (Т-§2.8): a later event of the same
+    name does not rewrite name, status and origin of the target and creates no node."""
+    target = _node("Topic", TOPIC, domainId=DOMAIN, name="Fractions", origin="session",
+                   status="active", knownClaimedAtMs=0)  # fmt: skip
+    alias = _rel(("Alias", TOPIC_B), "ALIAS_OF", ("Topic", TOPIC))
+    payload = {"topic_id": TOPIC_B, "domain_id": DOMAIN, "name": "Ratios", "origin": "material"}
+    graph = ([_DOMAIN, target, NodeRecord("Alias", TOPIC_B, {"learnerId": L})], [alias])
+    nodes, rels = _run([_event(2, event_type, payload)], *graph)
+    assert nodes[("Topic", TOPIC)] == target.props
+    assert ("Topic", TOPIC_B) not in nodes
+    assert (nodes, rels) == _run([], *graph)
 
 
 def test_edge_between_merged_skills_is_not_a_loop() -> None:
@@ -505,6 +548,26 @@ def test_skill_merged_moves_relations_and_leaves_an_alias() -> None:
     assert rels[("Skill", SKILL, "REQUIRES", "Skill", SKILL_B)] == {
         "origin": "model",
         "confidence": 0.7,
+    }
+
+
+def test_skill_merged_keeps_the_tests_of_every_level_and_part() -> None:
+    """`TESTS {level, part}` is told apart by its identity props (`Т-§3.4.3`, D-A-133): the
+    target already tested at level 1 by a task does not swallow the old skill's level 2 of it."""
+    _, rels = _run(
+        [_event(50, "skill.merged", {"from_id": SKILL_OLD, "into_id": SKILL})],
+        [_TOPIC, _SKILL, _SKILL_OLD, _TASK],
+        [
+            _rel(("Task", TASK), "TESTS", ("Skill", SKILL), level=1, part="main"),
+            _rel(("Task", TASK), "TESTS", ("Skill", SKILL_OLD), level=1, part="main"),
+            _rel(("Task", TASK), "TESTS", ("Skill", SKILL_OLD), level=2, part="main"),
+            _rel(("Task", TASK), "TESTS", ("Skill", SKILL_OLD), level=1, part="b"),
+        ],
+    )
+    assert {(k[4], k[5], k[6]) for k in rels if k[2] == "TESTS"} == {
+        (SKILL, 1, "main"),
+        (SKILL, 2, "main"),
+        (SKILL, 1, "b"),
     }
 
 
@@ -783,7 +846,7 @@ def test_a_description_with_the_name_of_a_skill_of_the_domain_is_that_skill() ->
 def test_task_checks_set_verification_and_correct_the_markup() -> None:
     """Т-§5.6: `task.verified` — checked; `task.markup_disputed` / `task.key_disputed` —
     disputed, the corrected markup replaces the old one (the verdicts are lowered to class
-    model with the evidence handlers)."""
+    model: `test_a_dispute_lowers_the_verdicts_already_given_to_class_model`)."""
     created = _event(62, "task.created", _TASK_CREATED, domain_id=UUID(DOMAIN))
     corrected = _MARKUP | {"tests": _tests((SKILL, 3)), "parts": None}
     nodes, rels = _run(
@@ -958,6 +1021,36 @@ def test_tier_by_verification_and_second_opinion(
     nodes, _ = _run([_answer(), _verdict(**verdict)], *_verdict_graph(task))
     evidence = nodes[("Evidence", _ev(0))]
     assert (evidence["tier"], evidence["verification"]) == (tier, verification)
+
+
+@pytest.mark.parametrize("check", ["task.key_disputed", "task.markup_disputed"])
+def test_a_dispute_lowers_the_verdicts_already_given_to_class_model(check: str) -> None:
+    """Т-§5.6, D-A-132: `task.key_disputed` / `task.markup_disputed` — the verdicts already
+    given (and the evidence derived from them) go down to class model, T1 to T2, exactly as a
+    verdict recorded after the dispute (the same handlers in every mode, T-P1); other checks
+    and other evidence stay."""
+    requires = _rel(("Skill", SKILL), "REQUIRES", ("Skill", SKILL_B), origin="model",
+                    confidence=0.9)  # fmt: skip
+    graph_nodes, graph_rels = _verdict_graph()
+    graph = (graph_nodes, [*graph_rels, requires])
+    disputed_nodes, _ = _verdict_graph(
+        _node("Task", TASK, **(_TASK.props | {"verification": "disputed"}))
+    )
+    card = _answer(72, source="card", self_assessment=True)
+    given = [_answer(), _verdict(outcome="correct"), card]
+
+    nodes, _ = _run([*given, _event(80, check, {"task_id": TASK})], *graph)
+    lowered = {k: v for k, v in nodes.items() if k[0] == "Evidence"}
+    assert any(v["derivedKind"] != "direct" for v in lowered.values())  # derived is covered
+    assert {(v["verification"], v["tier"]) for k, v in lowered.items()
+            if k[1] != _ev(0, 72)} == {("model", 2)}  # fmt: skip
+    assert lowered[("Evidence", _ev(0, 72))]["tier"] == 4  # the card stays T4
+
+    recorded_after, _ = _run(given, disputed_nodes, graph[1])
+    assert lowered == {k: v for k, v in recorded_after.items() if k[0] == "Evidence"}
+
+    nodes, _ = _run([*given, _event(80, "task.verified", {"task_id": TASK})], *graph)
+    assert nodes[("Evidence", _ev(0))]["verification"] == "code"
 
 
 def test_unclear_verdict_or_missing_answer_gives_nothing() -> None:

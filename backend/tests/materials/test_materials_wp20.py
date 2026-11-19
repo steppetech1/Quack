@@ -54,13 +54,53 @@ async def _domain(db: Db, learner: UUID) -> UUID:
     return domain_id
 
 
+async def _session(db: Db, learner: UUID, domain: UUID) -> UUID:
+    """A session of the learner: its `session.started` is in the log."""
+    session_id = uuid4()
+    await _event(
+        db,
+        learner,
+        "session.started",
+        {"session_id": str(session_id), "domain_id": str(domain), "intent": "learn"},
+        session_id=session_id,
+    )
+    return session_id
+
+
+async def test_upload_refuses_a_session_of_another_learner(pg_db: Db, settings: Settings) -> None:
+    """A foreign or made-up `session_id` must not reach `material.uploaded` and the parse job."""
+    owner = await create_learner(pg_db)
+    stranger = await create_learner(pg_db)
+    owner_domain = await _domain(pg_db, owner)
+    foreign = await _session(pg_db, owner, owner_domain)
+    own_domain = await _domain(pg_db, stranger)
+    storage = InMemoryObjectStore()
+    for session_id in (foreign, uuid4()):
+        with pytest.raises(MaterialNotFound):
+            await upload_material(
+                pg_db,
+                storage,
+                settings,
+                learner_id=stranger,
+                domain_id=own_domain,
+                data=PDF,
+                session_id=session_id,
+            )
+    assert storage.objects == {}
+    rows = await pg_db.fetch_all(
+        "SELECT 1 FROM core.events WHERE type = 'material.uploaded' AND learner_id = %(l)s",
+        {"l": stranger},
+    )
+    assert rows == []
+
+
 async def test_upload_material_stores_object_row_and_event(pg_db: Db, settings: Settings) -> None:
     """WP20.1: object under `learners/{id}/materials/{material_id}/original.pdf`, the row and
     `material.uploaded` in one transaction (Т-§2.3)."""
     learner = await create_learner(pg_db)
     domain = await _domain(pg_db, learner)
     storage = InMemoryObjectStore()
-    session_id = uuid4()
+    session_id = await _session(pg_db, learner, domain)
 
     material = await upload_material(
         pg_db,

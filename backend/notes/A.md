@@ -23,6 +23,55 @@
 
 <!-- записи ниже, новые сверху -->
 
+### D-A-252. Решение владельца по D-A-250 (2026-11-15): событие темы по слитому или живому id
+- Класс: B
+- WP / место: WP3, WP6; `quack/graph/projection/handlers.py` (`_topic_new`)
+- Контекст: владелец 2026-11-15 согласовал вариант для открытого пункта (в) D-A-250. Id темы — `uuid5` нормализованного имени (Т-§4.4), поэтому повторное имя даёт тот же id; случай бытовой (второй материал на ту же тему).
+- Решение:
+  1. `topic.created` и `topic.proposed` по id, который стал Alias слитой темы, ничего не меняют; событие остаётся в журнале.
+  2. `topic.proposed` по существующей теме ничего не меняет: статус не понижается, имя и origin не перезаписываются, `hidden` не оживает. `topic.created` по предложенной теме переводит её в `active`, как раньше.
+  3. `rules@3` не менялась (основания те же, что в D-A-250: исправление обработчика, схема графа прежняя).
+- Почему: Т-§2.8, Т-§4.7; T-P1
+- Обратимость: правка обработчика
+- Тесты: `tests/graph/test_projection_rules3.py`, `tests/graph/test_projection_batches.py`
+- Требует подтверждения владельцем: нет. Граф, уже испорченный поздним событием, исправляет только `ops rebuild --all`: `--stale-rules` его не найдёт, версия правил та же
+
+### D-A-251. Решения владельца по D-A-250 (2026-11-15): остановка потока диспетчера и индекс блокировки очереди
+- Класс: B; две миграции схемы
+- WP / место: WP7; `quack/jobs/dispatcher_p4.py`, `quack/ops/{status,alerts}.py`, `quack/deletion/account.py`, `quack/cli.py`, `quack/config.py`; миграции `20261115000001_dispatcher_failures.sql`, `20261115000002_jobs_in_work_lock_index.sql`, `20261115000003_jobs_drop_running_lock_index.sql`
+- Контекст: владелец 2026-11-15 поручил принять решения по открытым пунктам (а) и (б) D-A-250 самостоятельно.
+- Решение:
+  1. Сбой пачки диспетчера пишется в `ops.dispatcher_failures` отдельной транзакцией (seq события, тип и текст ошибки, `attempts`). После `dispatcher_failure_limit = 10` сбоев подряд на одном seq ставится `stopped_at`: поток ученика остановлен, остальные идут дальше. Событие не пропускается, метка не двигается (Т-§2.10); успешная пачка стирает строку.
+  2. Отличие от проектора: проектор останавливается на первом `EventFailed`, диспетчер — по порогу, потому что его сбой может быть временным.
+  3. Остановленные ученики исключены из `pending_learners` до `LIMIT` (нет голодания); видны в `ops status` (`dispatcher.stopped_streams`) и дают критичную тревогу `DISPATCHER_STOPPED`; `ops resume` снимает остановку и проектора, и диспетчера; удаление аккаунта чистит строки.
+  4. Уникальный индекс `uq_jobs_in_work_lock` по `lock_key` на `status IN ('running', 'cancel_requested')` заменяет `uq_jobs_running_lock`; новый создаётся раньше, чем удаляется старый (оба `CONCURRENTLY`).
+- Почему: Т-§2.10, Т-§13.1; закон 7
+- Обратимость: миграции с `migrate:down`
+- Тесты: `tests/jobs/{test_dispatcher_p4,test_queue_p4}.py`, `tests/test_ops_alerts.py`, `tests/test_ops_p4_status.py`, `tests/test_ops_p4_recovery.py`, `tests/domains/test_deletion_fixes.py`, `tests/db/test_baseline_migration.py`; `tests/test_infra.py::test_migration_creates_contract_indexes` переведён на новый индекс
+- Требует подтверждения владельцем: нет. Перед выкаткой проверить, что в живой базе нет двух задач с одним `lock_key` в `running` и `cancel_requested` — иначе создание индекса упадёт
+
+### D-A-250. Волна исправлений по аудиту багов (2026-11-13): удаление, очередь, правки ученика, проектор
+- Класс: B (обратимо, внутри контрактов); п.2 и п.10 — уточнение порядка из Д-§8.5 и Т-§2.7
+- WP / место: WP3–WP8, WP17, WP25; `quack/deletion/{account,domain,journal,topic}.py`, `quack/jobs/{queue_p4,rules_p4}.py`, `quack/domains/topic_edits.py`, `quack/review/today.py`, `quack/graph/projection/{handlers,store,rebuild,runner}.py`, `quack/graph/overlay_build.py`
+- Контекст: аудит 2026-11-10 (ветка `local/work`, `18608f8`) нашёл дефекты; каждый проверен по коду и документам перед правкой. Работа локальная, деление на потоки по решению владельца не применялось.
+- Решение:
+  1. Объекты хранилища домена и темы удаляются внутри транзакции строк, до коммита: сбой хранилища откатывает строки, ключи остаются для повтора (`delete_keys` идемпотентен).
+  2. Строка `ops.deletion_log` пишется после успешной пересборки (Д-§8.5 шаг 3); `rebuild_after` при `busy`/`failed` бросает `DeletionBusy` (API — 503), `reconcile`/`replay` обходят все записи и бросают `DeletionBusy` в конце.
+  3. Удаление домена и темы удаляет задачи `ops.jobs`, порождённые удаляемыми событиями (`payload.trigger_seq`) и связанные по payload; домен чистит `counters` диспетчера (эпизоды, `new_topics`), `content.study_plans` своих хабов и `canvas_boards` по `task_id`.
+  4. Удаление аккаунта берёт блокировку строки `ops.dispatcher_offsets` до `DELETE ops.jobs`; `_write_failure_event` терпит `LearnerNotFoundError`; `reap_stale` — точка сохранения на задачу.
+  5. Уточнение D-A-199: согласие на шпаргалку (`agent.requested`) не склеивается (`coalesce_key` убран, `lock_key artifact:{hub}` остался) — задача несёт `request_id` (Т-§13.1).
+  6. Уточнение D-A-193 п.3: «исходное состояние» в ключе `topic.renamed` / `hub.deadline_set` / `hub.topics_changed` / `episode.reassigned` — `seq` последнего события этого вида по цели, а не пара значений `old->new`; повтор уже выставленного значения возвращает то же событие. `topic.hidden:{id}` не менялся: обратного перехода из `hidden` в проекторе нет.
+  7. Ключ `today.shown` — по домену, дате и составу пунктов без `score`.
+  8. `agent.topic_split` без домена берёт `lock_key = topic_split:{learner_id}`.
+  9. Понижение уже вынесенных вердиктов при `task.key_disputed` / `task.markup_disputed` (Т-§5.6) делает обработчик `_task_checked` фазы А: Evidence задачи с `verification="code"` получают `model`, `tier=2`; результат один в пачках, пересборке и наложении.
+  10. `projectorVersion == ""` — метка незаконченной пересборки по частям: перед записью частями `ops.projector_offsets.seq` ставится в 0, проектор чистит частичный граф и проецирует журнал заново (Т-§2.7).
+  11. Свёртка профиля читает узел `Profile` в срез пачки (удаление устаревших `learned*`) и события профиля только до последнего события пачки или наложения.
+  12. `skill.merged` различает связи по identity-свойствам (`TESTS {level, part}`); `edge.removed` для `same_idea` удаляет оба направления (Т-§3.4.3).
+- Почему: законы 5, 7, 8 (Т-§1.1); Т-§2.7, Т-§3.4.3, Т-§5.6, Т-§13.1, Т-§19.5; Д-§8.5; T-P1
+- Обратимость: правки кода без миграций и без смены `rules@3`
+- Тесты: `tests/domains/{test_deletion_fixes,test_edit_keys}.py`, `tests/jobs/{test_queue_p4,test_rules_p4,test_cheatsheet_consent_queue}.py`, `tests/graph/{test_projection_rules3,test_projection_batches,test_projection_runner}.py`; изменены `test_rules_p4.py::test_cheatsheet_consent_is_the_job_of_its_hub` и `::test_topic_split_request_is_a_graph_job_of_the_domain` (закрепляли дефект)
+- Требует подтверждения владельцем: да — не исправлено и ждёт решения: (а) «ядовитое» событие в пачке диспетчера останавливает ученика (нет аналога `projector_failures`); (б) индекс `uq_jobs_running_lock` не покрывает `cancel_requested` (нужна миграция); (в) `topic.created` / `topic.proposed` по id, ставшему Alias, перезаписывает целевую тему
+
 ### D-A-249. Открытые вопросы владельцу (STATUS §6, issue #270) — решены по документам по поручению владельца 2026-11-05
 - Класс: C для пунктов 1, 3, 4, 7, 8 (схема после G1, слой 1 промптов — ТЗ §0.4.4 п.2, п.13); остальные — A/B/C
 - WP / место: STATUS §6; `Фаза 4 — решения (единое).md`; затрагивает B (промпты, D-B-104, D-B-132, D-B-143) и C (D-C-117, D-C-152, D-C-211, D-C-214, Q-C-1). Решения B уже были в #270 (D-B-220); здесь они сверены с документами

@@ -41,6 +41,7 @@ from langgraph.graph.state import CompiledStateGraph
 from quack.config import Settings
 from quack.events.event_types import DegradedMode
 from quack.llm.errors import ProviderIncompleteError
+from quack.llm.labels import LabelMap
 from quack.llm.streaming import (
     BlockClosed,
     BlockText,
@@ -113,6 +114,9 @@ class GuardInputs:
     has_spoiler: Callable[[str], bool]
     remove_spoiler: Callable[[str], str]
     boundary: Boundary | None = None
+    # The label table of the call: with it the guard also checks every label the write turns
+    # into an id (requests, `cancel_requests`, elements, deadline), Т-§12.4.
+    labels: LabelMap | None = None
 
 
 @dataclass(frozen=True)
@@ -410,6 +414,7 @@ async def _model(state: _State, config: RunnableConfig) -> _Update:
                 raise ProviderIncompleteError(step.text, headers=step.completed.headers)
             if attempt.shown:
                 await run.ports.emit(ResetFrame(reason="guard"))
+                attempt.shown = False  # the client dropped it: the next step starts clean
             limit = doubled(request.base.max_output_tokens, run.settings.max_output_tokens_cap)
             request = replace(request, base=replace(request.base, max_output_tokens=limit))
             return {"request": request, "cut_retried": True, "usage": usage, "outcome": "cut"}
@@ -455,6 +460,7 @@ async def _guard(state: _State, config: RunnableConfig) -> _Update:
         output.p3_markup,
         skill_labels=guard.skill_labels,
         misconception_labels=guard.misconception_labels,
+        labels=guard.labels,
     )
     if violations and not final:
         if attempt.shown:
@@ -468,6 +474,7 @@ async def _guard(state: _State, config: RunnableConfig) -> _Update:
                     output.p3_markup,
                     skill_labels=guard.skill_labels,
                     misconception_labels=guard.misconception_labels,
+                    labels=guard.labels,
                 )
             }
         )
@@ -527,6 +534,7 @@ async def _elements(run: _Run, output: TeacherOutputV2, text: str) -> TeacherOut
     elements = {e.element_id: e for e in markup.elements}
     tasks = {t.element_id: t for t in markup.tasks}
     removed: set[str] = set()
+    checked: set[str] = set()
     for block in output.p2_body.blocks:
         if block.element_id is None:
             continue
@@ -541,17 +549,27 @@ async def _elements(run: _Run, output: TeacherOutputV2, text: str) -> TeacherOut
             )
             continue
         if element.kind in TASK_ELEMENT_KINDS:
+            checked.add(element.element_id)
             task = await _checked_task(run, element, tasks.get(element.element_id), text)
             if task is None:
                 removed.add(element.element_id)
                 continue
             tasks[element.element_id] = task
         await run.ports.emit(ElementFrame(block_id=block.block_id, element=element))
+    # Т-§5.3: a task no task block of the body points at is committed too — it passes the same
+    # check (there is no element to fix it for, so a bad one is dropped).
+    dropped: set[str] = set()
+    for element_id, task in tasks.items():
+        if element_id not in checked and (problems := _task_problems(run.guard, task)):
+            dropped.add(element_id)
+            log.warning(
+                "guard_violation", rule="task_markup", element_id=element_id, reasons=problems
+            )
     markup = markup.model_copy(
         update={
             "elements": [e for e in markup.elements if e.element_id not in removed],
             # Review C #109: a task fixed from no markup at all is kept too (insertion order).
-            "tasks": [task for eid, task in tasks.items() if eid not in removed],
+            "tasks": [task for eid, task in tasks.items() if eid not in removed | dropped],
         }
     )
     blocks = [b for b in output.p2_body.blocks if b.element_id not in removed]

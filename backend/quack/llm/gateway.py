@@ -15,8 +15,8 @@ import inspect
 import math
 import random
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -229,6 +229,7 @@ class LLMGateway:
             images=tuple(images),
         )
         totals = [0, 0, 0, 0]  # input, output, cached, latency
+        settled = False  # the last attempt already has its row (a failed repair of a label)
         async with self._admitted(role, model):
             response = await self._attempts(ctx, request, totals)
             value, error = _parse(response_model, response.content)
@@ -247,11 +248,14 @@ class LLMGateway:
                 response = await self._attempts(ctx, replace(request, repair_hint=problem), totals)
                 again, _ = _parse(response_model, response.content)
                 if again is None:
+                    # Both attempts have their rows; the first answer is returned without a
+                    # third one (WP10.4: a row per attempt, the cost is not counted twice).
                     await self._record(ctx, response, totals[3], "schema_error", "schema")
-                    value, response = first, first_response
+                    value, response, settled = first, first_response, True
                 else:
                     value = again
-        await self._record(ctx, response, totals[3], "ok", None)
+        if not settled:
+            await self._record(ctx, response, totals[3], "ok", None)
         usage = LLMUsage(totals[0], totals[1], totals[2], totals[3])
         return LLMResult(value, False, prompt.sha256, response.model, usage)
 
@@ -474,12 +478,28 @@ class LLMGateway:
         totals: list[int],
         invoke: Callable[[ProviderRequest], Awaitable[R]],
     ) -> R:
+        probe = [False]
+        try:
+            return await self._attempt_loop(ctx, request, totals, invoke, probe)
+        finally:
+            # Whatever ended the call (a cancel, a broken answer, a failed ledger write), a probe
+            # without a verdict must not keep the breaker closed to everyone else.
+            self._release_probe(ctx.model, probe[0])
+
+    async def _attempt_loop[R: ProviderResponse](
+        self,
+        ctx: _CallContext,
+        request: ProviderRequest,
+        totals: list[int],
+        invoke: Callable[[ProviderRequest], Awaitable[R]],
+        probe: list[bool],
+    ) -> R:
         settings = self.settings
         started = time.monotonic()
         failures = rate_limited = 0
         cut_retried = False
         while True:
-            await self._admit_circuit(ctx)
+            probe[0] = await self._admit_circuit(ctx)
             attempt_started = time.monotonic()
             try:
                 async with asyncio.timeout(request.timeout_sec):
@@ -511,7 +531,16 @@ class LLMGateway:
                 ) from exc
             except ProviderIncompleteError as exc:
                 self._circuit_neutral(ctx.model)
-                await self._record_error(ctx, _latency(attempt_started), "incomplete", "incomplete")
+                # A cut answer is paid in full: the row carries the usage the provider reported.
+                cut = ProviderResponse(
+                    "",
+                    exc.input_tokens,
+                    exc.output_tokens,
+                    exc.cached_tokens,
+                    ctx.model,
+                    reasoning_tokens=exc.reasoning_tokens,
+                )
+                await self._record(ctx, cut, _latency(attempt_started), "incomplete", "incomplete")
                 limit = request.max_output_tokens
                 cap = settings.max_output_tokens_cap
                 if cut_retried or limit is None or limit >= cap:
@@ -576,9 +605,10 @@ class LLMGateway:
         await set_pressure_flag(self.redis, ctx.model, flag_ttl, "429", now)
         return ttl
 
-    async def _admit_circuit(self, ctx: _CallContext) -> None:
+    async def _admit_circuit(self, ctx: _CallContext) -> bool:
         """Short-circuit while the breaker of the model is open; after `circuit_open_s` let
-        exactly one probe through (WP5.5). Short-circuited calls are logged, not recorded."""
+        exactly one probe through (WP5.5). Short-circuited calls are logged, not recorded.
+        Returns whether this call is the probe: the caller frees it with `_release_probe`."""
         circuit = self._circuits.setdefault(ctx.model, _Circuit())
         now = time.monotonic()
         blocked = circuit.open_until > now or (circuit.open_until > 0 and circuit.probing)
@@ -589,6 +619,13 @@ class LLMGateway:
             raise LLMUnavailableError(f"{ctx.prompt.ref}: circuit open", reason="circuit_open")
         if circuit.open_until > 0:
             circuit.probing = True
+            return True
+        return False
+
+    def _release_probe(self, model: str, probe: bool) -> None:
+        """The probe ended (with or without a verdict): the next call may probe again."""
+        if probe:
+            self._circuit_neutral(model)
 
     def _circuit_success(self, model: str) -> None:
         self._circuits[model] = _Circuit()
@@ -716,6 +753,20 @@ class _GatewayStream:
         self._ctx = ctx
 
     async def stream_structured(self, request: StreamRequest) -> AsyncIterator[StreamEvent]:
+        probe = [False]
+        model = request.base.model
+        try:
+            async with aclosing(self._steps(request, probe)) as events:
+                async for event in events:
+                    yield event
+        finally:
+            # A probe that ended without a verdict (no slot, the client left, the stream stopped
+            # before its end event) must not keep the breaker closed to everyone else.
+            self._gw._release_probe(model, probe[0])  # pyright: ignore[reportPrivateUsage]
+
+    async def _steps(
+        self, request: StreamRequest, probe: list[bool]
+    ) -> AsyncGenerator[StreamEvent]:
         gw, settings = self._gw, self._gw.settings
         provider: StreamingLLMProvider = self._gw.provider  # type: ignore[assignment]
         ctx = replace(
@@ -726,10 +777,10 @@ class _GatewayStream:
         )
         failures = 0
         while True:
-            await gw._admit_circuit(ctx)  # pyright: ignore[reportPrivateUsage]
+            probe[0] = await gw._admit_circuit(ctx)  # pyright: ignore[reportPrivateUsage]
             started = time.monotonic()
             deadline = started + request.base.timeout_sec
-            yielded = False
+            yielded = completed = False
             try:
                 async with gw._admitted(ctx.role, ctx.model):  # pyright: ignore[reportPrivateUsage]
                     events = provider.stream_structured(request).__aiter__()
@@ -741,6 +792,7 @@ class _GatewayStream:
                                 except StopAsyncIteration:
                                     break
                             if isinstance(event, StreamCompleted):
+                                completed = True
                                 await self._completed(ctx, event, _latency(started))
                             yielded = True
                             yield event
@@ -748,6 +800,10 @@ class _GatewayStream:
                         aclose = getattr(events, "aclose", None)
                         if aclose is not None:
                             await aclose()
+                if not completed:
+                    # The stream ended without its end event: no usage is known, but the call
+                    # was made — a row of the attempt, like a cut answer (WP10.4).
+                    await gw._record_error(ctx, _latency(started), "incomplete", "incomplete")  # pyright: ignore[reportPrivateUsage]
                 return
             except ProviderRateLimitedError as exc:
                 gw._circuit_neutral(ctx.model)  # pyright: ignore[reportPrivateUsage]

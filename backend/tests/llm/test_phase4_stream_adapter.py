@@ -12,7 +12,11 @@ import httpx2
 import orjson
 import pytest
 
-from quack.llm.errors import ProviderIncompleteError, ProviderRateLimitedError
+from quack.llm.errors import (
+    ProviderIncompleteError,
+    ProviderRateLimitedError,
+    ProviderUnavailableError,
+)
 from quack.llm.provider import ProviderRequest
 from quack.llm.responses_client import ResponsesClient
 from quack.llm.streaming import (
@@ -174,6 +178,67 @@ async def test_stream_429_raises_with_headers() -> None:
         await _collect(_client(handler).stream_structured(StreamRequest(BASE)))
     assert caught.value.retry_after_sec == 2.0
     assert caught.value.headers["x-ratelimit-limit-tokens"] == "4000000"
+
+
+# An `error` event inside the stream. The format of a limit is NOT confirmed by a live run: the
+# cases follow the common shape of the Responses API (`code`/`type` with `rate_limit`, or 429).
+RATE_LIMIT_EVENTS = [
+    pytest.param(
+        {"type": "error", "code": "rate_limit_exceeded", "message": "slow down"},
+        None,
+        id="top-level-code",
+    ),
+    pytest.param(
+        {"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}},
+        None,
+        id="error-type",
+    ),
+    pytest.param(
+        {"type": "error", "error": {"code": "rate_limit_exceeded", "retry_after": 7}},
+        7.0,
+        id="retry-after-number",
+    ),
+    pytest.param(
+        {"type": "error", "status": 429, "retry_after_seconds": "3"},
+        3.0,
+        id="status-429",
+    ),
+    pytest.param(
+        {"type": "response.failed", "response": {"error": {"code": "rate_limit_exceeded"}}},
+        None,
+        id="response-failed",
+    ),
+]
+
+
+@pytest.mark.parametrize(("event", "retry_after"), RATE_LIMIT_EVENTS)
+async def test_error_event_with_a_rate_limit_is_a_429(
+    event: dict[str, Any], retry_after: float | None
+) -> None:
+    """A limit inside the stream is the same error as an HTTP 429: the gateway sets the pressure
+    flag and does not count it for the breaker (the event keeps the headers of the stream)."""
+    handler = _Handler(_ok(_sse({"type": "response.output_text.delta", "delta": "Hi"}, event)))
+    with pytest.raises(ProviderRateLimitedError) as caught:
+        await _collect(_client(handler).stream_structured(StreamRequest(BASE)))
+    assert caught.value.retry_after_sec == retry_after
+    assert caught.value.headers["x-ratelimit-limit-tokens"] == "4000000"
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "error", "code": "server_error", "message": "boom"},
+        {"type": "error", "error": {"code": "context_length_exceeded", "status": 400}},
+        {"type": "response.failed", "response": {"error": {"code": "server_error"}}},
+        {"type": "error", "message": "something about rate in prose"},
+    ],
+    ids=["server-error", "other-status", "failed-server-error", "no-code"],
+)
+async def test_other_error_events_stay_provider_failures(event: dict[str, Any]) -> None:
+    handler = _Handler(_ok(_sse(event)))
+    with pytest.raises(ProviderUnavailableError) as caught:
+        await _collect(_client(handler).stream_structured(StreamRequest(BASE)))
+    assert not isinstance(caught.value, ProviderRateLimitedError)
 
 
 # --- tool loop (Т-§11.5) ------------------------------------------------------------------

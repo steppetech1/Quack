@@ -86,6 +86,8 @@ export type GraphModel = {
   otherDomain: OtherDomainTopic[];
   recentSessions: RecentSession[];
   today: TodayRec[];
+  /** `minutes` of `GET …/today`: about how long all of today's recommendations take (the backend only; absent when 0) */
+  todayMinutes?: number;
   /** Mock "now"; the real API uses `Date.now()` */
   nowMs: number;
 };

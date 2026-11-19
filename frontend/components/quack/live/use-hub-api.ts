@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, get, idem, patch, post, type S } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
+import { MATERIAL_POLL_LIMIT, MATERIAL_POLL_MS, materialState } from "@/lib/api/materials";
 import { useT } from "@/lib/i18n/provider";
 import { useNotice } from "../soon";
 import { useErrorText } from "./error-text";
+import { useMaterialUpload } from "./use-material-upload";
 
 /** A hub of the backend has a uuid; "all" and the synthetic `all-<domain>` chapter of a subject without chapters do not */
 const REAL_HUB = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -13,8 +15,8 @@ const REAL_HUB = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 const GRADE_DISMISSED_KEY = "quack.gradeDismissed.v1";
 
 /**
- * What the chapter page takes from the backend: its cheat sheet, the materials of the subject, and the three
- * actions that were "soon": build the cheat sheet, deadline prep mode, change the deadline.
+ * What the chapter page takes from the backend: its cheat sheet, the materials of the subject (upload and parse state),
+ * and the actions that were "soon": build the cheat sheet, deadline prep mode on and off, change the deadline.
  */
 export function useHubApi(hubId: string, domainId: string, enabled: boolean) {
   const t = useT().live;
@@ -25,6 +27,9 @@ export function useHubApi(hubId: string, domainId: string, enabled: boolean) {
   const [cheat, setCheat] = useState<S["CheatsheetResponse"] | null>(null);
   const [materials, setMaterials] = useState<S["MaterialView"][]>([]);
   const [busy, setBusy] = useState(false);
+  /** The backend does not say whether prep mode is on, so this knows only what was switched in this visit */
+  const [prepOn, setPrepOn] = useState(false);
+  const { send: sendFile, uploading } = useMaterialUpload(domainId);
   /** The deadline has passed and no mark is entered yet: `grade_hub_ids` of `GET /v1/domains/{id}/today` (WP17.5) */
   const [gradeDue, setGradeDue] = useState(false);
   /** Chapters whose offer was dismissed with "Not now": the backend has no event for that, so it is kept in this browser */
@@ -54,6 +59,35 @@ export function useHubApi(hubId: string, domainId: string, enabled: boolean) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [real, hubId, domainId, appliedSeq]);
+
+  // while a material is being parsed: ask `GET /v1/materials/{id}` for each such one until it is done (or the tries run out)
+  const processing = materials.filter((m) => materialState(m.status) === "processing").map((m) => m.material_id).join(",");
+  useEffect(() => {
+    if (!real || !processing) return;
+    let off = false;
+    let tries = 0;
+    const timer = setInterval(() => {
+      if (++tries > MATERIAL_POLL_LIMIT) return clearInterval(timer);
+      for (const mid of processing.split(",")) {
+        get<S["MaterialDetailView"]>(`/v1/materials/${mid}`)
+          .then((d) => !off && setMaterials((cur) => cur.map((m) => (m.material_id === mid ? d.material : m))))
+          .catch(() => {}); // a failed poll is just tried again
+      }
+    }, MATERIAL_POLL_MS);
+    return () => {
+      off = true;
+      clearInterval(timer);
+    };
+  }, [real, processing]);
+
+  /** Upload a lecture into the subject; the new one lands at the top of the list and is polled until parsed */
+  const addMaterial = useCallback(
+    async (file: File) => {
+      const made = await sendFile(file);
+      if (made) setMaterials((cur) => [made, ...cur.filter((m) => m.material_id !== made.material_id)]);
+    },
+    [sendFile],
+  );
 
   useEffect(() => {
     try {
@@ -86,7 +120,22 @@ export function useHubApi(hubId: string, domainId: string, enabled: boolean) {
       }, t.cheatQueued),
     [run, hubId, loadCheat, t.cheatQueued],
   );
-  const prep = useCallback(() => run(() => post(`/v1/hubs/${hubId}/prep-mode`, { enabled: true }), t.prepOn), [run, hubId, t.prepOn]);
+  const prep = useCallback(
+    () =>
+      run(async () => {
+        await post(`/v1/hubs/${hubId}/prep-mode`, { enabled: true });
+        setPrepOn(true);
+      }, t.prepOn),
+    [run, hubId, t.prepOn],
+  );
+  const prepOff = useCallback(
+    () =>
+      run(async () => {
+        await post(`/v1/hubs/${hubId}/prep-mode`, { enabled: false });
+        setPrepOn(false);
+      }, t.prepOffDone),
+    [run, hubId, t.prepOffDone],
+  );
   /** `null` takes the deadline away */
   const setDeadline = useCallback(
     (ms: number | null) =>
@@ -116,5 +165,5 @@ export function useHubApi(hubId: string, domainId: string, enabled: boolean) {
     });
   }, [hubId]);
 
-  return { real, cheat, materials, busy, buildCheat, prep, setDeadline, gradeOffer: gradeDue && !dismissed.includes(hubId), grade, dismissGrade };
+  return { real, cheat, materials, uploading, addMaterial, busy, prepOn, buildCheat, prep, prepOff, setDeadline, gradeOffer: gradeDue && !dismissed.includes(hubId), grade, dismissGrade };
 }

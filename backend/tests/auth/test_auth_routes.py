@@ -55,7 +55,7 @@ async def _sign_in(client: httpx.AsyncClient, email: str) -> httpx.Response:
     parts = urlsplit(link)
     assert f"{parts.scheme}://{parts.netloc}{parts.path}" == f"{BASE}/auth/link/verify"
     token = parse_qs(parts.query)["token"][0]
-    return await client.get("/auth/link/verify", params={"token": token})
+    return await client.post("/auth/link/verify", data={"token": token})
 
 
 async def test_link_flow_sets_the_cookie_and_logout_ends_it(client: httpx.AsyncClient) -> None:
@@ -83,8 +83,46 @@ async def test_link_flow_sets_the_cookie_and_logout_ends_it(client: httpx.AsyncC
     assert after.status_code == 401 and after.json()["error"]["code"] == "UNAUTHENTICATED"
 
 
+async def test_get_of_the_link_does_not_spend_it(client: httpx.AsyncClient) -> None:
+    """Mail scanners open links before the learner: `GET` answers a page with a form and writes
+    nothing (no cookie, no spent token) — again and again; only `POST` signs in, once."""
+    await client.post("/auth/link", json={"email": "scan@example.com"})
+    link: str = client.mail.last_link("scan@example.com")  # type: ignore[attr-defined]
+    token = parse_qs(urlsplit(link).query)["token"][0]
+
+    for _ in range(2):  # the second `GET` gives the page as well
+        page = await client.get("/auth/link/verify", params={"token": token})
+        assert page.status_code == 200
+        assert page.headers["content-type"].startswith("text/html")
+        assert page.headers["cache-control"] == "no-store"
+        assert page.headers["referrer-policy"] == "no-referrer"
+        assert "default-src 'none'" in page.headers["content-security-policy"]
+        assert "set-cookie" not in page.headers
+        assert '<form method="post" action="verify">' in page.text
+        assert f'name="token" value="{token}"' in page.text
+        assert "Sign in" in page.text
+        assert "http://" not in page.text and "https://" not in page.text  # no outside resource
+    assert (await client.get("/v1/me")).status_code == 401  # still nobody
+
+    verified = await client.post("/auth/link/verify", data={"token": token})
+    assert verified.status_code == 303 and verified.headers["location"] == REDIRECT
+    assert (await client.get("/v1/me")).json()["email"] == "scan@example.com"
+
+    client.cookies.clear()
+    replay = await client.post("/auth/link/verify", data={"token": token})
+    assert replay.status_code == 401 and replay.json()["error"]["code"] == "UNAUTHENTICATED"
+    assert "set-cookie" not in replay.headers
+    # The page of a spent token is still a page: it spends and reveals nothing.
+    assert (await client.get("/auth/link/verify", params={"token": token})).status_code == 200
+
+
+async def test_the_page_of_the_link_escapes_the_token(client: httpx.AsyncClient) -> None:
+    page = await client.get("/auth/link/verify", params={"token": '"><script>x</script>'})
+    assert "<script>" not in page.text and "&quot;&gt;&lt;script&gt;" in page.text
+
+
 async def test_bad_link_and_no_session_are_401(client: httpx.AsyncClient) -> None:
-    bad = await client.get("/auth/link/verify", params={"token": "nope"})
+    bad = await client.post("/auth/link/verify", data={"token": "nope"})
     assert bad.status_code == 401 and bad.json()["error"]["code"] == "UNAUTHENTICATED"
     assert (await client.get("/v1/me")).status_code == 401
 
@@ -119,6 +157,15 @@ async def test_google_flow(client: httpx.AsyncClient) -> None:
     assert unverified.status_code == 401
     refused = await client.get("/auth/google/callback", params={"code": "unknown", "state": state})
     assert refused.status_code == 401  # Google refused the code or its id token is not valid
+    # The learner refused at Google: `?error=access_denied&state=…` without `code` was a 422.
+    denied = await client.get(
+        "/auth/google/callback", params={"error": "access_denied", "state": state}
+    )
+    assert denied.status_code == 401
+    assert denied.json()["error"]["code"] == "UNAUTHENTICATED"
+    assert (await client.get("/auth/google/callback")).status_code == 401  # nothing at all
+    start = await client.get("/auth/google/start")  # the refusal ended that attempt
+    state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
     done = await client.get("/auth/google/callback", params={"code": "good", "state": state})
     assert done.status_code == 303 and done.headers["location"] == REDIRECT
     assert (await client.get("/v1/me")).json()["email"] == "gina@example.com"

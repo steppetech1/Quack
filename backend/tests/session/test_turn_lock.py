@@ -17,11 +17,11 @@ from quack.session.action_turn import ApiTurnPorts, TurnLockedError
 pytest_plugins = ["tests.session.fixtures"]
 
 
-def _ports(redis: Redis, session_id: Any) -> ApiTurnPorts:
+def _ports(redis: Redis, session_id: Any, settings: Settings | None = None) -> ApiTurnPorts:
     return ApiTurnPorts(
         db=None,  # type: ignore[arg-type]
         redis=redis,
-        settings=Settings(env="test"),
+        settings=settings or Settings(env="test"),
         source=None,  # type: ignore[arg-type]
         learner_id=uuid4(),
         session_id=session_id,
@@ -46,3 +46,28 @@ async def test_second_turn_is_refused_a_foreign_lock_survives_release(redis: Red
     assert await redis.get(turn_lock_key(session)) is None
     await second._lock()  # pyright: ignore[reportPrivateUsage]
     await second.release()
+
+
+async def test_the_holder_renews_the_lock_while_the_turn_runs(redis: Redis) -> None:
+    """A turn can outlast the TTL (model timeouts, retries, tools): the lock must not expire
+    under it, or a second process starts a parallel turn of the session. Renewal runs until
+    `release`; a lock someone else holds is never extended."""
+    session = uuid4()
+    ports = _ports(
+        redis, session, Settings(env="test", turn_lock_ttl_sec=60, turn_lock_renew_sec=0)
+    )
+    key = turn_lock_key(session)
+
+    await ports._lock()  # pyright: ignore[reportPrivateUsage]
+    await redis.expire(key, 1)  # the TTL nearly ran out
+    await asyncio.sleep(0.2)  # the TTL is 1 s: without renewal the lock would be about to go
+    assert await redis.ttl(key) > 5
+
+    await redis.set(key, "another-holder", ex=1)  # the lock was lost: not ours any more
+    await asyncio.sleep(0.1)
+    assert await redis.get(key) in ("another-holder", b"another-holder")
+    assert await redis.ttl(key) <= 1
+
+    await redis.delete(key)
+    await ports.release()
+    assert ports._renewal is None  # pyright: ignore[reportPrivateUsage]

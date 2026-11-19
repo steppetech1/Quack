@@ -7,7 +7,10 @@
 #   release.env  QUACK_VERSION and both image names of the running release (read by compose)
 #   deploy.log   one line per rollout step result, the journal of Д-§6.1
 #
-# A <sha> that was deployed before is a rollback: no dump, no migrations (Д-§6.3).
+# A <sha> that was deployed before is a rollback: no dump, no roles, no migrations (Д-§6.3). The
+# roles of an earlier rollout stay as they are (the services of the rollback connect as `quack_app`
+# and find it); a rollback to a release of before the roles brings its own compose.yaml with the
+# superuser DSN, which still works on a database whose objects `quack_migrator` owns.
 # Caddy and the databases are not restarted by a rollout (Д-§6.1), only started when missing.
 set -euo pipefail
 
@@ -34,6 +37,12 @@ env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
 QUACK_REGISTRY="$(env_value QUACK_REGISTRY)"
 [[ -n "$QUACK_REGISTRY" ]] || die "set QUACK_REGISTRY in $ENV_FILE"
 API_DOMAIN="$(env_value API_DOMAIN)"; API_DOMAIN="${API_DOMAIN:-api.qvack.online}"
+# Д-§7, WP9.1: api, projector and workers connect as `quack_app`, the dump as `quack_reader`, the
+# schema is kept by `quack_migrator`. For a missing role password compose falls back to
+# POSTGRES_PASSWORD, which is for a local stack only: the server has none of that.
+for role_password in APP_DB_PASSWORD READER_DB_PASSWORD MIGRATOR_DB_PASSWORD; do
+  [[ -n "$(env_value "$role_password")" ]] || die "set $role_password in $ENV_FILE"
+done
 
 dc() { docker compose --env-file "$ENV_FILE" --env-file "$RELEASE_FILE" "$@"; }
 
@@ -139,7 +148,9 @@ if ((ROLLBACK)); then
     die "rollback not safe, fix forward (ops can-rollback refused)"
   fi
 else
-  # Roles before the dump (the dump reads as quack_reader) and before the migration (Д-§7).
+  # Roles before the dump (the dump reads as quack_reader, and a new or rotated password takes
+  # effect here) and before the migration (Д-§7). Only owners and grants change, no data. The
+  # `migrate` service runs it once more in front of `dbmate up` (idempotent).
   dc run --rm migrate ops db-roles || { restore_release; die "ops db-roles failed; nothing was changed"; }
 fi
 if ((!ROLLBACK && NEW_MIGRATIONS)); then
@@ -151,7 +162,8 @@ if ((!ROLLBACK && NEW_MIGRATIONS)); then
     restore_release
     die "pre-migration dump failed; nothing was changed"
   fi
-  # 4. Migrations: `dbmate up` before api, projector and workers start (WP1.3, D-C-160). A failed
+  # 4. Migrations: `ops migrate --with-roles` = roles on the superuser DSN, then `dbmate up` as
+  # `quack_migrator`, before api, projector and workers start (WP1.3, WP9.1, D-C-160). A failed
   # migration leaves the services on the old version.
   if ! dc run --rm migrate; then
     restore_release

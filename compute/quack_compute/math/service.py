@@ -76,7 +76,8 @@ def _quantity(request: MathCheckRequest) -> MathCheckResponse:
             status="failed", reason="unparsed", detail="quantity needs the answer and the unit"
         )
     try:
-        reference = float(parse(request.reference.sympy).evalf())
+        # A quantity is not an expression of the spec: `e` is not read as Euler's number here.
+        reference = float(parse(request.reference.sympy, euler_e=False).evalf())
         verdict = compare_quantity(request.student_text, reference, request.unit, request.tolerance)
     except (ParseRefused, QuantityRefused, TypeError) as exc:
         return MathCheckResponse(status="failed", reason="unparsed", detail=str(exc))
@@ -92,10 +93,11 @@ def _parsed(value: MathInput | None, variables: list[Variable]) -> Any:
     """Т-§22.7: `sympy` first through the grammar; else LaTeX through strict ANTLR."""
     if value is None:
         raise ParseRefused("no input")
+    assumptions = {v.name: {a: True for a in v.assumptions} for v in variables}
     if value.sympy is not None:
-        return parse(value.sympy, {v.name: {a: True for a in v.assumptions} for v in variables})
+        return parse(value.sympy, assumptions)
     if value.latex is not None:
-        return parse_latex_strict(value.latex)
+        return parse_latex_strict(value.latex, assumptions)
     raise ParseRefused("neither sympy nor latex")
 
 

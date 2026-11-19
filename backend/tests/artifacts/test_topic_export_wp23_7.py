@@ -433,3 +433,108 @@ async def test_export_status_of_another_learner_is_404(
     )
     async with await client_for(other) as client:
         assert (await client.get(f"/v1/learner/exports/{export_id}")).status_code == 404
+
+
+# --- POST /v1/learner/export ------------------------------------------------------------------
+
+
+async def _requests(db: Db, learner_id: UUID) -> list[dict[str, Any]]:
+    rows = await db.fetch_all(
+        "SELECT payload, actor FROM core.events WHERE learner_id = %(l)s "
+        "AND type = 'agent.requested' ORDER BY seq",
+        {"l": learner_id},
+    )
+    return [{**r["payload"], "actor": r["actor"]} for r in rows]
+
+
+async def test_export_request_writes_the_event_and_the_status_is_pending(
+    pg_db: Db, client_for: ClientFor
+) -> None:
+    learner = await create_learner(pg_db)
+    async with await client_for(learner) as client:
+        response = await client.post("/v1/learner/export", json={"idempotency_key": "k1"})
+        assert response.status_code == 202
+        export_id = response.json()["export_id"]
+        status = (await client.get(f"/v1/learner/exports/{export_id}")).json()
+    assert status["status"] == "pending" and status["download_url"] is None
+    (request,) = await _requests(pg_db, learner)
+    assert request["kind"] == "data_export" and request["request_id"] == export_id
+    assert request["actor"] == "learner" and request["needed_in_session"] is False
+
+
+async def test_export_request_is_idempotent_and_gives_the_archive_on_its_way(
+    pg_db: Db, client_for: ClientFor
+) -> None:
+    """The same key and another key while the archive is pending give one export, one event."""
+    learner = await create_learner(pg_db)
+    async with await client_for(learner) as client:
+        first = (await client.post("/v1/learner/export", json={"idempotency_key": "a"})).json()
+        again = (await client.post("/v1/learner/export", json={"idempotency_key": "a"})).json()
+        other = (await client.post("/v1/learner/export", json={"idempotency_key": "b"})).json()
+    assert first == again == other
+    assert len(await _requests(pg_db, learner)) == 1
+
+
+async def test_export_request_gives_the_ready_archive_and_asks_anew_after_expired_or_failed(
+    pg_db: Db, client_for: ClientFor, store: InMemoryObjectStore
+) -> None:
+    learner = await create_learner(pg_db)
+    async with await client_for(learner) as client:
+        first = (await client.post("/v1/learner/export", json={"idempotency_key": "a"})).json()
+        export_id = UUID(first["export_id"])
+        key = f"learners/{learner}/exports/{export_id}-x.zip"
+        await store.put(key, b"PK", "application/zip")
+        await pg_db.execute(
+            "INSERT INTO content.exports (export_id, learner_id, status, object_key, expires_at) "
+            "VALUES (%(e)s, %(l)s, 'ready', %(k)s, %(x)s)",
+            {"e": export_id, "l": learner, "k": key, "x": datetime.now(UTC) + timedelta(hours=1)},
+        )
+        ready = (await client.get(f"/v1/learner/exports/{export_id}")).json()
+        assert ready["status"] == "ready" and ready["download_url"]
+        same = (await client.post("/v1/learner/export", json={"idempotency_key": "b"})).json()
+        assert same == first
+        # The term is over: a new request is a new export.
+        await pg_db.execute(
+            "UPDATE content.exports SET expires_at = now() - interval '1 minute' "
+            "WHERE export_id = %(e)s",
+            {"e": export_id},
+        )
+        second = (await client.post("/v1/learner/export", json={"idempotency_key": "c"})).json()
+        assert second["export_id"] != first["export_id"]
+        # The job gave up (`agent.completed {ok: false}`): the status says so, and ask again.
+        await append_events(
+            pg_db,
+            learner,
+            [
+                NewEvent(
+                    type="agent.completed",
+                    payload={
+                        "request_id": second["export_id"],
+                        "kind": "data_export",
+                        "ok": False,
+                        "error": "storage down",
+                    },
+                    actor="system",
+                    idempotency_key="agent_completed:export-failed",
+                )
+            ],
+        )
+        failed = (await client.get(f"/v1/learner/exports/{second['export_id']}")).json()
+        assert failed["status"] == "failed" and failed["download_url"] is None
+        third = (await client.post("/v1/learner/export", json={"idempotency_key": "d"})).json()
+        assert third["export_id"] not in (first["export_id"], second["export_id"])
+
+
+async def test_export_request_needs_a_signed_in_learner_and_a_key(
+    pg_db: Db, client_for: ClientFor, settings: Settings
+) -> None:
+    app = create_app(settings)
+    app.state.resources = build_app_resources(settings, None, None)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as anonymous:
+        assert (await anonymous.post("/v1/learner/export", json={})).status_code == 401
+    learner = await create_learner(pg_db)
+    async with await client_for(learner) as client:
+        assert (await client.post("/v1/learner/export", json={})).status_code == 422
+    assert await _requests(pg_db, learner) == []

@@ -226,6 +226,19 @@ def render_materials(chunks: Sequence[MaterialChunk], labels: LabelMap) -> str:
     return render_chunks(chunks, lambda chunk_id: labels.label("chunk", chunk_id))
 
 
+# What of a card stands behind its label in slot 9: the topic and the question, on one line.
+CARD_LABEL_MAX_CHARS = 160
+
+
+def card_label_line(topic_name: str | None, prompt: str) -> str:
+    """The name of a card label (`C1`) for slot 9 (WP14.1): «topic: question», the question
+    cut to `CARD_LABEL_MAX_CHARS` and on one line; the answer is not shown (Т-§12.4)."""
+    question = " ".join(prompt.split())
+    if len(question) > CARD_LABEL_MAX_CHARS:
+        question = question[: CARD_LABEL_MAX_CHARS - 1].rstrip() + "…"
+    return f"{topic_name}: {question}" if topic_name else question
+
+
 def render_labels(labels: LabelMap, names: Mapping[UUID, str]) -> str:
     """Slot 9: every label of the call with what it names; never an id (Т-§4.5)."""
     lines: list[str] = []

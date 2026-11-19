@@ -10,9 +10,15 @@ caller's `Settings` (ТЗ Ф4 §0.3, D-B-124), compute has no defaults of its ow
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 type Mode = Literal["equal", "up_to_constant", "solution_set", "interval", "form"]
 type Assumption = Literal["real", "positive", "nonnegative", "integer", "nonzero"]
@@ -40,7 +46,20 @@ class Tolerance(_Model):
 
     tol_abs: float | None = None
     tol_rel: float | None = None
+    # The spec's tolerance by significant digits (`AnswerSpec.sig_digits`): half a unit of the
+    # `sig_digits`-th significant digit of the reference — compute knows the magnitude of a
+    # reference written as an expression. Weaker than `tol_abs` and `tol_rel`, as in Т-§6.4.
+    sig_digits: int | None = Field(default=None, ge=1)
     min_sig_digits: int = Field(ge=1)
+
+    @model_serializer(mode="wrap")
+    def _omit_unset(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """A compute of the release before this field refuses an unknown key: unset, the field
+        is not sent, so the two services need not be rolled out together."""
+        data: dict[str, Any] = handler(self)
+        if data.get("sig_digits") is None:
+            data.pop("sig_digits", None)
+        return data
 
 
 class NumericParams(_Model):

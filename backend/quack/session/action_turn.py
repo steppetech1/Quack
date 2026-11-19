@@ -70,8 +70,13 @@ from quack.session.turn_graph import (
 
 log = get_logger(__name__)
 
-# The TTL of the turn lock (Phase 3 `quack.session.locks`): longer than the teacher timeout.
-TURN_LOCK_TTL_SEC = 60
+_RENEW_LUA = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("expire", KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
 
 _RELEASE_LUA = """
 if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -149,6 +154,7 @@ class ApiTurnPorts:
         self._action = action
         self._frames = frames
         self._lock_token: str | None = None
+        self._renewal: asyncio.Task[None] | None = None
         self.setup: TurnSetup | None = None
 
     async def admit(self) -> Role:
@@ -211,6 +217,11 @@ class ApiTurnPorts:
 
     async def release(self) -> None:
         """Free the turn lock if this turn holds it (compare-and-delete)."""
+        if self._renewal is not None:
+            self._renewal.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._renewal
+            self._renewal = None
         if self._redis is None or self._lock_token is None:
             return
         with contextlib.suppress(RedisError, OSError):
@@ -225,7 +236,7 @@ class ApiTurnPorts:
         token = str(uuid4())
         try:
             taken = await self._redis.set(
-                turn_lock_key(self._session_id), token, nx=True, ex=TURN_LOCK_TTL_SEC
+                turn_lock_key(self._session_id), token, nx=True, ex=self._settings.turn_lock_ttl_sec
             )
         except (RedisError, OSError) as exc:
             log.warning(
@@ -235,6 +246,23 @@ class ApiTurnPorts:
         if not taken:
             raise TurnLockedError(f"turn of session {self._session_id} is held elsewhere")
         self._lock_token = token
+        self._renewal = asyncio.ensure_future(self._renew(self._redis, token))
+
+    async def _renew(self, redis: Redis, token: str) -> None:
+        """Keep the lock while the turn runs: a turn longer than the TTL must not let a second
+        process start a parallel turn of the session. A Redis error is skipped, the next
+        round tries again."""
+        settings = self._settings
+        while True:
+            await asyncio.sleep(settings.turn_lock_renew_sec)
+            with contextlib.suppress(RedisError, OSError):
+                await redis.eval(  # type: ignore[misc]
+                    _RENEW_LUA,
+                    1,
+                    turn_lock_key(self._session_id),
+                    token,
+                    settings.turn_lock_ttl_sec,
+                )
 
     def _ready(self) -> TurnSetup:
         if self.setup is None:

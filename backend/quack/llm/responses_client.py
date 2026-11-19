@@ -89,6 +89,39 @@ def _seconds(value: str | None) -> float | None:
         return None  # an HTTP date: the gateway parses the raw header (WP5.3)
 
 
+_RETRY_AFTER_FIELDS = ("retry_after", "retry_after_sec", "retry_after_seconds")
+
+
+def _event_rate_limit(event: Mapping[str, Any]) -> tuple[bool, float | None]:
+    """Whether an `error` / `response.failed` event of the stream is a rate limit, and its
+    `retry_after` in seconds when the event carries one.
+
+    The format is NOT confirmed by a live run (the spike recorded no 429 inside a stream, notes
+    B.md item в): it follows the common Responses API shape. The event, its `error` object or
+    `response.error` say `rate_limit…` in `code` or `type` (`rate_limit_exceeded`,
+    `rate_limit_error`), or carry the number 429 in `status`, `status_code` or `code`."""
+    response = event.get("response")
+    candidates: list[Mapping[str, Any]] = [event]
+    for holder in (event, response if isinstance(response, Mapping) else {}):
+        error = holder.get("error")
+        if isinstance(error, Mapping):
+            candidates.append(error)
+    limited = False
+    retry_after: float | None = None
+    for part in candidates:
+        for key in ("code", "type", "status", "status_code"):
+            value = part.get(key)
+            if isinstance(value, str) and "rate_limit" in value.lower():
+                limited = True
+            if value == 429 or (isinstance(value, str) and value.strip() == "429"):
+                limited = True
+        for key in _RETRY_AFTER_FIELDS:
+            seconds = _seconds(None if part.get(key) is None else str(part[key]))
+            if retry_after is None and seconds is not None and seconds > 0:
+                retry_after = seconds
+    return limited, retry_after if limited else None
+
+
 def _message_text(item: Mapping[str, Any]) -> str:
     parts = item.get("content") or []
     return "".join(
@@ -225,11 +258,18 @@ class ResponsesClient:
                 log.info("llm_commentary", model=request.model, text=_message_text(item))
                 continue
             answer = _message_text(item)
-        if data.get("status") == "incomplete":
-            raise ProviderIncompleteError(answer, headers=headers)
         usage = data.get("usage") or {}
         input_details = usage.get("input_tokens_details") or {}
         output_details = usage.get("output_tokens_details") or {}
+        if data.get("status") == "incomplete":
+            raise ProviderIncompleteError(
+                answer,
+                headers=headers,
+                input_tokens=int(usage.get("input_tokens", 0)),
+                output_tokens=int(usage.get("output_tokens", 0)),
+                cached_tokens=int(input_details.get("cached_tokens", 0)),
+                reasoning_tokens=int(output_details.get("reasoning_tokens", 0)),
+            )
         return ProviderResponse(
             content=answer,
             input_tokens=int(usage.get("input_tokens", 0)),
@@ -275,14 +315,21 @@ class ResponsesClient:
         for item in data.get("output") or []:
             if item.get("type") == "message" and item.get("phase") != "commentary":
                 answer = _message_text(item)
-        if data.get("status") == "incomplete":
-            raise ProviderIncompleteError(answer, headers=headers)
         usage = data.get("usage") or {}
+        cached = int((usage.get("input_tokens_details") or {}).get("cached_tokens", 0))
+        if data.get("status") == "incomplete":
+            raise ProviderIncompleteError(
+                answer,
+                headers=headers,
+                input_tokens=int(usage.get("input_tokens", 0)),
+                output_tokens=int(usage.get("output_tokens", 0)),
+                cached_tokens=cached,
+            )
         return ProviderResponse(
             content=answer,
             input_tokens=int(usage.get("input_tokens", 0)),
             output_tokens=int(usage.get("output_tokens", 0)),
-            cached_tokens=int((usage.get("input_tokens_details") or {}).get("cached_tokens", 0)),
+            cached_tokens=cached,
             model=str(data.get("model", request.model)),
             headers=headers,
         )
@@ -455,5 +502,12 @@ def _stream_event(
             )
         ]
     if kind in ("response.failed", "error"):
+        limited, retry_after = _event_rate_limit(event)
+        if limited:
+            # A limit inside the stream is a 429 for the gateway: the pressure flag, not the
+            # breaker. Format not confirmed by a live run (see `_event_rate_limit`).
+            raise ProviderRateLimitedError(
+                retry_after, headers=headers, body=orjson.dumps(event).decode()
+            )
         raise ProviderUnavailableError(f"stream error event {kind}: {orjson.dumps(event).decode()}")
     return []

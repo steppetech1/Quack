@@ -21,6 +21,10 @@ class ComputeSettings:
     # Hard timeout of one PDF, image or render job; the documents give none — Phase 4 decision
     # D-C-107 (conservative: a longer wait). Math jobs carry their own timeout in the request.
     compute_task_timeout_s: float = 60.0
+    # WP24: the most `/v1/render/snapshots` renders in one call. The documents give no
+    # number («при нескольких значениях параметров»); a call past it is refused with 422 —
+    # Phase 4 decision D-C-107.
+    render_max_param_sets: int = 10
     # Д-§4.2: the only place compute writes temporary files.
     compute_tmp_dir: str = "/srv/quack/tmp"
     # Д-§4.2: the directory «чистится по возрасту раз в час». Who and what age the documents do
@@ -28,10 +32,20 @@ class ComputeSettings:
     # one sweep interval is left over from a finished job.
     tmp_sweep_interval_s: int = 3600
     tmp_max_age_s: int = 3600
-    # WP23.5, Т-§17.6: the pinned KaTeX (js, css, woff2 fonts) that typesets the formulas of a
-    # printed page; a copy of `deploy/static/viz/katex/<version>/` made into the image, the
-    # version is the one of `SHA256SUMS`. Phase 4 decision D-C-250.
-    katex_dir: str = str(Path(__file__).resolve().parent / "katex" / "0.16.11")
+    # The pinned libraries of visualizations (d3, plotly, KaTeX): a copy of `deploy/static/viz/`
+    # made into the image (the build context is the repository root), listed in its
+    # `SHA256SUMS`. Two users: a visualization page loads them at the base address the request
+    # carries (`/v1/render/snapshots`, no network) and a printed page gets its formulas typeset
+    # by the KaTeX of this directory (WP23.5, D-C-250). The image sets `VIZ_LIBRARIES_DIR`; in a
+    # checkout it is the directory of the repository.
+    viz_libraries_dir: str = str(Path(__file__).resolve().parents[2] / "deploy" / "static" / "viz")
+    # The pinned KaTeX version of `SHA256SUMS` (the printed page; the CSS names its fonts).
+    katex_version: str = "0.16.11"
+
+    @property
+    def katex_dir(self) -> str:
+        return str(Path(self.viz_libraries_dir) / "katex" / self.katex_version)
+
     # WP22.3 п.1, sheet contour search — the documents give no numbers; Phase 4 decision D-C-110:
     # blur kernel, Canny thresholds, polygon precision as a share of the contour perimeter and
     # the least area of the sheet as a share of the photo.
@@ -42,6 +56,10 @@ class ComputeSettings:
     align_min_sheet_area_share: float = 0.2
     # WP21.3, a pen line of `render-strokes` in pixels; D-C-110.
     stroke_thickness_px: int = 2
+    # WP21.3: the longest side of the image of `render-strokes`; the request comes from the
+    # coordinates of a client, and the image is `width * height` bytes. A larger one is refused
+    # with 422; the documents give no number — Phase 4 decision D-C-131.
+    render_strokes_max_side_px: int = 8192
 
     @classmethod
     def from_env(cls) -> ComputeSettings:

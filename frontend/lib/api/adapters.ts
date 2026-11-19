@@ -194,7 +194,8 @@ export function graphModelFromApi(summary: S["DomainSummary"], graph: S["DomainG
     recentSessions: history
       .filter((x) => x.domain_id === summary.domain_id && x.topic_id)
       .map((x) => ({ id: x.session_id, atMs: Date.parse(x.last_activity_at) || now, topicIds: [x.topic_id as string] })),
-    today: due.map((t) => ({ id: t.id, kind: "item" as const, topicId: t.id, name: t.name, action: "review" as const })),
+    today: todayFromApi(today, (id) => hubNames.get(id), labels),
+    todayMinutes: today?.minutes && today.minutes > 0 ? today.minutes : undefined,
     nowMs: now,
   };
 }

@@ -64,6 +64,10 @@ class RenderStrokesRequest(_Model):
 class RenderSnapshotsRequest(_Model):
     html: str
     param_sets: list[dict[str, Any]]
+    # The address the page loads its libraries from (`VIZ_STATIC_BASE_URL`, the one the model
+    # is given); requests under it are served from the pinned files of the image, no network.
+    # Without it (an older backend) the page gets nothing but itself.
+    libraries_base_url: str | None = None
 
 
 class Snapshot(_Model):

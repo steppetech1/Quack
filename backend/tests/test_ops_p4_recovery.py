@@ -272,6 +272,11 @@ async def test_resume_releases_the_stopped_stream(
             "INSERT INTO ops.projector_failures (learner_id, seq, error) VALUES (%(l)s, 1, 'boom')",
             {"l": who},
         )
+        await pg_db.execute(
+            "INSERT INTO ops.dispatcher_failures (learner_id, seq, error_type, error, stopped_at) "
+            "VALUES (%(l)s, 1, 'KeyError', 'boom', now())",
+            {"l": who},
+        )
 
     async def open_db(settings: Settings, **_: Any) -> _Shared:
         return _Shared(pg_db)
@@ -282,6 +287,9 @@ async def test_resume_releases_the_stopped_stream(
     assert await cli._ops(settings, args) == 0  # pyright: ignore[reportPrivateUsage]
 
     rows = await pg_db.fetch_all("SELECT learner_id FROM ops.projector_failures")
+    assert [row["learner_id"] for row in rows] == [other]
+    # The dispatcher stream of the learner is released by the same command.
+    rows = await pg_db.fetch_all("SELECT learner_id FROM ops.dispatcher_failures")
     assert [row["learner_id"] for row in rows] == [other]
 
 

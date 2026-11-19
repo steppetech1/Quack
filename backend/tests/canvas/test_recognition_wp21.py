@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import base64
+import math
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
+
+import pytest
 
 from quack.api.app import create_app
 from quack.api.auth import SESSION_COOKIE
@@ -13,6 +16,7 @@ from quack.auth.sessions import open_session
 from quack.canvas.boards import open_canvas
 from quack.canvas.recognition import (
     LineBook,
+    LineTooLarge,
     commit_typed,
     erase_line,
     recognize_line,
@@ -68,10 +72,28 @@ def _render_answer() -> ImageResponse:
 
 def test_render_request_crops_the_line() -> None:
     """The strokes move to the corner of their own box; the box comes from the points."""
-    request = render_request([_stroke("a", (100.0, 50.0), (110.5, 55.0)), _stroke("b", (104, 60))])
+    request = render_request(
+        [_stroke("a", (100.0, 50.0), (110.5, 55.0)), _stroke("b", (104, 60))], 8192
+    )
     assert (request.width, request.height) == (12, 11)
     assert request.strokes[0].points == [(0.0, 0.0), (10.5, 5.0)]
     assert request.strokes[1].points == [(4.0, 10.0)]
+
+
+def test_render_request_refuses_what_compute_cannot_draw() -> None:
+    """The coordinates are the client's: a box past the limit, a coordinate that is not a number
+    and a line without points are not drawn; a stroke without points among others is dropped."""
+    far = [_stroke("a", (0.0, 0.0)), _stroke("b", (100_000.0, 100_000.0))]
+    with pytest.raises(LineTooLarge):
+        render_request(far, 8192)
+    with pytest.raises(LineTooLarge):
+        render_request([_stroke("a", (0.0, 0.0), (math.inf, 1.0))], 8192)
+    with pytest.raises(LineTooLarge):
+        render_request([_stroke("a", (0.0, 0.0), (math.nan, 1.0))], 8192)
+    with pytest.raises(LineTooLarge):
+        render_request([Stroke("empty", ())], 8192)
+    request = render_request([Stroke("empty", ()), _stroke("a", (5.0, 5.0), (8.0, 6.0))], 8192)
+    assert len(request.strokes) == 1 and (request.width, request.height) == (4, 2)
 
 
 async def test_line_is_rendered_read_and_committed(pg_db: Db, settings: Settings) -> None:
@@ -95,6 +117,7 @@ async def test_line_is_rendered_read_and_committed(pg_db: Db, settings: Settings
         "learner_id": learner,
         "session_id": session_id,
         "canvas_id": canvas_id,
+        "max_side_px": settings.line_render_max_side_px,
     }
 
     committed = await recognize_line(
@@ -131,6 +154,56 @@ async def test_line_is_rendered_read_and_committed(pg_db: Db, settings: Settings
         await recognize_line(resources.db, resources.llm, resources.compute, line=down, **where)
         is None
     )  # the render queue is empty: compute answers 503
+    assert len(await _lines(pg_db, learner)) == 1
+
+
+async def test_a_huge_line_is_not_drawn_and_a_changed_reading_is_not_a_conflict(
+    pg_db: Db, settings: Settings
+) -> None:
+    """A line past `line_render_max_side_px` goes to neither compute nor the model (`None`). A
+    repeated `line_ready` that the model reads differently, or with other strokes, is answered
+    with the line written first - not with `IdempotencyConflictError`."""
+    learner = await create_learner(pg_db)
+    session_id, canvas_id = await _canvas(pg_db, learner)
+    scenario = ComputeScenario()
+    scenario.push_for(RENDER, _render_answer(), _render_answer())
+    provider = ScriptedLLMProvider()
+    readings = iter([READ, {**READ, "text": "x^3", "sympy": "x**3"}])
+    provider.respond("RecognizerOutput", lambda _request: next(readings))
+    resources = build_app_resources(
+        settings, None, None, db=pg_db, provider=provider,
+        compute=scripted_compute(scenario),
+    )  # fmt: skip
+    book = LineBook()
+    book.add(
+        StrokeBatch(
+            1,
+            (
+                _stroke("s1", (0, 0), (5, 2)),
+                _stroke("s2", (6, 0), (8, 3)),
+                _stroke("far", (1e5, 1e5)),
+            ),
+        )
+    )
+    where: dict[str, Any] = {
+        "learner_id": learner,
+        "session_id": session_id,
+        "canvas_id": canvas_id,
+        "max_side_px": settings.line_render_max_side_px,
+    }
+
+    async def recognize(*stroke_ids: str) -> Any:
+        line = book.line("l1", stroke_ids, (0.0, 0.0, 8.0, 3.0), 1_000, 2_000)
+        return await recognize_line(
+            resources.db, resources.llm, resources.compute, line=line, **where
+        )
+
+    assert await recognize("s1", "far") is None
+    assert scenario.requests == [] and provider.calls == []
+    first = await recognize("s1", "s2")
+    assert first is not None and first.text == "x^2"
+    again = await recognize("s1")  # other strokes, and the model reads another text
+    assert again == first
     assert len(await _lines(pg_db, learner)) == 1
 
 
@@ -171,6 +244,30 @@ async def test_typed_formula_and_erased_line(pg_db: Db) -> None:
     assert [r["payload"] for r in erased] == [
         {"canvas_id": str(canvas_id), "line_id": "l1", "text": "x=1"}
     ]
+
+
+def test_a_line_erased_while_it_was_read_does_not_stand() -> None:
+    """Т-§15.1: the strokes of the line were erased before the reading came back - the line
+    does not enter the book (the caller writes `canvas.line_erased`); a line of strokes
+    from before a reconnect is known only after `adopt`."""
+    book = LineBook()
+    book.add(StrokeBatch(1, (_stroke("s1", (0, 0)), _stroke("s2", (1, 1)))))
+    line = CanvasLineCommitted(
+        canvas_id=uuid4(), line_id="l1", text="x=1", kind="latex", bbox=(0, 0, 1, 1),
+        stroke_ids=["s1", "s2"], started_at_ms=0, ended_at_ms=1, source="pen",
+        recognition_confidence=0.8, crossed_out=False,
+    )  # fmt: skip
+    book.add(StrokeBatch(2, erasures=(Erasure(("s1", "s2"), 5),)))
+    assert book.recognized(line) is False
+    assert book.add(StrokeBatch(3)) == []  # nothing waits to be erased again
+
+    fresh = LineBook()
+    assert fresh.missing(["s1"]) and not fresh.history_loaded
+    fresh.adopt({"s1": _stroke("s1", (0, 0)), "dot": Stroke("dot", ())}, {"s2"})
+    assert not fresh.missing(["s1"]) and fresh.history_loaded
+    assert [
+        s.stroke_id for s in fresh.line("l", ["s1", "s2", "dot"], (0, 0, 1, 1), 0, 1).strokes
+    ] == ["s1"]  # s2 is erased, the stroke without points draws nothing
 
 
 async def test_socket_recognizes_a_line(pg_db: Db, settings: Settings) -> None:

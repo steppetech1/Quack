@@ -99,7 +99,22 @@ class ProviderBadRequestError(Exception):
 class ProviderIncompleteError(Exception):
     """`status: incomplete` / `finish_reason: length`: never parsed (Т-§11.1, WP5.2)."""
 
-    def __init__(self, partial_text: str, *, headers: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        partial_text: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_tokens: int = 0,
+        reasoning_tokens: int = 0,
+    ) -> None:
         super().__init__("incomplete response")
         self.partial_text = partial_text
         self.headers: dict[str, str] = dict(headers or {})
+        # A cut answer is paid for in full (up to `max_output_tokens`): the ledger row of the
+        # attempt carries the usage the provider reported (WP10.4).
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cached_tokens = cached_tokens
+        self.reasoning_tokens = reasoning_tokens

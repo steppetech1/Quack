@@ -4,14 +4,18 @@ Each edit checks that the topic (and the target topic, the episode) is the learn
 otherwise (law 1) — and appends one event; the projector and the dispatcher do the rest
 (`topic.merged` — skills to the target and an alias, `episode.reassigned` — re-extraction,
 `known.claimed` — `check.known_claim`). The requests of §6.4 carry no idempotency key, so the
-key is the edit itself with the state it starts from: a retry gives the same event, a later
-edit of the same kind a new one (law 5).
+key is the edit itself with the state it starts from (D-A-193 п.3). For the edits that set a
+value (a name, a deadline, the scope of a hub, the topic of an episode) the state is the version
+of the log: the number of the last event of this kind about the target (`_versioned`). The old
+key, built from the values `old->new`, repeated with a chain A->B->A->B: the third edit found
+the first one's event, the API answered success and the value stayed A. Now a request for the
+value the last event already set returns that event, and any other request is a new event
+(law 5).
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
+from collections.abc import Callable
 from typing import Any, Self
 from uuid import UUID
 
@@ -21,6 +25,7 @@ from redis.asyncio import Redis
 
 from quack.db import Db
 from quack.db.neo4j import literal, read_session
+from quack.events.errors import IdempotencyConflictError
 from quack.events.log import NewEvent, append_events
 from quack.events.values import Level
 
@@ -70,6 +75,43 @@ async def _append(
     return stored.seq
 
 
+_LAST_EDIT = (
+    "SELECT seq, payload FROM core.events WHERE learner_id = %(learner_id)s AND type = %(type)s "
+    "AND payload->>%(field)s::text = %(target)s ORDER BY seq DESC LIMIT 1"
+)
+
+
+async def _versioned(
+    db: Db,
+    redis: Redis | None,
+    learner_id: UUID,
+    kind: str,
+    field: str,
+    target: str,
+    payload: dict[str, Any],
+    already: Callable[[dict[str, Any]], bool],
+) -> int:
+    """One edit that sets a value of `target` (the `field` of the payload). The last event of the
+    kind about the target is the state the edit starts from: if it already sets the requested
+    value, its number is the answer (a retry, a repeat); otherwise the key names that state, so
+    the same edit retried gives the same event and the same value set again later, a new one.
+    Two different edits that raced from one state meet in one key: the loser reads again."""
+    for may_retry in (True, False):  # a lost race is read again once
+        last = await db.fetch_one(
+            _LAST_EDIT,
+            {"learner_id": learner_id, "type": kind, "field": field, "target": target},
+        )
+        if last is not None and already(last["payload"]):
+            return int(last["seq"])
+        key = f"{kind}:{target}:{0 if last is None else int(last['seq'])}"
+        try:
+            return await _append(db, redis, learner_id, kind, payload, key)
+        except IdempotencyConflictError:
+            if not may_retry:
+                raise
+    raise AssertionError("unreachable")
+
+
 async def rename(
     db: Db, neo4j: AsyncDriver, redis: Redis | None, learner_id: UUID, topic_id: UUID, name: str
 ) -> int | None:
@@ -77,8 +119,10 @@ async def rename(
     if topic is None:
         return None
     payload = {"topic_id": str(topic_id), "name": name}
-    key = f"topic.renamed:{topic_id}:{topic['name']}->{name}"
-    return await _append(db, redis, learner_id, "topic.renamed", payload, key)
+    return await _versioned(
+        db, redis, learner_id, "topic.renamed", "topic_id", str(topic_id), payload,
+        lambda last: last.get("name") == name,
+    )  # fmt: skip
 
 
 async def merge(
@@ -128,8 +172,10 @@ async def reassign(
     if found is None or await _topic(neo4j, learner_id, topic_id) is None:
         return None
     payload = {"episode_seq": episode_seq, "topic_id": str(topic_id)}
-    key = f"episode.reassigned:{episode_seq}:{topic_id}"
-    return await _append(db, redis, learner_id, "episode.reassigned", payload, key)
+    return await _versioned(
+        db, redis, learner_id, "episode.reassigned", "episode_seq", str(episode_seq), payload,
+        lambda last: last.get("topic_id") == str(topic_id),
+    )  # fmt: skip
 
 
 # --- WP6.3: scope and deadline of a hub (`PATCH /v1/hubs/{id}`, Т-§4.8) ---------------------
@@ -167,10 +213,6 @@ class EditHub(BaseModel):
         return self
 
 
-def _digest(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:16]
-
-
 async def edit_hub(
     db: Db, neo4j: AsyncDriver, redis: Redis | None, learner_id: UUID, hub_id: UUID, body: EditHub
 ) -> int | None:
@@ -191,18 +233,27 @@ async def edit_hub(
                 return None
     seq: int | None = None
     if body.topics is not None:
-        now = sorted([str(t), sorted(levels or [])] for t, levels in hub["topics"] if t)
         new = sorted([str(t.topic_id), sorted(t.required_levels)] for t in body.topics)
         payload = {"hub_id": str(hub_id), "topics": [
             {"topic_id": t, "required_levels": levels} for t, levels in new]}  # fmt: skip
-        key = f"hub.topics_changed:{hub_id}:{_digest(now)}->{_digest(new)}"
-        seq = await _append(db, redis, learner_id, "hub.topics_changed", payload, key)
+
+        def same_scope(last: dict[str, Any]) -> bool:
+            return (
+                sorted([str(t["topic_id"]), sorted(t["required_levels"])] for t in last["topics"])
+                == new
+            )
+
+        seq = await _versioned(
+            db, redis, learner_id, "hub.topics_changed", "hub_id", str(hub_id), payload, same_scope
+        )
     if "deadline_at_ms" in body.model_fields_set:
         payload = {
             "hub_id": str(hub_id),
             "deadline_at_ms": body.deadline_at_ms,
             "source": "learner",
         }
-        key = f"hub.deadline_set:{hub_id}:{hub['deadline'] or 0}->{body.deadline_at_ms}"
-        seq = await _append(db, redis, learner_id, "hub.deadline_set", payload, key)
+        seq = await _versioned(
+            db, redis, learner_id, "hub.deadline_set", "hub_id", str(hub_id), payload,
+            lambda last: last.get("deadline_at_ms") == body.deadline_at_ms,
+        )  # fmt: skip
     return seq

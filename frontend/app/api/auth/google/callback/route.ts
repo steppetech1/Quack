@@ -6,7 +6,11 @@ const API_URL = process.env.QUACK_API_URL ?? "http://localhost:8000";
 /** Proxies `GET /auth/google/callback`; see `lib/api/cookie-domain.ts` for why. */
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const upstream = await fetch(`${API_URL}/auth/google/callback${url.search}`, { redirect: "manual" });
+  const cookie = request.headers.get("cookie");
+  const upstream = await fetch(`${API_URL}/auth/google/callback${url.search}`, {
+    redirect: "manual",
+    headers: cookie ? { cookie } : undefined,
+  });
   const body = await upstream.arrayBuffer();
   const contentType = upstream.headers.get("content-type");
   const response = new NextResponse(body, { status: upstream.status, headers: contentType ? { "content-type": contentType } : undefined });

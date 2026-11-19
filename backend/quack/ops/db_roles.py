@@ -9,6 +9,12 @@ Idempotent: runs on the first start, at every rollout and before `pg_restore` (`
 save roles, Д-§7). Connect as the database superuser. Passwords are set on every run, so a rotation
 is a new value plus a rollout. Objects created later by `quack_migrator` get the grants through
 default privileges, so the command may run before the first migration.
+
+A database created by the superuser (a stand or the production database from before the roles
+were used by the services) is brought in order by the same run: the schemas, their tables and
+sequences, and dbmate's own `public.schema_migrations` pass to `quack_migrator`, so old and new
+migrations run under it; `quack_app` gets the grants on everything that exists. The services
+connect as `quack_app` (compose.yaml); only the `migrate` service holds the superuser DSN.
 """
 
 from __future__ import annotations
@@ -62,13 +68,20 @@ class RolePasswords:
 _ROLE_EXISTS = "SELECT 1 AS found FROM pg_roles WHERE rolname = %(role)s"
 _DATABASE = "SELECT current_database() AS name"
 _SCHEMAS = "SELECT nspname FROM pg_namespace WHERE nspname = ANY(%(names)s)"
+# Only what another role owns: `ALTER ... OWNER TO` the current owner still takes an exclusive lock,
+# and this command runs at every rollout while the old release serves requests.
 _RELATIONS = (
     "SELECT c.relkind, c.relname FROM pg_class c "
     "JOIN pg_namespace n ON n.oid = c.relnamespace "
     "WHERE n.nspname = %(schema)s AND c.relkind IN ('r', 'p', 'S', 'v', 'm') "
+    "AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = %(owner)s) "
     # A sequence of a serial or identity column follows its table's owner.
     "AND NOT (c.relkind = 'S' AND EXISTS (SELECT 1 FROM pg_depend d "
     "WHERE d.objid = c.oid AND d.deptype IN ('a', 'i')))"
+)
+_SCHEMA_NOT_OWNED = (
+    "SELECT 1 AS found FROM pg_namespace WHERE nspname = %(schema)s "
+    "AND nspowner <> (SELECT oid FROM pg_roles WHERE rolname = %(owner)s)"
 )
 
 
@@ -80,6 +93,33 @@ async def _ensure_role(db: Db, role: str, password: str) -> None:
         sql.SQL("{} ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD {}").format(
             verb, sql.Identifier(role), sql.Literal(password)
         )
+    )
+
+
+async def _prepare_dbmate_journal(db: Db, migrator: sql.Identifier) -> None:
+    """`dbmate up` as `quack_migrator` creates `public.schema_migrations` (PostgreSQL 15+ closes
+    `public` to everybody but its owner) or, on a database the superuser migrated before, must
+    own the one that exists. `public` is closed to everybody else, `quack_app` included: the
+    application has no table there, and the journal must not be writable by it (the default
+    privileges of the migrator would otherwise hand it out). `quack_reader` reaches it through
+    `pg_read_all_data`."""
+    await db.execute(sql.SQL("REVOKE ALL ON SCHEMA public FROM PUBLIC"))
+    await db.execute(sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(migrator))
+    journal = await db.fetch_one(
+        "SELECT 1 AS found FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relname = 'schema_migrations' AND c.relkind = 'r' "
+        "AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = %(owner)s)",
+        {"owner": MIGRATOR},
+    )
+    if journal:
+        await db.execute(
+            sql.SQL("ALTER TABLE {} OWNER TO {}").format(
+                sql.Identifier("public", "schema_migrations"), migrator
+            )
+        )
+    # A journal that an earlier run of the migrator created already carries the default grants.
+    await db.execute(
+        sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {}").format(sql.Identifier(APP))
     )
 
 
@@ -126,8 +166,9 @@ async def apply_db_roles(db: Db, passwords: RolePasswords) -> list[str]:
         schemas = sorted(r["nspname"] for r in found)
         for schema in schemas:
             name = ident(schema)
-            await db.execute(sql.SQL("ALTER SCHEMA {} OWNER TO {}").format(name, migrator))
-            for rel in await db.fetch_all(_RELATIONS, {"schema": schema}):
+            if await db.fetch_one(_SCHEMA_NOT_OWNED, {"schema": schema, "owner": MIGRATOR}):
+                await db.execute(sql.SQL("ALTER SCHEMA {} OWNER TO {}").format(name, migrator))
+            for rel in await db.fetch_all(_RELATIONS, {"schema": schema, "owner": MIGRATOR}):
                 what = sql.SQL("SEQUENCE" if rel["relkind"] == "S" else "TABLE")
                 await db.execute(
                     sql.SQL("ALTER {} {} OWNER TO {}").format(
@@ -147,5 +188,6 @@ async def apply_db_roles(db: Db, passwords: RolePasswords) -> list[str]:
                     name, app
                 )
             )
+        await _prepare_dbmate_journal(db, migrator)
     log.info("db_roles_applied", schemas=schemas)
     return schemas

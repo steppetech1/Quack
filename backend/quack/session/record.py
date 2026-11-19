@@ -25,7 +25,7 @@ from quack.events.event_types import (
 )
 from quack.events.log import NewEvent, append_events
 from quack.events.registry import EventPayload
-from quack.practice.answers import record_answer
+from quack.practice.answers import part_spec, record_answer
 from quack.practice.check import Verdict
 from quack.practice.repo import event_by_seq
 from quack.practice.task_store import TaskDocument, get_task
@@ -76,6 +76,8 @@ async def record_action(
         return await _answer(db, answer, key, learner_id, session_id, domain_id, settings, redis)
     if isinstance(action, HintRequestAction | SolutionRequestAction | CheckSkipAction):
         await _own_task(db, learner_id, action.task_id)
+    if isinstance(action, MessageAction) and action.voice_seq is not None:
+        await _own_voice(db, learner_id, session_id, action.voice_seq)
     async with db.transaction():
         [event] = await append_events(
             db,
@@ -105,7 +107,15 @@ async def record_action(
             source="chat",
         )
         recorded = await _answer(
-            db, answer, f"{key}:answer", learner_id, session_id, domain_id, settings, redis
+            db,
+            answer,
+            f"{key}:answer",
+            learner_id,
+            session_id,
+            domain_id,
+            settings,
+            redis,
+            causation_seq=event.seq,
         )
     return RecordedAction(event.seq, starts_turn, recorded.verdict)
 
@@ -154,8 +164,11 @@ async def _answer(
     domain_id: UUID | None,
     settings: Settings,
     redis: Redis | None,
+    causation_seq: int | None = None,
 ) -> RecordedAction:
     task = await _own_task(db, learner_id, answer.task_id)
+    # Т-§6.2: a part of a task is checked by the spec of that part.
+    spec = await part_spec(db, learner_id=learner_id, task=task, part=answer.part)
     recorded = await record_answer(
         db,
         learner_id=learner_id,
@@ -163,9 +176,10 @@ async def _answer(
         domain_id=domain_id,
         idempotency_key=key,
         payload=answer,
-        spec=task.answer_spec,
+        spec=spec,
         settings=settings,
         redis=redis,
+        causation_seq=causation_seq,
     )
     return RecordedAction(recorded.answer_seq, True, recorded.verdict)
 
@@ -176,6 +190,14 @@ async def _own_task(db: Db, learner_id: UUID, task_id: UUID) -> TaskDocument:
     if task is None:
         raise LookupError(f"no task {task_id}")
     return task
+
+
+async def _own_voice(db: Db, learner_id: UUID, session_id: UUID, seq: int) -> None:
+    """The `voice.transcribed` of this session that a spoken message points at;
+    `LookupError` otherwise."""
+    event = await event_by_seq(db, learner_id=learner_id, seq=seq)
+    if event is None or event.type != "voice.transcribed" or event.session_id != session_id:
+        raise LookupError(f"no voice segment at seq {seq} in session {session_id}")
 
 
 async def _element_task(db: Db, learner_id: UUID, turn_seq: int, element_id: str) -> UUID:

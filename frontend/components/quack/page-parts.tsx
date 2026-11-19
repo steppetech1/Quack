@@ -254,6 +254,12 @@ export function MaterialsList({ items }: { items: Material[] }) {
             >
               <I aria-hidden className="size-[18px] shrink-0 stroke-[1.6] text-paper-dim" />
               <span className="min-w-0 flex-1 text-paper">{m.title}</span>
+              {m.state === "processing" && (
+                <span role="status" className="caps shrink-0 text-ribbon [--caps-size:0.625rem]">
+                  {t.page.materialProcessing}
+                </span>
+              )}
+              {m.state === "failed" && <span className="caps shrink-0 text-st-confused [--caps-size:0.625rem]">{t.page.materialFailed}</span>}
               <span className="num shrink-0 text-small text-paper-dim">{m.ref}</span>
             </button>
           </li>

@@ -9,7 +9,11 @@ with its reasons (WP13.2 `guard`, up to `guard_max_retries`); what happens after
 is the caller's: `settle_stance` lowers `code` to `formative` [РЕШЕНИЕ Ф4 WP13.5], an
 unmarked turn is shown and logged: `drop_unknown_head_labels` and `drop_unknown_markup_labels`
 take the labels that do not exist out of what is committed, so the write of the turn does not
-fail on them. «Do not jump the boundary» (head): every prerequisite of a
+fail on them. Every label the write turns into an id is checked, not only skills and
+misconceptions: those of agent requests, `cancel_requests`, the elements (`card_series`,
+`visualization`, `material_link`) and the deadline (`LabelMap`, «short labels exist»,
+Т-§12.4); an element with an unknown label leaves the markup, its block goes with it.
+«Do not jump the boundary» (head): every prerequisite of a
 target skill by `REQUIRES` with `confidence >= requires_min_confidence` has a showing or
 evidence (the slice of seam S4 reads them with the session overlay) or is a target of this
 turn too (D-B-153); after the retries the turn is shown and the case logged. Unsure links
@@ -24,14 +28,22 @@ from typing import Literal
 from uuid import UUID
 
 from quack.graph.read.models import RequiresLink
+from quack.llm.labels import LabelKind, LabelMap, UnknownLabelError
 from quack.practice.check import Verdict
-from quack.session.teacher_output import TurnHead, TurnMarkup
+from quack.session.elements import (
+    CardSeriesElement,
+    Element,
+    MaterialLinkElement,
+    VisualizationElement,
+)
+from quack.session.teacher_output import AgentRequest, TurnHead, TurnMarkup
 
 type GuardReason = Literal[
     "stance_without_code_verdict",
     "no_target_skills",
     "unknown_skill_label",
     "unknown_misconception_label",
+    "unknown_label",
     "spoiler",
     "boundary_jump",
 ]
@@ -108,10 +120,15 @@ def _boundary_jumps(head: TurnHead, boundary: Boundary) -> list[GuardViolation]:
 
 
 def markup_violations(
-    markup: TurnMarkup, *, skill_labels: Collection[str], misconception_labels: Collection[str]
+    markup: TurnMarkup,
+    *,
+    skill_labels: Collection[str],
+    misconception_labels: Collection[str],
+    labels: LabelMap | None = None,
 ) -> list[GuardViolation]:
     """Violations of «the turn is marked» in `p3_markup`: unknown labels of exposures and of
-    `targetsMisconception`."""
+    `targetsMisconception`; with the label table of the call (`labels`) also the labels of agent
+    requests, `cancel_requests`, elements and the deadline — whatever the write resolves."""
     violations = _unknown("unknown_skill_label", [e.skill for e in markup.exposures], skill_labels)
     if markup.targets_misconception is not None:
         violations.extend(
@@ -121,7 +138,64 @@ def markup_violations(
                 misconception_labels,
             )
         )
+    if labels is not None:
+        missing = [
+            f"{label} ({kind}, {where})"
+            for where, kind, label in _label_uses(markup)
+            if not _resolves(labels, kind, label)
+        ]
+        if missing:
+            detail = f"unknown labels: {', '.join(dict.fromkeys(missing))}"
+            violations.append(GuardViolation("unknown_label", detail))
     return violations
+
+
+def _resolves(labels: LabelMap, kind: LabelKind, label: str) -> bool:
+    try:
+        labels.resolve(kind, label)
+    except UnknownLabelError:
+        return False
+    return True
+
+
+def _request_labels(request: AgentRequest) -> list[tuple[LabelKind, str]]:
+    params = request.params
+    pairs: list[tuple[LabelKind, str | None]] = [
+        ("skill", params.skill),
+        ("topic", params.topic),
+        ("task", params.task),
+        ("misconception", params.misconception),
+    ]
+    return [(kind, label) for kind, label in pairs if label is not None]
+
+
+def _element_labels(element: Element) -> list[tuple[LabelKind, str]]:
+    if isinstance(element, CardSeriesElement):
+        return [("card", c) for c in element.cards]
+    if isinstance(element, VisualizationElement) and element.request is not None:
+        return [("request", element.request)]
+    if isinstance(element, MaterialLinkElement):
+        return [("chunk", element.chunk)]
+    return []
+
+
+def _label_uses(markup: TurnMarkup) -> list[tuple[str, LabelKind, str]]:
+    """`(where, kind, label)` of the labels of `p3_markup` that the write of the turn turns into
+    ids (`turn_commit`), apart from exposures and `targetsMisconception`."""
+    uses: list[tuple[str, LabelKind, str]] = []
+    for i, request in enumerate(markup.agent_requests):
+        uses.extend((f"agentRequests[{i}]", k, label) for k, label in _request_labels(request))
+    uses.extend(
+        ("planUpdate.cancel_requests", "request", r) for r in markup.plan_update.cancel_requests
+    )
+    for element in markup.elements:
+        uses.extend((f"element {element.element_id}", k, v) for k, v in _element_labels(element))
+    deadline = markup.deadline
+    if deadline is not None:
+        if deadline.hub_label is not None:
+            uses.append(("deadline.hub_label", "hub", deadline.hub_label))
+        uses.extend(("deadline.coverage", "topic", t) for t in deadline.coverage)
+    return uses
 
 
 def drop_unknown_head_labels(head: TurnHead, skill_labels: Collection[str]) -> TurnHead:
@@ -134,11 +208,19 @@ def drop_unknown_head_labels(head: TurnHead, skill_labels: Collection[str]) -> T
 
 
 def drop_unknown_markup_labels(
-    markup: TurnMarkup, *, skill_labels: Collection[str], misconception_labels: Collection[str]
+    markup: TurnMarkup,
+    *,
+    skill_labels: Collection[str],
+    misconception_labels: Collection[str],
+    labels: LabelMap | None = None,
 ) -> TurnMarkup:
     """After the retries: exposures of unknown skills and an unknown `targetsMisconception`
-    are dropped, as for the head."""
+    are dropped, as for the head; with `labels` also an agent request or an element with an
+    unknown label (the block of the element goes in the turn graph), unknown `cancel_requests`,
+    unknown topics of the deadline coverage, and a deadline of an unknown hub."""
     update: dict[str, object] = {}
+    if labels is not None:
+        update.update(_drop_unresolved(markup, labels))
     exposures = [e for e in markup.exposures if e.skill in skill_labels]
     if len(exposures) != len(markup.exposures):
         update["exposures"] = exposures
@@ -148,6 +230,37 @@ def drop_unknown_markup_labels(
     ):
         update["targets_misconception"] = None
     return markup.model_copy(update=update) if update else markup
+
+
+def _drop_unresolved(markup: TurnMarkup, labels: LabelMap) -> dict[str, object]:
+    update: dict[str, object] = {}
+    requests = [
+        r
+        for r in markup.agent_requests
+        if all(_resolves(labels, k, label) for k, label in _request_labels(r))
+    ]
+    if len(requests) != len(markup.agent_requests):
+        update["agent_requests"] = requests
+    plan = markup.plan_update
+    cancel = [r for r in plan.cancel_requests if _resolves(labels, "request", r)]
+    if len(cancel) != len(plan.cancel_requests):
+        update["plan_update"] = plan.model_copy(update={"cancel_requests": cancel})
+    elements = [
+        e
+        for e in markup.elements
+        if all(_resolves(labels, k, label) for k, label in _element_labels(e))
+    ]
+    if len(elements) != len(markup.elements):
+        update["elements"] = elements
+    deadline = markup.deadline
+    if deadline is not None:
+        if deadline.hub_label is not None and not _resolves(labels, "hub", deadline.hub_label):
+            update["deadline"] = None
+        else:
+            coverage = [t for t in deadline.coverage if _resolves(labels, "topic", t)]
+            if len(coverage) != len(deadline.coverage):
+                update["deadline"] = deadline.model_copy(update={"coverage": coverage})
+    return update
 
 
 def settle_stance(head: TurnHead, answered_verdict: Verdict | None) -> TurnHead:

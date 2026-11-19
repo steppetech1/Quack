@@ -142,3 +142,61 @@ async def test_unsupported_form_writes_check_failed_for_the_model(pg_db: Db) -> 
     assert [(r["type"], r["idempotency_key"], r["payload"]["reason"]) for r in rows] == [
         ("check.failed", check_failed_key(seq, "main"), "unsupported")
     ]
+
+
+async def test_the_insurance_checks_a_part_by_the_spec_of_that_part(pg_db: Db) -> None:
+    """Т-§6.2: the answer to part b is checked against `parts[b].answer`, not the key of the
+    whole task (compute got the key of the whole task, so a right part b was `incorrect`)."""
+    learner_id = await create_learner(pg_db)
+    task_id = uuid4()
+    await create_task(
+        pg_db,
+        learner_id=learner_id,
+        task_id=task_id,
+        family_id=task_id,
+        source="teacher",
+        condition=TaskCondition(text="a) Simplify x + x b) Simplify x * x", latex=None),
+        markup=records.TaskMarkupRecord(
+            tests=[records.TestedLevelRecord(skill_id=uuid4(), level=2)],
+            method_named=False,
+            answer=SPEC,
+            parts=[
+                records.TaskPartRecord(part="a", answer=SPEC),
+                records.TaskPartRecord(
+                    part="b",
+                    answer=AnswerSpec(
+                        type="expression", value=MathValue(latex="x^2", sympy="x**2")
+                    ),
+                ),
+            ],
+        ),
+        verification="unchecked",
+        actor="teacher@2",
+        idempotency_key=f"task:{task_id}",
+    )
+    payload = AnswerSubmitted(
+        task_id=task_id,
+        part="b",
+        answer=LearnerAnswer(kind="expression", value="x*x", sympy="x * x"),
+        source="chat",
+    )
+    [event] = await append_events(
+        pg_db,
+        learner_id,
+        [NewEvent(type="answer.submitted", payload=payload, actor="learner", idempotency_key="p1")],
+    )
+    scenario = ComputeScenario()
+    scenario.push_for(
+        CHECK_PATH, MathCheckResponse(status="completed", outcome="correct", method="symbolic")
+    )
+    client = scripted_compute(scenario)
+    try:
+        result = await insure_symbolic(
+            pg_db, client, SETTINGS, learner_id=learner_id, answer_seq=event.seq, part="b"
+        )
+    finally:
+        await client.aclose()
+
+    sent = [r for r in scenario.requests if r.url.path == CHECK_PATH]
+    assert b"x**2" in sent[0].content and b"2*x" not in sent[0].content
+    assert isinstance(result, Verdict) and (result.part, result.outcome) == ("b", "correct")

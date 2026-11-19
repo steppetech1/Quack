@@ -37,7 +37,7 @@ class SessionJob(StrictModel):
 
     job_key: str
     kind: str
-    status: str  # `queued` or `running`
+    status: str  # `queued`, `running`, or (a few minutes after the end) `succeeded` / `failed`
     created_at: datetime
 
 

@@ -141,3 +141,121 @@ def test_numeric_fields_are_required(field: str) -> None:
         TransitionRequest.model_validate(
             {**BASE, "numeric": numeric, "previous": {"sympy": "x"}, "current": {"sympy": "x"}}
         )
+
+
+@pytest.mark.parametrize("assumption", ["positive", "nonnegative", "integer", "nonzero"])
+def test_latex_answer_shares_the_symbols_of_the_spec(assumption: str) -> None:
+    """The reference is parsed with the assumptions of the spec; the LaTeX answer must get
+    the same symbols, or the numeric check samples `x` of each side independently."""
+    result = _check(
+        student={"latex": "\\frac{x^{2}}{2}"},
+        reference={"sympy": "x**2/2"},
+        variables=[{"name": "x", "assumptions": [assumption]}],
+    )
+    assert (result.status, result.outcome) == ("completed", "correct")
+
+
+def test_latex_answer_is_still_wrong_when_it_is_wrong_under_assumptions() -> None:
+    result = _check(
+        student={"latex": "\\frac{x^{2}}{3}"},
+        reference={"sympy": "x**2/2"},
+        variables=[{"name": "x", "assumptions": ["positive"]}],
+    )
+    assert (result.status, result.outcome) == ("completed", "incorrect")
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        ("0.7071", "correct"),
+        ("0,7071", "correct"),
+        ("7.071e-1", "correct"),
+        ("0.71", "unclear"),  # two significant digits, within half a unit
+        ("0.75", "incorrect"),
+    ],
+)
+def test_decimal_against_an_expression_reference(answer: str, outcome: str) -> None:
+    """Т-§6.4 for `number` with a reference written as an expression: the learner's own
+    precision, not the 1e-9 of the expression mode (the backend sends it as a dimensionless
+    quantity)."""
+    result = _check(
+        kind="quantity",
+        student_text=answer,
+        reference={"sympy": "sqrt(2)/2"},
+        unit="dimensionless",
+    )
+    assert (result.status, result.outcome) == ("completed", outcome)
+
+
+@pytest.mark.parametrize(
+    "student",
+    [
+        {"sympy": "e^x"},
+        {"sympy": "e**x"},
+        {"sympy": "E**x"},
+        {"sympy": "exp(x)"},
+        {"latex": "e^{x}"},
+        {"latex": "\\mathrm{e}^{x}"},
+        {"latex": "\\exp(x)"},
+    ],
+)
+@pytest.mark.parametrize("reference", [{"sympy": "exp(x)"}, {"sympy": "e**x"}, {"sympy": "E**x"}])
+def test_lowercase_e_is_eulers_number(student: dict[str, str], reference: dict[str, str]) -> None:
+    """`e^x`, `exp(x)` and `E**x` are one function, in both inputs and for the answer and the
+    reference alike."""
+    result = _check(student=student, reference=reference)
+    assert (result.status, result.outcome) == ("completed", "correct")
+
+
+def test_latex_2e_is_two_eulers_numbers() -> None:
+    result = _check(student={"latex": "2e"}, reference={"sympy": "2*E"})
+    assert (result.status, result.outcome) == ("completed", "correct")
+    result = _check(student={"latex": "2e"}, reference={"sympy": "2*e"})
+    assert (result.status, result.outcome) == ("completed", "correct")
+
+
+def test_lowercase_e_stays_a_variable_when_the_spec_names_it() -> None:
+    variables = [{"name": "e", "assumptions": ["real"]}]
+    for student in ({"sympy": "e*x"}, {"latex": "e x"}, {"latex": "ex"}):
+        result = _check(student=student, reference={"sympy": "E*x"}, variables=variables)
+        assert (result.status, result.outcome) == ("completed", "incorrect"), student
+    for student in ({"sympy": "e*x"}, {"latex": "e\\cdot x"}):
+        result = _check(student=student, reference={"sympy": "e*x"}, variables=variables)
+        assert (result.status, result.outcome) == ("completed", "correct"), student
+
+
+def test_a_variable_e_does_not_change_the_other_names() -> None:
+    variables = [{"name": "e", "assumptions": []}]
+    result = _check(student={"sympy": "E**x"}, reference={"sympy": "exp(x)"}, variables=variables)
+    assert (result.status, result.outcome) == ("completed", "correct")
+
+
+def test_a_quantity_reference_does_not_read_e_as_eulers_number() -> None:
+    """A quantity is not an expression of the spec (the electron charge is `e` for pint)."""
+    result = _check(kind="quantity", student_text="2.7 m", reference={"sympy": "e"}, unit="m")
+    assert (result.status, result.reason) == ("failed", "unparsed")
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        ("0.7071", "correct"),
+        ("0.70711", "correct"),
+        ("0.7072", "incorrect"),
+        ("0.707", "incorrect"),  # three digits: half a unit of the 4th digit is 5e-5
+        ("0.71", "incorrect"),
+    ],
+)
+def test_decimal_against_an_expression_by_the_specs_significant_digits(
+    answer: str, outcome: str
+) -> None:
+    """The spec's `sig_digits` is half a unit of that digit of the reference — the same verdict
+    the backend gives a decimal reference `0.70710678`."""
+    result = _check(
+        kind="quantity",
+        student_text=answer,
+        reference={"sympy": "sqrt(2)/2"},
+        unit="dimensionless",
+        tolerance={"sig_digits": 4, "min_sig_digits": 4},
+    )
+    assert (result.status, result.outcome) == ("completed", outcome)

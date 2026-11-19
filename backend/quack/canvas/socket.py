@@ -16,7 +16,13 @@ without Redis a socket gets only its own acks (§4.2).
 `line_ready` is recognized in the background (`quack.canvas.recognition`, WP21.3): the socket
 keeps acknowledging batches while Spark reads the line; the result is `canvas.line_committed`
 and `line_recognized` to every device of the canvas. `typed_formula` goes to the log as LaTeX;
-erasing every stroke of a recognized line writes `canvas.line_erased`.
+erasing every stroke of a recognized line writes `canvas.line_erased` - also when the erasure
+came while the model was reading, and for a line read by an earlier socket of the canvas (the
+socket starts from the lines of the log; the strokes of the earlier sockets are read from their
+chunks when a `line_ready` names them). A batch sent again while its chunk is not written is
+not new strokes. The photo job of `workers` tells the canvas of its new lines with
+`line_recognized {source: photo}` through the channel; a socket of a task canvas then checks
+them like lines of the pen (WP22.3).
 
 On a canvas opened by a task every new line goes through the step check (`quack.canvas.
 step_check`, WP21.4) and the marks it earns through the gate of interventions (`quack.canvas.
@@ -30,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -43,6 +50,7 @@ from redis.exceptions import RedisError
 from quack.api.auth import CurrentSession
 from quack.api.resources import AppResources
 from quack.canvas.boards import Canvas
+from quack.canvas.channel import canvas_channel, publish_canvas
 from quack.canvas.interventions import (
     Action,
     InterventionGate,
@@ -74,10 +82,12 @@ from quack.canvas.strokes import (
     StrokeBatch,
     StrokeJournal,
     chunk_max_batches,
+    load_journal,
 )
 from quack.events.event_types import CanvasLineCommitted
 from quack.graph.read import GraphReader, create_graph_reader
 from quack.logging import get_logger
+from quack.storage.objects import StorageUnavailable
 
 log = get_logger(__name__)
 
@@ -100,17 +110,6 @@ def memory_reader(resources: AppResources, learner_id: UUID) -> GraphReader:
     return create_graph_reader(
         resources.neo4j, resources.settings, learner_id=learner_id, db=resources.db
     )
-
-
-def canvas_channel(canvas_id: UUID) -> str:
-    """Т-§15.2: one channel per canvas."""
-    return f"canvas:{canvas_id}"
-
-
-async def publish_canvas(redis: Redis, canvas_id: UUID, message: dict[str, Any]) -> None:
-    """A server message (`line_recognized`, `mark`, `hint`, `layer_update`, `task_closed`) to
-    every socket of the canvas in every API process."""
-    await redis.publish(canvas_channel(canvas_id), orjson.dumps(message))
 
 
 class _Strict(BaseModel):
@@ -180,11 +179,12 @@ async def serve_canvas(
     websocket: WebSocket, resources: AppResources, session: CurrentSession, canvas: Canvas
 ) -> None:
     """The accepted socket until the client leaves."""
-    assert canvas.session_id is not None
+    session_id = canvas.session_id
+    assert session_id is not None
     journal = StrokeJournal(
         resources.storage,
         learner_id=session.learner_id,
-        session_id=canvas.session_id,
+        session_id=session_id,
         canvas_id=canvas.canvas_id,
         chunk_seconds=resources.settings.stroke_chunk_seconds,
         max_batches=chunk_max_batches(resources.settings),
@@ -210,6 +210,13 @@ async def serve_canvas(
         await send(message)
 
     book = LineBook()
+    if session.scope != "companion":
+        # Lines recognized before a reconnect: erasing one of them is still its erasure.
+        for known in await canvas_lines(
+            resources.db, learner_id=session.learner_id, canvas_id=canvas.canvas_id
+        ):
+            if known.stroke_ids:
+                book.recognized(known)
     pending: set[asyncio.Task[None]] = set()
     where = {
         "learner_id": session.learner_id,
@@ -219,14 +226,36 @@ async def serve_canvas(
     }
 
     async def recognize(line: LineReadyIn) -> None:
+        if book.missing(line.stroke_ids) and not book.history_loaded:
+            # The line was begun before a reconnect: its strokes are in the chunks of the
+            # earlier sockets, not in the memory of this one.
+            try:
+                book.adopt(
+                    *await load_journal(
+                        resources.storage,
+                        learner_id=session.learner_id,
+                        session_id=session_id,
+                        canvas_id=canvas.canvas_id,
+                    )
+                )
+            except StorageUnavailable as exc:
+                log.warning("canvas_history_unavailable", error=str(exc))
         strokes = book.line(
             line.line_id, line.stroke_ids, line.bbox, line.started_at, line.ended_at
         )
         committed = await recognize_line(
-            resources.db, resources.llm, resources.compute, line=strokes, **where
+            resources.db,
+            resources.llm,
+            resources.compute,
+            line=strokes,
+            max_side_px=resources.settings.line_render_max_side_px,
+            **where,
         )
-        if committed is not None:
-            book.recognized(committed)
+        if committed is not None and not book.recognized(committed):
+            # Every stroke of the line was erased while the model read it: the line is in the
+            # log, so its erasure goes after it, and nobody checks it (Т-§15.1).
+            await erase_line(resources.db, line_id=line.line_id, text=committed.text, **where)
+            return
         await deliver(line_recognized(line.line_id, committed))
         if committed is not None:
             committed_line(committed)
@@ -316,6 +345,24 @@ async def serve_canvas(
         wake.set()
         start(analyze(line))
 
+    async def photo_line(line_id: str) -> None:
+        """A line of a photo is in the log (the job of `workers` told the canvas): it is checked
+        like a line of the pen (WP22.3). Erased or crossed out meanwhile - nothing to check."""
+        for line in await canvas_lines(
+            resources.db, learner_id=session.learner_id, canvas_id=canvas.canvas_id
+        ):
+            if line.line_id == line_id and not line.crossed_out:
+                committed_line(line)
+
+    def on_relayed(payload: dict[str, Any]) -> None:
+        if (
+            checks
+            and payload.get("type") == "line_recognized"
+            and payload.get("source") == "photo"
+            and payload.get("recognized")
+        ):
+            start(photo_line(str(payload["line_id"])))
+
     async def check_all() -> None:
         """The check request: every line is checked and every mark shown (Т-§15.5)."""
         lines = await canvas_lines(
@@ -356,6 +403,7 @@ async def serve_canvas(
                 canvas.canvas_id,
                 send,
                 COMPANION_KINDS if session.scope == "companion" else None,
+                on_relayed,
             )
         )
         if resources.redis is not None
@@ -382,17 +430,18 @@ async def serve_canvas(
                     await acknowledge([message.batch_no])
                 else:
                     batch = message.batch()
-                    journal.add(batch, now=datetime.now(UTC))
+                    fresh = journal.add(batch, now=datetime.now(UTC))
                     await acknowledge(await journal.flush_due(now=datetime.now(UTC)))
-                    gone = book.add(batch)
-                    for line_id, line_text in gone:
-                        await erase_line(resources.db, line_id=line_id, text=line_text, **where)
-                    if checks:
-                        _watch_strokes(gate, book, batch)
-                        for line_id, _ in gone:
-                            for action in gate.line_erased(line_id):
-                                await perform(action)
-                        wake.set()
+                    if fresh:  # a repeat of a batch still waiting for its chunk is not new strokes
+                        gone = book.add(batch)
+                        for line_id, line_text in gone:
+                            await erase_line(resources.db, line_id=line_id, text=line_text, **where)
+                        if checks:
+                            _watch_strokes(gate, book, batch)
+                            for line_id, _ in gone:
+                                for action in gate.line_erased(line_id):
+                                    await perform(action)
+                            wake.set()
             elif isinstance(message, LineReadyIn):
                 task = asyncio.create_task(recognize(message))
                 pending.add(task)
@@ -412,7 +461,7 @@ async def serve_canvas(
         pass
     finally:
         try:
-            if pending:  # lines already sent are still recognized and written
+            while pending:  # lines already sent are still recognized and written, and checked
                 await asyncio.gather(*pending, return_exceptions=True)
             await stop_task(ticking, canvas_id=canvas.canvas_id)
             await stop_task(relay, canvas_id=canvas.canvas_id)
@@ -450,9 +499,15 @@ def _watch_strokes(gate: InterventionGate, book: LineBook, batch: StrokeBatch) -
         gate.erased_place(box, now)
 
 
-async def _relay(redis: Redis, canvas_id: UUID, send: Any, kinds: frozenset[str] | None) -> None:
-    """Messages of `canvas:{id}` to this socket (only `kinds` when given); a Redis failure ends
-    the relay, not the socket."""
+async def _relay(
+    redis: Redis,
+    canvas_id: UUID,
+    send: Any,
+    kinds: frozenset[str] | None,
+    on_message: Callable[[dict[str, Any]], None],
+) -> None:
+    """Messages of `canvas:{id}` to this socket (only `kinds` when given), each also to
+    `on_message`; a Redis failure ends the relay, not the socket."""
     pubsub = redis.pubsub()
     try:
         await pubsub.subscribe(canvas_channel(canvas_id))
@@ -462,6 +517,7 @@ async def _relay(redis: Redis, canvas_id: UUID, send: Any, kinds: frozenset[str]
             payload = orjson.loads(message["data"])
             if kinds is None or payload.get("type") in kinds:
                 await send(payload)
+                on_message(payload)
     except RedisError as exc:
         log.warning("canvas_relay_failed", canvas_id=str(canvas_id), error=str(exc))
     finally:

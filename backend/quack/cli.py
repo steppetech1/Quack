@@ -33,13 +33,14 @@ from quack.graph.projection.runner import RULES_VERSION
 from quack.graph.projection.runner import resume as resume_stream
 from quack.graph.projection.store import stale_learners
 from quack.graph.read.reader import create_graph_reader
+from quack.jobs.dispatcher_p4 import resume as resume_dispatcher
 from quack.llm.gateway import LLMGateway
 from quack.llm.responses_client import ResponsesClient
 from quack.logging import configure_logging, get_logger
 from quack.ops.alerts import run_alerts
 from quack.ops.backup import run_backup
-from quack.ops.commands import AlembicSchemaFound, migrate
-from quack.ops.db_roles import DbRolesRefused, RolePasswords, apply_db_roles
+from quack.ops.commands import AlembicSchemaFound, ensure_clean_start, migrate, role_dsn
+from quack.ops.db_roles import MIGRATOR, DbRolesRefused, RolePasswords, apply_db_roles
 from quack.ops.orphan_objects import orphan_objects
 from quack.ops.restore_check import restore_check
 from quack.ops.seed import SeedRefusedError, seed_learners, write_learners
@@ -108,7 +109,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("worker", help="projector + workers in one process (development only)")
     ops = sub.add_parser("ops", help="operational commands")
     ops_sub = ops.add_subparsers(dest="op", required=True)
-    ops_sub.add_parser("migrate", help="dbmate up on backend/db/migrations")
+    migrate_p = ops_sub.add_parser("migrate", help="dbmate up on backend/db/migrations")
+    migrate_p.add_argument(
+        "--with-roles",
+        action="store_true",
+        help="db-roles on POSTGRES_DSN (the superuser), then dbmate as quack_migrator (Д-§7)",
+    )
     ops_sub.add_parser("verify-schema", help="create/verify Neo4j constraints and indexes")
     rebuild = ops_sub.add_parser("rebuild", help="rebuild learner projections from the log")
     target = rebuild.add_mutually_exclusive_group(required=False)
@@ -202,6 +208,8 @@ def _run_api(settings: Settings) -> int:
         port=settings.api_port,
         workers=settings.api_workers,
         timeout_graceful_shutdown=settings.api_graceful_shutdown_s,
+        proxy_headers=True,
+        forwarded_allow_ips=settings.api_forwarded_allow_ips,
         log_config=None,
     )
     return 0
@@ -461,6 +469,7 @@ async def _resume(settings: Settings, args: argparse.Namespace) -> int:
     db = await open_db(settings, wait=False)
     try:
         await resume_stream(db, args.learner)
+        await resume_dispatcher(db, args.learner)
     finally:
         await db.close()
     log.info("projector_stream_resumed", learner_id=str(args.learner))
@@ -565,6 +574,18 @@ async def _db_roles(settings: Settings) -> int:
     return 0
 
 
+def _roles_then_migrator(settings: Settings) -> Settings:
+    """`ops migrate --with-roles` (service `migrate`, D-C-160): the superuser DSN of the service
+    creates or updates the three roles and hands the schema to `quack_migrator`; the settings that
+    come back carry the migrator's DSN, so DDL never runs as the superuser (Д-§7)."""
+    ensure_clean_start(settings.postgres_dsn)
+    passwords = RolePasswords.from_settings(settings)
+    if asyncio.run(_db_roles(settings)) != 0:
+        raise DbRolesRefused("ops db-roles failed")
+    dsn = role_dsn(settings.postgres_dsn, MIGRATOR, passwords.migrator)
+    return settings.model_copy(update={"postgres_dsn": dsn})
+
+
 async def _ops(settings: Settings, args: argparse.Namespace) -> int:
     if args.op == "verify-schema":
         driver = create_driver(settings)
@@ -642,8 +663,16 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_workers(settings))
     if args.op == "migrate":
         try:
+            if args.with_roles:
+                settings = _roles_then_migrator(settings)
             migrate(settings)
-        except (AlembicSchemaFound, subprocess.CalledProcessError, FileNotFoundError) as exc:
+        except (
+            AlembicSchemaFound,
+            DbRolesRefused,
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            ValueError,
+        ) as exc:
             log.error("ops_migrate_failed", error=str(exc))
             return 1
         return 0

@@ -89,7 +89,7 @@ export function CanvasLive({ id }: { id: string }) {
   return (
     <Board
       canvasId={view.canvas_id}
-      live={view.session_id ? { sessionId: view.session_id } : undefined}
+      live={view.session_id ? { sessionId: view.session_id, doc: view.doc } : undefined}
       mode="edit"
       topLeft={
         <>

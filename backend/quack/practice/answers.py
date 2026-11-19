@@ -20,11 +20,13 @@ from redis.asyncio import Redis
 
 from quack.config import Settings
 from quack.db.db import Db
-from quack.events.event_types import AnswerSubmitted
+from quack.events.event_types import AnswerSubmitted, TaskCreated
 from quack.events.keys import verdict_key
 from quack.events.log import NewEvent, append_events
 from quack.practice.answer_spec import INSTANT_TYPES, AnswerSpec, LearnerAnswer
 from quack.practice.check import CheckResult, HelpUsed, Verdict, check
+from quack.practice.repo import task_events
+from quack.practice.task_store import TaskDocument
 
 # Phase 4 decision D-B-121: the part of a task without parts (Т-§6.2: a verdict per part).
 DEFAULT_PART = "main"
@@ -64,6 +66,27 @@ async def help_in_session(db: Db, *, learner_id: UUID, session_id: UUID, task_id
     return HelpUsed(hint_step=row.hint_step, solution_requested=row.solution_requested)
 
 
+async def part_spec(
+    db: Db, *, learner_id: UUID, task: TaskDocument, part: str | None
+) -> AnswerSpec:
+    """Т-§6.2: the spec an answer to `part` is checked by. The whole task (no part, the default
+    part, a task without parts) — the document's spec; a part of a task with parts — the spec
+    of `parts[i].answer` of its `task.created` markup. `LookupError` — the task has no such
+    part."""
+    if part is None or part == DEFAULT_PART:
+        return task.answer_spec
+    created = await task_events(
+        db, learner_id=learner_id, task_ids=[task.task_id], types=["task.created"]
+    )
+    parts = TaskCreated.model_validate(created[0].payload).markup.parts if created else None
+    if not parts:
+        return task.answer_spec
+    found = next((p for p in parts if p.part == part), None)
+    if found is None:
+        raise LookupError(f"task {task.task_id} has no part {part!r}")
+    return found.answer
+
+
 async def record_answer(
     db: Db,
     *,
@@ -75,9 +98,11 @@ async def record_answer(
     spec: AnswerSpec,
     settings: Settings,
     redis: Redis | None = None,
+    causation_seq: int | None = None,
 ) -> RecordedAnswer:
     """Т-§6.1: the answer and its instant verdict in one transaction (also inside the caller's
-    transaction). A repeat with the same key returns the stored answer and verdict."""
+    transaction). A repeat with the same key returns the stored answer and verdict.
+    `causation_seq` — the action that made the answer (the response to a task element)."""
     part = payload.part or DEFAULT_PART
     async with db.transaction():
         help_used = await help_in_session(
@@ -94,6 +119,7 @@ async def record_answer(
                     idempotency_key=idempotency_key,
                     domain_id=domain_id,
                     session_id=session_id,
+                    causation_seq=causation_seq,
                 )
             ],
             redis=redis,

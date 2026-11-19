@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SerializerFunctionWrapHandler, model_serializer
 
 
 class _Model(BaseModel):
@@ -64,6 +64,19 @@ class RenderStrokesRequest(_Model):
 class RenderSnapshotsRequest(_Model):
     html: str
     param_sets: list[dict[str, Any]]
+    # The address the page loads its libraries from (`viz_static_base_url`, the one the model is
+    # given); compute answers requests under it from its pinned copy of the files and refuses
+    # every other. Without it (None) the page gets nothing but itself.
+    libraries_base_url: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """A compute of the release before this field refuses an unknown key: unset, the field
+        is not sent, so the two services need not be rolled out together."""
+        data: dict[str, Any] = handler(self)
+        if data.get("libraries_base_url") is None:
+            data.pop("libraries_base_url", None)
+        return data
 
 
 class Snapshot(_Model):

@@ -35,6 +35,35 @@ export function skillToApi(s: Skill) {
   };
 }
 
+/** The backend's limits of a skill (`NAME_PATTERN`, `learner_skill_max_chars`) */
+export const SKILL_NAME_MAX = 40;
+export const SKILL_TEXT_MAX = 2000;
+
+/** The name as the backend stores it: lower case, no leading `/`; `null` when it is not `[\w-]{1,40}` */
+export function validSkillName(raw: string): string | null {
+  const n = raw.trim().toLowerCase().replace(/^\//, "");
+  return new RegExp(`^[\\p{L}\\p{N}_-]{1,${SKILL_NAME_MAX}}$`, "u").test(n) ? n : null;
+}
+
+/** Skills that an older version of the app kept only in this browser (the mock mode saves them there) */
+export function readLocalSkills(): Skill[] {
+  try {
+    const raw = localStorage.getItem(SKILLS_KEY);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(list) ? (list as Skill[]).filter((s) => s && typeof s.name === "string" && typeof s.text === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Keeps `left` as the local copy; an empty list removes it */
+export function writeLocalSkills(left: Skill[]) {
+  try {
+    if (left.length) localStorage.setItem(SKILLS_KEY, JSON.stringify(left));
+    else localStorage.removeItem(SKILLS_KEY);
+  } catch {}
+}
+
 /** `/name rest of the message` → the name of the skill the message calls, or `undefined` (an unknown name changes nothing on the backend) */
 export function skillInvocation(text: string): string | undefined {
   const m = /^\/([\p{L}\p{N}_-]{1,40})(?:\s|$)/u.exec(text.trim());

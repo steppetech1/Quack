@@ -150,5 +150,5 @@ async def build_session_overlay(
         loaded,
         settings,
         earlier=earlier,
-        loader=Neo4jFolds(neo4j, db, learner_id),
+        loader=Neo4jFolds(neo4j, db, learner_id, max(e.seq for e in tail)),
     )

@@ -68,7 +68,7 @@ def test_rule_table() -> None:
 
 def test_every_non_periodic_kind_has_a_row() -> None:
     covered = {k for row in r.RULES for k in row.job_kinds}
-    assert covered >= set(r.JOB_KINDS) - {"export.data"}  # export.data — by request (WP25)
+    assert covered >= set(r.JOB_KINDS)
 
 
 def test_rows_with_events_exist_in_the_catalog() -> None:
@@ -239,13 +239,36 @@ def test_topic_split_request_is_a_graph_job_of_the_domain() -> None:
     )
     plan = _one(event)
     assert plan.kind == "agent.topic_split" and plan.priority_class == "P2"
-    assert plan.lock_key == f"domain:{event.domain_id}" and plan.required_seq == 10
+    # No domain on the envelope: the lock is the learner's, never the `domain:None` of everyone.
+    assert plan.lock_key == f"topic_split:{LEARNER}" and plan.required_seq == 10
     assert plan.payload["topic_id"] == str(topic)
+    domain = UUID(int=5)
+    in_domain = event.model_copy(update={"domain_id": domain})
+    assert _one(in_domain).lock_key == f"domain:{domain}"
+    other = event.model_copy(update={"learner_id": UUID(int=8)})
+    assert _one(other).lock_key != plan.lock_key
     bare = _event(
         "agent.requested",
         payload={"kind": "topic_split", "params": {}, "needed_in_session": False},
     )
     assert _kinds(bare) == []
+
+
+def test_data_export_request_is_the_job_export_data_with_the_request() -> None:
+    """WP23.7: `agent.requested {kind: data_export}` -> `export.data` with the request id."""
+    request = uid("export")
+    event = _event(
+        "agent.requested",
+        payload={
+            "request_id": request,
+            "kind": "data_export",
+            "params": {},
+            "needed_in_session": False,
+        },
+    )
+    plan = _one(event)
+    assert plan.kind == "export.data" and plan.priority_class == "P2"
+    assert plan.required_seq is None and plan.payload["request_id"] == str(request)
 
 
 def test_plan_update_cancels_agent_requests() -> None:
@@ -436,12 +459,16 @@ def test_cheatsheet_consent_is_the_job_of_its_hub() -> None:
         _event("agent.requested",
                payload={"kind": "artifact", "params": params, "needed_in_session": False})
     )  # fmt: skip
+    # It does not coalesce: the request to answer rides in its payload, and a coalescing job
+    # would leave the payload of the waiting `hub.deadline_set` job (the consent is lost).
     assert (plan.kind, plan.lock_key, plan.coalesce_key) == (
         "artifact.cheatsheet",
         f"artifact:{hub}",
-        f"artifact:{hub}",
+        None,
     )
     assert plan.payload["hub_id"] == hub and "request_id" in plan.payload
+    deadline = _one(_event("hub.deadline_set", seq=11, payload={"hub_id": hub}))
+    assert deadline.coalesce_key == f"artifact:{hub}" and deadline.job_key != plan.job_key
     no_hub = {"kind": "artifact", "params": {"artifact": "cheatsheet"}, "needed_in_session": False}
     assert r.plan_jobs(_event("agent.requested", payload=no_hub), SETTINGS) == []
     notes = {"kind": "artifact", "params": {"artifact": "notes"}, "needed_in_session": False}

@@ -1,0 +1,8 @@
+# The context of compute/Dockerfile is the repository root: only what the image copies goes in.
+*
+!compute/pyproject.toml
+!compute/uv.lock
+!compute/quack_compute
+!deploy/static/viz
+**/__pycache__
+**/*.pyc

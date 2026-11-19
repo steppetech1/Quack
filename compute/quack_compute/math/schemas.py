@@ -39,6 +39,10 @@ class Tolerance(_Model):
 
     tol_abs: float | None = None
     tol_rel: float | None = None
+    # The spec's tolerance by significant digits (`AnswerSpec.sig_digits`): half a unit of the
+    # `sig_digits`-th significant digit of the reference — compute knows the magnitude of a
+    # reference written as an expression. Weaker than `tol_abs` and `tol_rel`, as in Т-§6.4.
+    sig_digits: int | None = Field(default=None, ge=1)
     min_sig_digits: int = Field(ge=1)
 
 

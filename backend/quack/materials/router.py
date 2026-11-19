@@ -19,6 +19,7 @@ from quack.api.errors import ApiError
 from quack.api.resources import AppResources, get_resources
 from quack.materials import library
 from quack.materials.search import search_events
+from quack.storage.uploads import read_upload
 
 router = APIRouter(prefix="/v1", tags=["materials"])
 
@@ -96,7 +97,7 @@ async def upload_material(
             resources.settings,
             learner_id=session.learner_id,
             domain_id=domain_id,
-            data=await file.read(),
+            data=await read_upload(file, max_mb=resources.settings.upload_max_mb),
             session_id=session_id,
             redis=resources.redis,
         )

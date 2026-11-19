@@ -29,6 +29,8 @@ from quack.graph.profile_fold import PROFILE_EVENT_TYPES
 from quack.graph.projection.phase_a import EventFailed, apply_events, batch_need
 from quack.graph.projection.phase_b import FoldLoader, run_folds
 from quack.graph.projection.store import (
+    UNFINISHED_VERSION,
+    delete_learner_graph,
     load_fold_inputs,
     load_profile_evidence,
     load_slice,
@@ -94,28 +96,32 @@ def _event_refs(need: Need, events: dict[int, StoredEvent]) -> set[NodeRef]:
 
 _PROFILE_EVENTS = (
     "SELECT " + _EVENT_COLUMNS + " FROM core.events "
-    "WHERE learner_id = %(learner_id)s AND type = ANY(%(types)s) ORDER BY seq"
+    "WHERE learner_id = %(learner_id)s AND type = ANY(%(types)s) AND seq <= %(upto)s ORDER BY seq"
 )
 
 
-async def _profile_events(db: Db, learner_id: UUID) -> list[StoredEvent]:
-    """The journal events the profile fold reads (WP5.3)."""
+async def _profile_events(db: Db, learner_id: UUID, upto_seq: int) -> list[StoredEvent]:
+    """The journal events the profile fold reads (WP5.3), up to the last event of the batch: the
+    profile is the fold of what is applied, like the rebuild's (T-P1)."""
     types = sorted(PROFILE_EVENT_TYPES)
     return await db.fetch_all(
-        _PROFILE_EVENTS, {"learner_id": learner_id, "types": types}, row=StoredEvent
+        _PROFILE_EVENTS,
+        {"learner_id": learner_id, "types": types, "upto": upto_seq},
+        row=StoredEvent,
     )
 
 
 class Neo4jFolds:
     """Phases B–C read what the first slice did not hold from Neo4j and the journal."""
 
-    def __init__(self, neo4j: AsyncDriver, db: Db, learner_id: UUID) -> None:
+    def __init__(self, neo4j: AsyncDriver, db: Db, learner_id: UUID, upto_seq: int) -> None:
         self._neo4j, self._db, self._learner_id = neo4j, db, learner_id
+        self._upto_seq = upto_seq
         self._learner = str(learner_id)
 
     async def profile_inputs(self) -> tuple[SubGraph, Sequence[StoredEvent]]:
         evidence = await load_profile_evidence(self._neo4j, self._learner)
-        return evidence, await _profile_events(self._db, self._learner_id)
+        return evidence, await _profile_events(self._db, self._learner_id, self._upto_seq)
 
     async def fold_inputs(self, skills: set[str], misconceptions: set[str]) -> SubGraph:
         return await load_fold_inputs(self._neo4j, self._learner, skills, misconceptions)
@@ -191,6 +197,12 @@ async def project_learner(
         failure = await db.fetch_one(_FAILURE, params)
         if failure is not None:
             return BatchOutcome("stopped", after, int(failure["seq"]))
+        if watermark is not None and watermark[1] == UNFINISHED_VERSION:
+            # A rebuild by parts did not finish (Т-§2.7): the graph is partial. Replaying the log
+            # over final-state nodes is not the rebuild, so the rest is cleared first.
+            log.warning("unfinished_rebuild_cleared", learner_id=str(learner_id))
+            await delete_learner_graph(neo4j, str(learner_id))
+            after = 0
         limit = settings.projector_batch_max_events
         events = await db.fetch_all(
             _EVENTS_AFTER, params | {"after": after, "limit": limit}, row=StoredEvent
@@ -203,7 +215,12 @@ async def project_learner(
         try:
             loaded, earlier = await load_batch_inputs(db, neo4j, learner_id, events)
             batch = await run_batch(
-                learner_id, events, loaded, earlier, settings, Neo4jFolds(neo4j, db, learner_id)
+                learner_id,
+                events,
+                loaded,
+                earlier,
+                settings,
+                Neo4jFolds(neo4j, db, learner_id, events[-1].seq),
             )
         except EventFailed as failed:
             await db.execute(

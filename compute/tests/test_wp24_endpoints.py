@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from collections.abc import Iterator
 
 import cv2
@@ -183,6 +184,69 @@ def test_render_snapshots_report_uncaught_errors(client: TestClient) -> None:
     response = client.post("/v1/render/snapshots", json={"html": html, "param_sets": []})
     [snapshot] = response.json()["snapshots"]
     assert any("kaput" in error for error in snapshot["console_errors"])
+
+
+def test_render_snapshots_refuse_every_request_but_the_page(client: TestClient) -> None:
+    """Д-§3.2: the HTML is written by a model; every request of the page except the page itself
+    is refused by the renderer (net::ERR_FAILED), none is let out to a network; a host that does
+    not resolve would fail with another error."""
+    html = "<script src='http://elsewhere.quack.internal/lib.js'></script><p>page</p>"
+    response = client.post("/v1/render/snapshots", json={"html": html, "param_sets": []})
+    assert response.status_code == 200
+    [snapshot] = response.json()["snapshots"]
+    assert any("ERR_FAILED" in error for error in snapshot["console_errors"]), snapshot
+
+
+def test_render_jobs_have_the_hard_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WP24: the render endpoints are under `compute_task_timeout_s` like the pool jobs: a job
+    that outlives it is cancelled and the answer is 504."""
+
+    async def hang(self: Renderer, request: object) -> None:
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(Renderer, "snapshots", hang)
+    monkeypatch.setattr(Renderer, "pdf", hang)
+    settings = ComputeSettings(compute_workers=1, compute_tmp_dir=".", compute_task_timeout_s=0.3)
+    with TestClient(create_app(settings)) as short:
+        for path, body in (
+            ("/v1/render/snapshots", {"html": "<p>x</p>", "param_sets": []}),
+            ("/v1/render/pdf", {"html": "<p>x</p>"}),
+        ):
+            started = time.monotonic()
+            response = short.post(path, json=body)
+            assert response.status_code == 504, path
+            assert time.monotonic() - started < 5, path
+
+
+def test_render_snapshots_refuse_too_many_param_sets(client: TestClient) -> None:
+    """WP24: the number of parameter sets of one call is bounded by `render_max_param_sets`."""
+    limit = ComputeSettings().render_max_param_sets
+    sets: list[dict[str, int]] = [{"n": n} for n in range(limit + 1)]
+    response = client.post("/v1/render/snapshots", json={"html": "<p>x</p>", "param_sets": sets})
+    assert response.status_code == 422
+    ok = client.post("/v1/render/snapshots", json={"html": "<p>x</p>", "param_sets": sets[:2]})
+    assert ok.status_code == 200 and len(ok.json()["snapshots"]) == 2
+
+
+def test_image_render_strokes_refuses_a_huge_image_and_skips_empty_strokes(
+    client: TestClient,
+) -> None:
+    """WP21.3: the size of the image comes from client coordinates; past
+    `render_strokes_max_side_px` (or below 1) the answer is 422 and nothing is allocated; a
+    stroke without points draws nothing instead of failing the call."""
+    limit = ComputeSettings().render_strokes_max_side_px
+    for width, height in ((limit + 1, 10), (10, 100_000), (0, 10), (10, -1)):
+        response = client.post(
+            "/v1/image/render-strokes",
+            json={"strokes": [{"points": [[0, 0]]}], "width": width, "height": height},
+        )
+        assert response.status_code == 422, (width, height)
+    response = client.post(
+        "/v1/image/render-strokes",
+        json={"strokes": [{"points": []}, {"points": [[1, 1], [5, 5]]}], "width": 10, "height": 10},
+    )
+    assert response.status_code == 200
+    assert _image(response.json()["image_webp_b64"], cv2.IMREAD_GRAYSCALE).shape == (10, 10)
 
 
 async def test_chromium_idle_close() -> None:

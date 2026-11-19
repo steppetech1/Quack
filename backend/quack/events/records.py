@@ -107,6 +107,7 @@ type AgentKind = Literal[
     "artifact",
     "known_check",
     "topic_split",
+    "data_export",
 ]
 
 

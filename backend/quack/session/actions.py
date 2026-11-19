@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from quack.practice.answer_spec import LearnerAnswer
 from quack.session.elements import Element
@@ -38,13 +38,23 @@ class CanvasRef(BaseModel):
 
 
 class MessageAction(_Action):
-    """`message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8)."""
+    """`message.sent`: text, attached materials, canvas references, `/skill` call (Т-§17.8).
+
+    `voice_seq` - the message is spoken: the `seq` of its `voice.transcribed` (the answer of
+    `POST …/voice`). The words are that event's, so `text` must stay empty."""
 
     kind: Literal["message"]
-    text: str
+    text: str = ""
     material_ids: list[UUID] = []
     canvas_refs: list[CanvasRef] = []
     skill_invocation: str | None = None
+    voice_seq: int | None = None
+
+    @model_validator(mode="after")
+    def _spoken_words_once(self) -> MessageAction:
+        if self.voice_seq is not None and self.text.strip():
+            raise ValueError("a spoken message carries its words in the voice event, not in text")
+        return self
 
 
 class IntentAction(_Action):

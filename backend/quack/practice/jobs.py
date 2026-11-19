@@ -13,7 +13,7 @@ from quack.events.keys import check_failed_key, verdict_key
 from quack.graph.read import SliceFocus, create_graph_reader
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob
-from quack.practice.answers import help_in_session
+from quack.practice.answers import help_in_session, part_spec
 from quack.practice.model_check import (
     LevelState,
     check_with_model,
@@ -118,7 +118,7 @@ async def handle_check_model(job: ClaimedJob, ctx: JobContext) -> None:
         learner_id=learner_id,
         session_id=event.session_id,
         condition=doc.condition,
-        spec=doc.answer_spec,
+        spec=await part_spec(ctx.db, learner_id=learner_id, task=doc, part=part),
         solution_space=doc.solution_space,
         answer=answer,
         answer_seq=answer_seq,

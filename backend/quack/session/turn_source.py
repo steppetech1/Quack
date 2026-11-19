@@ -28,10 +28,17 @@ from neo4j import AsyncDriver
 from neo4j.exceptions import ConnectionAcquisitionTimeoutError, ServiceUnavailable, SessionExpired
 
 from quack.api.resources import AppResources
+from quack.compute_client.client import ComputeClient
 from quack.config import Settings
 from quack.db.db import Db
 from quack.embeddings.client import EmbeddingClient, EmbeddingsUnavailable
-from quack.events.event_types import MessageSent, SessionStarted, TaskClosed, TaskCreated
+from quack.events.event_types import (
+    AnswerSubmitted,
+    MessageSent,
+    SessionStarted,
+    TaskClosed,
+    TaskCreated,
+)
 from quack.events.log import StoredEvent
 from quack.events.records import PlanUpdateRecord
 from quack.events.values import AnswerSpec, Level, Verdict
@@ -52,9 +59,14 @@ from quack.graph.read.neo4j_reader import Neo4jGraphReader
 from quack.llm.gateway import LLMGateway
 from quack.llm.labels import LabelMap
 from quack.logging import get_logger
+from quack.practice.answer_spec import SLOW_TYPES, LearnerAnswer
+from quack.practice.answers import DEFAULT_PART, help_in_session, part_spec
+from quack.practice.check import check
+from quack.practice.model_check import record_verdict
 from quack.practice.repo import session_events_of_action
 from quack.practice.task_store import get_task
 from quack.session.action_turn import TurnRequest, TurnSetup
+from quack.session.actions import VerdictFrame
 from quack.session.conversation import render_conversation
 from quack.session.memory_picture import (
     MEMORY_UNAVAILABLE,
@@ -71,6 +83,7 @@ from quack.session.teacher_context import (
     Profile,
     SessionGoal,
     TeacherSlots,
+    card_label_line,
     fit_budget,
     frozen_slots,
     render_labels,
@@ -92,7 +105,13 @@ from quack.session.tools import (
 )
 from quack.session.turn_commit import AnsweredAction, LearnerText, TurnManifestRow
 from quack.session.turn_graph import AssembledTurn, Effort, GuardInputs, Role
-from quack.session.turn_inputs import learner_state, load_learner_skill, load_plan, load_snapshot
+from quack.session.turn_inputs import (
+    cards_for_turn,
+    learner_state,
+    load_learner_skill,
+    load_plan,
+    load_snapshot,
+)
 from quack.session.turn_policy import resolve_degraded_mode
 
 log = get_logger(__name__)
@@ -142,6 +161,12 @@ class SessionJournal:
     goal: SessionGoal
     open_tasks: list[UUID]
     task_skills: list[UUID]
+    # Т-§12.4: the active tasks whose answer the text may not show — open, and no
+    # `solution.requested`; a task the answered answer solves is closed by this very turn.
+    spoiler_tasks: list[UUID]
+    # Т-§12.4: the answers of the parts of those tasks (`markup.parts[i].answer`) the learner has
+    # not solved yet — a part with a correct latest verdict may be spoken about; (task, spec).
+    spoiler_parts: list[tuple[UUID, AnswerSpec]]
     learner_texts: list[LearnerText]
     first_turn: bool
     repeated_failure: bool
@@ -152,6 +177,7 @@ class SessionJournal:
     skill_invocation: str | None = None
     answered: AnsweredAction | None = None
     answered_verdict: Verdict | None = None
+    answer_seq: int | None = None  # the `answer.submitted` the turn answers
 
 
 def _latest_verdicts(events: Sequence[StoredEvent]) -> dict[tuple[int, str], Verdict]:
@@ -160,6 +186,48 @@ def _latest_verdicts(events: Sequence[StoredEvent]) -> dict[tuple[int, str], Ver
         if event.type == "verdict.recorded":
             verdict = Verdict.model_validate(event.payload)
             found[(verdict.answer_seq, verdict.part)] = verdict
+    return found
+
+
+def _solved(
+    task: TaskCreated | None, verdicts: dict[tuple[int, str], Verdict], task_answers: set[int]
+) -> bool:
+    """Т-§6.2: every part of the task has a correct latest verdict (the latest answer of that
+    part), or the whole task (`main`) does; a task without parts has `main` only."""
+    latest: dict[str, Verdict] = {}
+    for (answer_seq, part), verdict in sorted(verdicts.items()):
+        if answer_seq in task_answers:
+            latest[part] = verdict
+    parts = {p.part for p in (task.markup.parts if task is not None else None) or ()}
+    whole = latest.get(DEFAULT_PART)
+    if whole is not None and whole.outcome == "correct":
+        return True
+    if parts:
+        return all(part in latest and latest[part].outcome == "correct" for part in parts)
+    return bool(latest) and all(v.outcome == "correct" for v in latest.values())
+
+
+def _spoiler_parts(
+    created: dict[UUID, TaskCreated],
+    tasks: Sequence[UUID],
+    verdicts: dict[tuple[int, str], Verdict],
+    answer_tasks: dict[int, UUID],
+) -> list[tuple[UUID, AnswerSpec]]:
+    """Т-§12.4: the answers of the parts of the guarded tasks, except the parts whose latest
+    verdict is `correct` (the same exception as for the whole task). A task without parts has
+    none; the accepted wordings of a `short_text` are not added (decision of the owner)."""
+    latest: dict[tuple[UUID, str], Verdict] = {}
+    for (answer_seq, part), verdict in sorted(verdicts.items()):
+        task_id = answer_tasks.get(answer_seq)
+        if task_id is not None:
+            latest[(task_id, part)] = verdict
+    found: list[tuple[UUID, AnswerSpec]] = []
+    for task_id in tasks:
+        task = created.get(task_id)
+        for part in (task.markup.parts if task is not None else None) or ():
+            done = latest.get((task_id, part.part))
+            if done is None or done.outcome != "correct":
+                found.append((task_id, part.answer))
     return found
 
 
@@ -234,6 +302,7 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
     goal = SessionGoal(intent="learn")
     created: dict[UUID, TaskCreated] = {}
     closed: set[UUID] = set()
+    solution_asked: set[UUID] = set()
     answer_tasks: dict[int, UUID] = {}
     texts: list[LearnerText] = []
     for event in ordered:
@@ -250,6 +319,9 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
                     goal = SessionGoal(
                         intent=message.intent, topic_id=message.topic_id, hub_id=message.hub_id
                     )
+            case "voice.transcribed":
+                # The words of a spoken message (its `message.sent` carries none, `voice_seq`).
+                texts.append(LearnerText(seq=event.seq, text=str(event.payload["text"])))
             case "task.created":
                 task = TaskCreated.model_validate(event.payload)
                 created[task.task_id] = task
@@ -257,6 +329,8 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
                 closed.add(TaskClosed.model_validate(event.payload).task_id)
             case "answer.submitted":
                 answer_tasks[event.seq] = UUID(str(event.payload["task_id"]))
+            case "solution.requested":
+                solution_asked.add(UUID(str(event.payload["task_id"])))
             case _:
                 pass
     open_tasks = [task_id for task_id in created if task_id not in closed]
@@ -265,10 +339,15 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
         for task_id, task in created.items()
     }
     task_skills = list(dict.fromkeys(s for t in open_tasks for s in skills[t]))
+    spoiler_tasks = [t for t in open_tasks if t not in solution_asked]
     journal = SessionJournal(
         goal=goal,
         open_tasks=open_tasks,
         task_skills=task_skills,
+        spoiler_tasks=spoiler_tasks,
+        spoiler_parts=_spoiler_parts(
+            created, spoiler_tasks, _latest_verdicts(ordered), answer_tasks
+        ),
         learner_texts=texts,
         first_turn=not any(e.type == "turn.committed" for e in ordered),
         repeated_failure=_repeated_failure(ordered, answer_tasks, skills),
@@ -287,16 +366,28 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
         task_id = UUID(str(action.payload["task_id"]))
         kind = _TASK_ACTIONS[action.type]
         return replace(journal, answered=AnsweredAction(kind=kind, task_id=task_id))  # type: ignore[arg-type]
-    if action.type == "answer.submitted":
-        task_id = answer_tasks[action.seq]
+    answer = action
+    if action.type == "element.responded":
+        # WP13.1: an element that is a task also wrote `answer.submitted` (caused by the response).
+        answer = next(
+            (e for e in ordered if e.type == "answer.submitted" and e.causation_seq == action.seq),
+            None,
+        )
+    if answer is not None and answer.type == "answer.submitted":
+        task_id = answer_tasks[answer.seq]
         verdicts = _latest_verdicts(ordered)
-        mine = {part: v for (seq, part), v in verdicts.items() if answer_tasks.get(seq) == task_id}
-        solved = bool(mine) and all(v.outcome == "correct" for v in mine.values())
-        own = [v for (seq, _p), v in verdicts.items() if seq == action.seq]
+        task_answers = {seq for seq, t in answer_tasks.items() if t == task_id}
+        solved = _solved(created.get(task_id), verdicts, task_answers)
+        own = [v for (seq, _p), v in verdicts.items() if seq == answer.seq]
         return replace(
             journal,
+            spoiler_tasks=[t for t in journal.spoiler_tasks if not (solved and t == task_id)],
+            spoiler_parts=[
+                (t, spec) for t, spec in journal.spoiler_parts if not (solved and t == task_id)
+            ],
             answered=AnsweredAction(kind="answer", task_id=task_id, solved=solved),
             answered_verdict=own[-1] if own else None,
+            answer_seq=answer.seq,
         )
     return journal
 
@@ -310,10 +401,14 @@ def turn_effort(role: Role, journal: SessionJournal) -> Effort:
 
 
 def answer_strings(spec: AnswerSpec) -> list[str]:
-    """What of the answer may not be shown (Т-§12.4): the value and the items, both forms."""
+    """What of the answer may not be shown (Т-§12.4): the value and the items, both forms; for a
+    `choice` the text of the correct option (the function of Phase 3, `spoiler_guard`)."""
     values = [spec.value] if spec.value is not None else []
     values.extend(spec.items or [])
-    return [form for value in values for form in (value.latex, value.sympy) if form]
+    found = [form for value in values for form in (value.latex, value.sympy) if form]
+    if spec.type == "choice":
+        found.extend(o.text for o in spec.options or [] if o.correct and o.text)
+    return found
 
 
 def target_levels(
@@ -373,6 +468,7 @@ class MemoryTurnContextSource:
         reader: Callable[[UUID], GraphReader],
         neo4j: AsyncDriver | None = None,
         embeddings: EmbeddingClient | None = None,
+        compute: ComputeClient | None = None,
         clock: Callable[[], int] | None = None,
     ) -> None:
         self._db = db
@@ -381,6 +477,7 @@ class MemoryTurnContextSource:
         self._reader = reader
         self._neo4j = neo4j
         self._embeddings = embeddings
+        self._compute = compute
         self._clock = clock or (lambda: int(time.time() * 1000))
 
     async def _overlay(self, request: TurnRequest, end: int) -> SessionOverlay:
@@ -400,7 +497,9 @@ class MemoryTurnContextSource:
 
     async def _slice(
         self, reader: GraphReader, request: TurnRequest, focus: SliceFocus
-    ) -> tuple[MemorySlice, bool]:
+    ) -> tuple[MemorySlice, bool, list[int]]:
+        """The slice, whether memory was unavailable, and the `seq` of the overlay events the
+        slice was read with (the manifest keeps them, Т-§3.2)."""
         # The wait target is the end of the learner's journal (Т-§2.6): the reader waits for
         # the projector up to it and reports `lag_degraded` (`projector_lag`, §4.4).
         end = await journal_end(self._db, learner_id=request.learner_id)
@@ -408,8 +507,8 @@ class MemoryTurnContextSource:
             tail = await self._overlay(request, end)
             found = await reader.slice_for_turn(request.learner_id, request.session_id, focus, tail)
         except NEO4J_UNAVAILABLE:
-            return MemorySlice(learner_id=request.learner_id, projected_seq=0), True
-        return found, False
+            return MemorySlice(learner_id=request.learner_id, projected_seq=0), True, []
+        return found, False, [e.seq for e in tail.events]
 
     async def _review(
         self,
@@ -525,13 +624,70 @@ class MemoryTurnContextSource:
         )
         return {UUID(str(r["payload"]["request_id"])) for r in rows if r["payload"]["ok"]}
 
-    async def _answers(self, learner_id: UUID, task_ids: Sequence[UUID]) -> list[str]:
+    async def _answers(self, learner_id: UUID, journal: SessionJournal) -> list[str]:
         found: list[str] = []
-        for task_id in task_ids:
+        for task_id in journal.spoiler_tasks:
             task = await get_task(self._db, learner_id=learner_id, task_id=task_id)
             if task is not None:
                 found.extend(answer_strings(task.answer_spec))
-        return found
+        for _task_id, spec in journal.spoiler_parts:
+            found.extend(answer_strings(spec))
+        return list(dict.fromkeys(found))
+
+    async def _inline_verdict(
+        self, request: TurnRequest, events: Sequence[StoredEvent], journal: SessionJournal
+    ) -> Verdict | None:
+        """The wait for the fast verdict (Т-§6.1, WP11.3, T-CH2): an answer of a fast type
+        without a verdict goes to compute while the context is assembled, for no longer than
+        `symbolic_inline_timeout_ms`. In time: `verdict.recorded` is written (the key
+        `verdict:{answer_seq}:{part}` keeps it single); not in time or compute is down:
+        nothing is written, the insurance job `check.symbolic` does it later. A failure here
+        never fails the turn (law 9)."""
+        if (
+            self._compute is None
+            or journal.answer_seq is None
+            or journal.answered_verdict is not None
+        ):
+            return None
+        learner_id = request.learner_id
+        try:
+            event = next(e for e in events if e.seq == journal.answer_seq)
+            payload = AnswerSubmitted.model_validate(event.payload)
+            task = await get_task(self._db, learner_id=learner_id, task_id=payload.task_id)
+            if task is None:
+                return None
+            spec = await part_spec(self._db, learner_id=learner_id, task=task, part=payload.part)
+            if spec.type in SLOW_TYPES:
+                return None
+            result = await check(
+                LearnerAnswer.model_validate(payload.answer.model_dump()),
+                spec,
+                answer_seq=event.seq,
+                part=payload.part or DEFAULT_PART,
+                settings=self._settings,
+                compute=self._compute,
+                timeout_ms=self._settings.symbolic_inline_timeout_ms,
+                help_used=await help_in_session(
+                    self._db,
+                    learner_id=learner_id,
+                    session_id=request.session_id,
+                    task_id=payload.task_id,
+                ),
+                recognition_confidence=payload.recognition_confidence,
+            )
+            if not isinstance(result, Verdict):
+                return None
+            await record_verdict(
+                self._db,
+                result,
+                learner_id=learner_id,
+                session_id=request.session_id,
+                domain_id=request.domain_id,
+            )
+        except Exception as exc:  # the hot path never fails on this step (law 9)
+            log.warning("inline_verdict_failed", error=repr(exc), answer_seq=journal.answer_seq)
+            return None
+        return result
 
     async def assemble(self, request: TurnRequest) -> TurnSetup:
         settings, db = self._settings, self._db
@@ -577,38 +733,64 @@ class MemoryTurnContextSource:
                 )
             }
         )
-        (memory_slice, unavailable), chunks, answers, digest, completed = await asyncio.gather(
+        hub_topics = [t.topic_id for hub in hubs for t in hub.topics]
+        label_topics: list[UUID] = list(
+            dict.fromkeys([*topics, *hub_topics, *(prep.coverage_topic_ids if prep else [])])
+        )
+        sliced, chunks, digest, completed, inline, cards = await asyncio.gather(
             self._slice(reader, request, read_focus),
             self._chunks(learner_id, read_focus.skill_ids),
-            self._answers(learner_id, journal.open_tasks),
             self._digest(learner_id, request.domain_id),
             self._completed(learner_id, journal.requests),
+            self._inline_verdict(request, events, journal),
+            cards_for_turn(
+                db,
+                learner_id=learner_id,
+                topic_ids=label_topics[: settings.label_max_topics],
+                limit=settings.label_max_cards,
+            ),
         )
-
+        memory_slice, unavailable, overlay_seqs = sliced
+        verdict_frame: VerdictFrame | None = None
+        if inline is not None:
+            # The verdict came in time: the context, the guard and `solved` see it.
+            verdict_frame = VerdictFrame(
+                answer_seq=inline.answer_seq,
+                part=inline.part,
+                outcome=inline.outcome,
+                method=inline.method,
+                verification=inline.verification,
+            )
+            events = await session_events_of_action(
+                db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
+            )
+            journal = read_journal(events, request.action_seq)
+        answers = await self._answers(learner_id, journal)
         unavailable = unavailable or memory_down
         freeze = snapshot is None
         frozen = frozen_slots(snapshot or snapshot_slots(now, timezone), now, timezone)
         skill_ids = list(
             dict.fromkeys([*read_focus.skill_ids, *(s.skill_id for s in memory_slice.skills)])
         )
-        hub_topics = [t.topic_id for hub in hubs for t in hub.topics]
         bank = {} if unavailable else await self._bank(reader, learner_id, review, targets)
         labels = LabelMap.build(
             settings,
             skills=skill_ids,
-            topics=list(
-                dict.fromkeys([*topics, *hub_topics, *(prep.coverage_topic_ids if prep else [])])
-            ),
+            topics=label_topics,
             tasks=[*journal.open_tasks, *(t.task_id for ts in bank.values() for t in ts)],
             misconceptions=[m.misconception_id for m in memory_slice.misconceptions],
             hubs=[hub.hub_id for hub in hubs],
             chunks=[chunk.chunk_id for chunk in chunks],
+            cards=[card.card_id for card in cards],
             requests=list(journal.requests),
         )
         names: dict[UUID, str] = {s.skill_id: s.name for s in memory_slice.skills if s.name}
         names.update({m.topic_id: m.name for m in memory})
         names.update({hub.hub_id: hub.name for hub in hubs})
         names.update({t.topic_id: t.name for hub in hubs for t in hub.topics})
+        card_names = {
+            card.card_id: card_label_line(names.get(card.topic_id), card.prompt) for card in cards
+        }
         picture = (
             MEMORY_UNAVAILABLE
             if unavailable
@@ -640,7 +822,7 @@ class MemoryTurnContextSource:
                 session_plan=_session_plan(journal.goal, plan, labels, prep, names, settings),
                 memory_picture=picture,
                 materials=render_materials(chunks, labels),
-                labels=render_labels(labels, names),
+                labels=render_labels(labels, {**names, **card_names}),
                 skill=skill,
             )
         )
@@ -690,6 +872,7 @@ class MemoryTurnContextSource:
                     skill_labels=frozenset(labels.labels("skill")),
                     misconception_labels=frozenset(labels.labels("misconception")),
                     task_labels=frozenset(labels.labels("task")),
+                    labels=labels,
                     has_spoiler=lambda text: any(
                         answer_in_text(text, answer, settings) for answer in answers
                     ),
@@ -697,6 +880,7 @@ class MemoryTurnContextSource:
                 ),
                 effort=effort,
                 degraded_mode=degraded,
+                verdict=verdict_frame,
             ),
             provider=self._gateway.streaming(
                 role,
@@ -717,6 +901,7 @@ class MemoryTurnContextSource:
                 model=settings.model_for_role(role),
                 effort=effort,
                 projected_seq=memory_slice.projected_seq,
+                overlay_seqs=overlay_seqs,
                 label_table=labels.table(),
                 chunk_ids=[chunk.chunk_id for chunk in chunks],
                 context_text=(
@@ -762,4 +947,5 @@ def source_of(resources: AppResources) -> MemoryTurnContextSource:
         reader=reader,
         neo4j=resources.neo4j,
         embeddings=resources.embeddings,
+        compute=resources.compute,
     )

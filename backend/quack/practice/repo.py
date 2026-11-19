@@ -24,7 +24,9 @@ _SESSION_UP_TO = (
 )
 _SESSION_OF_ACTION = (
     f"SELECT {_COLUMNS} FROM core.events WHERE learner_id = %(learner_id)s "
-    "AND session_id = %(session_id)s AND (seq <= %(action_seq)s OR causation_seq = %(action_seq)s) "
+    "AND session_id = %(session_id)s AND (seq <= %(action_seq)s OR causation_seq = %(action_seq)s "
+    "OR causation_seq IN (SELECT seq FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND session_id = %(session_id)s AND causation_seq = %(action_seq)s)) "
     "ORDER BY seq"
 )
 _AGENT_REQUEST = (
@@ -66,7 +68,9 @@ async def session_events_of_action(
     db: Db, *, learner_id: UUID, session_id: UUID, action_seq: int
 ) -> list[StoredEvent]:
     """The session's events up to the action and what the action itself caused (its verdicts,
-    `causation_seq = action_seq`): the turn answers the action together with its check (D-B-221)."""
+    `causation_seq = action_seq`): the turn answers the action together with its check (D-B-221).
+    An element response that is an answer: its `answer.submitted` (`causation_seq` = the response)
+    and the verdicts of that answer come too."""
     params = {"learner_id": learner_id, "session_id": session_id, "action_seq": action_seq}
     return await db.fetch_all(_SESSION_OF_ACTION, params, row=StoredEvent)
 

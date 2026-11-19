@@ -17,6 +17,7 @@ from quack.events.log import NewEvent, StoredEvent, append_events
 from quack.jobs import queue_p4 as q
 from quack.jobs.coverage import mark_covered
 from quack.jobs.dispatcher_p4 import DispatcherP4
+from quack.jobs.dispatcher_p4 import resume as dispatcher_resume
 from tests.db.fixtures import create_learner
 from tests.events.samples import sample_payload
 
@@ -636,3 +637,135 @@ async def test_embedding_jobs_carry_their_text_and_read_only_the_log(jobs_db: Db
     texts = {j["payload"]["nodes"][0]["node_kind"]: j["payload"]["nodes"][0]["text"] for j in jobs}
     assert texts == {"chunk": "A limit is…", "misconception": "limit equals the value"}
     assert chunk.seq in {j["payload"]["trigger_seq"] for j in jobs}
+
+
+# --- a poisoned event stops one stream (`ops.dispatcher_failures`, bug audit 2026-11-15) ----
+
+FAILING = SETTINGS.model_copy(update={"dispatcher_failure_limit": 3})
+
+
+class _Poisoned(DispatcherP4):
+    """Raises on the rules of `bad` while `broken` — the way a program error on one event does."""
+
+    bad: UUID
+    broken: bool = True
+
+    async def _apply_rules(self, event: StoredEvent, counters: Any) -> int:
+        if self.broken and event.learner_id == self.bad:
+            raise KeyError("poison")
+        return await super()._apply_rules(event, counters)
+
+
+def _poisoned(db: Db, bad: UUID) -> _Poisoned:
+    d = _Poisoned(FAILING, db, clock=lambda: T0)
+    d.bad = bad
+    return d
+
+
+async def _failure(db: Db, learner: UUID) -> dict[str, Any] | None:
+    return await db.fetch_one(
+        "SELECT seq, error_type, error, attempts, stopped_at FROM ops.dispatcher_failures "
+        "WHERE learner_id = %(l)s",
+        {"l": learner},
+    )
+
+
+async def _mark(db: Db, learner: UUID) -> int:
+    row = await db.fetch_one(
+        "SELECT last_dispatched_seq FROM ops.dispatcher_offsets WHERE learner_id = %(l)s",
+        {"l": learner},
+    )
+    return 0 if row is None else int(row["last_dispatched_seq"])
+
+
+async def test_a_failing_batch_is_recorded_and_stops_the_stream_after_the_limit(
+    jobs_db: Db,
+) -> None:
+    """Law 7 / Т-§2.10: a batch that keeps failing is rolled back and counted; at the limit the
+    learner is not picked up, the others go on, and no event is skipped or lost."""
+    bad, good = await create_learner(jobs_db), await create_learner(jobs_db)
+    first = await Log(jobs_db, bad).put("message.sent", at=0)
+    await Log(jobs_db, good).put("message.sent", at=0)
+    d = _poisoned(jobs_db, bad)
+
+    assert await d.run_once() > 0  # `good` goes through, `bad` fails the first time
+    failure = await _failure(jobs_db, bad)
+    assert failure is not None
+    assert (failure["seq"], failure["error_type"], failure["attempts"]) == (
+        first.seq,
+        "KeyError",
+        1,
+    )
+    assert "poison" in failure["error"] and failure["stopped_at"] is None
+    assert await _failure(jobs_db, good) is None
+
+    await d.run_once()
+    await d.run_once()  # the third failure in a row on the same event
+    failure = await _failure(jobs_db, bad)
+    assert failure is not None and failure["attempts"] == 3 and failure["stopped_at"] is not None
+    assert await _mark(jobs_db, bad) == 0  # nothing committed, nothing skipped
+
+    assert await d.pending_learners() == []  # `good` is caught up, `bad` is stopped
+    later = await Log(jobs_db, good).put("message.sent", at=1)
+    assert await d.pending_learners() == [good]
+    assert await d.process_learner(bad) == 0  # a direct call of a stopped stream does nothing
+    assert await d.run_once() > 0 and await _mark(jobs_db, good) == later.seq
+    assert (await _failure(jobs_db, bad) or {})["attempts"] == 3  # no more attempts
+
+
+async def test_resume_goes_on_from_the_same_event(jobs_db: Db) -> None:
+    bad = await create_learner(jobs_db)
+    log = Log(jobs_db, bad)
+    first = await log.put("message.sent", at=0)
+    last = await log.put("message.sent", at=1)
+    d = _poisoned(jobs_db, bad)
+    for _ in range(3):
+        await d.run_once()
+    failure = await _failure(jobs_db, bad)
+    assert failure is not None and failure["stopped_at"] is not None
+    assert await _mark(jobs_db, bad) == 0
+
+    d.broken = False  # the cause is fixed, but the stream stays stopped until `resume`
+    assert await d.run_once() == 0 and await _mark(jobs_db, bad) == 0
+    await dispatcher_resume(jobs_db, bad)
+    assert await _failure(jobs_db, bad) is None
+    assert await d.run_once() > 0
+    assert await _mark(jobs_db, bad) >= last.seq > first.seq  # from the first event, none lost
+    assert await _failure(jobs_db, bad) is None
+
+
+async def test_a_batch_that_goes_through_ends_the_failures_in_a_row(jobs_db: Db) -> None:
+    bad = await create_learner(jobs_db)
+    await Log(jobs_db, bad).put("message.sent", at=0)
+    d = _poisoned(jobs_db, bad)
+    await d.run_once()
+    await d.run_once()
+    failure = await _failure(jobs_db, bad)
+    assert failure is not None and failure["attempts"] == 2
+    d.broken = False
+    assert await d.run_once() > 0
+    assert await _failure(jobs_db, bad) is None  # the counter starts again, not 3 of 3
+    d.broken = True
+    await Log(jobs_db, bad).put("message.sent", at=1)
+    await d.run_once()
+    failure = await _failure(jobs_db, bad)
+    assert failure is not None and failure["attempts"] == 1 and failure["stopped_at"] is None
+
+
+async def test_stopped_streams_do_not_starve_the_others_in_the_selection(jobs_db: Db) -> None:
+    """`pending_learners` is `ORDER BY learner_id LIMIT n`: stopped learners must not fill it."""
+    stopped = [await create_learner(jobs_db) for _ in range(3)]
+    healthy = [await create_learner(jobs_db) for _ in range(2)]
+    for learner in (*stopped, *healthy):
+        await Log(jobs_db, learner).put("message.sent", at=0)
+    for learner in stopped:
+        await jobs_db.execute(
+            "INSERT INTO ops.dispatcher_failures (learner_id, seq, error_type, error, attempts, "
+            "stopped_at) VALUES (%(l)s, 1, 'KeyError', 'x', 10, now())",
+            {"l": learner},
+        )
+    d = dispatcher(jobs_db)
+    assert sorted(await d.pending_learners(limit=2)) == sorted(healthy)
+    # A failure still being repeated (no `stopped_at`) is still picked up.
+    await jobs_db.execute("UPDATE ops.dispatcher_failures SET stopped_at = NULL")
+    assert len(await d.pending_learners(limit=10)) == 5

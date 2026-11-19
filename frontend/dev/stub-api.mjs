@@ -515,6 +515,31 @@ data: ${JSON.stringify({ applied_seq: S.seq })}
     }
     return err(res, "NOT_FOUND", 404, "no such artifact");
   }
+  // materials: a list per subject, an upload (multipart, the stub does not read the file) and the parse state:
+  // a new material is "uploaded" and turns "parsed" on the third read of GET /v1/materials/{id}
+  if ((g = p.match(/^\/v1\/domains\/([^/]+)\/materials$/))) {
+    if (!domainById(g[1])) return err(res, "NOT_FOUND", 404, "no such subject");
+    const list = ((S.materials ??= {})[g[1]] ??= []);
+    if (m === "GET") return json(res, 200, { materials: list.map((x) => x.view).reverse() });
+    const material = { reads: 0, view: { material_id: randomUUID(), domain_id: g[1], session_id: null, mime: "application/pdf", status: "uploaded", pages_count: null, created_at: new Date().toISOString() } };
+    list.push(material);
+    return json(res, 201, material.view);
+  }
+  if ((g = p.match(/^\/v1\/materials\/([^/]+)$/))) {
+    for (const list of Object.values(S.materials ?? {})) {
+      const material = list.find((x) => x.view.material_id === g[1]);
+      if (!material) continue;
+      if (++material.reads >= 3) material.view = { ...material.view, status: "parsed", pages_count: 12 };
+      return json(res, 200, { material: material.view, file_url: `http://localhost:${PORT}/_materials/${g[1]}.pdf`, pages: [] });
+    }
+    return err(res, "NOT_FOUND", 404, "no such material");
+  }
+  // access to the models: the mode comes from STUB_LLM (normal | tight | judges_only); the judge flag is the preference
+  if (p === "/v1/llm/access") {
+    const mode = ["normal", "tight", "judges_only"].includes(process.env.STUB_LLM ?? "") ? process.env.STUB_LLM : "normal";
+    const judge = S.settings.meta_judge === true;
+    return json(res, 200, { mode, judge, blocked: mode === "judges_only" && !judge, preference_key: "meta_judge" });
+  }
   if (p === "/v1/search") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const hits = [];

@@ -1,13 +1,18 @@
 "use client";
 
-import { Mic, Paperclip, PenLine, X } from "lucide-react";
+import { Loader2, Mic, Paperclip, PenLine, Square, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useId, useRef, useState } from "react";
+import { API_MODE } from "@/lib/api/client";
+import { MATERIAL_ACCEPT } from "@/lib/api/materials";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
+import { useShell } from "./app-shell";
 import { IconButton } from "./icon-button";
+import { useMaterialUpload } from "./live/use-material-upload";
 import { useSoon } from "./soon";
 import { useSkills } from "./use-skills";
+import { useVoiceInput, type VoiceProps } from "./use-voice-input";
 
 /** Слово с «/» перед кареткой: в начале поля или после пробела */
 const SLASH = /(^|\s)\/([^\s/]*)$/;
@@ -24,6 +29,8 @@ type Props = {
   compact?: boolean;
   /** Фокус новой сессии: «тема: …» со снимаемой меткой */
   chip?: { label: string; onRemove: () => void };
+  /** Голос в сессии (только режим API): запись с микрофона → WAV → `onClip`. Без пропса — кнопка-заглушка «скоро» */
+  voice?: VoiceProps;
 };
 
 export function Composer({
@@ -34,11 +41,16 @@ export function Composer({
   primary = true,
   compact = false,
   chip,
+  voice,
 }: Props) {
   const t = useT();
   placeholder ??= t.composer.placeholder;
   submitText ??= t.composer.submit;
   const soon = useSoon();
+  const { domain } = useShell();
+  // with the backend, the clip uploads a lecture or a photo into the current subject; on mocks it stays a "soon"
+  const { send: sendFile, uploading } = useMaterialUpload(domain.id);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
@@ -47,6 +59,9 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [active, setActive] = useState(0);
+  const mic = useVoiceInput(voice?.onClip);
+  const micBusy = mic.phase === "starting" || mic.phase === "sending";
+  const mm = (n: number) => `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
 
   const match = SLASH.exec(value.slice(0, caret));
   const query = match?.[2].toLowerCase() ?? "";
@@ -227,13 +242,73 @@ export function Composer({
         </button>
       )}
       </div>
+      {voice && mic.supported && (mic.phase !== "idle" || mic.error) && (
+        <p
+          role={mic.error && mic.phase === "idle" ? "alert" : "status"}
+          className={cn("flex items-center gap-2 px-2.5 pb-1 text-small", mic.error && mic.phase === "idle" ? "text-st-confused" : "text-paper-dim")}
+        >
+          {mic.phase === "recording" && (
+            <>
+              <span aria-hidden className="size-2 rounded-pill bg-st-confused motion-safe:animate-pulse" />
+              <span>{t.voiceSession.recording}</span>
+              <span className="num">{mm(mic.seconds)}</span>
+            </>
+          )}
+          {mic.phase === "starting" && t.voiceSession.starting}
+          {mic.phase === "sending" && t.voiceSession.sending}
+          {mic.phase === "idle" && mic.error}
+        </p>
+      )}
       <div className={cn("flex items-center gap-1", compact && "max-md:hidden")}>
-        <IconButton label={t.composer.attach} onClick={() => soon(t.composer.soonAttach)}>
+        {API_MODE && (
+          <input
+            ref={fileRef}
+            type="file"
+            accept={MATERIAL_ACCEPT}
+            tabIndex={-1}
+            aria-hidden
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void sendFile(file);
+            }}
+          />
+        )}
+        <IconButton
+          label={t.composer.attach}
+          disabled={uploading}
+          onClick={() => (API_MODE && domain.id ? fileRef.current?.click() : soon(t.composer.soonAttach))}
+        >
           <Paperclip />
         </IconButton>
-        <IconButton label={t.composer.dictate} onClick={() => soon(t.composer.soonVoice)}>
-          <Mic />
-        </IconButton>
+        {!voice && (
+          <IconButton label={t.composer.dictate} onClick={() => soon(t.composer.soonVoice)}>
+            <Mic />
+          </IconButton>
+        )}
+        {voice && mic.supported && (
+          <>
+            <IconButton
+              label={mic.phase === "recording" ? t.voiceSession.stop : t.voiceSession.record}
+              aria-pressed={mic.phase === "recording"}
+              aria-busy={micBusy}
+              disabled={micBusy || (mic.phase === "idle" && voice.disabled)}
+              onClick={() => void (mic.phase === "recording" ? mic.stop() : mic.start())}
+              className={cn(
+                "disabled:cursor-default disabled:opacity-50",
+                mic.phase === "recording" && "bg-cloth-hover text-st-confused",
+              )}
+            >
+              {mic.phase === "recording" ? <Square className="fill-current" /> : micBusy ? <Loader2 className="motion-safe:animate-spin" /> : <Mic />}
+            </IconButton>
+            {mic.phase === "recording" && (
+              <IconButton label={t.voiceSession.cancel} onClick={mic.cancel}>
+                <X />
+              </IconButton>
+            )}
+          </>
+        )}
         <IconButton label={t.composer.openCanvas} onClick={() => router.push("/canvas/new")}>
           <PenLine />
         </IconButton>

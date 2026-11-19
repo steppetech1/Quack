@@ -36,6 +36,7 @@ PUBLIC_ROUTES = {
     # ТЗ Ф4 WP18: sign-in routes.
     ("POST", "/auth/link"),
     ("GET", "/auth/link/verify"),
+    ("POST", "/auth/link/verify"),
     ("GET", "/auth/google/start"),
     ("GET", "/auth/google/callback"),
     ("POST", "/companion/pair"),

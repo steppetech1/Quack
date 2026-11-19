@@ -288,7 +288,34 @@ const SPACE = (
 /** Backend decks only: change the text of a card or delete it. Each resolves with the text of the error, or `null` when done */
 export type DeckManage = { edit: (id: string, prompt: string) => Promise<string | null>; remove: (id: string) => Promise<string | null> };
 
-export function DeckViewer({ cards, manage }: { cards: StudyCard[]; manage?: DeckManage }) {
+/**
+ * Backend decks only: one rated card goes to the backend as an answer. Resolves with the text of the error, or `null` when saved.
+ * The deck never waits for it: the ratings stay in the window whatever the backend says.
+ */
+export type DeckAnswers = { submit: (id: string, remembered: boolean, text: string) => Promise<string | null> };
+
+/** A rating at or above this one («got it») counts as «I remembered» */
+const REMEMBERED_FROM = 2;
+
+/** Under the result of a backend deck: are the answers saved, and a way to send the failed ones again */
+function AnswersSync({ sync, onRetry }: { sync: ("sending" | "sent" | "failed")[]; onRetry: () => void }) {
+  const t = useT();
+  const failed = sync.filter((s) => s === "failed").length;
+  if (!sync.length) return null;
+  const busy = sync.includes("sending");
+  return (
+    <p role={failed && !busy ? "alert" : "status"} className={cn("mt-4 text-small", failed && !busy ? "text-st-confused" : "text-paper-dim")}>
+      {busy ? t.cardAnswers.sending : failed ? t.cardAnswers.failed(failed) : t.cardAnswers.saved}
+      {failed > 0 && !busy && (
+        <button type="button" onClick={onRetry} className={cn(TEXT_BTN, "ml-2")}>
+          {t.cardAnswers.retry}
+        </button>
+      )}
+    </p>
+  );
+}
+
+export function DeckViewer({ cards, manage, answers }: { cards: StudyCard[]; manage?: DeckManage; answers?: DeckAnswers }) {
   const t = useT();
   const [i, setI] = useState(0);
   const [started, setStarted] = useState(false);
@@ -305,6 +332,20 @@ export function DeckViewer({ cards, manage }: { cards: StudyCard[]; manage?: Dec
   const rateRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const revealRef = useRef<HTMLButtonElement>(null);
   const last = cards.length - 1;
+  /** What the learner typed before turning the card over (backend decks), per card */
+  const [typed, setTyped] = useState<string[]>(() => cards.map(() => ""));
+  /** Where each answer is on its way to the backend; one at a time, in the order of the ratings (each is a teacher turn there) */
+  const [sync, setSync] = useState<Record<string, "sending" | "sent" | "failed">>({});
+  const queue = useRef<Promise<void>>(Promise.resolve());
+
+  const send = (id: string, remembered: boolean, text: string) => {
+    if (!answers) return;
+    setSync((s) => ({ ...s, [id]: "sending" }));
+    queue.current = queue.current.then(async () => {
+      const err = await answers.submit(id, remembered, text);
+      setSync((s) => ({ ...s, [id]: err ? "failed" : "sent" }));
+    });
+  };
 
   const step = (to: number) => {
     if (to < 0 || to > last) return;
@@ -314,10 +355,17 @@ export function DeckViewer({ cards, manage }: { cards: StudyCard[]; manage?: Dec
   };
   const rate = (r: number) => {
     setRated((prev) => prev.map((x, k) => (k === i ? r : x)));
+    send(cards[i].id, r >= REMEMBERED_FROM, typed[i]);
     if (i === last) setDone(true);
     else step(i + 1);
   };
+  const retryFailed = () =>
+    cards.forEach((c, k) => {
+      if (sync[c.id] === "failed" && rated[k] !== null) send(c.id, (rated[k] as number) >= REMEMBERED_FROM, typed[k]);
+    });
   const restart = () => {
+    setSync({});
+    setTyped(cards.map(() => ""));
     setRated(cards.map(() => null));
     setDone(false);
     setI(0);
@@ -397,6 +445,7 @@ export function DeckViewer({ cards, manage }: { cards: StudyCard[]; manage?: Dec
             </li>
           ))}
         </ul>
+        {answers && <AnswersSync sync={Object.values(sync)} onRetry={retryFailed} />}
         <button
           type="button"
           autoFocus
@@ -521,8 +570,36 @@ export function DeckViewer({ cards, manage }: { cards: StudyCard[]; manage?: Dec
         <p className="text-[22px] leading-snug text-paper">
           <Inline text={card.front} />
         </p>
+        {answers && !revealed && (
+          <div className="mt-6">
+            <label className="caps mb-1.5 block text-paper-dim" htmlFor={`answer-${card.id}`}>
+              {t.cardAnswers.label}
+            </label>
+            <textarea
+              id={`answer-${card.id}`}
+              rows={3}
+              value={typed[i]}
+              placeholder={t.cardAnswers.placeholder}
+              onChange={(e) => setTyped((prev) => prev.map((x, k) => (k === i ? e.target.value : x)))}
+              onKeyDown={(e) => {
+                // Enter turns the card over, Shift+Enter is a new line
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  setRevealed(true);
+                }
+              }}
+              className="block w-full rounded-control border border-seam bg-cloth-deep px-3 py-2 text-body text-paper outline-none placeholder:text-paper-dim focus-visible:border-ribbon"
+            />
+          </div>
+        )}
         {revealed && (
           <div className="mt-6 border-t border-seam-soft pt-5 text-[17px] leading-relaxed text-paper animate-in fade-in slide-in-from-bottom-1 duration-200 motion-reduce:animate-none">
+            {answers && typed[i].trim() && (
+              <div className="mb-4">
+                <p className="caps mb-1 text-paper-dim">{t.cardAnswers.yours}</p>
+                <p className="whitespace-pre-wrap">{typed[i].trim()}</p>
+              </div>
+            )}
             <RichText text={card.back || t.artifacts.noAnswer} />
           </div>
         )}

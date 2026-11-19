@@ -13,6 +13,25 @@ type LineReady = {
   ended_at: number;
 };
 
+/**
+ * What the board hears from a canvas socket besides the acks: the line it just sent for reading and the teacher's
+ * server messages `line_recognized`, `mark` (`kind: null` takes the mark off) and `hint` (Т-§15.2, WP21.2-21.5)
+ */
+export type CanvasEvent =
+  | { type: "line_sent"; line_id: string; stroke_ids: string[]; bbox: [number, number, number, number] }
+  | {
+      type: "line_recognized";
+      line_id: string;
+      recognized: boolean;
+      kind?: "latex" | "text";
+      text?: string;
+      sympy?: string | null;
+      confidence?: number;
+      crossed_out?: boolean;
+    }
+  | { type: "mark"; line_id: string; kind: "error" | "question" | null }
+  | { type: "hint"; line_id: string | null; step: number; text: string };
+
 /** Batches go out every `stroke_batch_ms` of the backend (300) */
 const BATCH_MS = 300;
 const RETRY_MIN_MS = 1000;
@@ -22,6 +41,8 @@ const POINT_MS = 8;
 const PRESSURE = 0.5;
 /** A line is "done" after this long without a new stroke (backend default of `line_pause_ms`, Т-§15.2) */
 const LINE_PAUSE_MS = 1200;
+/** How long a message to the teacher waits for the lines just drawn to be read (render + model on the server) */
+const SETTLE_MS = 20000;
 
 /**
  * Where the WebSocket is. `NEXT_PUBLIC_QUACK_WS` (for example `wss://api.qvack.online`) when the API has its own host;
@@ -41,6 +62,7 @@ function socketUrl(canvasId: string): string {
 export class CanvasSocket {
   private ws: WebSocket | null = null;
   private closed = false;
+  private opened = false;
   private retry = RETRY_MIN_MS;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -60,11 +82,21 @@ export class CanvasSocket {
     endedAt: number;
   } | null = null;
   private lineTimer: ReturnType<typeof setTimeout> | null = null;
+  /** `line_ready` that could not go out (socket down): sent when it is back */
+  private unsentLines: LineReady[] = [];
+  /** lines sent and not yet answered with `line_recognized` */
+  private awaiting = new Set<string>();
+  private waiters = new Set<() => void>();
 
   constructor(
     private readonly canvasId: string,
     private readonly onState: (s: SyncState) => void,
+    private readonly onEvent: (e: CanvasEvent) => void = () => {},
+    /** the socket is open again after a drop (not the first open): what the server said while it was down is lost to the board */
+    private readonly onReopen: () => void = () => {},
   ) {
+    // a board that is shown again (cached route) keeps the state of its last socket: this one starts clean
+    this.onState(this.state);
     this.connect();
   }
 
@@ -111,6 +143,37 @@ export class CanvasSocket {
     if (this.line) this.line.strokeIds = this.line.strokeIds.filter((id) => !ids.includes(id));
   }
 
+  /**
+   * Before a message to the teacher: sends the strokes and the line being drawn now, without waiting for the pause,
+   * and resolves when the server has read those lines (`line_recognized`) — only then are they in the session log
+   * (`canvas.line_committed`), which is all the teacher reads of the drawing. Gives up after `SETTLE_MS` or when the socket is down.
+   */
+  settle(timeoutMs = SETTLE_MS): Promise<void> {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.flush();
+    }
+    if (this.lineTimer) {
+      clearTimeout(this.lineTimer);
+      this.flushLine();
+    }
+    if (!this.awaiting.size) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(t);
+        this.waiters.delete(done);
+        resolve();
+      };
+      const t = setTimeout(done, timeoutMs);
+      this.waiters.add(done);
+    });
+  }
+
+  private release() {
+    if (this.awaiting.size) return;
+    for (const w of [...this.waiters]) w();
+  }
+
   /** Sends what is collected now and leaves; the server writes what it has on close */
   close() {
     this.closed = true;
@@ -119,6 +182,8 @@ export class CanvasSocket {
     if (this.lineTimer) clearTimeout(this.lineTimer);
     this.flushLine();
     this.flush();
+    this.awaiting.clear();
+    this.release();
     this.ws?.close();
   }
 
@@ -135,7 +200,15 @@ export class CanvasSocket {
       started_at: line.startedAt,
       ended_at: line.endedAt,
     };
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    this.sendLine(msg);
+  }
+
+  private sendLine(msg: LineReady) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.awaiting.add(msg.line_id);
+      this.ws.send(JSON.stringify(msg));
+      this.onEvent({ type: "line_sent", line_id: msg.line_id, stroke_ids: msg.stroke_ids, bbox: msg.bbox });
+    } else this.unsentLines.push(msg);
   }
 
   private schedule() {
@@ -179,20 +252,36 @@ export class CanvasSocket {
     ws.onopen = () => {
       this.retry = RETRY_MIN_MS;
       for (const b of this.unacked.values()) ws.send(JSON.stringify(b));
+      // the lines go after the strokes they name: the server reads a line from the strokes it has received
+      for (const l of this.unsentLines.splice(0)) this.sendLine(l);
       this.update();
+      const again = this.opened;
+      this.opened = true;
+      if (again) this.onReopen();
     };
     ws.onmessage = (e) => {
       try {
-        const m = JSON.parse(String(e.data)) as { type?: string; batch_no?: number };
+        const m = JSON.parse(String(e.data)) as { type?: string; batch_no?: number; line_id?: unknown; step?: unknown; text?: unknown };
         if (m.type === "ack" && typeof m.batch_no === "number") {
           this.unacked.delete(m.batch_no);
           this.update();
+        } else if (m.type === "line_recognized" && typeof m.line_id === "string") {
+          this.awaiting.delete(m.line_id);
+          this.release();
+          this.onEvent(m as CanvasEvent);
+        } else if (m.type === "mark" && typeof m.line_id === "string") {
+          this.onEvent(m as CanvasEvent);
+        } else if (m.type === "hint" && typeof m.text === "string") {
+          this.onEvent({ type: "hint", line_id: typeof m.line_id === "string" ? m.line_id : null, step: typeof m.step === "number" ? m.step : 1, text: m.text });
         }
       } catch {}
     };
     ws.onclose = (e) => {
       if (this.ws === ws) this.ws = null;
       this.update();
+      // an answer for a line sent on this connection may never come; nobody should wait for it
+      this.awaiting.clear();
+      this.release();
       // 1008: no session or not this learner's canvas: another try will not change that
       if (this.closed || e.code === 1008) return;
       this.retryTimer = setTimeout(() => this.connect(), this.retry);

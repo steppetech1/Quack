@@ -33,12 +33,15 @@ import base64
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from quack.canvas.board import LearnerDrawing
 from quack.canvas.boards import Canvas, add_drawing, get_canvas
+from quack.canvas.channel import publish_canvas
 from quack.canvas.drawings import drawing_mask, pixel_box, webp_size
 from quack.canvas.recognition import (
     RECOGNIZER_ROLE,
@@ -46,6 +49,7 @@ from quack.canvas.recognition import (
     SHEET_MODE,
     RecognizerSheetOutput,
     SheetLine,
+    line_recognized,
 )
 from quack.compute_client.client import ComputeClient
 from quack.compute_client.contracts import CleanDrawingRequest, ImageRequest
@@ -155,6 +159,7 @@ async def current_sheet(db: Db, *, learner_id: UUID, canvas_id: UUID) -> Sheet:
             erased.add(payload["line_id"])
             continue
         committed[payload["line_id"]] = payload
+        erased.discard(payload["line_id"])  # written again after it was struck out
         sheet_id = payload["line_id"].split(":", 1)[0]
     rows = [
         SheetRow(
@@ -235,15 +240,17 @@ async def run_photo_pipeline(
     at_ms = int(occurred_at.timestamp() * 1000)
     events: list[NewEvent] = []
     committed: list[str] = []
+    messages: list[dict[str, Any]] = []
     erased: list[str] = []
     for n, line in enumerate(lines):
         before = sheet.rows[pairs[n]] if n in pairs else None
         line_id = before.line_id if before else f"{sheet_id}:{photo_id}:{n}"
         if before is None or before.text != line.text:
             committed.append(line_id)
-            events.append(
-                _committed(photo.canvas_id, photo_id, line_id, line, at_ms, canvas.session_id)
-            )
+            event = _committed(photo.canvas_id, photo_id, line_id, line, at_ms, canvas.session_id)
+            events.append(event)
+            assert isinstance(event.payload, CanvasLineCommitted)
+            messages.append({**line_recognized(line_id, event.payload), "source": "photo"})
         if line.crossed_out and (before is None or not before.crossed_out):
             erased.append(line_id)
             events.append(
@@ -253,12 +260,16 @@ async def run_photo_pipeline(
                         canvas_id=photo.canvas_id, line_id=line_id, text=line.text
                     ),
                     actor="learner",
-                    idempotency_key=f"canvas.line_erased:{photo.canvas_id}:{line_id}",
+                    # A line struck out, written again and struck out again is erased again.
+                    idempotency_key=f"canvas.line_erased:{photo.canvas_id}:{line_id}:{photo_id}",
                     session_id=canvas.session_id,
                 )
             )
     if events:
         await append_events(db, learner_id, events, redis=redis)
+    if redis is not None:
+        for message in messages:
+            await _tell_canvas(redis, photo.canvas_id, message)
     placed = await _place_drawings(
         db, gateway, compute, storage,
         learner_id=learner_id, canvas=canvas, photo_id=photo_id, image=sheet_image, areas=areas,
@@ -270,6 +281,16 @@ async def run_photo_pipeline(
         drawings=len(areas),
         drawings_placed=placed,
     )
+
+
+async def _tell_canvas(redis: Redis, canvas_id: UUID, message: dict[str, Any]) -> None:
+    """A new line of the photo to the devices of the canvas: the notebook shows the reading and
+    its socket checks the line like one of the pen (WP22.3 "as for the pen"). The log has the
+    line already, so a Redis failure is logged, not retried."""
+    try:
+        await publish_canvas(redis, canvas_id, message)
+    except RedisError as exc:
+        log.warning("photo_line_publish_failed", canvas_id=str(canvas_id), error=str(exc))
 
 
 async def _place_drawings(

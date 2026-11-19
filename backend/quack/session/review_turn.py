@@ -86,9 +86,9 @@ async def bank_for_review(
     candidates: Sequence[ReviewCandidate],
     targets: dict[UUID, list[Level]],
 ) -> dict[UUID, list[ReviewTask]]:
-    """Per candidate the first bank task of a family not met yet, at the frontier level of the
-    skill (the levels of `targets`, or all levels without a hub). At most `label_max_tasks`
-    candidates, so every task can have a label."""
+    """Per candidate the first checked bank task (Т-§12.4) of a family not met yet, at the frontier
+    level of the skill (the levels of `targets`, or all levels without a hub). At most
+    `label_max_tasks` candidates, so every task can have a label."""
     found: dict[UUID, list[ReviewTask]] = {}
     for candidate in candidates[: settings.label_max_tasks]:
         levels = targets.get(candidate.skill_id) or ALL_LEVELS
@@ -100,9 +100,12 @@ async def bank_for_review(
             skill_id=candidate.skill_id,
             level=frontier.level if frontier.level is not None else levels[-1],
         )
-        if not picked:
+        # Т-§12.4 «Сгенерированное проверено»: a bank task is offered only with `verification =
+        # checked`; `select_tasks` puts checked ones first (Т-§5.7), so this is the first pick.
+        chosen = next((t for t in picked if t.checked), None)
+        if chosen is None:
             continue
-        task = await get_task(db, learner_id=learner_id, task_id=picked[0].task_id)
+        task = await get_task(db, learner_id=learner_id, task_id=chosen.task_id)
         if task is not None:
-            found[candidate.skill_id] = [ReviewTask(picked[0].task_id, task.condition.text)]
+            found[candidate.skill_id] = [ReviewTask(chosen.task_id, task.condition.text)]
     return found

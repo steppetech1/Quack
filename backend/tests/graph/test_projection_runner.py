@@ -836,3 +836,136 @@ async def test_slice_waits_for_the_journal_of_phase_4(pg_db: Db) -> None:
     assert (behind.min_seq, behind.lag_degraded) == (1, True)
     caught_up = await read_consistent_slice(learner, None, load, 50, deps=deps(1))
     assert (caught_up.min_seq, caught_up.lag_degraded) == (1, False)
+
+
+# --- findings of the audit of 2026-11-13 (T-P1: batches = rebuild; Т-§2.7) -------------------
+
+
+def _practice(domain: UUID, topic: UUID, skill: UUID, task: UUID) -> list[NewEvent]:
+    """A skill, a task on it, an answer and a code verdict (seq 1..6)."""
+    d = str(domain)
+    tests = [{"skill_id": str(skill), "level": 3}]
+    answer_key = {"type": "number", "value": {"latex": "2", "sympy": "2"}}
+    markup = {"tests": tests, "method_named": False, "answer": answer_key}
+    created = {"task_id": str(task), "family_id": str(uuid4()), "source": "teacher",
+               "verification": "unchecked", "markup": markup}  # fmt: skip
+    answer = {"task_id": str(task), "answer": {"kind": "number", "value": "2"}, "source": "chat"}
+    verdict = {"answer_seq": 5, "part": "main", "outcome": "correct", "method": "exact",
+               "verification": "code"}  # fmt: skip
+    new_topic = {"topic_id": str(topic), "domain_id": d, "name": "F", "origin": "session"}
+    new_skill = {"skill_id": str(skill), "topic_id": str(topic), "domain_id": d, "name": "add",
+                 "summary": "s", "status": "active", "origin": "session"}  # fmt: skip
+    return [
+        _new("domain.created", {"domain_id": d, "name": "Algebra"}, "d", domain_id=domain),
+        _new("topic.created", new_topic, "t", domain_id=domain),
+        _new("skill.created", new_skill, "s", domain_id=domain),
+        _new("task.created", created, "k", domain_id=domain),
+        _new("answer.submitted", answer, "a", domain_id=domain),
+        _new("verdict.recorded", verdict, "v", domain_id=domain),
+    ]
+
+
+async def _evidence_classes(neo4j: AsyncDriver, learner: UUID) -> set[tuple[str, int]]:
+    async with neo4j.session() as session:
+        result = await session.run(
+            "MATCH (e:Evidence {learnerId: $l}) RETURN e.verification AS v, e.tier AS t",
+            l=str(learner),
+        )
+        return {(r["v"], r["t"]) async for r in result}
+
+
+async def test_a_dispute_lowers_given_verdicts_in_the_batch_loop_as_in_the_rebuild(
+    pg_db: Db, neo4j: AsyncDriver, settings: Settings
+) -> None:
+    """Т-§5.6, D-A-132, T-P1: `task.key_disputed` after the verdict lowers the evidence of the
+    task read from Neo4j (the neighbourhood of the task) to class model, T2; the rebuild gives
+    the same graph."""
+    from quack.graph.projection.rebuild import rebuild_learner
+
+    learner, task = await create_learner(pg_db), uuid4()
+    await append_events(pg_db, learner, _practice(uuid4(), uuid4(), uuid4(), task))
+    await _project_all(pg_db, neo4j, settings, learner)
+    assert await _evidence_classes(neo4j, learner) == {("code", 1)}
+    await append_events(pg_db, learner, [_new("task.key_disputed", {"task_id": str(task)}, "x")])
+    assert await _project_all(pg_db, neo4j, settings, learner) == ["applied", "empty"]
+    assert await _evidence_classes(neo4j, learner) == {("model", 2)}
+    incremental = await _graph(neo4j, learner)
+    assert (await rebuild_learner(pg_db, neo4j, settings, learner)).status == "rebuilt"
+    assert await _graph(neo4j, learner) == incremental
+
+
+async def test_a_stale_learned_property_of_the_profile_is_removed_by_a_batch(
+    pg_db: Db, neo4j: AsyncDriver, settings: Settings
+) -> None:
+    """T-P1 (`Т-§9.5`, law 8): the profile fold sees the `Profile` that is in Neo4j, so a
+    `learned*` without data is removed in a batch as in the rebuild."""
+    from quack.graph.projection.rebuild import rebuild_learner
+
+    learner = await create_learner(pg_db)
+    await append_events(pg_db, learner, _practice(uuid4(), uuid4(), uuid4(), uuid4()))
+    await _project_all(pg_db, neo4j, settings, learner)
+    async with neo4j.session() as session:
+        await session.run(
+            "MATCH (:Learner {id: $l})-[:HAS_PROFILE]->(p:Profile) SET p.learnedBranchRate = 0.5",
+            l=str(learner),
+        )
+    report = _new("confidence.reported", {"target_seq": 5, "value": 3}, "c")
+    await append_events(pg_db, learner, [report])
+    assert await _project_all(pg_db, neo4j, settings, learner) == ["applied", "empty"]
+    async with neo4j.session() as session:
+        result = await session.run(
+            "MATCH (:Learner {id: $l})-[:HAS_PROFILE]->(p:Profile) RETURN properties(p) AS p",
+            l=str(learner),
+        )
+        record = await result.single()
+    assert record is not None and "learnedBranchRate" not in record["p"]
+    incremental = await _graph(neo4j, learner)
+    await rebuild_learner(pg_db, neo4j, settings, learner)
+    assert await _graph(neo4j, learner) == incremental
+
+
+@pytest.mark.parametrize("fail_at", [1, 3])
+async def test_a_failed_chunked_rebuild_is_finished_by_the_batch_loop(
+    pg_db: Db,
+    neo4j: AsyncDriver,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    fail_at: int,
+) -> None:
+    """Т-§2.7: a rebuild by parts that fails after the delete (before the first part, or midway)
+    leaves the learner to the projector — the copy of the watermark is 0, `_PENDING` finds the
+    learner, the batch loop clears the partial graph and projects the log again."""
+    from quack.graph.projection import store
+    from quack.graph.projection.process import ProjectorP4
+    from quack.graph.projection.rebuild import rebuild_learner
+
+    learner = await create_learner(pg_db)
+    await append_events(pg_db, learner, _practice(uuid4(), uuid4(), uuid4(), uuid4()))
+    await _project_all(pg_db, neo4j, settings, learner)
+    projected = await _graph(neo4j, learner)
+
+    real_write, calls = store._write, 0
+
+    async def failing(*args: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == fail_at:
+            raise RuntimeError("neo4j went away")
+        await real_write(*args)
+
+    tiny = settings.model_copy(update={"rebuild_max_tx_ops": 2})
+    monkeypatch.setattr(store, "_write", failing)
+    with pytest.raises(RuntimeError):
+        await rebuild_learner(pg_db, neo4j, tiny, learner, respect_presence=False)
+    monkeypatch.setattr(store, "_write", real_write)
+    assert await _graph(neo4j, learner) != projected  # empty or partial
+    row = await pg_db.fetch_one(
+        "SELECT seq FROM ops.projector_offsets WHERE learner_id = %(l)s", {"l": learner}
+    )
+    assert row is not None and row["seq"] == 0
+    assert learner in await ProjectorP4(settings, pg_db, neo4j).pending_learners()
+
+    assert (await _project_all(pg_db, neo4j, settings, learner))[0] == "applied"
+    assert await _graph(neo4j, learner) == projected
+    assert await store.read_watermark(neo4j, str(learner)) == (6, RULES_VERSION)
+    assert learner not in await ProjectorP4(settings, pg_db, neo4j).pending_learners()

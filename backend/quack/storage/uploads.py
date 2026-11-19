@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 type UploadKind = Literal["pdf", "png", "jpeg", "webp"]
 type RejectReason = Literal["type", "size"]
@@ -62,6 +62,26 @@ def check_upload_size(size: int | None, *, max_mb: int) -> None:
     yet (the body is checked again once read)."""
     if size is not None and size > max_mb * _BYTES_PER_MB:
         raise UploadRejected("size", f"upload is larger than {max_mb} MB")
+
+
+class _ReadableUpload(Protocol):
+    """What of `starlette.datastructures.UploadFile` `read_upload` needs."""
+
+    @property
+    def size(self) -> int | None: ...
+
+    async def read(self, size: int = -1, /) -> bytes: ...
+
+
+async def read_upload(upload: _ReadableUpload, *, max_mb: int) -> bytes:
+    """The body of an uploaded file, never more than `max_mb` into memory (Т-§19.8): the size the
+    framework already knows is checked before the first byte is read, and the read itself stops
+    one byte past the limit, so a file of any size is `UploadRejected` (413), not an
+    out-of-memory kill of `api`."""
+    check_upload_size(upload.size, max_mb=max_mb)
+    data = await upload.read(max_mb * _BYTES_PER_MB + 1)
+    check_upload_size(len(data), max_mb=max_mb)
+    return data
 
 
 def detect_upload(

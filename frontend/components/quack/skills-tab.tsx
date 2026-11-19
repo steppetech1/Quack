@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 import { IconButton } from "./icon-button";
 import { PILL } from "./page-parts";
 import { SkillChat } from "./skill-chat";
+import { SkillGuide } from "./skill-guide";
+import { SkillsMigrate } from "./skills-migrate";
 import { useMenu } from "./use-menu";
 import { API_MODE } from "@/lib/api/client";
 import { useNotice } from "./soon";
@@ -16,7 +18,7 @@ import { useSkills } from "./use-skills";
 
 export function SkillsTab() {
   const tx = useT();
-  const { skills, save: saveSkill, remove, toggle, canToggle } = useSkills();
+  const { skills, save: saveSkill, remove, migrate, toggle, canToggle } = useSkills();
   const notice = useNotice();
   // "chat" — помощник; { skill } — редактор (skill: null — пустой, новый)
   const [editing, setEditing] = useState<"chat" | { skill: Skill | null } | null>(null);
@@ -44,6 +46,13 @@ export function SkillsTab() {
     const err = await saveSkill(s, tx.live.serverError);
     if (err) return notice(err);
     close();
+  };
+
+  // the helper shows the backend's error inside its own form instead of a toast
+  const saveInline = async (s: Skill) => {
+    const err = await saveSkill(s, tx.live.serverError);
+    if (!err) close();
+    return err;
   };
 
   return (
@@ -80,7 +89,14 @@ export function SkillsTab() {
         )}
       </div>
 
-      {editing === "chat" && <SkillChat onSave={save} onManual={(skill) => setEditing({ skill })} onClose={close} />}
+      {API_MODE && !editing && <SkillsMigrate migrate={migrate} />}
+
+      {editing === "chat" &&
+        (API_MODE ? (
+          <SkillGuide existing={skills} onSave={saveInline} onManual={() => setEditing({ skill: null })} onClose={close} />
+        ) : (
+          <SkillChat onSave={save} onManual={(skill) => setEditing({ skill })} onClose={close} />
+        ))}
       {editing && editing !== "chat" && (
         <SkillEditor
           key={editing.skill?.id ?? "new"}

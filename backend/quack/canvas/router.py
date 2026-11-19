@@ -24,7 +24,7 @@ from quack.api.errors import ApiError
 from quack.api.resources import AppResources, get_resources
 from quack.canvas import boards, photos, recognition, replay, socket, voice
 from quack.canvas.board import BoardDoc
-from quack.storage.uploads import check_upload_size
+from quack.storage.uploads import read_upload
 
 router = APIRouter(prefix="/v1", tags=["canvas"])
 
@@ -186,7 +186,7 @@ async def upload_photo(
             resources.settings,
             learner_id=session.learner_id,
             canvas_id=canvas_id,
-            data=await file.read(),
+            data=await read_upload(file, max_mb=resources.settings.upload_max_mb),
             redis=resources.redis,
         )
     except boards.CanvasNotFound as exc:
@@ -207,10 +207,7 @@ async def upload_voice(
     audio is not stored (П-14.1). The companion has no voice (T-CP1: 403). A session of another
     learner is 404; compressed audio is 415; the same segment again gives the same answer.
     Larger than `upload_max_mb` is 413 before the body is read (Т-§19.8, as photos)."""
-    max_mb = resources.settings.upload_max_mb
-    check_upload_size(audio.size, max_mb=max_mb)
-    data = await audio.read()
-    check_upload_size(len(data), max_mb=max_mb)
+    data = await read_upload(audio, max_mb=resources.settings.upload_max_mb)
     try:
         heard = await voice.transcribe_segment(
             resources.db,
@@ -267,10 +264,22 @@ async def correct_line(
     )
 
 
+def _origin_allowed(websocket: WebSocket, allowed: list[str]) -> bool:
+    """Cross-site WebSocket hijacking: a browser sends the cookie to the socket of any page, so
+    a handshake with an `Origin` outside `cors_origins` is refused. Without `Origin` the client
+    is not a browser (the companion app, a script) and the cookie decides alone."""
+    origin = websocket.headers.get("origin")
+    return origin is None or origin in allowed
+
+
 @router.websocket("/canvases/{canvas_id}/ws")
 async def canvas_socket(websocket: WebSocket, canvas_id: UUID) -> None:
-    """WP21.2: refused with 1008 without a session that may open this canvas (D-C-121)."""
+    """WP21.2: refused with 1008 without a session that may open this canvas (D-C-121), and
+    with a browser `Origin` that is not one of `cors_origins` (before the session is looked at)."""
     resources = get_resources(websocket)
+    if not _origin_allowed(websocket, resources.settings.cors_origins):
+        await websocket.close(code=socket.CLOSE_POLICY)
+        return
     session = await websocket_session(websocket)
     canvas = None
     if socket.may_open(session, canvas_id):

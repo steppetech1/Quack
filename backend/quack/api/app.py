@@ -52,12 +52,19 @@ class HealthReady(BaseModel):
     checks: dict[str, str]
 
 
-def _trace_id(request: Request) -> str:
+def _client_id(value: str | None, max_chars: int) -> str | None:
+    """A request or trace id from the client, if it is short printable ASCII without spaces."""
+    if value and len(value) <= max_chars and value.isascii() and value.isprintable():
+        return None if " " in value else value
+    return None
+
+
+def _trace_id(request: Request, max_chars: int) -> str:
     traceparent = request.headers.get("traceparent", "")
     parts = traceparent.split("-")
     if len(parts) == 4 and len(parts[1]) == 32:
         return parts[1]
-    return request.headers.get("X-Trace-ID") or uuid.uuid4().hex
+    return _client_id(request.headers.get("X-Trace-ID"), max_chars) or uuid.uuid4().hex
 
 
 async def _check(probe: Callable[[], Awaitable[object]], timeout_s: float) -> str:
@@ -198,8 +205,9 @@ def create_app(
     async def request_context(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        trace_id = _trace_id(request)
+        max_chars = settings.request_id_max_chars
+        request_id = _client_id(request.headers.get("X-Request-ID"), max_chars) or str(uuid.uuid4())
+        trace_id = _trace_id(request, max_chars)
         request.state.request_id = request_id
         request.state.trace_id = trace_id
         with log_context(request_id=request_id, trace_id=trace_id):

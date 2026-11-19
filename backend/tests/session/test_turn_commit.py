@@ -17,6 +17,7 @@ import pytest
 from quack.config import Settings
 from quack.db.db import Db
 from quack.events import records
+from quack.events.event_types import TurnCommitted
 from quack.events.values import AnswerSpec, MathValue
 from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.llm.streaming import StreamUsage
@@ -614,3 +615,102 @@ def test_split_topic_requests_the_split_of_a_known_topic_only() -> None:
     assert asked.idempotency_key.endswith(f":agent:topic_split:{TOPIC}")
     assert [e.type for e in split("T9")] == ["turn.committed"]
     assert [e.type for e in split(None)] == ["turn.committed"]
+
+
+def test_what_the_guard_leaves_the_write_can_resolve() -> None:
+    """The guard checks every label `turn_batch` turns into an id: after it drops the unknown
+    ones (the turn after the retries) the write raises no `UnknownLabelError`, which used to fail
+    a turn whose text was already shown (`cancel_requests: ["R9"]`)."""
+    from quack.session.guards import drop_unknown_markup_labels, markup_violations
+
+    labels = LabelMap.build(
+        SETTINGS,
+        skills=[SKILL],
+        topics=[TOPIC],
+        hubs=[HUB],
+        misconceptions=[MISCONCEPTION],
+        requests=[uuid4()],
+    )
+    output = _output(
+        planUpdate={
+            "completed_steps": [],
+            "current_step": "s",
+            "next_steps": [],
+            "branches": [],
+            "cancel_requests": ["R1", "R9"],
+        },
+        deadline=_deadline(coverage=["T1", "T7"]),
+        elements=[
+            {
+                "element_id": "e1",
+                "kind": "short_answer",
+                "prompt": "What is the sum?",
+                "ask_confidence": False,
+            },
+            {"element_id": "e2", "kind": "material_link", "chunk": "P9", "page": None},
+            {"element_id": "e3", "kind": "card_series", "cards": ["C1"]},
+        ],
+    )
+    markup = output.p3_markup
+
+    def violations(m: Any) -> Any:
+        return markup_violations(m, skill_labels={"S1"}, misconception_labels={"M1"}, labels=labels)
+
+    assert violations(markup)
+    manifest = _manifest(uuid4(), uuid4(), labels)
+
+    def write(markup_: Any) -> Any:
+        settled = output.model_copy(update={"p3_markup": markup_})
+        return turn_batch(
+            _turn(settled),
+            labels,
+            manifest=manifest,
+            action_seq=1,
+            domain_id=DOMAIN,
+            settings=SETTINGS,
+            learner_texts=LEARNER,
+        )
+
+    with pytest.raises(UnknownLabelError):
+        write(markup)
+    settled = drop_unknown_markup_labels(
+        markup, skill_labels={"S1"}, misconception_labels={"M1"}, labels=labels
+    )
+    assert violations(settled) == []
+    batch = write(settled)
+    assert [e.type for e in batch.events if e.type == "hub.deadline_set"] == ["hub.deadline_set"]
+
+
+def test_a_card_series_of_labelled_cards_is_committed_with_the_card_ids() -> None:
+    """Q1: the turn labels the cards of its focus, so `card_series` is no longer cut by the guard:
+    the guard passes it and `turn.committed` carries the ids of the cards."""
+    from quack.session.guards import markup_violations
+
+    card, other = uuid4(), uuid4()
+    labels = LabelMap.build(
+        SETTINGS,
+        skills=[SKILL],
+        topics=[TOPIC],
+        hubs=[HUB],
+        misconceptions=[MISCONCEPTION],
+        cards=[card, other],
+    )
+    output = _bare(elements=[{"element_id": "e1", "kind": "card_series", "cards": ["C2", "C1"]}])
+    assert (
+        markup_violations(
+            output.p3_markup, skill_labels={"S1"}, misconception_labels={"M1"}, labels=labels
+        )
+        == []
+    )
+    batch = turn_batch(
+        _turn(output),
+        labels,
+        manifest=_manifest(uuid4(), uuid4(), labels),
+        action_seq=1,
+        domain_id=DOMAIN,
+        settings=SETTINGS,
+        learner_texts=LEARNER,
+    )
+    committed = TurnCommitted.model_validate(batch.events[0].payload)
+    (element,) = committed.markup.elements
+    assert element.kind == "card_series" and element.card_ids == [str(other), str(card)]

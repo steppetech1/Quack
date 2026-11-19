@@ -4,7 +4,9 @@ D-B-177.
 - The job `agent.viz` (WP7.1, `agent.requested {kind: viz}`) reads its request by `request_id`.
 - **Generation**: `viz_builder` (Wonder) writes a one-page HTML or SVG from the description;
   libraries only from `viz_libraries` at `viz_static_base_url`.
-- **Render**: compute opens the page at each parameter set (`parameter_values`, D-B-130).
+- **Render**: compute opens the page at each parameter set (`parameter_values`, D-B-130); the
+  request carries `viz_static_base_url`, and compute serves the libraries under it from its
+  own pinned files (it has no network).
 - **Check** (Т-§22.10): any console error or a blank snapshot fails; no model check on the slice.
 - **Fix**: at most `viz_max_fix_rounds` more calls with the errors of the previous attempt; a
   parameter set that is not a flat JSON object is an error of the same kind (D-B-130 п.2).
@@ -88,11 +90,24 @@ def page_html(output: VizBuilderOutput) -> str:
     return output.content
 
 
-async def _check(compute: ComputeClient, html: str, sets: list[dict[str, Any]]) -> list[str]:
-    rendered = await compute.render_snapshots(RenderSnapshotsRequest(html=html, param_sets=sets))
+async def _check(
+    compute: ComputeClient, html: str, sets: list[dict[str, Any]], settings: Settings
+) -> list[str]:
+    # The page loads its libraries at `viz_static_base_url` (`libraries_block`); compute has no
+    # network and serves those addresses from its pinned copy of `deploy/static/viz/`, so the
+    # base is the one the model was given.
+    request = RenderSnapshotsRequest(
+        html=html, param_sets=sets, libraries_base_url=settings.viz_static_base_url.strip() or None
+    )
+    rendered = await compute.render_snapshots(request)
     errors: list[str] = []
-    for params, snapshot in zip(sets, rendered.snapshots, strict=False):
+    for index, params in enumerate(sets):
         label = json.dumps(params, sort_keys=True)
+        if index >= len(rendered.snapshots):
+            # A set without a snapshot is not checked, and "not checked" is not "passed" (law 8).
+            errors.append(f"no snapshot at {label}")
+            continue
+        snapshot = rendered.snapshots[index]
         errors.extend(f"console error at {label}: {e}" for e in snapshot.console_errors)
         if snapshot.blank:
             errors.append(f"blank canvas at {label}")
@@ -146,7 +161,7 @@ async def build_viz(
         )
         sets, errors = param_sets(result.value.parameter_values)
         if not errors:
-            errors = await _check(compute, page_html(result.value), sets)
+            errors = await _check(compute, page_html(result.value), sets, settings)
         if not errors:
             passed = result.value
             break
