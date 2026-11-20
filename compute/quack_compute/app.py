@@ -28,6 +28,8 @@ from quack_compute.contracts import (
     JobError,
     PdfPagesRequest,
     PdfPagesResponse,
+    PptxSlidesRequest,
+    PptxSlidesResponse,
     RenderPdfRequest,
     RenderPdfResponse,
     RenderSnapshotsRequest,
@@ -126,6 +128,15 @@ def create_app(settings: ComputeSettings | None = None) -> FastAPI:
     @app.post("/v1/pdf/pages")
     async def pdf_pages(body: PdfPagesRequest, request: Request) -> PdfPagesResponse:
         return await in_pool(request, work.pdf_pages, body)
+
+    @app.post("/v1/pptx/slides", response_model=PptxSlidesResponse)
+    async def pptx_slides(body: PptxSlidesRequest, request: Request) -> Any:
+        """A file that is not a presentation (or is too large unpacked) is the caller's error: 422,
+        not a crash of compute that the job would retry."""
+        try:
+            return await in_pool(request, work.pptx_slides, body)
+        except ValueError as exc:
+            return JSONResponse(status_code=422, content=JobError(error=str(exc)).model_dump())
 
     @app.post("/v1/image/align")
     async def image_align(body: ImageRequest, request: Request) -> AlignResponse:
