@@ -2,45 +2,93 @@
 
 import { Check, ListTree, Loader2, Maximize2, Minimize2, Minus, Play } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { get, type S } from "@/lib/api/client";
+import { ApiError, get, type S } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
 import type { OpenDemo } from "./demo-panel";
 import { JobsLines, type JobRow } from "./jobs-plaque";
 import { cn } from "@/lib/utils";
 
-export type SessionPlanView = S["SessionPlanView"];
+export type PlanStepStatus = "done" | "current" | "upcoming";
+export type PlanStep = S["PlanStep"] & { status?: PlanStepStatus };
+export type SessionPlanView = Omit<S["SessionPlanView"], "current_step" | "next_steps"> & {
+  current_step: PlanStep | null;
+  next_steps: PlanStep[];
+  done_steps?: PlanStep[];
+};
 export type PlanDemo = SessionPlanView["demos"][number];
+
+const PLAN_RETRY_MS = 5_000;
+/** the pause between retries doubles up to this */
+const PLAN_RETRY_MAX_MS = 60_000;
 
 /**
  * The plan of a session: read once on open and again after each finished teacher turn (`refresh()`), no polling.
- * A 404 or any error just hides the graph (the endpoint may not exist yet): `plan` stays null.
+ * On error, keeps the previous `plan`, marks it `stale`, and retries after a short pause.
  */
-export function useSessionPlan(sessionId: string) {
+export function useSessionPlan(sessionId: string, opts?: { onSuccess?: () => void }) {
   const [plan, setPlan] = useState<SessionPlanView | null>(null);
+  const [stale, setStale] = useState(false);
   const request = useRef(0);
   const alive = useRef(true);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const failures = useRef(0);
+  const onSuccessRef = useRef(opts?.onSuccess);
+  const refreshRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    onSuccessRef.current = opts?.onSuccess;
+  });
 
   const refresh = useCallback(() => {
+    clearTimeout(retryTimer.current);
     const mine = ++request.current;
     get<SessionPlanView>(`/v1/sessions/${sessionId}/plan`)
-      .then((p) => alive.current && mine === request.current && setPlan(p))
-      .catch(() => alive.current && mine === request.current && setPlan(null));
+      .then((p) => {
+        if (!alive.current || mine !== request.current) return;
+        failures.current = 0;
+        setPlan(p);
+        setStale(false);
+        onSuccessRef.current?.();
+      })
+      .catch((e) => {
+        if (!alive.current || mine !== request.current) return;
+        setStale(true);
+        // the session is gone or not ours: asking again changes nothing
+        if (e instanceof ApiError && [401, 403, 404].includes(e.status)) return;
+        const pause = Math.min(PLAN_RETRY_MS * 2 ** failures.current, PLAN_RETRY_MAX_MS);
+        failures.current += 1;
+        retryTimer.current = setTimeout(() => {
+          if (alive.current) refreshRef.current();
+        }, pause);
+      });
   }, [sessionId]);
+
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   useEffect(() => {
     alive.current = true;
     refresh();
     return () => {
       alive.current = false;
+      clearTimeout(retryTimer.current);
     };
   }, [refresh]);
 
-  return { plan, refresh };
+  return { plan, stale, refresh };
 }
 
 /** Is there anything to draw: a goal, a landmark or a step */
 export function hasPlan(plan: SessionPlanView | null): plan is SessionPlanView {
-  return !!plan && (!!plan.goal || plan.landmarks.length > 0 || !!plan.current_step || plan.next_steps.length > 0);
+  return (
+    !!plan &&
+    (!!plan.goal ||
+      plan.landmarks.length > 0 ||
+      (plan.done_steps?.length ?? 0) > 0 ||
+      !!plan.current_step ||
+      plan.next_steps.length > 0)
+  );
 }
 
 const STORE_KEY = "quack.planGraph.open";
@@ -61,12 +109,14 @@ const DUCK_CLEARANCE = 44;
  */
 export function SessionCorner({
   plan,
+  stale = false,
   jobs,
   topicId,
   onOpenDemo,
   className,
 }: {
   plan: SessionPlanView | null;
+  stale?: boolean;
   jobs: JobRow[];
   topicId?: string | null;
   /** The learner pressed the demo of a step: the session opens it on the right */
@@ -169,7 +219,7 @@ export function SessionCorner({
     >
       {showPlan &&
         (open ? (
-          <PlanWindow plan={plan} full={fullOn} fullRef={fullBtn} onFull={() => setFull((f) => !f)} onFold={() => setOpen(false)} onOpenDemo={onOpenDemo} />
+          <PlanWindow plan={plan} stale={stale} full={fullOn} fullRef={fullBtn} onFull={() => setFull((f) => !f)} onFold={() => setOpen(false)} onOpenDemo={onOpenDemo} />
         ) : (
           <button
             type="button"
@@ -181,6 +231,7 @@ export function SessionCorner({
             <ListTree aria-hidden className="size-4" />
             <span>{p.heading}</span>
             {plan.progress && <span>{p.liveProgress(plan.progress.done, plan.progress.total)}</span>}
+            {stale && <span className="text-st-confused">{p.stale}</span>}
           </button>
         ))}
       {!fullOn && jobs.length > 0 && (
@@ -190,25 +241,71 @@ export function SessionCorner({
   );
 }
 
-type NodeKind = "done" | "current" | "upcoming" | "step-now" | "step-next";
+type NodeKind = "done" | "current" | "upcoming" | "step-done" | "step-now" | "step-next";
 type GraphNode = { key: string; kind: NodeKind; label: string; dashed?: boolean; srAdded?: string; stepId?: string };
 
-/** Points (landmarks) in a chain; under the current one its steps, smaller and paler. Only steps: they form the chain themselves */
+/** Points (landmarks) in a chain; under each landmark its steps, smaller and paler. Only steps: they form the chain themselves */
 function graphNodes(plan: SessionPlanView, addedLabel: string): GraphNode[] {
-  const steps = [...(plan.current_step ? [plan.current_step] : []), ...plan.next_steps];
+  const activeIds = new Set<string>([
+    ...(plan.current_step ? [plan.current_step.id] : []),
+    ...plan.next_steps.map((s) => s.id),
+  ]);
+  const doneSteps = (plan.done_steps ?? []).filter((s) => !activeIds.has(s.id));
+
   if (!plan.landmarks.length) {
-    return steps.map((s, i) => ({ key: s.id, kind: i === 0 ? "current" : "upcoming", label: s.text, stepId: s.id }));
+    const out: GraphNode[] = doneSteps.map((s) => ({ key: `done:${s.id}`, kind: "done", label: s.text, stepId: s.id }));
+    if (plan.current_step) {
+      out.push({ key: `cur:${plan.current_step.id}`, kind: "current", label: plan.current_step.text, stepId: plan.current_step.id });
+    }
+    for (const s of plan.next_steps) {
+      out.push({ key: `next:${s.id}`, kind: "upcoming", label: s.text, stepId: s.id });
+    }
+    return out;
   }
+
+  const landmarkIds = new Set(plan.landmarks.map((l) => l.id));
+  const doneByLandmark = new Map<string | null, PlanStep[]>();
+  for (const s of doneSteps) {
+    const bucketKey = s.landmark_id && landmarkIds.has(s.landmark_id) ? s.landmark_id : null;
+    const list = doneByLandmark.get(bucketKey);
+    if (list) list.push(s);
+    else doneByLandmark.set(bucketKey, [s]);
+  }
+  const orphanDone = doneByLandmark.get(null) ?? [];
+  const hasCurrentLandmark = plan.landmarks.some((l) => l.status === "current");
+
   const out: GraphNode[] = [];
-  for (const l of plan.landmarks) {
-    out.push({ key: `${l.kind}:${l.id}`, kind: l.status, label: l.title, dashed: l.added_by_teacher, srAdded: l.added_by_teacher ? addedLabel : undefined });
-    if (l.status === "current") steps.forEach((s, i) => out.push({ key: s.id, kind: i === 0 ? "step-now" : "step-next", label: s.text, stepId: s.id }));
-  }
+  plan.landmarks.forEach((l, idx) => {
+    out.push({
+      key: `${l.kind}:${l.id}`,
+      kind: l.status,
+      label: l.title,
+      dashed: l.added_by_teacher,
+      srAdded: l.added_by_teacher ? addedLabel : undefined,
+    });
+    for (const s of doneByLandmark.get(l.id) ?? []) {
+      out.push({ key: `done:${s.id}`, kind: "step-done", label: s.text, stepId: s.id });
+    }
+    if (l.status === "current" || (!hasCurrentLandmark && idx === plan.landmarks.length - 1)) {
+      for (const s of orphanDone) {
+        out.push({ key: `done:${s.id}`, kind: "step-done", label: s.text, stepId: s.id });
+      }
+    }
+    if (l.status === "current") {
+      if (plan.current_step) {
+        out.push({ key: `cur:${plan.current_step.id}`, kind: "step-now", label: plan.current_step.text, stepId: plan.current_step.id });
+      }
+      for (const s of plan.next_steps) {
+        out.push({ key: `next:${s.id}`, kind: "step-next", label: s.text, stepId: s.id });
+      }
+    }
+  });
   return out;
 }
 
 function PlanWindow({
   plan,
+  stale,
   full,
   fullRef,
   onFull,
@@ -216,6 +313,7 @@ function PlanWindow({
   onOpenDemo,
 }: {
   plan: SessionPlanView;
+  stale: boolean;
   full: boolean;
   fullRef: RefObject<HTMLButtonElement | null>;
   onFull: () => void;
@@ -228,10 +326,8 @@ function PlanWindow({
   const nodes = graphNodes(plan, p.addedByTeacher);
   const stamp = `${plan.updated_at ?? ""}|${nodes.map((n) => `${n.key}:${n.kind}`).join(",")}`;
   const demos = plan.demos ?? [];
-  const shown = new Set(nodes.map((n) => n.stepId));
-  // demos of steps that are no longer on the chain stay reachable under it
-  const others = demos.filter((d) => d.status === "ready" && !shown.has(d.step_id));
   const open = (d: PlanDemo) => onOpenDemo?.({ requestId: d.request_id, title: d.title });
+  const hasCurNode = nodes.some((n) => n.kind === "current");
 
   // bring the current point to the top of the window (3-4 nodes are in view by default)
   useEffect(() => {
@@ -257,9 +353,10 @@ function PlanWindow({
     >
       <header className={cn("flex shrink-0 items-start border-b border-seam-soft", full && "px-2")}>
         <div className={cn("min-w-0 flex-1 py-2 pl-3", full && "pl-2 md:py-3")}>
-          <div className="flex items-baseline gap-2">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="caps text-paper">{p.heading}</span>
             {plan.progress && <span className="caps text-paper-dim">{p.liveProgress(plan.progress.done, plan.progress.total)}</span>}
+            {stale && <span role="status" className="caps text-st-confused">{p.stale}</span>}
           </div>
           {plan.goal && <p className={cn("mt-0.5 text-paper", full ? "text-body" : "line-clamp-2 text-small")}>{plan.goal}</p>}
         </div>
@@ -285,57 +382,61 @@ function PlanWindow({
         <ol className={cn("relative mx-auto flex flex-col", full ? "max-w-xl gap-4" : "gap-3")}>
           <span aria-hidden className="absolute top-2 bottom-2 left-3.5 w-px bg-seam" />
           {nodes.map((n) => (
-            <Node key={n.key} node={n} big={full} demo={demos.find((d) => d.step_id === n.stepId)} onOpen={open} />
+            <Node
+              key={n.key}
+              node={n}
+              big={full}
+              isCurrentTarget={n.kind === "current" || (!hasCurNode && n.kind === "step-now")}
+              demo={n.stepId ? demos.find((d) => d.step_id === n.stepId) : undefined}
+              onOpen={open}
+            />
           ))}
         </ol>
-        {others.length > 0 && (
-          <div className={cn("mx-auto mt-4 border-t border-seam-soft pt-2", full && "max-w-xl")}>
-            <p className="caps text-paper-dim">{p.demosHeading}</p>
-            <ul className="mt-1">
-              {others.map((d) => (
-                <li key={d.request_id}>
-                  <button
-                    type="button"
-                    onClick={() => open(d)}
-                    aria-label={p.demoOpen(d.title)}
-                    className="flex min-h-10 w-full items-center gap-2 text-left text-small text-paper-dim hover:text-paper"
-                  >
-                    <Play aria-hidden className="size-3.5 shrink-0 text-ribbon" />
-                    <span className="min-w-0 truncate">{d.title}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
     </section>
   );
 }
 
-function Node({ node, big, demo, onOpen }: { node: GraphNode; big: boolean; demo?: PlanDemo; onOpen: (d: PlanDemo) => void }) {
+function Node({
+  node,
+  big,
+  isCurrentTarget,
+  demo,
+  onOpen,
+}: {
+  node: GraphNode;
+  big: boolean;
+  isCurrentTarget: boolean;
+  demo?: PlanDemo;
+  onOpen: (d: PlanDemo) => void;
+}) {
   const tx = useT();
   const p = tx.plan;
-  const step = node.kind === "step-now" || node.kind === "step-next";
+  const step = node.kind === "step-done" || node.kind === "step-now" || node.kind === "step-next";
+  const done = node.kind === "done" || node.kind === "step-done";
   const dim = node.kind === "upcoming" || node.kind === "step-next";
   return (
     <li className={cn("relative flex", step && (big ? "ml-9" : "ml-6"))}>
       {step && <span aria-hidden className={cn("absolute top-1/2 h-px bg-seam", big ? "-left-5 w-5" : "-left-2.5 w-2.5")} />}
       <div
-        data-cur={node.kind === "current" ? "" : undefined}
+        data-cur={isCurrentTarget ? "" : undefined}
         className={cn(
           "relative flex min-w-0 flex-1 items-start gap-2 rounded-[2px] border px-2.5",
           step ? (big ? "py-2 text-small" : "py-1 text-[0.8125rem] leading-snug") : big ? "py-3 text-body" : "py-1.5 text-small",
-          node.kind === "done" && "border-seam bg-cloth-deep text-paper",
+          done && "border-seam bg-cloth-deep text-paper",
           node.kind === "current" && "border-ribbon bg-ribbon-soft font-medium text-paper",
           node.kind === "step-now" && "border-seam bg-cloth-deep text-paper",
           dim && "border-seam-soft bg-cloth text-paper-dim",
           node.dashed && node.kind !== "current" && "border-dashed",
         )}
       >
-        {node.kind === "done" && <Check aria-hidden className="mt-0.5 size-3.5 shrink-0 text-paper-dim" />}
+        {done && <Check aria-hidden className="mt-0.5 size-3.5 shrink-0 text-paper-dim" />}
         <span className={cn("min-w-0 [overflow-wrap:anywhere]", !big && "line-clamp-2")}>
-          {step && <span className="sr-only">{node.kind === "step-now" ? p.currentStep : p.nextStep}: </span>}
+          {step && (
+            <span className="sr-only">
+              {node.kind === "step-done" ? p.doneStep : node.kind === "step-now" ? p.currentStep : p.nextStep}:{" "}
+            </span>
+          )}
           {node.label}
           {node.kind === "current" && <span className="sr-only"> {p.current}</span>}
           {node.srAdded && <span className="sr-only"> ({node.srAdded})</span>}

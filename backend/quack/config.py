@@ -642,6 +642,8 @@ class Settings(BaseSettings):
     # ordered this way in one session. Starting values.
     viz_prefetch_enabled: bool = True
     viz_prefetch_horizon: int = Field(default=3, ge=1)
+    # the title of a finished demo in the link block of notes and cheat sheets is cut to this
+    session_demo_title_chars: int = Field(default=80, ge=10)
     viz_prefetch_max_per_session: int = Field(default=6, ge=1)
     viz_static_base_url: str = ""
     # WP16.5 (Т-§13.6 п.1): the allowed libraries, name → path under `viz_static_base_url`; the

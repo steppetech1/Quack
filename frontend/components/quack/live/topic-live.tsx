@@ -16,7 +16,7 @@ import { DeckCard, DeckViewer, type DeckAnswers, type DeckManage } from "../arti
 import { Crumbs, MemoryRing, MoreMenu, PageFrame, PageSection, PILL, TEXT_BTN } from "../page-parts";
 import { useNotice } from "../soon";
 import { useErrorText } from "./error-text";
-import { Markdown, plainText } from "./markdown";
+import { ArtifactMarkdown, plainText } from "./markdown";
 
 type Block = { block_id: string; kind: string; content: string };
 type Loaded = {
@@ -346,7 +346,7 @@ export function TopicLive({ id }: { id: string }) {
             {tx.topic.edit}
           </Link>
         ) : undefined,
-      body: <Markdown text={d.text} />,
+      body: <ArtifactMarkdown text={d.text} />,
     };
   }
   // a deck that was emptied by deleting its cards keeps its window (it may be open), with a line saying so

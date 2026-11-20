@@ -42,6 +42,7 @@ from quack.session.plan_view import (
     build_points,
     view_of,
     visited_landmarks,
+    visited_steps,
 )
 from quack.session.sessions import StartSession, start_session
 from tests.support.broken import BrokenNeo4jDriver
@@ -333,6 +334,68 @@ def test_visited_landmarks_from_turns_mark_passed_points_done() -> None:
     ]
 
 
+def test_visited_steps_collects_prior_steps_in_first_order_and_updates_details() -> None:
+    """`visited_steps` folds v1 & v2 `turn.committed` payloads, keeps first-appearance order,
+    updates `text`/`landmark` on repeats, and excludes `doc.current_step` and `doc.next_steps`."""
+    from tests.events.samples import sample_payload
+
+    def v2_turn(step_id: str, text: str, skill: int | None) -> dict[str, Any]:
+        p = sample_payload("turn.committed")
+        p["markup"]["plan_update"] = {
+            "goal": None,
+            "current_step": {
+                "id": step_id,
+                "text": text,
+                "landmark": None if skill is None else {"kind": "skill", "id": str(_sid(skill))},
+            },
+            "next_steps": None,
+            "landmark_edits": None,
+            "branches": [],
+            "cancel_request_ids": [],
+        }
+        return p
+
+    v1_turn = sample_payload("turn.committed")
+    v1_turn["markup"]["plan_update"] = {
+        "completed_steps": ["old"],
+        "current_step": "Warm up",
+        "next_steps": [],
+        "branches": [],
+        "cancel_request_ids": [],
+    }
+    no_step_turn = sample_payload("turn.committed")
+    no_step_turn["markup"]["plan_update"] = {
+        "goal": None,
+        "current_step": None,
+        "next_steps": None,
+        "landmark_edits": None,
+        "branches": [],
+        "cancel_request_ids": [],
+    }
+
+    doc = lift_plan(
+        {
+            "v": 2,
+            "current_step": {"id": "s2", "text": "Step 2", "landmark": None},
+            "next_steps": [{"id": "s3", "text": "Step 3", "landmark": None}],
+        }
+    )
+    payloads = [
+        v1_turn,
+        v2_turn("s1", "First draft", 1),
+        v2_turn("s2", "Step 2", 2),
+        v2_turn("s1", "First updated", 3),
+        v2_turn("s3", "Step 3", None),
+        no_step_turn,
+        {"markup": {"plan_update": "broken"}},
+    ]
+    done = visited_steps(payloads, doc)
+    assert [(s.id, s.text, s.landmark_id, s.status) for s in done] == [
+        ("Warm up", "Warm up", None, "done"),
+        ("s1", "First updated", _sid(3), "done"),
+    ]
+
+
 # --- the route ------------------------------------------------------------------------------
 
 HUB_ID, TOPIC_ID = uuid4(), uuid4()
@@ -499,8 +562,16 @@ async def test_plan_of_a_hub_session_with_a_v2_document(
     ]
     # `done` counts the landmarks reached by the levels: Limit; Fractions has no level yet.
     assert body["progress"] == {"done": 1, "total": 4}
-    assert body["current_step"] == {"id": "derive", "text": "Derive x^2", "landmark_id": str(SK_B)}
-    assert body["next_steps"] == [{"id": "chain", "text": "Chain rule", "landmark_id": str(SK_C)}]
+    assert body["done_steps"] == []
+    assert body["current_step"] == {
+        "id": "derive",
+        "text": "Derive x^2",
+        "landmark_id": str(SK_B),
+        "status": "current",
+    }
+    assert body["next_steps"] == [
+        {"id": "chain", "text": "Chain rule", "landmark_id": str(SK_C), "status": "upcoming"}
+    ]
     assert body["updated_at"] is not None
 
 
@@ -516,8 +587,14 @@ async def test_plan_of_a_topic_session_and_of_an_old_document(
     )
     body = (await client.get(f"/v1/sessions/{session}/plan", cookies=cookies)).json()
     assert body["goal"] is None
-    assert body["current_step"] == {"id": "Warm up", "text": "Warm up", "landmark_id": None}
+    assert body["current_step"] == {
+        "id": "Warm up",
+        "text": "Warm up",
+        "landmark_id": None,
+        "status": "current",
+    }
     assert [s["text"] for s in body["next_steps"]] == ["Then this"]
+    assert [s["status"] for s in body["next_steps"]] == ["upcoming"]
     assert [m["status"] for m in body["landmarks"]] == ["done", "upcoming", "upcoming"]
     assert [m["kind"] for m in body["landmarks"]] == ["skill"] * 3
 
@@ -532,6 +609,7 @@ async def test_empty_plan_and_a_session_without_a_goal(
     assert seen.json() == {
         "goal": None,
         "landmarks": [],
+        "done_steps": [],
         "current_step": None,
         "next_steps": [],
         "progress": None,
@@ -888,8 +966,15 @@ async def test_plan_of_a_hub_session_with_real_neo4j(
         ("Chain rule", "upcoming", False),
     ]
     assert body["progress"] == {"done": 1, "total": 4}
-    assert body["current_step"] == {"id": "derive", "text": "Derive x^2", "landmark_id": str(sk_b)}
-    assert body["next_steps"] == [{"id": "chain", "text": "Chain rule", "landmark_id": str(sk_c)}]
+    assert body["current_step"] == {
+        "id": "derive",
+        "text": "Derive x^2",
+        "landmark_id": str(sk_b),
+        "status": "current",
+    }
+    assert body["next_steps"] == [
+        {"id": "chain", "text": "Chain rule", "landmark_id": str(sk_c), "status": "upcoming"}
+    ]
     assert body["updated_at"] is not None
 
 
@@ -981,3 +1066,134 @@ async def test_plan_progress_matches_done_landmarks_across_turns(
         ("Chain rule", "current"),
     ]
     assert second["progress"] == {"done": 2, "total": 3}
+    assert second["done_steps"] == [
+        {"id": "derive", "text": "Derivative", "landmark_id": str(SK_B), "status": "done"}
+    ]
+
+
+async def test_free_session_keeps_done_steps_with_demos_and_handles_revisit(
+    client: httpx.AsyncClient, pg_db: Db, settings: Settings
+) -> None:
+    """In a free session (`landmarks == []`), past steps stay in `done_steps` together with
+    their demos; returning to an earlier step makes it `current_step` and removes it from
+    `done_steps`."""
+    from quack.events.event_types import AgentCompleted, AgentRequested
+    from quack.events.records import AgentParamsRecord
+    from tests.events.samples import sample_payload
+
+    learner, session, cookies = await _learner(pg_db, settings, goal=False)
+
+    def turn_event(step_id: str, text: str, key: str) -> NewEvent:
+        payload = sample_payload("turn.committed")
+        payload["markup"]["plan_update"] = {
+            "goal": None,
+            "current_step": {"id": step_id, "text": text, "landmark": None},
+            "next_steps": None,
+            "landmark_edits": None,
+            "branches": [],
+            "cancel_request_ids": [],
+        }
+        return NewEvent(
+            type="turn.committed",
+            payload=payload,
+            actor="teacher@3",
+            idempotency_key=key,
+            session_id=session,
+        )
+
+    demo_req = uuid4()
+    await append_events(
+        pg_db,
+        learner,
+        [
+            turn_event("step-1", "Explore slope", "t1"),
+            NewEvent(
+                type="agent.requested",
+                payload=AgentRequested(
+                    request_id=demo_req,
+                    kind="viz",
+                    params=AgentParamsRecord(
+                        description="slope viz", step_id="step-1", title="Slope graph"
+                    ),
+                    needed_in_session=False,
+                ),
+                actor="viz_planner@1",
+                idempotency_key=f"req:{demo_req}",
+                session_id=session,
+            ),
+            NewEvent(
+                type="agent.completed",
+                payload=AgentCompleted(request_id=demo_req, kind="viz", ok=True),
+                actor="viz_builder@2",
+                idempotency_key=f"done:{demo_req}",
+                session_id=session,
+            ),
+            turn_event("step-2", "Tangent line", "t2"),
+        ],
+    )
+    await _store(
+        pg_db,
+        learner,
+        session,
+        {
+            "v": 2,
+            "goal": "Understand derivatives",
+            "current_step": {"id": "step-3", "text": "Derivative rule", "landmark": None},
+            "next_steps": [],
+            "landmark_edits": {"added": [], "removed": []},
+            "branches": [],
+        },
+    )
+
+    body = (await client.get(f"/v1/sessions/{session}/plan", cookies=cookies)).json()
+    assert body["landmarks"] == []
+    assert body["done_steps"] == [
+        {"id": "step-1", "text": "Explore slope", "landmark_id": None, "status": "done"},
+        {"id": "step-2", "text": "Tangent line", "landmark_id": None, "status": "done"},
+    ]
+    assert body["current_step"] == {
+        "id": "step-3",
+        "text": "Derivative rule",
+        "landmark_id": None,
+        "status": "current",
+    }
+    assert body["demos"] == [
+        {
+            "request_id": str(demo_req),
+            "step_id": "step-1",
+            "title": "Slope graph",
+            "status": "ready",
+        }
+    ]
+
+    # Return to step-1: it becomes `current_step`, leaving only step-2 in `done_steps`.
+    await pg_db.execute(
+        "UPDATE content.session_plans SET plan = %(p)s WHERE session_id = %(s)s",
+        {
+            "s": session,
+            "p": Jsonb(
+                {
+                    "v": 2,
+                    "goal": "Understand derivatives",
+                    "current_step": {
+                        "id": "step-1",
+                        "text": "Explore slope again",
+                        "landmark": None,
+                    },
+                    "next_steps": [],
+                    "landmark_edits": {"added": [], "removed": []},
+                    "branches": [],
+                }
+            ),
+        },
+    )
+    revisited = (await client.get(f"/v1/sessions/{session}/plan", cookies=cookies)).json()
+    assert revisited["done_steps"] == [
+        {"id": "step-2", "text": "Tangent line", "landmark_id": None, "status": "done"}
+    ]
+    assert revisited["current_step"] == {
+        "id": "step-1",
+        "text": "Explore slope again",
+        "landmark_id": None,
+        "status": "current",
+    }

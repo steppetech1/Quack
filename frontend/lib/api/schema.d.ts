@@ -1351,6 +1351,16 @@ export interface components {
         /** @enum {string} */
         AnswerType: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text";
         /**
+         * ArtifactConsentRequest
+         * @description Consent to generate topic notes or a hub cheat sheet, optionally within a session.
+         */
+        ArtifactConsentRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /**
          * ArtifactResponse
          * @description An artifact at its current version; blocks with the names of Т-§17.2.
          */
@@ -2782,6 +2792,12 @@ export interface components {
             id: string;
             /** Landmark Id */
             landmark_id: string | null;
+            /**
+             * Status
+             * @default upcoming
+             * @enum {string}
+             */
+            status?: "done" | "current" | "upcoming";
             /** Text */
             text: string;
         };
@@ -2883,6 +2899,25 @@ export interface components {
              * @enum {string}
              */
             reason: "spoiler" | "guard";
+        };
+        /**
+         * RetryTurnAction
+         * @description `retry_turn`: run the teacher turn again on the last learner input of the session that
+         *     has no `turn.committed` (a turn lost to a dropped write or stream). Writes no event: the
+         *     input is already in the journal. Idempotent: an input that is answered is not asked again,
+         *     and `commit_turn` keeps one `turn.committed` per action.
+         */
+        RetryTurnAction: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "retry_turn";
         };
         /**
          * ReviewResponse
@@ -3023,6 +3058,8 @@ export interface components {
             title: string | null;
             /** Topic Id */
             topic_id: string | null;
+            /** Unanswered Seq */
+            unanswered_seq?: number | null;
         };
         /** @enum {string} */
         SessionIntent: "learn" | "practice" | "review" | "free";
@@ -3062,6 +3099,8 @@ export interface components {
             current_step: components["schemas"]["PlanStep"] | null;
             /** Demos */
             demos: components["schemas"]["PlanDemo"][];
+            /** Done Steps */
+            done_steps?: components["schemas"]["PlanStep"][];
             /** Goal */
             goal: string | null;
             /** Landmarks */
@@ -3145,6 +3184,8 @@ export interface components {
             title: string | null;
             /** Topic Id */
             topic_id: string | null;
+            /** Unanswered Seq */
+            unanswered_seq?: number | null;
         };
         /**
          * SetPreferenceRequest
@@ -5943,7 +5984,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["KeyedRequest"];
+                "application/json": components["schemas"]["ArtifactConsentRequest"];
             };
         };
         responses: {
@@ -7285,7 +7326,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MessageAction"] | components["schemas"]["IntentAction"] | components["schemas"]["AnswerAction"] | components["schemas"]["ElementResponseAction"] | components["schemas"]["HintRequestAction"] | components["schemas"]["SolutionRequestAction"] | components["schemas"]["CheckSkipAction"] | components["schemas"]["FlagUnclearAction"] | components["schemas"]["ConfidenceAction"];
+                "application/json": components["schemas"]["MessageAction"] | components["schemas"]["IntentAction"] | components["schemas"]["AnswerAction"] | components["schemas"]["ElementResponseAction"] | components["schemas"]["HintRequestAction"] | components["schemas"]["SolutionRequestAction"] | components["schemas"]["CheckSkipAction"] | components["schemas"]["FlagUnclearAction"] | components["schemas"]["ConfidenceAction"] | components["schemas"]["RetryTurnAction"];
             };
         };
         responses: {
@@ -7298,7 +7339,7 @@ export interface operations {
                     "text/event-stream": components["schemas"]["ActionFrame"];
                 };
             };
-            /** @description Actions without a teacher turn (`confidence`): the action event seq. */
+            /** @description Actions without a teacher turn (`confidence`): the action event seq; also a `retry_turn` whose input is answered already: the seq of that input. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8614,7 +8655,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["KeyedRequest"];
+                "application/json": components["schemas"]["ArtifactConsentRequest"];
             };
         };
         responses: {

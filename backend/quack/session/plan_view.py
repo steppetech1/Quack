@@ -251,21 +251,41 @@ def apply_edits(points: list[Point], doc: PlanDoc, resolved: Mapping[Ref, Point]
     return out
 
 
-def visited_landmarks(payloads: Sequence[Mapping[str, Any]]) -> set[Ref]:
-    """Landmarks named in `current_step.landmark` across `turn.committed` payloads."""
-    found: set[Ref] = set()
+def _plan_updates(payloads: Sequence[Mapping[str, Any]]) -> list[PlanUpdateRecord]:
+    updates: list[PlanUpdateRecord] = []
     for payload in payloads:
         markup = payload.get("markup")
         if not isinstance(markup, Mapping) or "plan_update" not in markup:
             continue
         try:
-            plan_update = PlanUpdateRecord.model_validate(markup["plan_update"])
+            updates.append(PlanUpdateRecord.model_validate(markup["plan_update"]))
         except ValidationError:
             continue
+    return updates
+
+
+def visited_landmarks(payloads: Sequence[Mapping[str, Any]]) -> set[Ref]:
+    """Landmarks named in `current_step.landmark` across `turn.committed` payloads."""
+    found: set[Ref] = set()
+    for plan_update in _plan_updates(payloads):
         if plan_update.current_step is not None and plan_update.current_step.landmark is not None:
             lm = plan_update.current_step.landmark
             found.add((lm.kind, lm.id))
     return found
+
+
+def visited_steps(payloads: Sequence[Mapping[str, Any]], doc: PlanDoc) -> list[PlanStep]:
+    """Steps visited in `turn.committed` payloads, preserving first appearance order and
+    excluding `doc.current_step` and `doc.next_steps`."""
+    seen: dict[str, PlanStepRecord] = {}
+    for plan_update in _plan_updates(payloads):
+        if plan_update.current_step is not None:
+            step = plan_update.current_step
+            seen[step.id] = step
+    excluded = {s.id for s in doc.next_steps}
+    if doc.current_step is not None:
+        excluded.add(doc.current_step.id)
+    return [_step_view(step, "done") for step_id, step in seen.items() if step_id not in excluded]
 
 
 def view_of(
@@ -448,9 +468,14 @@ async def landmarks_of(
     return apply_edits(points, doc, resolved)
 
 
-def _step_view(step: PlanStepRecord) -> PlanStep:
+def _step_view(
+    step: PlanStepRecord, status: Literal["done", "current", "upcoming"] = "upcoming"
+) -> PlanStep:
     return PlanStep(
-        id=step.id, text=step.text, landmark_id=None if step.landmark is None else step.landmark.id
+        id=step.id,
+        text=step.text,
+        landmark_id=None if step.landmark is None else step.landmark.id,
+        status=status,
     )
 
 
@@ -487,6 +512,10 @@ async def session_plan_view(
     row = await db.fetch_one(_PLAN, {"learner_id": learner_id, "session_id": session.session_id})
     doc = lift_plan(None if row is None else row["plan"])
     updated_at: datetime | None = None if row is None else row["updated_at"]
+    turn_rows = await db.fetch_all(
+        _TURN_PLANS, {"learner_id": learner_id, "session_id": session.session_id}
+    )
+    turn_payloads = [r["payload"] for r in turn_rows]
     landmarks: list[PlanLandmark] = []
     progress: PlanProgress | None = None
     try:
@@ -496,10 +525,7 @@ async def session_plan_view(
         points = []
     if points:
         current = None if doc.current_step is None else landmark_ref(doc.current_step.landmark)
-        rows = await db.fetch_all(
-            _TURN_PLANS, {"learner_id": learner_id, "session_id": session.session_id}
-        )
-        visited = visited_landmarks([r["payload"] for r in rows])
+        visited = visited_landmarks(turn_payloads)
         landmarks = view_of(points, current, visited=visited)
         progress = PlanProgress(
             done=sum(m.status == "done" for m in landmarks),
@@ -508,8 +534,9 @@ async def session_plan_view(
     return SessionPlanView(
         goal=doc.goal,
         landmarks=landmarks,
-        current_step=None if doc.current_step is None else _step_view(doc.current_step),
-        next_steps=[_step_view(s) for s in doc.next_steps],
+        done_steps=visited_steps(turn_payloads, doc),
+        current_step=None if doc.current_step is None else _step_view(doc.current_step, "current"),
+        next_steps=[_step_view(s, "upcoming") for s in doc.next_steps],
         progress=progress,
         updated_at=updated_at,
         demos=await session_demos(db, learner_id=learner_id, session_id=session.session_id),

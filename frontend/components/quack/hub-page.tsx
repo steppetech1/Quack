@@ -16,7 +16,7 @@ import { CheatCard, CheatSheetContent } from "./artifact-content";
 import { Duck } from "./duck";
 import { ActionButton, Crumbs, HubRing, MaterialsList, MemoryRing, MomentsList, MoreMenu, PageFrame, PageSection, TEXT_BTN } from "./page-parts";
 import { ExpandableCard } from "./artifact-window";
-import { Markdown, plainText } from "./live/markdown";
+import { ArtifactMarkdown, plainText } from "./live/markdown";
 import { useHubApi } from "./live/use-hub-api";
 import { NumText } from "./num-text";
 import { useStartSession } from "./live/use-start-session";
@@ -112,7 +112,7 @@ export function HubPage({ id }: { id: string }) {
   const cheatTitle = deadline ? tx.hub.cheatDeadline : tx.hub.cheat;
   const windows: Record<string, WindowSpec> = {};
   if (apiCheat) {
-    windows.cheatsheet = { title: cheatTitle, meta: tx.hub.cheatMeta, body: <Markdown text={apiCheatText} /> };
+    windows.cheatsheet = { title: cheatTitle, meta: tx.hub.cheatMeta, body: <ArtifactMarkdown text={apiCheatText} /> };
   } else if (cheat) {
     windows.cheatsheet = {
       title: cheatTitle,

@@ -23,7 +23,7 @@ from quack.api.ratelimit import enforce_action_rate_limit
 from quack.api.resources import AppResources, get_resources
 from quack.artifacts.documents import Artifact, ArtifactNotFound, get_artifact
 from quack.artifacts.hub_cheatsheet import Prefetch, request_hub_cheatsheet, review_hub_cheatsheet
-from quack.artifacts.notes_routes import ArtifactResponse, KeyedRequest
+from quack.artifacts.notes_routes import ArtifactConsentRequest, ArtifactResponse, KeyedRequest
 from quack.graph.read import GraphReader, create_graph_reader
 from quack.graph.read.cheatsheet_offer import cheatsheet_offer
 from quack.graph.read.materials import ChunkHit, materials_prefetch
@@ -113,11 +113,16 @@ async def get_hub_cheatsheet(
 
 @router.post("/hubs/{hub_id}/cheatsheet", response_model=ConsentResponse, status_code=202)
 async def agree_to_hub_cheatsheet(
-    hub_id: UUID, body: KeyedRequest, learner_id: CurrentLearnerId, resources: Resources
+    hub_id: UUID, body: ArtifactConsentRequest, learner_id: CurrentLearnerId, resources: Resources
 ) -> ConsentResponse:
     try:
         request_id = await request_hub_cheatsheet(
-            resources.db, learner_id, hub_id, idempotency_key=body.idempotency_key
+            resources.db,
+            learner_id,
+            hub_id,
+            idempotency_key=body.idempotency_key,
+            session_id=body.session_id,
+            redis=resources.redis,
         )
     except ArtifactNotFound as exc:
         raise _not_found(exc) from exc

@@ -121,6 +121,7 @@ export function Composer({
       onSend(text, hasFiles ? files.ready.map((a) => ({ id: a.materialId, name: a.name })) : undefined);
       setValue("");
       files.clear();
+      if (ref.current) ref.current.style.height = "auto";
     } else {
       soon(t.composer.soonReply);
     }
