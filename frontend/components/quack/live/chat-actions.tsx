@@ -56,7 +56,7 @@ export type NoteCard = {
 };
 
 const POLL_MS = 3_000;
-const POLL_LIMIT = 40;
+const POLL_LIMIT = 100;
 
 const orNone = <T,>(p: Promise<T>) =>
   p.catch((e) => {
@@ -137,7 +137,7 @@ export function ChatTurnActions({ ctx }: { ctx: TurnActionContext }) {
   const hasPreparing = cards.some((c) => c.status === "preparing");
 
   const checkPreparing = useCallback(
-    async (forceReadyOnExisting: boolean) => {
+    async () => {
       const preparing = cards.filter((c) => c.status === "preparing");
       if (!preparing.length) return;
       const updates = await Promise.all(
@@ -145,12 +145,12 @@ export function ChatTurnActions({ ctx }: { ctx: TurnActionContext }) {
           try {
             if (card.kind === "topic") {
               const doc = await orNone(get<S["ArtifactResponse"]>(`/v1/topics/${card.id}/notes`));
-              if (doc && doc.blocks.length > 0 && (card.prevVersion === null || doc.version > card.prevVersion || forceReadyOnExisting)) {
+              if (doc && doc.blocks.length > 0 && (card.prevVersion === null || doc.version > card.prevVersion)) {
                 return { key: card.key, status: "ready" as const, preview: blocksPreview(doc.blocks) };
               }
             } else {
               const doc = await orNone(get<S["CheatsheetResponse"]>(`/v1/hubs/${card.id}/cheatsheet`));
-              if (doc && doc.blocks.length > 0 && (card.prevVersion === null || doc.version > card.prevVersion || forceReadyOnExisting)) {
+              if (doc && doc.blocks.length > 0 && (card.prevVersion === null || doc.version > card.prevVersion)) {
                 return { key: card.key, status: "ready" as const, preview: blocksPreview(doc.blocks) };
               }
             }
@@ -179,9 +179,11 @@ export function ChatTurnActions({ ctx }: { ctx: TurnActionContext }) {
     const timer = setInterval(() => {
       if (++pollTries.current > POLL_LIMIT) {
         clearInterval(timer);
+        // the version never moved: the card must not spin for ever, say it did not come
+        setCards((prev) => prev.map((c) => (c.status === "preparing" ? { ...c, status: "failed" } : c)));
         return;
       }
-      void checkPreparing(false);
+      void checkPreparing();
     }, POLL_MS);
     return () => clearInterval(timer);
   }, [hasPreparing, checkPreparing]);
@@ -193,7 +195,7 @@ export function ChatTurnActions({ ctx }: { ctx: TurnActionContext }) {
     if (tick === prevTick.current) return;
     prevTick.current = tick;
     if (hasPreparing) {
-      const timer = setTimeout(() => void checkPreparing(true), 0);
+      const timer = setTimeout(() => void checkPreparing(), 0);
       return () => clearTimeout(timer);
     }
   }, [ctx.artifactTick, hasPreparing, checkPreparing]);

@@ -334,6 +334,8 @@ export function SessionLive({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** the turn lock moves with the action itself; `busy` (state) catches up on the next render */
+  const busyRef = useRef(false);
   const [unansweredSeq, setUnansweredSeq] = useState<number | null>(null);
   const [lastFailedAction, setLastFailedAction] = useState<FailedAction | null>(null);
   const [artifactTick, setArtifactTick] = useState(0);
@@ -458,10 +460,11 @@ export function SessionLive({ id }: { id: string }) {
       files?: FileRef[],
       opts?: { skipStudentEcho?: boolean; existingStudentLineId?: string },
     ): Promise<boolean> => {
-      if (busy) {
+      if (busy || busyRef.current) {
         setError(t.turnLocked);
         return false;
       }
+      busyRef.current = true;
       setBusy(true);
       setError(null);
       setVerdict(null);
@@ -596,6 +599,7 @@ export function SessionLive({ id }: { id: string }) {
         setRefining(false);
         setLive([]);
         setThinking(false);
+        busyRef.current = false;
         setBusy(false);
         scrollDown();
         // a turn queues background agents (demo, tasks, checks) shortly after it is committed
@@ -622,7 +626,12 @@ export function SessionLive({ id }: { id: string }) {
 
   const queue = useSendQueue<FileRef>({
     busy,
-    onSend: (item) => send(item.text, item.files),
+    onSend: (item) => {
+      // a turn that began after the queue looked (the ref moves with the action, the state a render later): not sent, stays queued
+      if (busyRef.current) return false;
+      void send(item.text, item.files);
+      return true;
+    },
   });
 
   const handleComposerSend = useCallback(

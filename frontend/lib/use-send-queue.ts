@@ -10,7 +10,8 @@ export type QueuedSend<TFile = unknown> = {
 
 /**
  * Reusable FIFO send queue: holds outgoing messages `{ id, text, files? }` while a turn
- * is busy and dispatches the next item automatically once `busy` returns to `false`.
+ * is busy and dispatches the next item automatically once `busy` returns to `false`. `onSend` returns
+ * `false` when it did not start the send; the item then stays in the queue.
  */
 export function useSendQueue<TFile = unknown>({
   busy,
@@ -54,7 +55,12 @@ export function useSendQueue<TFile = unknown>({
       if (dispatchedId.current === next.id) return;
       dispatchedId.current = next.id;
       setItems((prev) => prev.filter((x) => x.id !== next.id));
-      void onSendRef.current(next);
+      // `false` — the send did not start (a turn began in between): the message goes back to the head of the queue
+      void Promise.resolve(onSendRef.current(next)).then((started) => {
+        if (started !== false) return;
+        dispatchedId.current = null;
+        setItems((prev) => (prev.some((x) => x.id === next.id) ? prev : [next, ...prev]));
+      });
     }, 0);
     return () => clearTimeout(timer);
   }, [busy, items]);

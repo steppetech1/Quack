@@ -2,7 +2,7 @@
 
 import { Check, ListTree, Loader2, Maximize2, Minimize2, Minus, Play } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { get, type S } from "@/lib/api/client";
+import { ApiError, get, type S } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
 import type { OpenDemo } from "./demo-panel";
 import { JobsLines, type JobRow } from "./jobs-plaque";
@@ -18,6 +18,8 @@ export type SessionPlanView = Omit<S["SessionPlanView"], "current_step" | "next_
 export type PlanDemo = SessionPlanView["demos"][number];
 
 const PLAN_RETRY_MS = 5_000;
+/** the pause between retries doubles up to this */
+const PLAN_RETRY_MAX_MS = 60_000;
 
 /**
  * The plan of a session: read once on open and again after each finished teacher turn (`refresh()`), no polling.
@@ -29,6 +31,7 @@ export function useSessionPlan(sessionId: string, opts?: { onSuccess?: () => voi
   const request = useRef(0);
   const alive = useRef(true);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const failures = useRef(0);
   const onSuccessRef = useRef(opts?.onSuccess);
   const refreshRef = useRef<() => void>(() => {});
 
@@ -42,16 +45,21 @@ export function useSessionPlan(sessionId: string, opts?: { onSuccess?: () => voi
     get<SessionPlanView>(`/v1/sessions/${sessionId}/plan`)
       .then((p) => {
         if (!alive.current || mine !== request.current) return;
+        failures.current = 0;
         setPlan(p);
         setStale(false);
         onSuccessRef.current?.();
       })
-      .catch(() => {
+      .catch((e) => {
         if (!alive.current || mine !== request.current) return;
         setStale(true);
+        // the session is gone or not ours: asking again changes nothing
+        if (e instanceof ApiError && [401, 403, 404].includes(e.status)) return;
+        const pause = Math.min(PLAN_RETRY_MS * 2 ** failures.current, PLAN_RETRY_MAX_MS);
+        failures.current += 1;
         retryTimer.current = setTimeout(() => {
           if (alive.current) refreshRef.current();
-        }, PLAN_RETRY_MS);
+        }, pause);
       });
   }, [sessionId]);
 
