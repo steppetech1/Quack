@@ -3820,6 +3820,28 @@
         "title": "ResetFrame",
         "type": "object"
       },
+      "RetryTurnAction": {
+        "additionalProperties": false,
+        "description": "`retry_turn`: run the teacher turn again on the last learner input of the session that\nhas no `turn.committed` (a turn lost to a dropped write or stream). Writes no event: the\ninput is already in the journal. Idempotent: an input that is answered is not asked again,\nand `commit_turn` keeps one `turn.committed` per action.",
+        "properties": {
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "retry_turn",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "kind"
+        ],
+        "title": "RetryTurnAction",
+        "type": "object"
+      },
       "ReviewResponse": {
         "description": "The sheet after the review; `remarks` — the system blocks added to the learner's sheet.",
         "properties": {
@@ -10267,6 +10289,7 @@
                     "hint_request": "#/components/schemas/HintRequestAction",
                     "intent": "#/components/schemas/IntentAction",
                     "message": "#/components/schemas/MessageAction",
+                    "retry_turn": "#/components/schemas/RetryTurnAction",
                     "solution_request": "#/components/schemas/SolutionRequestAction"
                   },
                   "propertyName": "kind"
@@ -10298,6 +10321,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/ConfidenceAction"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RetryTurnAction"
                   }
                 ],
                 "title": "Body"
@@ -10362,7 +10388,7 @@
                 }
               }
             },
-            "description": "Actions without a teacher turn (`confidence`): the action event seq."
+            "description": "Actions without a teacher turn (`confidence`): the action event seq; also a `retry_turn` whose input is answered already: the seq of that input."
           },
           "401": {
             "content": {

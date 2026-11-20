@@ -127,6 +127,15 @@ class ConfidenceAction(_Action):
     value: Confidence
 
 
+class RetryTurnAction(_Action):
+    """`retry_turn`: run the teacher turn again on the last learner input of the session that
+    has no `turn.committed` (a turn lost to a dropped write or stream). Writes no event: the
+    input is already in the journal. Idempotent: an input that is answered is not asked again,
+    and `commit_turn` keeps one `turn.committed` per action."""
+
+    kind: Literal["retry_turn"]
+
+
 type Action = Annotated[
     MessageAction
     | IntentAction
@@ -136,7 +145,8 @@ type Action = Annotated[
     | SolutionRequestAction
     | CheckSkipAction
     | FlagUnclearAction
-    | ConfidenceAction,
+    | ConfidenceAction
+    | RetryTurnAction,
     Field(discriminator="kind"),
 ]
 
@@ -151,10 +161,11 @@ TURN_ACTION_KINDS: frozenset[str] = frozenset(
         "solution_request",
         "check_skip",
         "flag_unclear",
+        "retry_turn",
     }
 )
 
-# ТЗ Ф4 WP13.1: action kind → event type written for it.
+# ТЗ Ф4 WP13.1: action kind → event type written for it (`retry_turn` writes none).
 ACTION_EVENT_TYPES: dict[str, str] = {
     "message": "message.sent",
     "intent": "message.sent",

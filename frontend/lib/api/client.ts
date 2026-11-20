@@ -150,7 +150,15 @@ export async function sse(
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
-  if (!res.ok || !res.body) throw await toError(res);
+  if (!res.ok) throw await toError(res);
+  if (res.status === 201 || res.headers.get("content-type")?.includes("application/json")) {
+    onActivity?.();
+    const parsed = await res.json().catch(() => ({}));
+    const data = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    onEvent({ event: "action_accepted", data });
+    return;
+  }
+  if (!res.body) throw await toError(res);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   for (;;) {

@@ -183,6 +183,7 @@ def _batch(
     output: TeacherOutputV2 | None = None,
     *,
     session_id: UUID | None = None,
+    action_seq: int = 1,
     answered: AnsweredAction | None = None,
     learner_texts: list[LearnerText] = LEARNER,
     learner_timezone: str | None = None,
@@ -192,7 +193,7 @@ def _batch(
         _turn(output),
         labels,
         manifest=_manifest(learner_id, session_id or uuid4(), labels),
-        action_seq=1,
+        action_seq=action_seq,
         domain_id=DOMAIN,
         settings=SETTINGS,
         answered=answered,
@@ -451,7 +452,8 @@ async def test_hint_steps_counted_by_code(pg_db: Db) -> None:
     answered = AnsweredAction(kind="hint_request", task_id=task_id)
 
     batches = [
-        _batch(learner_id, _bare(), session_id=session_id, answered=answered) for _ in range(4)
+        _batch(learner_id, _bare(), session_id=session_id, action_seq=i + 1, answered=answered)
+        for i in range(4)
     ]
     for batch in batches:
         await commit_turn(pg_db, batch, learner_id=learner_id)
@@ -536,7 +538,7 @@ async def test_turn_writes_the_session_plan(pg_db: Db) -> None:
     assert row is not None and row["learner_id"] == learner_id and row["status"] == "active"
     assert row["plan"]["v"] == 2 and row["plan"]["current_step"]["id"] == "definition"
 
-    batch = _batch(learner_id, second, session_id=session_id)
+    batch = _batch(learner_id, second, session_id=session_id, action_seq=2)
     await commit_turn(pg_db, batch, learner_id=learner_id)
     await commit_turn(pg_db, batch, learner_id=learner_id)  # a repeat changes nothing
 
@@ -562,7 +564,7 @@ async def test_a_turn_that_names_nothing_leaves_the_plan(pg_db: Db) -> None:
 
     quiet = _bare(planUpdate=_plan_update(None))
     await commit_turn(
-        pg_db, _batch(learner_id, quiet, session_id=session_id), learner_id=learner_id
+        pg_db, _batch(learner_id, quiet, session_id=session_id, action_seq=2), learner_id=learner_id
     )
 
     after = await _plan(pg_db, session_id)
@@ -570,7 +572,7 @@ async def test_a_turn_that_names_nothing_leaves_the_plan(pg_db: Db) -> None:
     # an empty list is not `null`: the teacher has no next steps in mind
     empty = _bare(planUpdate=_plan_update(None, next_steps=[]))
     await commit_turn(
-        pg_db, _batch(learner_id, empty, session_id=session_id), learner_id=learner_id
+        pg_db, _batch(learner_id, empty, session_id=session_id, action_seq=3), learner_id=learner_id
     )
     row = await _plan(pg_db, session_id)
     assert row is not None and row["plan"]["next_steps"] == []
@@ -585,11 +587,12 @@ async def test_landmark_edits_are_resolved_and_accumulate(pg_db: Db) -> None:
     drop = {"add": [], "remove": ["T1"]}
     swap = {"add": [{"label": "T1", "before": None}], "remove": ["S1"]}
     docs = []
-    for edits in (add, drop, swap):
+    for action_seq, edits in enumerate((add, drop, swap), start=1):
         batch = _batch(
             learner_id,
             _bare(planUpdate=_plan_update(None, landmark_edits=edits)),
             session_id=session_id,
+            action_seq=action_seq,
         )
         await commit_turn(pg_db, batch, learner_id=learner_id)
         row = await _plan(pg_db, session_id)
@@ -632,7 +635,11 @@ async def test_a_plan_of_the_old_form_is_lifted_by_the_next_turn(pg_db: Db) -> N
     )
 
     turn = _bare(planUpdate=_plan_update(None, goal="the ratio test"))
-    await commit_turn(pg_db, _batch(learner_id, turn, session_id=session_id), learner_id=learner_id)
+    await commit_turn(
+        pg_db,
+        _batch(learner_id, turn, session_id=session_id, action_seq=2),
+        learner_id=learner_id,
+    )
 
     row = await _plan(pg_db, session_id)
     assert row is not None
@@ -653,7 +660,9 @@ async def test_failed_turn_leaves_the_plan(pg_db: Db) -> None:
         _batch(learner_id, _bare(planUpdate=_plan_update("definition")), session_id=session_id),
         learner_id=learner_id,
     )
-    batch = _batch(learner_id, _bare(planUpdate=_plan_update("later")), session_id=session_id)
+    batch = _batch(
+        learner_id, _bare(planUpdate=_plan_update("later")), session_id=session_id, action_seq=2
+    )
     broken = replace(batch, manifest=replace(batch.manifest, prompt_version=None))
 
     with pytest.raises(Exception):  # noqa: B017 — the NOT NULL violation of the manifest

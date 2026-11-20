@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiUrl, ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
+import { apiUrl, ApiError, get, idem, post, sse, type BodyOf, type S } from "@/lib/api/client";
 import { allTopicsHubId } from "@/lib/api/adapters";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
@@ -32,7 +32,10 @@ const HEARTBEAT_MS = 30_000;
 /** No data (not even a keepalive) on the turn's stream for this long: the request is cut and the learner may send again, so `busy` never hangs for good */
 const BUSY_TIMEOUT_MS = 90_000;
 
-type SessionDetailExt = S["SessionDetail"] & { unanswered_seq?: number | null };
+type ActionBody = BodyOf<`/v1/sessions/${string}/actions`, "post">;
+type ActionPayload = {
+  [K in ActionBody as K["kind"]]: Omit<K, "idempotency_key">;
+}[ActionBody["kind"]];
 
 type Line = {
   id: string;
@@ -58,7 +61,7 @@ type Elem = {
 type Outcome = "correct" | "incorrect" | "partial" | "unclear";
 
 type FailedAction = {
-  body: Record<string, unknown>;
+  body: ActionPayload;
   recorded: boolean;
   studentLineId?: string;
   onVerdict?: (o: Outcome) => void;
@@ -67,12 +70,99 @@ type FailedAction = {
 /** Elements the learner answers with text; the rest of the kinds are shown as a card with their title */
 const ANSWERABLE = new Set(["task", "short_answer", "free_answer", "choice", "prediction", "why_choice"]);
 
+function parseSessionFeed(
+  d: S["SessionDetail"],
+  names: Map<string, string>,
+  fallbackFileName: string,
+): { past: Line[]; pastElems: Elem[] } {
+  const past: Line[] = [];
+  const pastElems: Elem[] = [];
+  // what the learner answered inside the forms: `FeedEvent` carries deterministic `turn_seq`, `element_id` and `outcome`
+  // (with fallback to payload / `answer_seq` for legacy events) so reload never guesses by order
+  const answers = new Map<string, string>();
+  const verdicts = new Map<string, Outcome>();
+  const lastAnswer = new Map<string, string>();
+  const answerAt = new Map<number, string>();
+  const keyOf = (ev: S["FeedEvent"]) => {
+    const tSeq = ev.turn_seq ?? (typeof ev.payload.turn_seq === "number" ? ev.payload.turn_seq : null);
+    const elId = ev.element_id ?? (typeof ev.payload.element_id === "string" ? ev.payload.element_id : null);
+    return tSeq !== null && elId ? `${tSeq}:${elId}` : null;
+  };
+  for (const ev of d.events) {
+    const pl = ev.payload;
+    if (ev.type === "element.responded") {
+      const k = keyOf(ev);
+      if (!k) continue;
+      const said = typeof pl.response === "string" && pl.response ? pl.response : typeof pl.text === "string" ? pl.text : "";
+      if (said) answers.set(k, said);
+      if (ev.outcome) verdicts.set(k, ev.outcome);
+      const elId = ev.element_id ?? (typeof pl.element_id === "string" ? pl.element_id : null);
+      if (elId) lastAnswer.set(elId, k);
+    } else if (ev.type === "answer.submitted") {
+      const elId = ev.element_id ?? (typeof pl.element_id === "string" ? pl.element_id : null);
+      const k = keyOf(ev) ?? (elId ? lastAnswer.get(elId) ?? null : null);
+      if (k) answerAt.set(ev.seq, k);
+    } else if (ev.type === "verdict.recorded") {
+      const outcome = ev.outcome ?? (typeof pl.outcome === "string" ? (pl.outcome as Outcome) : null);
+      if (!outcome) continue;
+      const k = keyOf(ev) ?? (typeof pl.answer_seq === "number" ? answerAt.get(pl.answer_seq) ?? null : null);
+      if (k) verdicts.set(k, outcome);
+    }
+  }
+  for (const ev of d.events) {
+    const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
+    // a spoken message: its words are the `voice.transcribed` event, the `message.sent` after it has none
+    if ((ev.type === "message.sent" || ev.type === "voice.transcribed") && text) {
+      const ids =
+        ev.type === "message.sent" && Array.isArray(ev.payload.material_ids)
+          ? (ev.payload.material_ids as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+      past.push({
+        id: `e-${ev.seq}`,
+        role: "student",
+        text,
+        seq: ev.seq,
+        files: ids.map((fid) => ({ id: fid, name: names.get(fid) ?? fallbackFileName })),
+      });
+    } else if (ev.type === "turn.committed") {
+      const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
+      // a turn of one task has no text; its line only holds the place of the forms
+      if (!text && !markup?.elements?.length) continue;
+      past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null, seq: ev.seq });
+      // committed elements carry `request_id` (resolved from the live frame's `R…` label, ТЗ §12.3): the only
+      // point a `visualization` element becomes renderable, so history is where it actually shows up
+      for (const el of markup?.elements ?? []) {
+        const e = el as { element_id?: string; kind?: string };
+        if (!e.kind) continue;
+        const k = `${ev.seq}:${e.element_id}`;
+        const answer = answers.get(k);
+        pastElems.push({ blockId: k, element: e as S["Element"], turnSeq: ev.seq, answered: answer !== undefined, answer, verdict: verdicts.get(k) });
+      }
+    }
+  }
+  return { past, pastElems };
+}
+
+async function fetchSessionFeed(sessionId: string, fallbackFileName: string) {
+  const d = await get<S["SessionDetail"]>(`/v1/sessions/${sessionId}`);
+  const names = new Map<string, string>();
+  const withFiles = d.events.some((e) => e.type === "message.sent" && Array.isArray(e.payload.material_ids) && e.payload.material_ids.length > 0);
+  if (withFiles) {
+    try {
+      const list = await get<S["MaterialList"]>(`/v1/domains/${d.domain_id}/materials`);
+      for (const m of list.materials) if (m.title) names.set(m.material_id, m.title);
+    } catch {}
+  }
+  const { past, pastElems } = parseSessionFeed(d, names, fallbackFileName);
+  return { detail: d, past, pastElems };
+}
+
 function isRealHubId(hubId: string | null | undefined, domainId: string): hubId is string {
   return Boolean(hubId && hubId !== "all" && hubId !== allTopicsHubId(domainId));
 }
 
 function extractNoteTargets(
-  d: SessionDetailExt,
+  d: S["SessionDetail"],
   domainTopics: { id: string; title: string; hubId?: string }[],
   hubs: S["HubGoal"][],
   fallbackTopicTitle: string,
@@ -225,8 +315,8 @@ export function SessionLive({ id }: { id: string }) {
   const errorText = useErrorText();
   const { domains, setActive, appliedSeq } = useData();
   const { focusDomain } = useShell();
-  const [detail, setDetail] = useState<SessionDetailExt | null>(null);
-  const detailRef = useRef<SessionDetailExt | null>(null);
+  const [detail, setDetail] = useState<S["SessionDetail"] | null>(null);
+  const detailRef = useRef<S["SessionDetail"] | null>(null);
   const [hubs, setHubs] = useState<S["HubGoal"][]>([]);
   const [lines, setLines] = useState<Line[]>([]);
   const [elems, setElems] = useState<Elem[]>([]);
@@ -264,7 +354,7 @@ export function SessionLive({ id }: { id: string }) {
 
   /** A finished background job (a demo, say) leaves its result in the committed turn: re-read it, a visualization gets its `request_id` there */
   const refreshElements = useCallback(() => {
-    get<SessionDetailExt>(`/v1/sessions/${id}`)
+    get<S["SessionDetail"]>(`/v1/sessions/${id}`)
       .then((d) => {
         setDetail(d);
         setUnansweredSeq(d.unanswered_seq ?? null);
@@ -292,7 +382,7 @@ export function SessionLive({ id }: { id: string }) {
   const reopened = useCallback(() => {
     if (!closed.current) return;
     closed.current = false;
-    get<SessionDetailExt>(`/v1/sessions/${id}`)
+    get<S["SessionDetail"]>(`/v1/sessions/${id}`)
       .then((d) => {
         setDetail(d);
         setUnansweredSeq(d.unanswered_seq ?? null);
@@ -362,7 +452,7 @@ export function SessionLive({ id }: { id: string }) {
   /** One action of the learner; the answer of the teacher streams back as frames (ТЗ Ф4 §4.7) */
   const act = useCallback(
     async (
-      body: Record<string, unknown>,
+      body: ActionPayload,
       studentText?: string,
       onVerdict?: (o: Outcome) => void,
       files?: FileRef[],
@@ -403,6 +493,7 @@ export function SessionLive({ id }: { id: string }) {
       let retry = false;
       let degraded: string | null = null;
       let committed: number | null = null;
+      let accepted = false;
       let actionRecorded = false;
       const fresh: { block: string; element: S["Element"] }[] = [];
       const showLive = () => setLive(fresh.map((f) => ({ blockId: `live:${f.block}`, element: f.element, turnSeq: null, answered: false })));
@@ -410,10 +501,12 @@ export function SessionLive({ id }: { id: string }) {
         await sse(
           "POST",
           `/v1/sessions/${id}/actions`,
-          // the body is one of the actions of the contract (message, intent, element_response…); the shape is checked by the backend
-          { ...body, idempotency_key: idem() } as never,
+          // the body is one of the actions of the contract (message, intent, element_response, retry_turn…); the shape is checked by the backend
+          { ...body, idempotency_key: idem() } as ActionBody,
           ({ event, data }) => {
-            if (event === "action_recorded") {
+            if (event === "action_accepted") {
+              accepted = true;
+            } else if (event === "action_recorded") {
               actionRecorded = true;
               reopened();
               const v = data.verdict as { outcome?: Outcome } | null | undefined;
@@ -459,8 +552,21 @@ export function SessionLive({ id }: { id: string }) {
           cut.signal,
           arm,
         );
-        // the stream closed with no `turn_committed` and no `error` frame (proxy cut, server restart): the turn is not saved
+        // the stream closed with no `turn_committed`: either 201 JSON (turn already answered/accepted) or cut stream
         if (committed === null) {
+          if (accepted) {
+            const synced = await fetchSessionFeed(id, tx.composer.attachFallbackName).catch(() => null);
+            if (synced) {
+              setDetail(synced.detail);
+              setUnansweredSeq(synced.detail.unanswered_seq ?? null);
+              setLines(synced.past);
+              setElems(synced.pastElems);
+            } else {
+              setUnansweredSeq(null);
+            }
+            setLastFailedAction(null);
+            return true;
+          }
           if (reply) setLines((l) => [...l, { id: turnId, role: "teacher", text: reply, interrupted: true }]);
           else setError(t.interrupted);
           setLastFailedAction({ body, recorded: actionRecorded, studentLineId: studentText ? lineId : opts?.existingStudentLineId, onVerdict });
@@ -495,10 +601,10 @@ export function SessionLive({ id }: { id: string }) {
         // a turn queues background agents (demo, tasks, checks) shortly after it is committed
         refreshJobs();
         refreshPlan();
-        refreshElements();
+        if (!accepted) refreshElements();
       }
     },
-    [busy, id, t.turnLocked, t.interrupted, t.busyTimeout, errorText, reopened, refreshJobs, refreshPlan, refreshElements],
+    [busy, id, t.turnLocked, t.interrupted, t.busyTimeout, tx.composer.attachFallbackName, errorText, reopened, refreshJobs, refreshPlan, refreshElements],
   );
 
   const send = useCallback(
@@ -565,82 +671,15 @@ export function SessionLive({ id }: { id: string }) {
   // History: the feed of the session; text lives in `message.sent` / `voice.transcribed` (student) and `turn.committed` (teacher)
   useEffect(() => {
     let off = false;
-    get<SessionDetailExt>(`/v1/sessions/${id}`)
-      .then(async (d) => {
+    fetchSessionFeed(id, tx.composer.attachFallbackName)
+      .then(({ detail: d, past, pastElems }) => {
         if (off) return;
-        // the names of the files that went with messages (the log holds their ids)
-        const names = new Map<string, string>();
-        const withFiles = d.events.some((e) => e.type === "message.sent" && Array.isArray(e.payload.material_ids) && e.payload.material_ids.length > 0);
-        if (withFiles) {
-          try {
-            const list = await get<S["MaterialList"]>(`/v1/domains/${d.domain_id}/materials`);
-            for (const m of list.materials) if (m.title) names.set(m.material_id, m.title);
-          } catch {}
-          if (off) return;
-        }
         setDetail(d);
         setUnansweredSeq(d.unanswered_seq ?? null);
         closed.current = d.status !== "active";
         focusDomain(d.domain_id);
         // a session opened from a topic page becomes the active one in the sessions panel
         if (d.status === "active") setActive(d);
-        const past: Line[] = [];
-        const pastElems: Elem[] = [];
-        // what the learner answered inside the forms: `FeedEvent` carries deterministic `turn_seq`, `element_id` and `outcome`
-        // (with fallback to payload / `answer_seq` for legacy events) so reload never guesses by order
-        const answers = new Map<string, string>();
-        const verdicts = new Map<string, Outcome>();
-        const lastAnswer = new Map<string, string>();
-        const answerAt = new Map<number, string>();
-        const keyOf = (ev: S["FeedEvent"]) => {
-          const tSeq = ev.turn_seq ?? (typeof ev.payload.turn_seq === "number" ? ev.payload.turn_seq : null);
-          const elId = ev.element_id ?? (typeof ev.payload.element_id === "string" ? ev.payload.element_id : null);
-          return tSeq !== null && elId ? `${tSeq}:${elId}` : null;
-        };
-        for (const ev of d.events) {
-          const pl = ev.payload;
-          if (ev.type === "element.responded") {
-            const k = keyOf(ev);
-            if (!k) continue;
-            const said = typeof pl.response === "string" && pl.response ? pl.response : typeof pl.text === "string" ? pl.text : "";
-            if (said) answers.set(k, said);
-            if (ev.outcome) verdicts.set(k, ev.outcome);
-            const elId = ev.element_id ?? (typeof pl.element_id === "string" ? pl.element_id : null);
-            if (elId) lastAnswer.set(elId, k);
-          } else if (ev.type === "answer.submitted") {
-            const elId = ev.element_id ?? (typeof pl.element_id === "string" ? pl.element_id : null);
-            const k = keyOf(ev) ?? (elId ? lastAnswer.get(elId) ?? null : null);
-            if (k) answerAt.set(ev.seq, k);
-          } else if (ev.type === "verdict.recorded") {
-            const outcome = ev.outcome ?? (typeof pl.outcome === "string" ? (pl.outcome as Outcome) : null);
-            if (!outcome) continue;
-            const k = keyOf(ev) ?? (typeof pl.answer_seq === "number" ? answerAt.get(pl.answer_seq) ?? null : null);
-            if (k) verdicts.set(k, outcome);
-          }
-        }
-        for (const ev of d.events) {
-          const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
-          // a spoken message: its words are the `voice.transcribed` event, the `message.sent` after it has none
-          if ((ev.type === "message.sent" || ev.type === "voice.transcribed") && text) {
-            const ids = ev.type === "message.sent" && Array.isArray(ev.payload.material_ids) ? (ev.payload.material_ids as unknown[]).filter((x): x is string => typeof x === "string") : [];
-            past.push({ id: `e-${ev.seq}`, role: "student", text, seq: ev.seq, files: ids.map((id) => ({ id, name: names.get(id) ?? tx.composer.attachFallbackName })) });
-          }
-          else if (ev.type === "turn.committed") {
-            const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
-            // a turn of one task has no text; its line only holds the place of the forms
-            if (!text && !markup?.elements?.length) continue;
-            past.push({ id: `e-${ev.seq}`, role: "teacher", text, degraded: (ev.payload.degraded_mode as string | null) ?? null, seq: ev.seq });
-            // committed elements carry `request_id` (resolved from the live frame's `R…` label, ТЗ §12.3): the only
-            // point a `visualization` element becomes renderable, so history is where it actually shows up
-            for (const el of markup?.elements ?? []) {
-              const e = el as { element_id?: string; kind?: string };
-              if (!e.kind) continue;
-              const k = `${ev.seq}:${e.element_id}`;
-              const answer = answers.get(k);
-              pastElems.push({ blockId: k, element: e as S["Element"], turnSeq: ev.seq, answered: answer !== undefined, answer, verdict: verdicts.get(k) });
-            }
-          }
-        }
         setLines(past);
         // the forms come back where the teacher put them (right after the text of their turn), answered ones with the answer in them
         setElems(pastElems);
@@ -672,7 +711,10 @@ export function SessionLive({ id }: { id: string }) {
       void send(turn.text, turn.files);
     }
     // a fresh session already has `session.started` in its log: "fresh" means nobody has spoken yet
-    else if (detail.intent && detail.intent !== "free" && !detail.events.some((e) => e.type === "message.sent" || e.type === "turn.committed")) {
+    else if (
+      (detail.intent === "learn" || detail.intent === "practice" || detail.intent === "review") &&
+      !detail.events.some((e) => e.type === "message.sent" || e.type === "turn.committed")
+    ) {
       void act({ kind: "intent", intent: detail.intent, topic_id: detail.topic_id, hub_id: detail.hub_id });
     }
   }, [detail, id, send, act]);
@@ -696,7 +738,7 @@ export function SessionLive({ id }: { id: string }) {
     const cur = detailRef.current;
     if (!cur) return { topics: [], hub: null };
     const [freshRes, hubsRes] = await Promise.allSettled([
-      get<SessionDetailExt>(`/v1/sessions/${id}`),
+      get<S["SessionDetail"]>(`/v1/sessions/${id}`),
       get<S["HubGoal"][]>(`/v1/domains/${cur.domain_id}/hubs`),
     ]);
     const freshDetail = freshRes.status === "fulfilled" ? freshRes.value : cur;
