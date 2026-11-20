@@ -251,6 +251,7 @@ async def generate_hub_cheatsheet(
             hub_id=hub_id,
             domain_id=sheet.domain_id,
             session_id=session_id,
+            title_chars=settings.session_demo_title_chars,
         )
         if not demos:
             log.info("cheatsheet_unknown_hub", hub_id=str(hub_id))
@@ -280,6 +281,7 @@ async def generate_hub_cheatsheet(
         is_domain_all=context.is_domain_all,
         session_id=session_id,
         skill_topic_fallback=dict(context.skill_topics),
+        title_chars=settings.session_demo_title_chars,
     )
     version: int | None = None
     pages: int | None = None

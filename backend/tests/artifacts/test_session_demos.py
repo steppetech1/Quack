@@ -214,6 +214,31 @@ def test_merge_demo_links_block_preserves_learner_edits_and_is_idempotent() -> N
     assert merge_demo_links_block([sys_summary], current, []) == [sys_summary]
 
 
+def test_merge_demo_links_block_keeps_system_blocks_when_writer_is_empty() -> None:
+    """An empty writer answer must not turn into a version that has only the demo block:
+    `write_system_blocks` drops the system blocks no block names."""
+    req = uuid4()
+    demo = ReadyDemo(req, 1, None, None, "s1", "Slope")
+    summary_id, learner_id_, demo_block_id = uuid4(), uuid4(), uuid4()
+    current = (
+        Block(block_id=summary_id, kind="summary", content="Summary", owner="system"),
+        Block(block_id=learner_id_, kind="custom", content="Mine", owner="learner"),
+        Block(
+            block_id=demo_block_id,
+            kind="links",
+            content=format_demo_links_content([demo]),
+            owner="system",
+        ),
+    )
+    merged = merge_demo_links_block([], current, [demo])
+    assert [b.block_id for b in merged] == [summary_id, demo_block_id]
+    assert merged[0].content == "Summary"
+    assert f"/v1/viz/{req}" in merged[1].content
+    # the first demo of a document that has no demo block yet: the summary stays, the demo is new
+    first = merge_demo_links_block([], current[:2], [demo])
+    assert [b.block_id for b in first] == [summary_id, None]
+
+
 # --- integration helpers --------------------------------------------------------------------
 
 

@@ -313,7 +313,11 @@ async def refresh_topic_notes(
     )
     skill_fallback = {sid: topic_id for sid in context.skill_ids} if context is not None else {}
     demos = await topic_ready_demos(
-        db, learner_id=learner_id, topic_id=topic_id, skill_topic_fallback=skill_fallback
+        db,
+        learner_id=learner_id,
+        topic_id=topic_id,
+        skill_topic_fallback=skill_fallback,
+        title_chars=settings.session_demo_title_chars,
     )
     if context is None:
         log.info("topic_refresh_unknown_topic", topic_id=str(topic_id))

@@ -33,7 +33,6 @@ from quack.graph.ids import deterministic_id
 
 DEMO_BLOCK_HEADING = "### Демо"
 DEMO_LINK_PREFIX = "/v1/viz/"
-_TITLE_MAX = 80
 
 _STRUCTURE_TYPES: tuple[str, ...] = (
     "skill.created",
@@ -133,14 +132,15 @@ def _opt_uuid(value: object) -> UUID | None:
         return None
 
 
-def _clean_text(text: object, limit: int = _TITLE_MAX) -> str:
+def _clean_text(text: object, limit: int | None = None) -> str:
+    """One line of text; `limit` — at most that many characters (`None` — all of it)."""
     if not isinstance(text, str):
         return ""
     return " ".join(text.split())[:limit].strip()
 
 
 def _sanitize_link_title(title: str) -> str:
-    cleaned = _clean_text(title, _TITLE_MAX)
+    cleaned = _clean_text(title)
     return cleaned.replace("[", "(").replace("]", ")") or "Демо"
 
 
@@ -348,6 +348,19 @@ def _is_system_demo_block(block: Block) -> bool:
     )
 
 
+def _as_system_block(block: Block) -> SystemBlock:
+    return SystemBlock(
+        block_id=block.block_id,
+        kind=block.kind,
+        content=block.content,
+        sources=list(block.sources),
+        skills=list(block.skills),
+        generated_by=block.generated_by,
+        basis=block.basis,
+        unverified=block.unverified,
+    )
+
+
 def merge_demo_links_block(
     blocks: Sequence[SystemBlock],
     current: Sequence[Block],
@@ -355,6 +368,15 @@ def merge_demo_links_block(
 ) -> list[SystemBlock]:
     """Attach the deterministic demo `links` system block without clobbering learner edits."""
     existing_demo = next((b for b in current if _is_system_demo_block(b)), None)
+    if not blocks:
+        # The writer returned nothing: `write_system_blocks` drops the system blocks that no block
+        # names, so the current system part is named again, unchanged, and only the demo block
+        # is added or refreshed.
+        blocks = [
+            _as_system_block(b)
+            for b in current
+            if b.owner == "system" and b.supplement_to is None and not _is_system_demo_block(b)
+        ]
     filtered = [
         b
         for b in blocks
@@ -379,7 +401,9 @@ def merge_demo_links_block(
 
 
 def _build_ready_demo(
-    row: Mapping[str, Any], events_by_session: Mapping[UUID, list[SessionEvent]]
+    row: Mapping[str, Any],
+    events_by_session: Mapping[UUID, list[SessionEvent]],
+    title_chars: int | None,
 ) -> ReadyDemo | None:
     payload = row["payload"]
     if not isinstance(payload, Mapping):
@@ -393,14 +417,14 @@ def _build_ready_demo(
     step_id = raw_step if isinstance(raw_step, str) and raw_step else None
     seq = int(row["seq"])
     session_id = _opt_uuid(row["session_id"])
-    title = _clean_text(params_map.get("title"))
+    title = _clean_text(params_map.get("title"), title_chars)
     if not title and session_id is not None and step_id is not None:
         for _, step in _matching_plan_steps(events_by_session.get(session_id, ()), step_id, seq):
-            if step_title := _clean_text(step.text):
+            if step_title := _clean_text(step.text, title_chars):
                 title = step_title
                 break
     if not title:
-        title = _clean_text(params_map.get("description"))
+        title = _clean_text(params_map.get("description"), title_chars)
     if not title:
         title = step_id or "Демо"
     return ReadyDemo(
@@ -416,7 +440,7 @@ def _build_ready_demo(
 
 
 async def _load_demo_context(
-    db: Db, learner_id: UUID
+    db: Db, learner_id: UUID, title_chars: int | None
 ) -> tuple[list[ReadyDemo], dict[UUID, list[SessionEvent]], SkillTopicIndex]:
     viz_rows = await db.fetch_all(_READY_VIZ, {"learner_id": learner_id})
     if not viz_rows:
@@ -457,7 +481,7 @@ async def _load_demo_context(
     demos: list[ReadyDemo] = []
     seen: set[UUID] = set()
     for row in viz_rows:
-        demo = _build_ready_demo(row, events_by_session)
+        demo = _build_ready_demo(row, events_by_session, title_chars)
         if demo is None or demo.request_id in seen:
             continue
         seen.add(demo.request_id)
@@ -471,9 +495,10 @@ async def topic_ready_demos(
     learner_id: UUID,
     topic_id: UUID,
     skill_topic_fallback: Mapping[UUID, UUID] | None = None,
+    title_chars: int | None = None,
 ) -> list[ReadyDemo]:
     """All finished `viz` demos of the learner that map to `topic_id`, in chronological order."""
-    demos, events_by_session, index = await _load_demo_context(db, learner_id)
+    demos, events_by_session, index = await _load_demo_context(db, learner_id, title_chars)
     if not demos:
         return []
     target = index.canonical_topic(topic_id)
@@ -521,9 +546,10 @@ async def hub_ready_demos(
     is_domain_all: bool | None = None,
     session_id: UUID | None = None,
     skill_topic_fallback: Mapping[UUID, UUID] | None = None,
+    title_chars: int | None = None,
 ) -> list[ReadyDemo]:
     """All finished `viz` demos belonging to `hub_id`: topics, hub sessions, and `session_id`."""
-    demos, events_by_session, index = await _load_demo_context(db, learner_id)
+    demos, events_by_session, index = await _load_demo_context(db, learner_id, title_chars)
     if not demos:
         return []
     domain_all = (
