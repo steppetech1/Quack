@@ -244,6 +244,17 @@
   to { box-shadow: 0 0 0 4px transparent; }
 }
 
+/* Duck's foot of a running background job: a slow paddle; only when motion is welcome */
+@keyframes paw-paddle {
+  0%, 100% { transform: rotate(-16deg) translateY(0); }
+  50% { transform: rotate(-4deg) translateY(-1px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .paw-busy {
+    animation: paw-paddle 1.4s ease-in-out infinite;
+  }
+}
+
 @utility num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -299,6 +310,83 @@
   mask-repeat: no-repeat;
   -webkit-mask-position: 0 calc(var(--mask-y, 0%) * 2);
   mask-position: 0 calc(var(--mask-y, 0%) * 2);
+}
+
+/* пиксельная утка (components/quack/pixel-duck.tsx): 6 кадров (16×18 арт-пикселей) рисуются в <canvas width=16 height=18>
+   с image-rendering: pixelated (честный nearest-neighbor при любом DPR, без замыливания SVG и без сдвига ленты). */
+.pd {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+.pd:not([data-ready]) {
+  visibility: hidden;
+}
+.pd-btn {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+/* зона нажатия чуть шире спрайта, вниз не заходит (там заголовок / композер) */
+.pd-btn::after {
+  content: "";
+  position: absolute;
+  inset: -8px -8px 0;
+}
+.pd-hop,
+.pd-flip,
+.pd-view {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.pd-sheet {
+  display: block;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+.pd[data-dir="left"] .pd-flip {
+  transform: scaleX(-1);
+}
+@keyframes pd-hop {
+  0% { transform: translateY(0); }
+  35% { transform: translateY(-12px); }
+  70% { transform: translateY(0); }
+  82% { transform: translateY(-3px); }
+  100% { transform: translateY(0); }
+}
+@keyframes pd-pop {
+  from { translate: 0 6px; }
+  to { translate: 0 0; }
+}
+.pd-bubble {
+  position: fixed;
+  z-index: 60;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.pd-bubble[data-side="right"] {
+  transform: translate(0, -100%);
+}
+.pd-bubble[data-side="left"] {
+  transform: translate(-100%, -100%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pd[data-quack] .pd-hop {
+    animation: pd-hop 0.5s cubic-bezier(0.3, 0, 0.4, 1);
+  }
+  .pd-bubble {
+    animation: pd-pop 0.18s var(--ease-out);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

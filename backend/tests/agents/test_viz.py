@@ -126,7 +126,7 @@ async def test_viz_one_fix_round_and_failed(pg_db: Db) -> None:
     assert first["description"] == "a slider over the ratio test"
     assert first["previous_errors"] == NONE_LINE
     assert second["previous_errors"] == 'console error at {"a": 1}: x is undefined'
-    PromptRegistry().load("viz_builder", 1).render(first)
+    PromptRegistry().load("viz_builder", 2).render(first)
     assert [r.param_sets for r in compute.requests] == [[{"a": 1}], [{}]]
     assert done.type == "agent.completed"
     assert done.payload["ok"] is False and done.payload["error"] == "viz_check_failed"
@@ -238,3 +238,51 @@ async def test_the_request_carries_the_libraries_base_address(pg_db: Db) -> None
         request_id=other,
     )
     assert [r.libraries_base_url for r in plain.requests] == [None]  # no address configured
+
+
+def test_the_kit_goes_into_an_html_page_before_its_first_script_and_only_once() -> None:
+    """`viz_builder@2`: the helpers of `window.QV` are put into the page itself, so the page that
+    passed the check is the page that is published; an SVG is left alone; a page that carries the
+    kit already is not given it twice."""
+    from quack.agents.viz import KIT_JS, page_html, with_kit
+
+    with_head = with_kit(
+        "<!doctype html><html><head><title>t</title></head><body><script>x()</script></body></html>"
+    )
+    assert with_head.index("window.QV = {}") < with_head.index("x()")
+    assert with_head.count("window.QV = {}") == 1 and "<head><script>" in with_head
+    bare = with_kit("<body><script>x()</script></body>")
+    assert bare.index("window.QV = {}") < bare.index("x()")
+    assert with_kit(with_head) == with_head
+    assert with_kit("<p>text</p>").startswith("<script>") and KIT_JS in with_kit("<p>text</p>")
+    svg = VizBuilderOutput(format="svg", content="<svg/>", parameter_values=[], answer_action=None)
+    assert "QV" not in page_html(svg)
+    assert page_html(_page("<p>ok</p>")).count("window.QV = {}") == 1
+
+
+def test_a_stored_page_is_brought_to_the_current_kit_when_served() -> None:
+    """A fix of the kit (the canvas drawn sharp) reaches pages built before it: the copy of the kit
+    inside a stored page is replaced when the page is read; a page without it is left alone."""
+    from quack.practice.viz_page import KIT_JS, current_kit
+
+    old = (
+        "<html><head><script>/* Quack visualization kit: an old copy */var QV={};</script></head>"
+        "<body><script>draw()</script></body></html>"
+    )
+    fresh = current_kit(old)
+    assert "an old copy" not in fresh and KIT_JS in fresh and "draw()" in fresh
+    assert current_kit(fresh) == fresh  # nothing to replace twice
+    plain = "<html><body><p>no kit</p></body></html>"
+    assert current_kit(plain) == plain
+
+
+def test_the_kit_canvas_is_fitted_in_device_pixels() -> None:
+    """The canvas of the kit must not be stretched by the browser (the page looked soft on a full
+    screen): its size comes from device pixels, it is out of the layout, and a change of the pixel
+    ratio fits it again. The behaviour is checked in a real browser; here the code is pinned."""
+    from quack.practice.viz_page import KIT_JS
+
+    assert "devicePixelContentBoxSize" in KIT_JS
+    assert 'c.style.position = "absolute"' in KIT_JS
+    assert 'matchMedia("(resolution: "' in KIT_JS
+    assert "Math.floor(w * dpr)" not in KIT_JS

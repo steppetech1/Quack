@@ -97,7 +97,7 @@ def test_render_request_refuses_what_compute_cannot_draw() -> None:
 
 
 async def test_line_is_rendered_read_and_committed(pg_db: Db, settings: Settings) -> None:
-    """Т-§15.3: compute renders the line, `recognizer@1` reads the image, the log gets
+    """Т-§15.3: compute renders the line, `recognizer@2` reads the image, the log gets
     `canvas.line_committed {source: pen}`; a repeated `line_ready` writes nothing new; with
     compute down nothing is written."""
     learner = await create_learner(pg_db)
@@ -128,7 +128,7 @@ async def test_line_is_rendered_read_and_committed(pg_db: Db, settings: Settings
     assert again == committed
 
     (row,) = await _lines(pg_db, learner)
-    assert row["actor"] == "recognizer@1" and row["session_id"] == session_id
+    assert row["actor"] == "recognizer@2" and row["session_id"] == session_id
     assert row["payload"] == {
         "canvas_id": str(canvas_id),
         "line_id": "l1",

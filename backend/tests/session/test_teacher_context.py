@@ -24,6 +24,9 @@ from quack.events.log import StoredEvent
 from quack.events.records import (
     BodyBlockRecord,
     ExposureRecord,
+    LandmarkAddRecord,
+    LandmarkRefRecord,
+    PlanStepRecord,
     PlanUpdateRecord,
     TurnHeadRecord,
     TurnMarkupRecord,
@@ -41,6 +44,7 @@ from quack.graph.read import (
     SliceFocus,
 )
 from quack.llm.labels import LabelMap
+from quack.practice.session_plan import LandmarkEditsDoc, PlanDoc, lift_plan
 from quack.prompts.registry import PromptRegistry
 from quack.session.conversation import render_conversation, split_turns
 from quack.session.memory_picture import (
@@ -51,6 +55,7 @@ from quack.session.memory_picture import (
     picture_skills,
     render_memory_picture,
 )
+from quack.session.schemas import PlanLandmark
 from quack.session.teacher_context import (
     SLOT_VARIABLES,
     TRIM_ORDER,
@@ -465,9 +470,10 @@ def _committed(
             exposures=exposures or [],
             targets_misconception_id=None,
             plan_update=PlanUpdateRecord(
-                completed_steps=[],
-                current_step="explain",
+                goal=None,
+                current_step=PlanStepRecord(id="explain", text="explain"),
                 next_steps=[],
+                landmark_edits=None,
                 branches=[],
                 cancel_request_ids=[],
             ),
@@ -658,7 +664,7 @@ def test_slot_order_and_freeze() -> None:
     a change is a line of the tail."""
     variables = teacher_variables(_slots())
     assert set(SLOT_VARIABLES) | {"guard_feedback"} == set(variables)
-    prompt = PromptRegistry().load("teacher", 2)
+    prompt = PromptRegistry().load("teacher", 3)
     rendered = prompt.render(variables)
     markers = [
         "Memory tools:",
@@ -695,18 +701,116 @@ def test_slot_order_and_freeze() -> None:
 
 
 def test_session_plan_slot() -> None:
-    labels = LabelMap.build(SETTINGS, topics=[TOPIC])
-    plan = PlanUpdateRecord(
-        completed_steps=["recalled the definition"],
-        current_step="ratio test on an example",
-        next_steps=["a task without the method named"],
-        branches=[],
-        cancel_request_ids=[],
+    plan = PlanDoc(
+        goal="Learn the ratio test",
+        current_step=PlanStepRecord(
+            id="ratio-example",
+            text="ratio test on an example",
+            landmark=LandmarkRefRecord(kind="topic", id=TOPIC),
+        ),
+        next_steps=[PlanStepRecord(id="no-method", text="a task without the method named")],
+        landmark_edits=LandmarkEditsDoc(
+            added=[
+                LandmarkAddRecord(kind="skill", id=TASK_SKILL),
+                LandmarkAddRecord(kind="skill", id=uuid4()),
+            ],
+            removed=[LandmarkRefRecord(kind="topic", id=TOPIC)],
+        ),
     )
-    assert render_session_plan(SessionGoal(intent="practice", topic_id=TOPIC), plan, labels) == (
-        "Goal: Practice T1\nDone: recalled the definition\nCurrent step: ratio test on an example\n"
-        "Next: a task without the method named"
+    labels = LabelMap.build(SETTINGS, topics=[TOPIC], skills=[TASK_SKILL])
+    goal = SessionGoal(intent="practice", topic_id=TOPIC)
+    assert render_session_plan(goal, plan, labels) == (
+        "Goal: Practice T1\nPlan goal: Learn the ratio test\n"
+        "Current step (id ratio-example) [landmark T1]: ratio test on an example\n"
+        "Next step (id no-method): a task without the method named\n"
+        "Landmarks you added: S1 (+1 not in this table)\nLandmarks you removed: T1"
     )
+    # a document before version 2 has only the text of a step
+    old = lift_plan({"current_step": "idea", "next_steps": ["task"]})
+    assert render_session_plan(goal, old, labels) == (
+        "Goal: Practice T1\nCurrent step (id idea): idea\nNext step (id task): task"
+    )
+
+
+def test_session_plan_slot_with_landmarks() -> None:
+    """Slot 6 renders code-computed landmarks after `Plan goal` with labels, statuses,
+    teacher-added tags, and an unmapped fallback that never leaks raw UUIDs."""
+    unmapped = uuid4()
+    plan = PlanDoc(
+        goal="Learn the ratio test",
+        current_step=PlanStepRecord(
+            id="ratio-example",
+            text="ratio test on an example",
+            landmark=LandmarkRefRecord(kind="topic", id=TOPIC),
+        ),
+        next_steps=[PlanStepRecord(id="no-method", text="a task without the method named")],
+        landmark_edits=LandmarkEditsDoc(
+            added=[LandmarkAddRecord(kind="skill", id=GOAL_SKILL)],
+        ),
+    )
+    labels = LabelMap.build(SETTINGS, topics=[TOPIC], skills=[PREREQ_DONE, GOAL_SKILL])
+    goal = SessionGoal(intent="practice", topic_id=TOPIC)
+    landmarks = [
+        PlanLandmark(
+            kind="skill",
+            id=PREREQ_DONE,
+            title="Factorials",
+            status="done",
+            added_by_teacher=False,
+        ),
+        PlanLandmark(
+            kind="topic",
+            id=TOPIC,
+            title="Series tests",
+            status="current",
+            added_by_teacher=False,
+        ),
+        PlanLandmark(
+            kind="skill",
+            id=GOAL_SKILL,
+            title="Cauchy root test",
+            status="upcoming",
+            added_by_teacher=True,
+        ),
+        PlanLandmark(
+            kind="skill",
+            id=unmapped,
+            title="Unmapped skill",
+            status="upcoming",
+            added_by_teacher=False,
+        ),
+    ]
+    rendered = render_session_plan(goal, plan, labels, landmarks)
+    assert rendered == (
+        "Goal: Practice T1\n"
+        "Plan goal: Learn the ratio test\n"
+        "Landmarks (built by code; use their labels in planUpdate):\n"
+        "- S1 (done): Factorials\n"
+        "- T1 (current): Series tests\n"
+        "- S2 (upcoming, added by teacher): Cauchy root test\n"
+        "- (upcoming): Unmapped skill\n"
+        "Current step (id ratio-example) [landmark T1]: ratio test on an example\n"
+        "Next step (id no-method): a task without the method named\n"
+        "Landmarks you added: S2"
+    )
+    for uid in (PREREQ_DONE, TOPIC, GOAL_SKILL, unmapped):
+        assert str(uid) not in rendered
+
+
+def test_session_plan_slot_with_has_topic_notes() -> None:
+    labels = LabelMap.build(SETTINGS, topics=[TOPIC], hubs=[HUB])
+    topic_goal = SessionGoal(intent="learn", topic_id=TOPIC)
+    with_notes = render_session_plan(topic_goal, None, labels, has_topic_notes=True)
+    assert with_notes == (
+        "Goal: Learn T1\n"
+        "Topic notes: already saved in this topic (if the learner asks for notes or a summary "
+        "in chat, write the notes in your reply, mention that notes already exist in this topic, "
+        "and tell them they can update the topic notes with the button below)."
+    )
+    without_notes = render_session_plan(topic_goal, None, labels, has_topic_notes=False)
+    assert without_notes == "Goal: Learn T1"
+    hub_goal = SessionGoal(intent="learn", hub_id=HUB)
+    assert render_session_plan(hub_goal, None, labels, has_topic_notes=True) == "Goal: Learn H1"
 
 
 # --- T-CX6 ----------------------------------------------------------------------------------
@@ -734,7 +838,7 @@ def test_skill_invocation_in_tail() -> None:
 def test_context_budget_trim() -> None:
     """`T-CX5`: over `teacher_context_max_tokens` slots 8, 7, 9 are cut first, the conversation
     last; the current action of the learner stays; under the limit nothing changes."""
-    prompt = PromptRegistry().load("teacher", 2)
+    prompt = PromptRegistry().load("teacher", 3)
     conversation = "\n".join(
         [
             *(f"Turn {n}\nLearner: question {n}" for n in range(1, 40)),

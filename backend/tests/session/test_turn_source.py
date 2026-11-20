@@ -315,7 +315,21 @@ async def test_assemble_first_turn_freezes_slots(pg_db: Db) -> None:
     assert setup.manifest.frozen_slots is not None
     assert setup.manifest.frozen_slots["profile"].startswith("Preference answer_length: short")
     assert setup.manifest.renderer_version == "renderer@1"
-    assert setup.manifest.prompt_version == "teacher@2"
+    assert setup.manifest.prompt_version == "teacher@3"
+    assert {
+        "journal_ms",
+        "reads_ms",
+        "memory_ms",
+        "review_prep_ms",
+        "slice_ms",
+        "chunks_ms",
+        "digest_ms",
+        "completed_ms",
+        "inline_verdict_ms",
+        "cards_ms",
+        "parallel_ms",
+    } <= set(setup.timings)
+    assert all(isinstance(v, int) and v >= 0 for v in setup.timings.values())
     assert setup.labels.label("task", task_id) == "K1"
     assert setup.labels.label("skill", fx.SKILL_FAILED) is not None
     assert "Analyst summary: the denominators are the gap" in prompt
@@ -1210,3 +1224,339 @@ async def test_the_turn_labels_the_cards_of_its_focus_and_shows_their_questions(
     none = await source_with(SETTINGS).assemble(_request(lonely, session_id, lonely_seq))
     assert none.labels.labels("card") == {}
     assert "C1: " not in none.assembled.request.base.prompt
+
+
+async def test_assemble_includes_landmarks_and_teacher_edits_in_slot_6(pg_db: Db) -> None:
+    """Slot 6 includes code-computed landmarks and teacher-added landmarks (fetching extra
+    topics and skills as needed) when memory is up, with no raw UUIDs in the prompt."""
+    from psycopg.types.json import Jsonb
+
+    from quack.graph.read import TopicMemory
+
+    extra_topic = uuid4()
+
+    class _ReaderWithExtraTopic(fx.FixedGraphReader):
+        async def topic_memory(self, topic_ids: Any) -> list[TopicMemory]:
+            items = await super().topic_memory(topic_ids)
+            if extra_topic in topic_ids:
+                items.append(
+                    TopicMemory(
+                        topic_id=extra_topic,
+                        name="Decimal fractions",
+                        domain_id=fx.DOMAIN,
+                        skills=[],
+                        misconceptions=[],
+                    )
+                )
+            return items
+
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    plan_doc = {
+        "v": 2,
+        "goal": "Master reducing fractions",
+        "current_step": {
+            "id": "find-gcd",
+            "text": "Find common divisor",
+            "landmark": {"kind": "skill", "id": str(fx.SKILL_FAILED)},
+        },
+        "next_steps": [
+            {
+                "id": "try-extra",
+                "text": "Connect to decimals",
+                "landmark": {"kind": "topic", "id": str(extra_topic)},
+            }
+        ],
+        "landmark_edits": {
+            "added": [
+                {
+                    "kind": "skill",
+                    "id": str(fx.SKILL_PROVEN),
+                    "before_kind": None,
+                    "before_id": None,
+                },
+                {"kind": "topic", "id": str(extra_topic), "before_kind": None, "before_id": None},
+            ],
+            "removed": [],
+        },
+        "branches": [],
+    }
+    await pg_db.execute(
+        "INSERT INTO content.session_plans (session_id, learner_id, plan, status) "
+        "VALUES (%(s)s, %(l)s, %(p)s, 'active')",
+        {"s": session_id, "l": learner_id, "p": Jsonb(plan_doc)},
+    )
+    seq = await _message(
+        pg_db, learner_id, session_id, text="let's go", intent="learn", topic_id=fx.TOPIC_OPEN
+    )
+    source = MemoryTurnContextSource(
+        db=pg_db,
+        gateway=LLMGateway(ScriptedLLMProvider(), SETTINGS, db=pg_db),
+        settings=SETTINGS,
+        reader=lambda _learner: _ReaderWithExtraTopic(),
+        clock=lambda: NOW_MS,
+    )
+    setup = await source.assemble(_request(learner_id, session_id, seq))
+    prompt = setup.assembled.request.base.prompt
+
+    failed_label = setup.labels.label("skill", fx.SKILL_FAILED)
+    quiet_label = setup.labels.label("skill", fx.SKILL_QUIET)
+    proven_label = setup.labels.label("skill", fx.SKILL_PROVEN)
+    extra_label = setup.labels.label("topic", extra_topic)
+    assert all(x is not None for x in (failed_label, quiet_label, proven_label, extra_label))
+    assert "Plan goal: Master reducing fractions" in prompt
+    assert "Landmarks (built by code; use their labels in planUpdate):" in prompt
+    assert f"- {failed_label} (current): common denominator" in prompt
+    assert f"- {quiet_label} (upcoming): reduce a fraction" in prompt
+    assert f"- {proven_label} (done, added by teacher): add fractions" in prompt
+    assert f"- {extra_label} (upcoming, added by teacher): Decimal fractions" in prompt
+    assert f"{extra_label}: Decimal fractions" in prompt
+    for uid in (fx.SKILL_FAILED, fx.SKILL_QUIET, fx.SKILL_PROVEN, extra_topic):
+        assert str(uid) not in prompt
+
+
+async def test_assemble_degrades_cleanly_without_landmarks_when_neo4j_down(pg_db: Db) -> None:
+    """When Neo4j is unavailable, slot 6 keeps the stored plan without landmarks."""
+    from neo4j.exceptions import ServiceUnavailable
+    from psycopg.types.json import Jsonb
+
+    class _Down(fx.FixedGraphReader):
+        async def profile(self, learner_id: UUID) -> Any:
+            raise ServiceUnavailable("neo4j is down")
+
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    await pg_db.execute(
+        "INSERT INTO content.session_plans (session_id, learner_id, plan, status) "
+        "VALUES (%(s)s, %(l)s, %(p)s, 'active')",
+        {
+            "s": session_id,
+            "l": learner_id,
+            "p": Jsonb(
+                {
+                    "v": 2,
+                    "goal": "Master reducing fractions",
+                    "current_step": {"id": "step-1", "text": "Start", "landmark": None},
+                    "next_steps": [],
+                    "landmark_edits": {"added": [], "removed": []},
+                    "branches": [],
+                }
+            ),
+        },
+    )
+    seq = await _message(
+        pg_db, learner_id, session_id, text="hello", intent="learn", topic_id=fx.TOPIC_OPEN
+    )
+    source = MemoryTurnContextSource(
+        db=pg_db,
+        gateway=LLMGateway(ScriptedLLMProvider(), SETTINGS, db=pg_db),
+        settings=SETTINGS,
+        reader=lambda _learner: _Down(),
+        clock=lambda: NOW_MS,
+    )
+    setup = await source.assemble(_request(learner_id, session_id, seq))
+    prompt = setup.assembled.request.base.prompt
+
+    assert setup.assembled.degraded_mode == "memory_unavailable"
+    assert "Plan goal: Master reducing fractions" in prompt
+    assert "Current step (id step-1): Start" in prompt
+    assert "Landmarks (built by code" not in prompt
+
+
+def test_fix_markup_request_builds_strict_task_and_element_schemas() -> None:
+    """`_fix_markup_request` targets `TurnTask` for task elements and the concrete element
+    model for non-task elements, passing the shown text, problems, and label-table rule."""
+    from quack.llm.provider import ProviderRequest
+    from quack.session.elements import MaterialLinkElement, TaskElement
+    from quack.session.teacher_output import TurnTask
+    from quack.session.turn_graph import MarkupFix
+    from quack.session.turn_source import _fix_markup_request
+
+    base = ProviderRequest(
+        model="muse-wonder-1.0",
+        prompt="context",
+        json_schema={"type": "object"},
+        schema_name="TeacherOutputV2",
+        temperature=0.0,
+        timeout_sec=30.0,
+    )
+    task_el = TaskElement(
+        element_id="e1", kind="task", prompt="Add 1/2 and 1/3", canvas=True, ask_confidence=False
+    )
+    task_req, task_model = _fix_markup_request(
+        base,
+        MarkupFix(
+            element=task_el,
+            task=None,
+            problems=["no task markup"],
+            text="Try this problem.",
+            attempt=1,
+        ),
+    )
+    assert task_model is TurnTask and task_req.base.schema_name == "TurnTask"
+    assert task_req.base.json_schema["additionalProperties"] is False
+    note = task_req.input_items[0]["content"][0]["text"]
+    assert "no task markup" in note and "Label table" in note and "Try this problem." in note
+
+    link_el = MaterialLinkElement(element_id="e2", kind="material_link", chunk="P9", page=4)
+    link_req, link_model = _fix_markup_request(
+        base,
+        MarkupFix(
+            element=link_el,
+            task=None,
+            problems=["unknown_label: P9"],
+            text="See the notes.",
+            attempt=1,
+        ),
+    )
+    assert link_model is MaterialLinkElement
+    assert link_req.base.schema_name == "MaterialLinkElement"
+    assert link_req.base.json_schema["additionalProperties"] is False
+    assert "unknown_label: P9" in link_req.input_items[0]["content"][0]["text"]
+
+
+async def test_assemble_wires_fix_markup_and_degrades_on_error(pg_db: Db) -> None:
+    """`assemble` wires `TurnSetup.fix_markup` through the gateway stream and `ApiTurnPorts`
+    returns `None` cleanly if the fix call fails."""
+    from quack.session.action_turn import ApiTurnPorts
+    from quack.session.elements import MaterialLinkElement, TaskElement
+    from quack.session.record import RecordedAction
+    from quack.session.teacher_output import TurnTask
+    from quack.session.turn_graph import MarkupFix
+    from tests.support.llm import ScriptedFailure
+
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    seq = await _message(pg_db, learner_id, session_id, text="teach me", intent="learn")
+    provider = ScriptedLLMProvider()
+    provider.respond(
+        "TurnTask",
+        lambda _r: {
+            "element_id": "e1",
+            "tests": [{"skill": "S1", "new_skill": None, "level": 3}],
+            "methodNamed": True,
+            "variantOf": None,
+            "answer": {
+                "type": "number",
+                "value": {"latex": "5/6", "sympy": "5/6"},
+                "items": None,
+                "options": None,
+                "accepted": None,
+                "tol_abs": None,
+                "tol_rel": None,
+                "sig_digits": None,
+                "unit": None,
+                "mode": None,
+                "form_target": None,
+                "variables": None,
+                "key_ideas": None,
+            },
+            "options": None,
+            "pairTaskId": None,
+            "form": None,
+            "parts": None,
+        },
+    )
+    provider.respond(
+        "MaterialLinkElement",
+        lambda _r: {"element_id": "e2", "kind": "material_link", "chunk": "P1", "page": 4},
+    )
+    gateway = LLMGateway(provider, SETTINGS, db=pg_db)
+    source = MemoryTurnContextSource(
+        db=pg_db,
+        gateway=gateway,
+        settings=SETTINGS,
+        reader=lambda _learner: fx.FixedGraphReader(),
+        clock=lambda: NOW_MS,
+    )
+    setup = await source.assemble(_request(learner_id, session_id, seq))
+    assert setup.fix_markup is not None
+
+    task_el = TaskElement(
+        element_id="e1", kind="task", prompt="Add 1/2 and 1/3", canvas=True, ask_confidence=False
+    )
+    fixed_task = await setup.fix_markup(
+        MarkupFix(element=task_el, task=None, problems=["no task markup"], text="Solve.", attempt=1)
+    )
+    assert isinstance(fixed_task, TurnTask) and fixed_task.element_id == "e1"
+
+    link_el = MaterialLinkElement(element_id="e2", kind="material_link", chunk="P9", page=4)
+    fixed_link = await setup.fix_markup(
+        MarkupFix(
+            element=link_el, task=None, problems=["unknown_label: P9"], text="Read.", attempt=1
+        )
+    )
+    assert isinstance(fixed_link, MaterialLinkElement) and fixed_link.chunk == "P1"
+
+    ports = ApiTurnPorts(
+        db=pg_db,
+        redis=None,
+        settings=SETTINGS,
+        source=source,
+        learner_id=learner_id,
+        session_id=session_id,
+        domain_id=fx.DOMAIN,
+        recorded=RecordedAction(seq=seq, verdict=None, starts_turn=True),
+        action=cast(Action, None),
+        frames=cast(Any, None),
+    )
+    ports.setup = setup
+    provider.fail(
+        ScriptedFailure(
+            kind="unavailable", schema_name="TurnTask", times=1 + SETTINGS.llm_retry_attempts
+        )
+    )
+    assert (
+        await ports.fix_markup(
+            MarkupFix(
+                element=task_el, task=None, problems=["no task markup"], text="Solve.", attempt=1
+            )
+        )
+        is None
+    )
+
+
+def test_canonical_topic_name_strips_domain_prefix_in_teacher_context() -> None:
+    from quack.graph.topic_names import canonical_topic_name
+
+    assert canonical_topic_name("Statistics: binomial distribution", "Statistics") == (
+        "binomial distribution"
+    )
+    assert canonical_topic_name("Statistics: normal distribution", "Statistics") == (
+        "normal distribution"
+    )
+    assert canonical_topic_name("normal distribution", "Statistics") == "normal distribution"
+
+
+async def test_assemble_notes_awareness_when_topic_has_notes(pg_db: Db) -> None:
+    from quack.artifacts.documents import SystemBlock, write_system_blocks
+    from quack.session.turn_inputs import has_topic_notes
+
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    await _topic_row(pg_db, learner_id, fx.TOPIC_OPEN)
+    assert not await has_topic_notes(pg_db, learner_id=learner_id, topic_id=fx.TOPIC_OPEN)
+    assert not await has_topic_notes(pg_db, learner_id=learner_id, topic_id=None)
+
+    await write_system_blocks(
+        pg_db,
+        learner_id=learner_id,
+        kind="notes",
+        owner_id=fx.TOPIC_OPEN,
+        blocks=[SystemBlock(kind="summary", content="Fractions notes")],
+        created_by="artifact_writer@1",
+    )
+    assert await has_topic_notes(pg_db, learner_id=learner_id, topic_id=fx.TOPIC_OPEN)
+
+    seq = await _message(
+        pg_db, learner_id, session_id, text="give me notes", intent="learn", topic_id=fx.TOPIC_OPEN
+    )
+    source = MemoryTurnContextSource(
+        db=pg_db,
+        gateway=LLMGateway(ScriptedLLMProvider(), SETTINGS, db=pg_db),
+        settings=SETTINGS,
+        reader=lambda _learner: fx.FixedGraphReader(),
+        clock=lambda: NOW_MS,
+    )
+    setup = await source.assemble(_request(learner_id, session_id, seq))
+    assert "Topic notes: already saved in this topic" in setup.assembled.request.base.prompt

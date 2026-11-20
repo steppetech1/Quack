@@ -1,5 +1,12 @@
 """ТЗ Ф4 §8.9 T-TT2, T-TT3, T-TT4, T-TT5, T-TT6 at the turn graph (WP13.2, WP13.4, WP13.5).
 
+Only a violation found before the text is shown returns the turn to the model (the head, the
+spoiler, a cut answer); the markup, a stance without a code verdict, the plan format and the
+boundary are settled or logged by code, with one stream call and no `reset`. The spoiler guard
+has two modes (`spoiler_guard_mode`): `enforce` — the holdback buffer, the rollback, the cut
+sentence; `shadow` (the default) — nothing changes in the turn, the hit is only recorded
+(`guard_events`, `GuardSample`).
+
 The graph runs on the seam S13 provider (`ScriptedLLMProvider.stream_structured`) and on
 in-memory ports: admission, context, tools, the write and the frames are the caller's
 (route body, WP13.1/§4.7; context WP14). The write of `turn.committed` with the manifest
@@ -15,6 +22,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import uuid4
 
+import pytest
+from pydantic import TypeAdapter
 from structlog.testing import capture_logs
 
 from quack.config import Settings
@@ -31,7 +40,9 @@ from quack.session.actions import (
     TurnCommittedFrame,
     VerdictFrame,
 )
+from quack.session.elements import Element
 from quack.session.guards import Boundary
+from quack.session.spoiler_guard import spoiler_hits
 from quack.session.teacher_output import TurnTask
 from quack.session.turn_graph import (
     AssembledTurn,
@@ -93,9 +104,14 @@ def _markup(**fields: Any) -> dict[str, Any]:
         "exposures": [{"skill": "S1", "kind": "explained", "approach": "none"}],
         "targetsMisconception": None,
         "planUpdate": {
-            "completed_steps": [],
-            "current_step": "sum of a geometric series",
+            "goal": None,
+            "current_step": {
+                "id": "sum-of-a-geometric-series",
+                "text": "sum of a geometric series",
+                "landmark": None,
+            },
             "next_steps": [],
+            "landmark_edits": None,
             "branches": [],
             "cancel_requests": [],
         },
@@ -143,6 +159,7 @@ def _guard(
         remove_spoiler=_remove_spoiler,
         boundary=boundary,
         labels=labels,
+        spoiler_hits=lambda text: spoiler_hits(text, [ANSWER], _settings()),
     )
 
 
@@ -204,12 +221,15 @@ class Ports:
     async def emit(self, frame: Any) -> None:
         self.frames.append(frame)
 
-    async def fix_markup(self, fix: MarkupFix) -> TurnTask | None:
-        """The n-th fix answer is `fixes[n]` (the last repeats); none — no fix."""
+    async def fix_markup(self, fix: MarkupFix) -> TurnTask | Element | None:
+        """The n-th fix answer is `fixes[n]` (the last repeats); none — no fix. An answer with a
+        `kind` is an element, any other is the markup of a task."""
         self.fix_calls.append(fix)
         if not self.fixes:
             return None
         answer = self.fixes.pop(0) if len(self.fixes) > 1 else self.fixes[0]
+        if "kind" in answer:
+            return TypeAdapter(Element).validate_python(answer)
         return TurnTask.model_validate(answer)
 
 
@@ -323,7 +343,7 @@ async def test_long_body_streams_before_the_end() -> None:
     _answers(provider, _turn(CLEAN_PREFIX * 3))
     ports = _ports()
 
-    await _run(ports, provider, spoiler_holdback_chars=40)
+    await _run(ports, provider, spoiler_holdback_chars=40, spoiler_guard_mode="enforce")
 
     tokens = [f for f in ports.frames if isinstance(f, TokenFrame)]
     assert len(tokens) > 2
@@ -340,11 +360,13 @@ async def test_holdback_spoiler_reset() -> None:
     _answers(provider, _turn(CLEAN_PREFIX + f"The sum is {ANSWER}. Check it."), _turn())
     ports = _ports()
 
-    await _run(ports, provider, spoiler_holdback_chars=20)
+    await _run(ports, provider, spoiler_holdback_chars=20, spoiler_guard_mode="enforce")
 
     resets = [f for f in ports.frames if isinstance(f, ResetFrame)]
     assert resets == [ResetFrame(reason="spoiler")]
-    before = ports.frames[: ports.frames.index(resets[0])]
+    at = ports.frames.index(resets[0])
+    assert ports.frames[at + 1] == StatusFrame(state="thinking")
+    before = ports.frames[:at]
     assert _shown(before) and ANSWER not in _shown(before)
     after = ports.frames[ports.frames.index(resets[0]) :]
     assert _shown(after) == CLEAN_PREFIX
@@ -359,13 +381,24 @@ async def test_spoiler_after_retries_sentence_removed() -> None:
     _answers(provider, _turn(CLEAN_PREFIX + f"The sum is {ANSWER}. Check it."))
     ports = _ports()
 
-    await _run(ports, provider, spoiler_holdback_chars=20, guard_max_retries=2)
+    await _run(
+        ports,
+        provider,
+        spoiler_holdback_chars=20,
+        guard_max_retries=2,
+        spoiler_guard_mode="enforce",
+    )
 
     assert len(provider.stream_calls) == 3
     assert ANSWER not in _shown(ports.frames)
     [turn] = ports.committed
     assert ANSWER not in turn.text and "Check it." in turn.text
     assert turn.guard_retries == 2
+    # the cleaned text comes in sentences, not in one piece; the pieces are the committed text
+    last_reset = max(i for i, f in enumerate(ports.frames) if isinstance(f, ResetFrame))
+    assert ports.frames[last_reset + 1] == StatusFrame(state="thinking")
+    tail = [f.text for f in ports.frames[last_reset:] if isinstance(f, TokenFrame)]
+    assert len(tail) >= 2 and "".join(tail) == turn.text
     body = [b.text for b in turn.output.p2_body.blocks if b.text is not None]
     assert all(ANSWER not in text for text in body)
 
@@ -374,36 +407,49 @@ async def test_spoiler_after_retries_sentence_removed() -> None:
 
 
 async def test_head_guards() -> None:
-    """Honest verdict and «the turn is marked»: violation → retry before the body is shown."""
+    """«The turn is marked»: an empty `targetSkills` goes back to the model before the body is
+    shown. A `code` stance without a code verdict does not: it is lowered at once."""
     provider = ScriptedLLMProvider()
     _answers(
         provider,
         _turn("Unmarked.", head=_head(targetSkills=[])),
-        _turn("Code stance.", head=_head(verdict_stance="code")),
-        _turn(),
+        _turn(CLEAN_PREFIX, head=_head(verdict_stance="code")),
     )
     ports = _ports(verdict=_verdict("model"))
 
-    await _run(ports, provider)
+    with capture_logs() as logs:
+        await _run(ports, provider)
 
-    assert len(provider.stream_calls) == 3
+    assert len(provider.stream_calls) == 2
     assert _shown(ports.frames) == CLEAN_PREFIX
     assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
-    reasons = str(provider.stream_calls[2].input_items)
-    assert "no_target_skills" in reasons and "stance_without_code_verdict" in reasons
+    reasons = str(provider.stream_calls[1].input_items)
+    assert "no_target_skills" in reasons and "stance_without_code_verdict" not in reasons
+    [turn] = ports.committed
+    assert turn.output.p1_head.verdict_stance == "formative" and turn.guard_retries == 1
+    assert any(
+        e["event"] == "guard_violation"
+        and e["rule"] == "head"
+        and e["reasons"] == ["stance_without_code_verdict"]
+        for e in logs
+    )
 
 
-async def test_stance_settled_after_retries() -> None:
+async def test_code_stance_without_a_code_verdict_is_lowered_without_a_retry() -> None:
     provider = ScriptedLLMProvider()
     _answers(provider, _turn(head=_head(verdict_stance="code")))
     ports = _ports(verdict=_verdict("model"))
 
-    await _run(ports, provider, guard_max_retries=1)
+    with capture_logs() as logs:
+        await _run(ports, provider)
 
-    assert len(provider.stream_calls) == 2
+    assert len(provider.stream_calls) == 1
+    assert _shown(ports.frames) == CLEAN_PREFIX
+    assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
     [turn] = ports.committed
     assert turn.output.p1_head.verdict_stance == "formative"
-    assert turn.guard_retries == 1
+    assert turn.guard_retries == 0
+    assert any(e["event"] == "guard_violation" and e["rule"] == "head" for e in logs)
 
 
 async def test_code_stance_with_code_verdict_passes() -> None:
@@ -411,10 +457,12 @@ async def test_code_stance_with_code_verdict_passes() -> None:
     _answers(provider, _turn(head=_head(verdict_stance="code")))
     ports = _ports(verdict=_verdict("code"))
 
-    await _run(ports, provider)
+    with capture_logs() as logs:
+        await _run(ports, provider)
 
     assert len(provider.stream_calls) == 1
     assert ports.committed[0].output.p1_head.verdict_stance == "code"
+    assert not [e for e in logs if e["event"] == "guard_violation"]
 
 
 def _jump() -> Boundary:
@@ -427,35 +475,35 @@ def _jump() -> Boundary:
     )
 
 
-async def test_boundary_jump_retried_before_the_body() -> None:
-    """«Do not jump the boundary» at the head: retry before any body text; a turn that takes
-    the prerequisite too passes."""
-    provider = ScriptedLLMProvider()
-    _answers(
-        provider,
-        _turn("Jumped.", head=_head(targetSkills=["S1"])),
-        _turn(head=_head(targetSkills=["S1", "S2"])),
-    )
-    ports = _ports(boundary=_jump())
-
-    await _run(ports, provider)
-
-    assert len(provider.stream_calls) == 2
-    assert _shown(ports.frames) == CLEAN_PREFIX
-    assert "boundary_jump" in str(provider.stream_calls[1].input_items)
-
-
-async def test_boundary_jump_after_retries_is_shown_and_logged() -> None:
+async def test_boundary_jump_is_logged_and_does_not_return_the_turn() -> None:
+    """«Do not jump the boundary» (the head): the turn is shown and committed at the first
+    attempt; the case is a structured log with the labels and a count (the metric)."""
     provider = ScriptedLLMProvider()
     _answers(provider, _turn(head=_head(targetSkills=["S1"])))
     ports = _ports(boundary=_jump())
 
     with capture_logs() as logs:
-        await _run(ports, provider, guard_max_retries=1)
+        await _run(ports, provider)
 
-    assert len(provider.stream_calls) == 2 and len(ports.committed) == 1
+    assert len(provider.stream_calls) == 1 and len(ports.committed) == 1
+    assert ports.committed[0].guard_retries == 0
     assert _shown(ports.frames) == CLEAN_PREFIX
-    assert any(e["event"] == "guard_violation" and "boundary_jump" in e["reasons"] for e in logs)
+    assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
+    [entry] = [e for e in logs if e["event"] == "guard_violation"]
+    assert entry["rule"] == "boundary" and entry["reasons"] == ["boundary_jump"]
+    assert entry["skills"] == ["S1"] and entry["missing"] == ["S2"] and entry["count"] == 1
+
+
+async def test_a_turn_that_takes_the_prerequisite_too_logs_nothing() -> None:
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(head=_head(targetSkills=["S1", "S2"])))
+    ports = _ports(boundary=_jump())
+
+    with capture_logs() as logs:
+        await _run(ports, provider)
+
+    assert len(provider.stream_calls) == 1
+    assert not [e for e in logs if e["event"] == "guard_violation"]
 
 
 async def test_unknown_labels_after_retries_are_dropped_from_the_committed_turn() -> None:
@@ -479,18 +527,64 @@ async def test_unknown_labels_after_retries_are_dropped_from_the_committed_turn(
     assert turn.guard_retries == 1
 
 
-async def test_markup_labels_reset_after_shown_text() -> None:
-    """Unknown label in `p3_markup` after the body was shown → `reset {guard}`, retry."""
+async def test_unknown_markup_label_after_shown_text_is_dropped_without_a_retry() -> None:
+    """An unknown exposure and `targetsMisconception` in `p3_markup`, after the text is shown:
+    one model attempt, no `reset`, the text stays, the labels are dropped, the turn is committed
+    and the case is logged."""
     provider = ScriptedLLMProvider()
-    bad = _turn(exposures=[{"skill": "S9", "kind": "explained", "approach": "none"}])
-    _answers(provider, bad, _turn())
+    bad = _turn(
+        exposures=[
+            {"skill": "S1", "kind": "explained", "approach": "none"},
+            {"skill": "S9", "kind": "explained", "approach": "none"},
+        ],
+        targetsMisconception="M9",
+    )
+    _answers(provider, bad)
     ports = _ports()
 
-    await _run(ports, provider, spoiler_holdback_chars=20)
+    with capture_logs() as logs:
+        await _run(ports, provider, spoiler_holdback_chars=20)
 
-    assert [f for f in ports.frames if isinstance(f, ResetFrame)] == [ResetFrame(reason="guard")]
-    assert "unknown_skill_label" in str(provider.stream_calls[1].input_items)
-    assert ports.committed[0].guard_retries == 1
+    assert len(provider.stream_calls) == 1
+    assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
+    assert _shown(ports.frames) == CLEAN_PREFIX
+    [turn] = ports.committed
+    assert turn.text == CLEAN_PREFIX and turn.guard_retries == 0
+    assert [e.skill for e in turn.output.p3_markup.exposures] == ["S1"]
+    assert turn.output.p3_markup.targets_misconception is None
+    [entry] = [e for e in logs if e["event"] == "guard_violation"]
+    assert entry["rule"] == "markup"
+    assert entry["reasons"] == ["unknown_skill_label", "unknown_misconception_label"]
+
+
+async def test_plan_format_is_made_by_code_without_a_retry() -> None:
+    """A step `id` that is no slug and too many `next_steps` used to return the turn: now the slug
+    is made and the list is cut, at every turn, before the commit."""
+    steps = [
+        {"id": "Ratio Test!", "text": "ratio test", "landmark": None},
+        {"id": "b", "text": "b", "landmark": None},
+        {"id": "c", "text": "c", "landmark": None},
+        {"id": "d", "text": "d", "landmark": None},
+    ]
+    plan = _markup()["planUpdate"] | {
+        "current_step": {"id": "Sum Of Series", "text": "sum", "landmark": None},
+        "next_steps": steps,
+    }
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(planUpdate=plan))
+    ports = _ports()
+
+    with capture_logs() as logs:
+        await _run(ports, provider, plan_next_steps_max=2)
+
+    assert len(provider.stream_calls) == 1
+    assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
+    [turn] = ports.committed
+    committed = turn.output.p3_markup.plan_update
+    assert committed.current_step is not None and committed.current_step.id == "sum-of-series"
+    assert [s.id for s in committed.next_steps or []] == ["ratio-test", "b"]
+    assert turn.guard_retries == 0 and turn.text == CLEAN_PREFIX
+    assert any(e["event"] == "guard_violation" and "plan_step" in e["reasons"] for e in logs)
 
 
 async def test_invalid_task_markup_removes_element() -> None:
@@ -657,11 +751,12 @@ def _with_link(turn: dict[str, Any], chunk: str) -> dict[str, Any]:
     return turn
 
 
-async def test_unresolvable_labels_are_retried_then_dropped_from_the_turn() -> None:
+async def test_unresolvable_labels_are_dropped_from_the_turn_without_a_retry() -> None:
     """`cancel_requests: ["R9"]`, a request of an unknown topic and a link to an unknown chunk
-    used to reach `turn_batch` after the text was shown (`UnknownLabelError`, `SERVICE_UNAVAILABLE`,
-    no turn in the journal). Now the guard returns the turn to the model naming the labels and,
-    after the retries, takes them out of what is committed; the element goes with its block."""
+    used to reach `turn_batch` after the text was shown (`UnknownLabelError`, no turn in the
+    journal), then they returned the turn to the model. Now code takes the labels out of what is
+    committed at the first attempt; the link goes to the fix call first (none came here), then
+    leaves with its block."""
     plan = _markup()["planUpdate"] | {"cancel_requests": ["R1", "R9"]}
     request = {
         "kind": "viz",
@@ -680,11 +775,18 @@ async def test_unresolvable_labels_are_retried_then_dropped_from_the_turn() -> N
     _answers(provider, bad)
     ports = _ports(labels=_label_table())
 
-    await _run(ports, provider, guard_max_retries=1)
+    with capture_logs() as logs:
+        await _run(ports, provider, guard_max_retries=1)
 
-    assert len(provider.stream_calls) == 2
-    retry_input = str(provider.stream_calls[1].input_items)
-    assert "unknown_label" in retry_input and "R9" in retry_input and "P9" in retry_input
+    assert len(provider.stream_calls) == 1
+    assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
+    assert _shown(ports.frames) == CLEAN_PREFIX
+    [entry] = [e for e in logs if e["event"] == "guard_violation" and e["rule"] == "markup"]
+    detail = str(entry["details"])
+    assert entry["reasons"] == ["unknown_label"] and "R9" in detail and "P9" in detail
+    [fix] = ports.fix_calls
+    assert fix.element.element_id == "e2" and fix.task is None
+    assert fix.problems == ["unknown_label: P9 (chunk)"] and fix.text == CLEAN_PREFIX
     [turn] = ports.committed
     markup = turn.output.p3_markup
     assert markup.plan_update.cancel_requests == ["R1"]
@@ -692,6 +794,86 @@ async def test_unresolvable_labels_are_retried_then_dropped_from_the_turn() -> N
     assert [e.element_id for e in markup.elements] == ["e1"]
     assert [b.block_id for b in turn.output.p2_body.blocks] == ["b1", "b2"]
     assert [f.block_id for f in ports.frames if isinstance(f, ElementFrame)] == ["b2"]
+    assert turn.text == CLEAN_PREFIX and turn.guard_retries == 0
+
+
+def _chunk_table() -> LabelMap:
+    return LabelMap.build(_settings(), skills=[uuid4()], chunks=[uuid4()])
+
+
+def _link_fix(chunk: str, **fields: Any) -> dict[str, Any]:
+    return {"element_id": "e2", "kind": "material_link", "chunk": chunk, "page": None} | fields
+
+
+async def test_an_element_with_an_unknown_label_is_fixed_and_the_text_stays() -> None:
+    """The fix call of `fix_markup`, as for a task: the text is not generated again, no `reset`,
+    the fixed element is shown and committed in its place."""
+    provider = ScriptedLLMProvider()
+    _answers(provider, _with_link(_turn(), "P9"))
+    ports = _ports(labels=_chunk_table())
+    ports.fixes = [_link_fix("P1")]
+
+    await _run(ports, provider)
+
+    assert len(provider.stream_calls) == 1
+    assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
+    [fix] = ports.fix_calls
+    assert fix.element.element_id == "e2" and fix.attempt == 1 and fix.text == CLEAN_PREFIX
+    assert [f.block_id for f in ports.frames if isinstance(f, ElementFrame)] == ["b2", "b3"]
+    [turn] = ports.committed
+    assert turn.text == CLEAN_PREFIX
+    links = [e for e in turn.output.p3_markup.elements if e.kind == "material_link"]
+    assert [(e.element_id, e.chunk) for e in links] == [("e2", "P1")]
+    assert [b.block_id for b in turn.output.p2_body.blocks] == ["b1", "b2", "b3"]
+
+
+async def test_an_element_that_cannot_be_fixed_is_removed_with_its_block() -> None:
+    """Every fix still has the unknown label (or is another element, or another kind): at most
+    `guard_max_retries` calls, then the element goes with its block; the text is whole."""
+    provider = ScriptedLLMProvider()
+    _answers(provider, _with_link(_turn(), "P9"))
+    ports = _ports(labels=_chunk_table())
+    ports.fixes = [_link_fix("P8"), _link_fix("P1", element_id="e9"), _link_fix("P1")]
+
+    with capture_logs() as logs:
+        await _run(ports, provider, guard_max_retries=2)
+
+    assert len(ports.fix_calls) == 2 and len(provider.stream_calls) == 1
+    assert [f.attempt for f in ports.fix_calls] == [1, 2]
+    assert [f.block_id for f in ports.frames if isinstance(f, ElementFrame)] == ["b2"]
+    [turn] = ports.committed
+    assert turn.text == CLEAN_PREFIX
+    assert [e.element_id for e in turn.output.p3_markup.elements] == ["e1"]
+    assert [b.block_id for b in turn.output.p2_body.blocks] == ["b1", "b2"]
+    assert any(e["event"] == "guard_violation" and e["rule"] == "element_markup" for e in logs)
+
+
+async def test_an_element_fix_of_another_kind_is_not_taken() -> None:
+    provider = ScriptedLLMProvider()
+    _answers(provider, _with_link(_turn(), "P9"))
+    ports = _ports(labels=_chunk_table())
+    ports.fixes = [{"element_id": "e2", "kind": "card_series", "cards": []}]
+
+    await _run(ports, provider, guard_max_retries=1)
+
+    assert len(ports.fix_calls) == 1
+    [turn] = ports.committed
+    assert [e.element_id for e in turn.output.p3_markup.elements] == ["e1"]
+
+
+async def test_an_element_with_an_unknown_label_and_no_block_is_dropped_unfixed() -> None:
+    """No block shows it, so there is nothing to fix; it must not reach the write."""
+    provider = ScriptedLLMProvider()
+    turn = _with_link(_turn(), "P9")
+    turn["p2_body"]["blocks"].pop()  # the link element has no block now
+    _answers(provider, turn)
+    ports = _ports(labels=_chunk_table())
+
+    await _run(ports, provider)
+
+    assert ports.fix_calls == []
+    [committed] = ports.committed
+    assert [e.element_id for e in committed.output.p3_markup.elements] == ["e1"]
 
 
 async def test_task_markup_without_a_block_is_checked_too() -> None:
@@ -743,10 +925,213 @@ async def test_a_cut_step_after_tools_leaves_no_shown_text_behind() -> None:
 
     cut = _CutSecondStep(provider)
     await run_turn(
-        ports, cut, settings=_settings(spoiler_holdback_chars=20), cancel=asyncio.Event()
+        ports,
+        cut,
+        settings=_settings(spoiler_holdback_chars=20, spoiler_guard_mode="enforce"),
+        cancel=asyncio.Event(),
     )
 
     resets = [f for f in ports.frames if isinstance(f, ResetFrame)]
     assert resets == [ResetFrame(reason="guard")]
+    assert ports.frames[ports.frames.index(resets[0]) + 1] == StatusFrame(state="thinking")
     [turn] = ports.committed
     assert ANSWER not in turn.text
+
+
+# --- the spoiler guard in `shadow`, and what the guard records (guard_events, samples) ---------
+
+
+SPOILED = CLEAN_PREFIX + f"The sum is {ANSWER}. Check it."
+
+
+def _events(turn: TurnToCommit) -> list[tuple[str, str, str, bool]]:
+    return [(e.rule, e.reason, e.phase, e.retried) for e in turn.guard_events]
+
+
+async def test_shadow_spoiler_changes_nothing_in_the_turn_and_is_recorded() -> None:
+    """`shadow` (the default): the reply with the answer is shown whole, at once, with one model
+    attempt, no `reset`, no cut sentence; the hit is a `guard_events` entry and a sample."""
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(SPOILED))
+    ports = _ports()
+
+    with capture_logs() as logs:
+        await _run(ports, provider)
+
+    assert len(provider.stream_calls) == 1
+    assert not [f for f in ports.frames if isinstance(f, ResetFrame)]
+    assert _shown(ports.frames) == SPOILED  # nothing was held back, nothing was cut
+    [turn] = ports.committed
+    assert turn.text == SPOILED and turn.guard_retries == 0
+    assert _events(turn) == [("spoiler", "answer_in_text", "spoiler_shadow", False)]
+    [sample] = turn.guard_samples
+    assert (sample.rule, sample.reason, sample.answer_token) == ("spoiler", "shadow", ANSWER)
+    assert sample.sentence == f"The sum is {ANSWER}."  # the matched sentence, not the whole reply
+    assert any(e["event"] == "guard_violation" and e["mode"] == "shadow" for e in logs)
+
+
+async def test_shadow_does_not_hold_the_text_back() -> None:
+    """Without the check there is nothing to wait for: the text goes out as it comes."""
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(CLEAN_PREFIX * 2))
+    ports = _ports()
+
+    await _run(ports, provider, spoiler_holdback_chars=100_000)
+
+    tokens = [f for f in ports.frames if isinstance(f, TokenFrame)]
+    assert len(tokens) > 1 and _shown(ports.frames) == CLEAN_PREFIX * 2
+
+
+async def test_shadow_clean_turn_records_nothing() -> None:
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn())
+    ports = _ports()
+
+    await _run(ports, provider)
+
+    [turn] = ports.committed
+    assert turn.guard_events == () and turn.guard_samples == ()
+
+
+async def test_sample_is_cut_to_the_setting() -> None:
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(SPOILED))
+    ports = _ports()
+
+    await _run(ports, provider, guard_sample_max_chars=6)
+
+    [sample] = ports.committed[0].guard_samples
+    assert sample.sentence == "The su" and sample.answer_token == ANSWER
+
+
+async def test_enforce_spoiler_is_recorded_with_its_retries() -> None:
+    """`enforce` stays what it was (the rollback, the `reset`); every firing is an event, a
+    returned attempt is `retried`, and the sentence of each is a sample."""
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(SPOILED), _turn())
+    ports = _ports()
+
+    await _run(ports, provider, spoiler_holdback_chars=20, spoiler_guard_mode="enforce")
+
+    [turn] = ports.committed
+    assert turn.guard_retries == 1 and ANSWER not in turn.text
+    assert _events(turn) == [("spoiler", "answer_in_text", "spoiler", True)]
+    [sample] = turn.guard_samples
+    assert sample.reason == "enforce" and sample.answer_token == ANSWER
+    assert sample.sentence.startswith("The sum is") and ANSWER in sample.sentence
+
+
+async def test_enforce_final_spoiler_is_recorded_not_retried() -> None:
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(SPOILED))
+    ports = _ports()
+
+    await _run(
+        ports,
+        provider,
+        spoiler_holdback_chars=20,
+        guard_max_retries=1,
+        spoiler_guard_mode="enforce",
+    )
+
+    [turn] = ports.committed
+    assert _events(turn) == [
+        ("spoiler", "answer_in_text", "spoiler", True),
+        ("spoiler", "answer_in_text", "spoiler", False),
+    ]
+    assert ANSWER not in turn.text
+
+
+async def test_guard_events_name_the_head_the_markup_and_the_cut_step() -> None:
+    """Names only: a rolled-back head is `retried`, a lowered stance and the markup are not."""
+    provider = ScriptedLLMProvider()
+    _answers(
+        provider,
+        _turn("Unmarked.", head=_head(targetSkills=[])),
+        _turn(
+            head=_head(verdict_stance="code"),
+            exposures=[{"skill": "S9", "kind": "explained", "approach": "none"}],
+        ),
+    )
+    ports = _ports(verdict=_verdict("model"))
+
+    await _run(ports, provider)
+
+    [turn] = ports.committed
+    assert _events(turn) == [
+        ("head", "no_target_skills", "head", True),
+        ("head", "stance_without_code_verdict", "head", False),
+        ("markup", "unknown_skill_label", "markup", False),
+    ]
+    assert "S9" not in str(turn.guard_events)
+
+
+async def test_guard_event_of_a_jumped_boundary() -> None:
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(head=_head(targetSkills=["S1"])))
+    ports = _ports(boundary=_jump())
+
+    await _run(ports, provider)
+
+    assert _events(ports.committed[0]) == [("boundary", "boundary_jump", "head", False)]
+
+
+async def test_guard_event_of_a_cut_step() -> None:
+    provider = ScriptedLLMProvider()
+    provider.script_tools(SCHEMA, ScriptedToolStep((ScriptedToolCall("skill_history", {}),)))
+    _answers(provider, _turn(), _turn(), _turn())
+    ports = _ports()
+
+    await run_turn(ports, _CutSecondStep(provider), settings=_settings(), cancel=asyncio.Event())
+
+    assert ("incomplete", "incomplete_output", "cut", True) in _events(ports.committed[0])
+
+
+# --- stage timings (owner decision 2026-11-19) ---
+
+
+async def test_the_turn_carries_its_stage_timings() -> None:
+    provider = ScriptedLLMProvider()
+    provider.script_tools(SCHEMA, ScriptedToolStep((ScriptedToolCall("skill_history", {}),)))
+    _answers(provider, _turn())
+    ports = _ports()
+
+    await _run(ports, provider)
+
+    timings = ports.committed[0].timings
+    assert {"admit_ms", "assemble_total_ms", "first_status_ms", "ttft_ms", "total_ms"} <= set(
+        timings
+    )
+    assert all(isinstance(v, int) and v >= 0 for v in timings.values())
+    assert timings["first_status_ms"] <= timings["ttft_ms"] <= timings["total_ms"]
+    assert timings["admit_ms"] + timings["assemble_total_ms"] <= timings["total_ms"]
+    assert (timings["model_attempts"], timings["tool_steps"], timings["guard_retries"]) == (2, 1, 0)
+
+
+async def test_the_timings_count_the_retries_of_the_guard() -> None:
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn(head=_head(targetSkills=[])), _turn())
+    ports = _ports()
+
+    await _run(ports, provider)
+
+    timings = ports.committed[0].timings
+    assert (timings["model_attempts"], timings["guard_retries"]) == (2, 1)
+
+
+async def test_a_failed_measurement_does_not_break_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quack.session import turn_timings
+
+    def broken(_start: int) -> int:
+        raise RuntimeError("clock")
+
+    monkeypatch.setattr(turn_timings, "since_ms", broken)
+    provider = ScriptedLLMProvider()
+    _answers(provider, _turn())
+    ports = _ports()
+
+    seq = await _run(ports, provider)
+
+    assert seq == 42 and ports.committed[0].timings == {}

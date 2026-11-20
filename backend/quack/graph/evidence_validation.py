@@ -173,6 +173,11 @@ type RejectionReason = Literal[
 ]
 
 
+class NewSkillLike(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
 class RootCauseLike(Protocol):
     @property
     def skill(self) -> str: ...
@@ -188,7 +193,7 @@ class ExtractorElementLike(Protocol):
     @property
     def skill(self) -> str | None: ...
     @property
-    def new_skill(self) -> NewSkill | None: ...
+    def new_skill(self) -> NewSkillLike | None: ...
     @property
     def skill_unclear(self) -> bool: ...
     @property
@@ -314,7 +319,7 @@ def _check_element(
     return ExtractedElementRecord(
         kind=element.kind,
         skill_id=skill_id,
-        new_skill=element.new_skill,
+        new_skill=None if element.new_skill is None else NewSkill(name=element.new_skill.name),
         skill_unclear=element.skill_unclear,
         level=element.level,
         outcome=element.outcome,

@@ -96,7 +96,7 @@ async def test_hub_deadline_today(stand: StandFactory) -> None:
             {"l": learner.learner_id},
         )
         assert len(plans) == len(today["items"]), plans
-        assert plans[0]["plan"]["current_step"] == "Recall the ratio", plans
+        assert plans[0]["plan"]["current_step"]["text"] == "Recall the ratio", plans
 
 
 async def test_session_from_today_item_has_its_plan(stand: StandFactory) -> None:
@@ -110,4 +110,4 @@ async def test_session_from_today_item_has_its_plan(stand: StandFactory) -> None
         plan = await system.resources.db.fetch_one(
             "SELECT plan FROM content.session_plans WHERE session_id = %(s)s", {"s": session_id}
         )
-        assert plan is not None and plan["plan"]["current_step"] == "Recall the ratio", plan
+        assert plan is not None and plan["plan"]["current_step"]["text"] == "Recall the ratio", plan

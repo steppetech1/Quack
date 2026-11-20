@@ -4,7 +4,8 @@ The last `holdback_chars` characters (`spoiler_holdback_chars`) are not shown un
 spoiler check over the whole accumulated text has passed; a spoiler stops the stream
 (`SpoilerDetected` → SSE `reset`, the turn is rebuilt with the reason, WP13.2). Nothing that
 was released was ever part of a text with a spoiler. No artificial delay: a chunk is released
-as soon as it is checked.
+as soon as it is checked. Used in `spoiler_guard_mode = "enforce"` only; in `shadow` the graph
+holds nothing back (a buffer of zero characters that never raises).
 """
 
 from __future__ import annotations

@@ -22,8 +22,9 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from quack.db.db import Db
-from quack.events.records import PlanUpdateRecord
 from quack.graph.read import GraphReader, ProfileFacts
+from quack.graph.topic_names import canonical_topic_name
+from quack.practice.session_plan import PlanDoc, lift_plan
 from quack.session.teacher_context import (
     GoalTopic,
     HubGoal,
@@ -45,6 +46,14 @@ _SNAPSHOT = (
     "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s "
     "AND frozen_slots IS NOT NULL ORDER BY created_at, manifest_id LIMIT 1"
 )
+_TOPIC_HAS_NOTES = (
+    "SELECT 1 FROM content.artifacts a "
+    "JOIN content.artifact_versions v ON v.artifact_id = a.artifact_id "
+    "AND v.version = a.current_version AND v.learner_id = %(learner_id)s "
+    "WHERE a.learner_id = %(learner_id)s AND a.kind = 'notes' AND a.topic_id = %(topic_id)s "
+    "AND a.current_version > 0 "
+    "AND jsonb_array_length(COALESCE(v.content -> 'blocks', '[]'::jsonb)) > 0 LIMIT 1"
+)
 
 NO_DATA = "no data yet"
 _BIAS_WORDS = {
@@ -54,9 +63,10 @@ _BIAS_WORDS = {
 }
 
 
-async def load_plan(db: Db, *, learner_id: UUID, session_id: UUID) -> PlanUpdateRecord | None:
+async def load_plan(db: Db, *, learner_id: UUID, session_id: UUID) -> PlanDoc | None:
+    """The plan document of the session as version 2 (a document of the old form is lifted)."""
     row = await db.fetch_one(_PLAN, {"learner_id": learner_id, "session_id": session_id})
-    return None if row is None else PlanUpdateRecord.model_validate(row["plan"])
+    return None if row is None else lift_plan(row["plan"])
 
 
 async def load_learner_skill(db: Db, *, learner_id: UUID, name: str) -> LearnerSkill | None:
@@ -86,6 +96,7 @@ async def learner_state(reader: GraphReader, *, learner_id: UUID, domain_id: UUI
     """Profile and goals of the learner now (slots 3, 4), from memory (S4)."""
     facts = await reader.profile(learner_id)
     hubs = await reader.domain_goals(domain_id)
+    domain_name = next((hub.name for hub in hubs if hub.kind == "domain_all"), None)
     return LearnerState(
         profile=Profile(preferences=facts.prefs, learned=learned_lines(facts), manner=facts.manner),
         hubs=[
@@ -95,7 +106,11 @@ async def learner_state(reader: GraphReader, *, learner_id: UUID, domain_id: UUI
                 control_type=hub.control_type,
                 deadline_at_ms=hub.deadline_at_ms,
                 topics=[
-                    GoalTopic(topic_id=t.topic_id, name=t.name, required_levels=t.required_levels)
+                    GoalTopic(
+                        topic_id=t.topic_id,
+                        name=canonical_topic_name(t.name, domain_name),
+                        required_levels=t.required_levels,
+                    )
                     for t in hub.topics
                 ],
             )
@@ -108,6 +123,14 @@ async def load_snapshot(db: Db, *, learner_id: UUID, session_id: UUID) -> dict[s
     """The slots 3 and 4 frozen on the session; `None` — the session has no turn yet."""
     row = await db.fetch_one(_SNAPSHOT, {"learner_id": learner_id, "session_id": session_id})
     return None if row is None else dict(row["frozen_slots"])
+
+
+async def has_topic_notes(db: Db, *, learner_id: UUID, topic_id: UUID | None) -> bool:
+    """Whether the learner already has saved notes blocks for `topic_id` (slot 6)."""
+    if topic_id is None:
+        return False
+    row = await db.fetch_one(_TOPIC_HAS_NOTES, {"learner_id": learner_id, "topic_id": topic_id})
+    return row is not None
 
 
 # The cards of the current versions of the learner's cards artifacts of the given topics, in the

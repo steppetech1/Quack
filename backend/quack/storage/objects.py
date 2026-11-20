@@ -72,26 +72,49 @@ class S3ObjectStore:
     key on `get` is `KeyError`, as in the test double. The region is the botocore default:
     the documents do not name it (Д-§8.4 «Проверить», D-C-109)."""
 
-    def __init__(self, *, endpoint: str, access_key: str, secret_key: str, bucket: str) -> None:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        access_key: str,
+        secret_key: str,
+        bucket: str,
+        public_endpoint: str = "",
+    ) -> None:
         self._endpoint = endpoint
+        self._public_endpoint = public_endpoint.strip()
         self._access_key = access_key
         self._secret_key = secret_key
         self._bucket = bucket
         self._stack = AsyncExitStack()
         self._client: Any = None
+        self._signer: Any = None
+
+    async def _new_client(self, endpoint: str) -> Any:
+        session = aioboto3.Session(
+            aws_access_key_id=self._access_key, aws_secret_access_key=self._secret_key
+        )
+        config = AioConfig(signature_version="s3v4", s3={"addressing_style": "path"})
+        client = cast(
+            AbstractAsyncContextManager[Any],
+            session.client("s3", endpoint_url=endpoint, config=config),  # pyright: ignore[reportUnknownMemberType]
+        )
+        return await self._stack.enter_async_context(client)
 
     async def _s3(self) -> Any:
         if self._client is None:
-            session = aioboto3.Session(
-                aws_access_key_id=self._access_key, aws_secret_access_key=self._secret_key
-            )
-            config = AioConfig(signature_version="s3v4", s3={"addressing_style": "path"})
-            client = cast(
-                AbstractAsyncContextManager[Any],
-                session.client("s3", endpoint_url=self._endpoint, config=config),  # pyright: ignore[reportUnknownMemberType]
-            )
-            self._client = await self._stack.enter_async_context(client)
+            self._client = await self._new_client(self._endpoint)
         return self._client
+
+    async def _presigner(self) -> Any:
+        """The client that signs links for a browser: the public address when there is one (the
+        signature covers the host, so the link must be signed for the host it is opened at).
+        Signing makes no request, so this client never talks to the public address itself."""
+        if not self._public_endpoint or self._public_endpoint == self._endpoint:
+            return await self._s3()
+        if self._signer is None:
+            self._signer = await self._new_client(self._public_endpoint)
+        return self._signer
 
     async def put(self, key: str, data: bytes, content_type: str) -> None:
         async with _unavailable_on_failure():
@@ -112,7 +135,7 @@ class S3ObjectStore:
 
     async def presigned_get_url(self, key: str, ttl_s: int) -> str:
         async with _unavailable_on_failure():
-            s3 = await self._s3()
+            s3 = await self._presigner()
             url = await s3.generate_presigned_url(
                 "get_object", Params={"Bucket": self._bucket, "Key": key}, ExpiresIn=ttl_s
             )
@@ -182,4 +205,5 @@ def create_object_store(settings: Settings) -> ObjectStore:
         access_key=settings.s3_access_key.get_secret_value(),
         secret_key=settings.s3_secret_key.get_secret_value(),
         bucket=settings.s3_bucket_learners,
+        public_endpoint=settings.s3_public_endpoint,
     )

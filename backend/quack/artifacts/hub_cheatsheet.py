@@ -29,7 +29,8 @@ from uuid import UUID, uuid5
 
 from redis.asyncio import Redis
 
-from quack.artifacts.accuracy import write_blocks
+from quack.artifacts.accuracy import WRITER_ROLE, write_blocks
+from quack.artifacts.delivery import deliver
 from quack.artifacts.documents import (
     Artifact,
     ArtifactNotFound,
@@ -42,6 +43,7 @@ from quack.artifacts.documents import (
     written_version,
 )
 from quack.artifacts.learner_skills import bound_skill, writer_text
+from quack.artifacts.session_demos import hub_ready_demos, merge_demo_links_block
 from quack.artifacts.topic_refresh import (
     WriterInput,
     chunks_text,
@@ -104,6 +106,10 @@ class HubWriterInput(WriterInput):
     """The writer's input for a hub; `title` — the name of the hub, for the printed page."""
 
     title: str = ""
+    topic_ids: tuple[UUID, ...] = ()
+    is_domain_all: bool = False
+    domain_id: UUID | None = None
+    skill_topics: tuple[tuple[UUID, UUID], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -177,6 +183,13 @@ async def hub_writer_input(
         current=sheet.blocks,
         title=goal.name,
         skill_version=None if skill is None else skill.version,
+        skill_ids=tuple(skill_ids),
+        topic_ids=tuple(
+            dict.fromkeys([*(t.topic_id for t in goal.topics), *(t.topic_id for t in topics)])
+        ),
+        is_domain_all=goal.kind == "domain_all",
+        domain_id=sheet.domain_id,
+        skill_topics=tuple((s.skill_id, t.topic_id) for t in topics for s in t.skills),
     )
 
 
@@ -222,6 +235,7 @@ async def generate_hub_cheatsheet(
     hub_id: UUID,
     key: str,
     redis: Redis | None = None,
+    session_id: UUID | None = None,
 ) -> CheatsheetResult:
     """Write the hub's cheat sheet and fit it to one A4 page (Т-§17.6). `key` is the consent
     request: a round that this key has already written is not asked of the model again
@@ -230,8 +244,45 @@ async def generate_hub_cheatsheet(
         db, reader, prefetch, settings, learner_id=learner_id, hub_id=hub_id
     )
     if context is None:
-        log.info("cheatsheet_unknown_hub", hub_id=str(hub_id))
-        return CheatsheetResult(None, None, 0, False)
+        sheet = await get_artifact(db, learner_id=learner_id, kind="cheatsheet", owner_id=hub_id)
+        demos = await hub_ready_demos(
+            db,
+            learner_id=learner_id,
+            hub_id=hub_id,
+            domain_id=sheet.domain_id,
+            session_id=session_id,
+            title_chars=settings.session_demo_title_chars,
+        )
+        if not demos:
+            log.info("cheatsheet_unknown_hub", hub_id=str(hub_id))
+            return CheatsheetResult(None, None, 0, False)
+        demo_blocks = merge_demo_links_block([], sheet.blocks, demos)
+        sheet = await write_system_blocks(
+            db,
+            learner_id=learner_id,
+            kind="cheatsheet",
+            owner_id=hub_id,
+            blocks=demo_blocks,
+            created_by="system",
+            redis=redis,
+            event_key=_round_key(hub_id, key, 0),
+        )
+        rendered = await compute.render_pdf(
+            RenderPdfRequest(html=cheatsheet_html("Шпаргалка", sheet.blocks))
+        )
+        return CheatsheetResult(sheet.version, rendered.page_count, 0, rendered.page_count <= 1)
+    assert context.domain_id is not None
+    demos = await hub_ready_demos(
+        db,
+        learner_id=learner_id,
+        hub_id=hub_id,
+        domain_id=context.domain_id,
+        hub_topic_ids=context.topic_ids,
+        is_domain_all=context.is_domain_all,
+        session_id=session_id,
+        skill_topic_fallback=dict(context.skill_topics),
+        title_chars=settings.session_demo_title_chars,
+    )
     version: int | None = None
     pages: int | None = None
     rounds = 0
@@ -265,14 +316,15 @@ async def generate_hub_cheatsheet(
             learner_id=learner_id,
             key=f"artifact_writer:cheatsheet:{hub_id}:{key}:r{round_}",
         )
-        if not blocks:
+        if not blocks and not demos:
             break
+        final_blocks = merge_demo_links_block(blocks, context.current, demos)
         sheet = await write_system_blocks(
             db,
             learner_id=learner_id,
             kind="cheatsheet",
             owner_id=hub_id,
-            blocks=blocks,
+            blocks=final_blocks,
             created_by=created_by,
             skill_version=context.skill_version,
             redis=redis,
@@ -378,7 +430,13 @@ async def review_hub_cheatsheet(
 # --- consent ---------------------------------------------------------------------------------
 
 
-def consent_event(hub_id: UUID, request_id: UUID, *, idempotency_key: str) -> NewEvent:
+def consent_event(
+    hub_id: UUID,
+    request_id: UUID,
+    *,
+    idempotency_key: str,
+    session_id: UUID | None = None,
+) -> NewEvent:
     """`agent.requested {kind: artifact, params: {artifact: cheatsheet, hub_id}}` — the kind and
     the hub are parameters, never words (law 2, D-C-143)."""
     return NewEvent(
@@ -391,18 +449,35 @@ def consent_event(hub_id: UUID, request_id: UUID, *, idempotency_key: str) -> Ne
         },
         actor="learner",
         idempotency_key=f"hub-cheatsheet:{hub_id}:{idempotency_key}",
+        session_id=session_id,
     )
 
 
 async def request_hub_cheatsheet(
-    db: Db, learner_id: UUID, hub_id: UUID, *, idempotency_key: str
+    db: Db,
+    learner_id: UUID,
+    hub_id: UUID,
+    *,
+    idempotency_key: str,
+    session_id: UUID | None = None,
+    redis: Redis | None = None,
 ) -> UUID:
     """The learner's consent to the hub's cheat sheet; returns the request id (derived from the
     key, so a repeat is the same request). `ArtifactNotFound` — the hub is not the learner's."""
     await get_artifact(db, learner_id=learner_id, kind="cheatsheet", owner_id=hub_id)
     request_id = uuid5(QUACK_UUID_NS, f"cheatsheet-request:{learner_id}:{hub_id}:{idempotency_key}")
     await append_events(
-        db, learner_id, [consent_event(hub_id, request_id, idempotency_key=idempotency_key)]
+        db,
+        learner_id,
+        [
+            consent_event(
+                hub_id,
+                request_id,
+                idempotency_key=idempotency_key,
+                session_id=session_id,
+            )
+        ],
+        redis=redis,
     )
     return request_id
 
@@ -527,8 +602,23 @@ async def _cheatsheet_handler(job: ClaimedJob, ctx: JobContext) -> None:
         )
 
     reader = create_graph_reader(ctx.neo4j, ctx.settings, learner_id=learner_id)  # D-A-144
-    await generate_hub_cheatsheet(
+    hub_id = UUID(job.payload["hub_id"])
+    result = await generate_hub_cheatsheet(
         ctx.db, ctx.llm, ctx.compute, reader, prefetch, ctx.settings,
-        learner_id=learner_id, hub_id=UUID(job.payload["hub_id"]), key=str(request_id),
-        redis=ctx.redis,
+        learner_id=learner_id, hub_id=hub_id, key=str(request_id),
+        redis=ctx.redis, session_id=job.session_id,
     )  # fmt: skip
+    await deliver(
+        ctx.db,
+        learner_id=learner_id,
+        request_id=UUID(str(request_id)),
+        job_key=None,
+        kind="artifact",
+        ok=result.version is not None,
+        actor=ctx.settings.llm_roles[WRITER_ROLE].prompt or WRITER_ROLE,
+        error=None if result.version is not None else "nothing_written",
+        result_ref=str(artifact_id_for(learner_id, "cheatsheet", hub_id))
+        if result.version is not None
+        else None,
+        session_id=job.session_id,
+    )

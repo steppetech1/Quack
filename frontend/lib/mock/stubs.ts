@@ -6,13 +6,11 @@ import type { Locale } from "@/lib/i18n/locale";
 export type StubQuestion = { id: string; prompt: string; options: string[]; correct: number };
 export type StubTask = { id: string; prompt: string; answer: string; hints: string[] };
 export type StubArtifact = { id: string; kind: "note" | "cheatsheet" | "digest"; title: string; snippet: string; topicId?: string; date: string };
-export type StubSummary = { title: string; turns: number; minutes: number; tasks: number; topicId: string };
 
 export type StubData = {
   questions: StubQuestion[];
   tasks: StubTask[];
   artifacts: StubArtifact[];
-  summary: StubSummary;
 };
 
 const ru: StubData = {
@@ -31,7 +29,6 @@ const ru: StubData = {
     { id: "a3", kind: "digest", title: "Сессия: Лопиталь без фокусов", snippet: "Разобрали, когда Лопиталь применим. Ошибка: применял к $\\frac{1}{0}$.", topicId: "lhopital", date: "2026-10-26" },
     { id: "a4", kind: "note", title: "Тейлор до o(x³)", snippet: "$\\sin x = x - \\frac{x^3}{6} + o(x^3)$, $\\cos x = 1 - \\frac{x^2}{2} + o(x^3)$.", topicId: "taylor", date: "2026-10-24" },
   ],
-  summary: { title: "Радиус сходимости", turns: 14, minutes: 27, tasks: 3, topicId: "radius" },
 };
 
 const en: StubData = {
@@ -50,7 +47,6 @@ const en: StubData = {
     { id: "a3", kind: "digest", title: "Session: L'Hôpital without tricks", snippet: "When L'Hôpital applies. Mistake: used it on $\\frac{1}{0}$.", topicId: "lhopital", date: "2026-10-26" },
     { id: "a4", kind: "note", title: "Taylor up to o(x³)", snippet: "$\\sin x = x - \\frac{x^3}{6} + o(x^3)$, $\\cos x = 1 - \\frac{x^2}{2} + o(x^3)$.", topicId: "taylor", date: "2026-10-24" },
   ],
-  summary: { title: "Radius of convergence", turns: 14, minutes: 27, tasks: 3, topicId: "radius" },
 };
 
 export const getStubData = (locale: Locale): StubData => (locale === "en" ? en : ru);

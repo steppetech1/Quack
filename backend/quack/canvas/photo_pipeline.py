@@ -4,7 +4,7 @@
 
 1. aligns the perspective by the sheet contour — compute `/v1/image/align`; no contour, the
    photo goes as is;
-2. reads every line of the sheet with `recognizer@1` in the sheet mode, in one call, top to
+2. reads every line of the sheet with `recognizer@2` in the sheet mode, in one call, top to
    bottom (D-C-134);
 3. separates new lines from those already written by aligning the two sequences on the
    normalized Levenshtein distance between LaTeX strings: a pair matches below

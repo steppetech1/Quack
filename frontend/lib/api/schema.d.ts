@@ -921,8 +921,8 @@ export interface paths {
          * Post Action
          * @description ТЗ Ф4 WP13.1 (`Т-§1.4`): one learner action of an open session of the learner. A kind
          *     without a teacher turn answers `201 {seq}`; a kind with one — SSE frames of §4.7 (D-B-156);
-         *     a session the inactivity sweep ended comes back first (WP13.10). The learner is the one of
-         *     the session cookie (Т-§19.1).
+         *     a closed session comes back first (WP13.10: only the inactivity sweep closes). The learner is
+         *     the one of the session cookie (Т-§19.1).
          */
         post: operations["post_action_v1_sessions__session_id__actions_post"];
         delete?: never;
@@ -942,27 +942,6 @@ export interface paths {
         put?: never;
         /** Open Canvas */
         post: operations["open_canvas_v1_sessions__session_id__canvases_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{session_id}/end": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * End Session
-         * @description `session.ended {reason: learner}` (WP13.10); the learner's end is final, a repeat changes
-         *     nothing.
-         */
-        post: operations["end_session_v1_sessions__session_id__end_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1017,6 +996,29 @@ export interface paths {
          *     or none — `404` (D-B-207).
          */
         get: operations["session_jobs_v1_sessions__session_id__jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{session_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session Plan
+         * @description The action graph of the session: the goal, the landmarks the code builds from memory,
+         *     the current step and the next ones. Reads only; a session of another learner or none is a
+         *     `404` (as `/jobs`); a Neo4j outage gives the plan without landmarks, not an error. The
+         *     reader has no `db`: it does not wait for the journal (law 9).
+         */
+        get: operations["session_plan_v1_sessions__session_id__plan_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1222,8 +1224,10 @@ export interface paths {
         };
         /** Topic Notes */
         get: operations["topic_notes_v1_topics__topic_id__notes_get"];
-        put?: never;
-        post?: never;
+        /** Put Topic Notes */
+        put: operations["put_topic_notes_v1_topics__topic_id__notes_put"];
+        /** Request Topic Notes */
+        post: operations["request_topic_notes_v1_topics__topic_id__notes_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1346,6 +1350,16 @@ export interface components {
         AnswerSource: "chat" | "canvas" | "photo" | "card";
         /** @enum {string} */
         AnswerType: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text";
+        /**
+         * ArtifactConsentRequest
+         * @description Consent to generate topic notes or a hub cheat sheet, optionally within a session.
+         */
+        ArtifactConsentRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
         /**
          * ArtifactResponse
          * @description An artifact at its current version; blocks with the names of Т-§17.2.
@@ -1990,21 +2004,32 @@ export interface components {
         /**
          * FeedEvent
          * @description An event of the session feed (`GET /v1/sessions/{id}`, D-B-210).
+         *
+         *     `causation_seq` is the causal parent in `core.events`; `turn_seq`, `element_id` and
+         *     `outcome` link element responses, submitted answers and verdicts back to their exact
+         *     turn and element without guessing by order.
          */
         FeedEvent: {
             /** Actor */
             actor: string;
+            /** Causation Seq */
+            causation_seq?: number | null;
+            /** Element Id */
+            element_id?: string | null;
             /**
              * Occurred At
              * Format: date-time
              */
             occurred_at: string;
+            outcome?: components["schemas"]["Outcome"] | null;
             /** Payload */
             payload: {
                 [key: string]: unknown;
             };
             /** Seq */
             seq: number;
+            /** Turn Seq */
+            turn_seq?: number | null;
             /** Type */
             type: string;
         };
@@ -2516,6 +2541,8 @@ export interface components {
             session_id: string | null;
             /** Status */
             status: string;
+            /** Title */
+            title: string | null;
         };
         /**
          * MathValue
@@ -2697,6 +2724,84 @@ export interface components {
             session_id?: string | null;
         };
         /**
+         * PlanDemo
+         * @description An interactive demo made ahead for a step of the plan (`viz.plan`): `request_id` opens the
+         *     page at `GET /v1/viz/{request_id}` once `status` is `ready`; `preparing` while it is being
+         *     built, `failed` when no page passed the check (the learner just goes on without it).
+         */
+        PlanDemo: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "preparing" | "ready" | "failed";
+            /** Step Id */
+            step_id: string;
+            /** Title */
+            title: string;
+        };
+        /**
+         * PlanLandmark
+         * @description A landmark of the action graph: a skill or a topic of the session goal. The code builds
+         *     the set from memory and the learner's levels; `added_by_teacher` marks the ones the teacher
+         *     added (`landmark_edits`).
+         */
+        PlanLandmark: {
+            /** Added By Teacher */
+            added_by_teacher: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skill" | "topic";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "done" | "current" | "upcoming";
+            /** Title */
+            title: string;
+        };
+        /**
+         * PlanProgress
+         * @description Landmarks whose required levels are reached, of all landmarks.
+         */
+        PlanProgress: {
+            /** Done */
+            done: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * PlanStep
+         * @description A step of the teacher: `id` is the stable slug of the step in the session, `landmark_id`
+         *     — the skill or topic it belongs to.
+         */
+        PlanStep: {
+            /** Id */
+            id: string;
+            /** Landmark Id */
+            landmark_id: string | null;
+            /**
+             * Status
+             * @default upcoming
+             * @enum {string}
+             */
+            status?: "done" | "current" | "upcoming";
+            /** Text */
+            text: string;
+        };
+        /**
          * PlotSpec
          * @description A simple plot of one function (Т-§12.3 «простой график»).
          */
@@ -2796,6 +2901,25 @@ export interface components {
             reason: "spoiler" | "guard";
         };
         /**
+         * RetryTurnAction
+         * @description `retry_turn`: run the teacher turn again on the last learner input of the session that
+         *     has no `turn.committed` (a turn lost to a dropped write or stream). Writes no event: the
+         *     input is already in the journal. Idempotent: an input that is answered is not asked again,
+         *     and `commit_turn` keeps one `turn.committed` per action.
+         */
+        RetryTurnAction: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "retry_turn";
+        };
+        /**
          * ReviewResponse
          * @description The sheet after the review; `remarks` — the system blocks added to the learner's sheet.
          */
@@ -2821,6 +2945,13 @@ export interface components {
             topic_id: string | null;
             /** Version */
             version: number;
+        };
+        /** SaveTopicNotesRequest */
+        SaveTopicNotesRequest: {
+            /** Content */
+            content: string;
+            /** Idempotency Key */
+            idempotency_key: string;
         };
         /**
          * Scaffold
@@ -2923,8 +3054,12 @@ export interface components {
              * @enum {string}
              */
             status: "active" | "ended";
+            /** Title */
+            title: string | null;
             /** Topic Id */
             topic_id: string | null;
+            /** Unanswered Seq */
+            unanswered_seq?: number | null;
         };
         /** @enum {string} */
         SessionIntent: "learn" | "practice" | "review" | "free";
@@ -2955,6 +3090,27 @@ export interface components {
             /** Sessions */
             sessions: components["schemas"]["SessionView"][];
         };
+        /**
+         * SessionPlanView
+         * @description `GET /v1/sessions/{id}/plan`: where the session is and where it goes. Read only; a graph
+         *     that cannot be read gives `landmarks = []` and `progress = null`, the rest still comes.
+         */
+        SessionPlanView: {
+            current_step: components["schemas"]["PlanStep"] | null;
+            /** Demos */
+            demos: components["schemas"]["PlanDemo"][];
+            /** Done Steps */
+            done_steps?: components["schemas"]["PlanStep"][];
+            /** Goal */
+            goal: string | null;
+            /** Landmarks */
+            landmarks: components["schemas"]["PlanLandmark"][];
+            /** Next Steps */
+            next_steps: components["schemas"]["PlanStep"][];
+            progress: components["schemas"]["PlanProgress"] | null;
+            /** Updated At */
+            updated_at: string | null;
+        };
         /** SessionSummary */
         SessionSummary: {
             /** Before Seq */
@@ -2984,7 +3140,12 @@ export interface components {
             /** Topic Id */
             topic_id?: string | null;
         };
-        /** SessionView */
+        /**
+         * SessionView
+         * @description `title` — the name of the session: the one the job `session.title` wrote, else the first
+         *     words of the learner (a provisional name, the old sessions too), else `None` (nobody has said
+         *     anything yet: the client names the session by its intent and topic).
+         */
         SessionView: {
             /**
              * Domain Id
@@ -3019,8 +3180,12 @@ export interface components {
              * @enum {string}
              */
             status: "active" | "ended";
+            /** Title */
+            title: string | null;
             /** Topic Id */
             topic_id: string | null;
+            /** Unanswered Seq */
+            unanswered_seq?: number | null;
         };
         /**
          * SetPreferenceRequest
@@ -3367,6 +3532,14 @@ export interface components {
             topic_id: string;
             /** Visibility */
             visibility: string;
+        };
+        /** TopicNotesConsentResponse */
+        TopicNotesConsentResponse: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
         };
         /**
          * TopicRequires
@@ -5809,7 +5982,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["KeyedRequest"];
+                "application/json": components["schemas"]["ArtifactConsentRequest"];
             };
         };
         responses: {
@@ -7151,7 +7324,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MessageAction"] | components["schemas"]["IntentAction"] | components["schemas"]["AnswerAction"] | components["schemas"]["ElementResponseAction"] | components["schemas"]["HintRequestAction"] | components["schemas"]["SolutionRequestAction"] | components["schemas"]["CheckSkipAction"] | components["schemas"]["FlagUnclearAction"] | components["schemas"]["ConfidenceAction"];
+                "application/json": components["schemas"]["MessageAction"] | components["schemas"]["IntentAction"] | components["schemas"]["AnswerAction"] | components["schemas"]["ElementResponseAction"] | components["schemas"]["HintRequestAction"] | components["schemas"]["SolutionRequestAction"] | components["schemas"]["CheckSkipAction"] | components["schemas"]["FlagUnclearAction"] | components["schemas"]["ConfidenceAction"] | components["schemas"]["RetryTurnAction"];
             };
         };
         responses: {
@@ -7164,7 +7337,7 @@ export interface operations {
                     "text/event-stream": components["schemas"]["ActionFrame"];
                 };
             };
-            /** @description Actions without a teacher turn (`confidence`): the action event seq. */
+            /** @description Actions without a teacher turn (`confidence`): the action event seq; also a `retry_turn` whose input is answered already: the seq of that input. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -7254,82 +7427,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CanvasView"];
-                };
-            };
-            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description VALIDATION_ERROR */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description RATE_LIMITED; details.retry_after_sec */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    end_session_v1_sessions__session_id__end_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionView"];
                 };
             };
             /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
@@ -7531,6 +7628,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionJobsResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    session_plan_v1_sessions__session_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionPlanView"];
                 };
             };
             /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
@@ -8407,6 +8562,148 @@ export interface operations {
             };
             /** @description VALIDATION_ERROR */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    put_topic_notes_v1_topics__topic_id__notes_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveTopicNotesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    request_topic_notes_v1_topics__topic_id__notes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopicNotesConsentResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

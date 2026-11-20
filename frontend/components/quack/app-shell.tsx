@@ -2,7 +2,8 @@
 
 import { History, PanelLeft, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Suspense, useContext, useEffect, useRef, useState } from "react";
+import type { FileRef } from "./attachments";
 import type { GraphMode } from "@/lib/graph-layout";
 import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
@@ -13,10 +14,9 @@ import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
-import { MenuToggle } from "./menu-toggle";
-import { SiteMenu } from "./site-menu";
 import { IndicatorPills } from "./graph/indicator-pills";
 import { SessionsPanel } from "./sessions-panel";
+import { BackLink } from "./page-parts";
 import { SoonProvider } from "./soon";
 
 type Shell = {
@@ -24,9 +24,11 @@ type Shell = {
   selectDomain: (id: string) => void;
   /** Новая сессия из поля ввода: сообщение студента, пока бэкенда нет */
   pending: string | null;
+  /** Files attached to the message that starts the session */
+  pendingFiles: FileRef[];
   /** Тема, к которой привязана новая сессия (поле ввода на странице темы) */
   pendingTopic: string | null;
-  startSession: (text: string, topicId?: string | null) => void;
+  startSession: (text: string, topicId?: string | null, files?: FileRef[]) => void;
   /** Режим графа домена: обзор глав, одна глава или все темы */
   graphMode: GraphMode;
   setGraphMode: (m: GraphMode) => void;
@@ -80,6 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // «Все графы» (первый экран), как и настройки, не про один предмет: панели сессий нет
   const noSessions = inSettings || pathname === "/";
   const inSession = /^\/(session|topic|hub|canvas)\//.test(pathname);
+  const inSessionPage = pathname.startsWith("/session/");
   // Доска канваса занимает весь экран: ни панели доменов, ни панели сессий
   const fullscreen = pathname.startsWith("/canvas/");
   // Живой режим: пока данные грузятся (или «/» без предметов — сейчас уведёт в чат) — пустой центр; ошибка — плашка
@@ -94,6 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [domainId, setDomainId] = useState(domains[0].id);
   const [pending, setPending] = useState<string | null>(null);
   const [pendingTopic, setPendingTopic] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
   // null — решает ширина экрана: на узком десктопе панель свёрнута
   const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
   // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
@@ -163,9 +167,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (pathname !== DOMAIN_PATH || window.location.search.includes("view=canvases")) router.push(DOMAIN_PATH);
   };
 
-  const startSession = (text: string, topicId: string | null = null) => {
+  const startSession = (text: string, topicId: string | null = null, files: FileRef[] = []) => {
     setPending(text);
     setPendingTopic(topicId);
+    setPendingFiles(files);
     if (!API_MODE) setDomainId(SESSION_DOMAIN);
     router.push("/session/new");
   };
@@ -195,7 +200,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId, centerPending, consumeCenter: () => setCenterPending(false) }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId, centerPending, consumeCenter: () => setCenterPending(false) }}>
         <a
           href="#main"
           onClick={(e) => {
@@ -206,7 +211,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           {t.shell.skip}
         </a>
-        <div inert={!!drawer || menuOpen} className="flex h-dvh">
+        <div inert={!!drawer} className="flex h-dvh">
           {!fullscreen && (
             <aside aria-label={t.shell.subjects} className="hidden w-62 shrink-0 border-r border-seam-soft md:block">
               <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} />
@@ -222,19 +227,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </IconButton>
               )}
               <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
-              {/* на телефоне кнопка меню в верхней полосе */}
-              <div ref={barToggle} data-menu-anchor className="ml-auto">
-                <MenuToggle
-                  open={menuOpen}
-                  onClick={() => (menuOpen ? closeMenu() : openMenu(barToggle.current?.querySelector("button") ?? null))}
-                  labelOpen={t.menu.open}
-                  labelClose={t.menu.close}
-                />
-              </div>
-              {!inSettings && <IconButton label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
+              {!inSettings && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
                 <History />
               </IconButton>}
             </div>}
+            {/* Сессия: путь назад в граф домена; граф открывается по «/» */}
+            {inSessionPage && (
+              <div className="shrink-0 border-b border-seam-soft px-4 md:px-7">
+                <BackLink href="/">{t.shell.backToGraph}</BackLink>
+              </div>
+            )}
             {busy ? (
               <div className="flex-1" aria-busy="true" />
             ) : failed ? (
@@ -309,7 +311,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           );
         })}
-
       </ShellContext.Provider>
     </SoonProvider>
   );

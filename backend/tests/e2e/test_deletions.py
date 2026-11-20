@@ -13,7 +13,7 @@ from uuid import UUID
 
 from tests.e2e.journey import ok
 from tests.e2e.system import Learner, System
-from tests.e2e.text_journey import event_types, run_text_journey
+from tests.e2e.text_journey import close_by_inactivity, event_types, run_text_journey
 from tests.support.deletions import FakeDeletionJournal
 
 
@@ -51,7 +51,7 @@ async def test_deletions_end_to_end(system: System) -> None:
     journey = await run_text_journey(system)
     learner = journey.learner
     learner_id = learner.learner_id
-    await system.client.post(f"/v1/sessions/{journey.session_id}/end", headers=learner.headers)
+    await close_by_inactivity(system, journey.session_id)
     await system.settle()
     journal = system.resources.deletions
     assert isinstance(journal, FakeDeletionJournal)

@@ -14,6 +14,7 @@ from quack.graph.evidence_validation import (
     ExtractorElementLike,
     check_extracted,
 )
+from quack.practice.markup import NewSkill as OutputNewSkill
 
 SKILL = UUID(int=0x51)
 ROOT = UUID(int=0x52)
@@ -96,9 +97,10 @@ def test_unclear_skill_is_kept_without_a_skill() -> None:
 
 
 def test_new_skill_is_kept_with_its_quote() -> None:
-    new_skill = NewSkill(name="quadratic roots", topic_hint="quadratics")
+    new_skill = OutputNewSkill(name="quadratic roots")
     checked = check_extracted([_el(skill=None, new_skill=new_skill)], CTX)
-    assert checked.rejected == [] and checked.elements[0].new_skill == new_skill
+    assert checked.rejected == []
+    assert checked.elements[0].new_skill == NewSkill(name="quadratic roots", topic_hint=None)
 
 
 def test_unknown_labels_are_rejected() -> None:
@@ -137,7 +139,7 @@ def test_negative_elements_need_a_quote_from_their_sources() -> None:
     assert _reasons(_el(quote=" ")) == ["missing_quote"]
     hypothesis = _el(kind="misconception_hypothesis", misconception="M1", quote="", level=None)
     assert _reasons(hypothesis) == ["missing_quote"]
-    new_skill = NewSkill(name="roots", topic_hint="quadratics")
+    new_skill = OutputNewSkill(name="roots")
     positive = {"outcome": "correct", "gap_type": "none"}
     assert _reasons(_el(skill=None, new_skill=new_skill, quote="", **positive)) == [
         "missing_quote"

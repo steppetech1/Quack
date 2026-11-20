@@ -22,7 +22,8 @@ is in the event log (law 1; the hot path does not wait for Neo4j, Т-§20.7).
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Sequence
+import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 from uuid import UUID, uuid5
@@ -35,7 +36,7 @@ from quack.db import Db
 from quack.events.errors import IdempotencyConflictError
 from quack.events.event_types import ArtifactUpdated
 from quack.events.log import NewEvent, append_events
-from quack.graph.ids import QUACK_UUID_NS
+from quack.graph.ids import QUACK_UUID_NS, deterministic_id
 
 type ArtifactKind = Literal["notes", "cards", "cheatsheet"]
 type BlockKind = Literal[
@@ -151,9 +152,32 @@ class NotASupplement(Exception):
 
 
 _OWNER_OF_LEARNER = (
-    "SELECT payload ->> 'domain_id' AS domain_id FROM core.events "
+    "SELECT COALESCE(domain_id::text, payload ->> 'domain_id') AS domain_id FROM core.events "
     "WHERE learner_id = %(learner_id)s AND type = ANY(%(types)s) "
     "AND payload ->> %(field)s = %(owner_id)s ORDER BY seq LIMIT 1"
+)
+_DOMAIN_CREATED_EVENTS = (
+    "SELECT seq, COALESCE(domain_id::text, payload ->> 'domain_id') AS domain_id "
+    "FROM core.events WHERE learner_id = %(learner_id)s AND type = 'domain.created' ORDER BY seq"
+)
+_TOPIC_REFERENCE_EVENTS = (
+    "SELECT COALESCE(domain_id::text, payload ->> 'domain_id') AS domain_id "
+    "FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND COALESCE(domain_id::text, payload ->> 'domain_id') IS NOT NULL "
+    "AND ("
+    "payload ->> 'topic_id' = %(owner_id)s "
+    "OR (type = 'topic.merged' AND (payload ->> 'into_id' = %(owner_id)s "
+    "OR payload ->> 'from_id' = %(owner_id)s)) "
+    "OR (type = 'topic.split' AND EXISTS ("
+    "SELECT 1 FROM jsonb_array_elements(payload -> 'into') AS p "
+    "WHERE p ->> 'topic_id' = %(owner_id)s))"
+    ") ORDER BY seq LIMIT 1"
+)
+_TOPIC_HINT_EVENTS = (
+    "SELECT seq, COALESCE(domain_id::text, payload ->> 'domain_id') AS domain_id, type, payload "
+    "FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND type IN ('observation.extracted', 'task.created') "
+    "AND COALESCE(domain_id::text, payload ->> 'domain_id') IS NOT NULL ORDER BY seq"
 )
 _INSERT_ARTIFACT = (
     "INSERT INTO content.artifacts (artifact_id, learner_id, kind, domain_id, topic_id, hub_id) "
@@ -402,6 +426,67 @@ async def delete_block(
     return await _save_learner(db, learner_id, artifact_id, change, idempotency_key, redis)
 
 
+_HEADING_SPLIT = re.compile(r"^#{1,3}\s+")
+_FENCE = re.compile(r"^\s*```")
+
+
+def _split_markdown_blocks(artifact_id: UUID, content: str) -> list[Block]:
+    """Split Markdown `content` into `summary` learner blocks on top-level `#`/`##`/`###`
+    headings outside fenced code blocks."""
+    text = content.strip()
+    if not text:
+        return []
+    sections: list[list[str]] = []
+    current: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if _FENCE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and _HEADING_SPLIT.match(line) and current and "\n".join(current).strip():
+            sections.append(current)
+            current = []
+        current.append(line)
+    if current and "\n".join(current).strip():
+        sections.append(current)
+    parts = ["\n".join(section).strip() for section in sections if "\n".join(section).strip()]
+    if not parts:
+        parts = [text]
+    return [
+        Block(
+            block_id=uuid5(
+                artifact_id,
+                f"chat-notes:{idx}:{hashlib.sha256(section.encode()).hexdigest()}",
+            ),
+            kind="summary",
+            content=section,
+            owner="learner",
+        )
+        for idx, section in enumerate(parts)
+    ]
+
+
+async def save_topic_notes(
+    db: Db,
+    *,
+    learner_id: UUID,
+    topic_id: UUID,
+    content: str,
+    idempotency_key: str,
+    redis: Redis | None = None,
+) -> Artifact:
+    """`PUT /v1/topics/{topic_id}/notes`: replace topic notes with learner-saved sections."""
+    domain_id = await _domain_of_owner(db, learner_id, "notes", topic_id)
+    artifact_id = await _ensure_artifact(db, learner_id, "notes", topic_id, domain_id)
+    return await _save_learner(
+        db,
+        learner_id,
+        artifact_id,
+        lambda _current: _split_markdown_blocks(artifact_id, content),
+        idempotency_key,
+        redis,
+    )
+
+
 async def version_blocks(
     db: Db, *, learner_id: UUID, artifact_id: UUID, version: int
 ) -> tuple[Block, ...]:
@@ -553,15 +638,70 @@ async def _save(
     return artifact
 
 
+def _topic_hints(event_type: str, payload: Any) -> list[str]:
+    if not isinstance(payload, Mapping):
+        return []
+    hints: list[str] = []
+    if event_type == "observation.extracted":
+        for el in payload.get("elements") or ():
+            if (
+                isinstance(el, Mapping)
+                and isinstance(ns := el.get("new_skill"), Mapping)
+                and isinstance(hint := ns.get("topic_hint"), str)
+            ):
+                hints.append(hint)
+    elif event_type == "task.created" and isinstance(markup := payload.get("markup"), Mapping):
+        for test in markup.get("tests") or ():
+            if (
+                isinstance(test, Mapping)
+                and isinstance(ns := test.get("new_skill"), Mapping)
+                and isinstance(hint := ns.get("topic_hint"), str)
+            ):
+                hints.append(hint)
+        for part in markup.get("parts") or ():
+            if not isinstance(part, Mapping):
+                continue
+            for test in part.get("tests") or ():
+                if (
+                    isinstance(test, Mapping)
+                    and isinstance(ns := test.get("new_skill"), Mapping)
+                    and isinstance(hint := ns.get("topic_hint"), str)
+                ):
+                    hints.append(hint)
+    return hints
+
+
 async def _domain_of_owner(db: Db, learner_id: UUID, kind: ArtifactKind, owner_id: UUID) -> UUID:
     field, types = _OWNER_EVENTS[kind]
     row = await db.fetch_one(
         _OWNER_OF_LEARNER,
         {"learner_id": learner_id, "types": types, "field": field, "owner_id": str(owner_id)},
     )
-    if row is None or row["domain_id"] is None:
-        raise ArtifactNotFound(f"{field.removesuffix('_id')} {owner_id} not found")
-    return UUID(row["domain_id"])
+    if row is not None and row["domain_id"] is not None:
+        return UUID(str(row["domain_id"]))
+    if kind == "cheatsheet":
+        for d_row in await db.fetch_all(_DOMAIN_CREATED_EVENTS, {"learner_id": learner_id}):
+            if (
+                d_row["domain_id"] is not None
+                and UUID(deterministic_id(learner_id, int(d_row["seq"]), 0)) == owner_id
+            ):
+                return UUID(str(d_row["domain_id"]))
+    elif kind in ("notes", "cards"):
+        ref_row = await db.fetch_one(
+            _TOPIC_REFERENCE_EVENTS, {"learner_id": learner_id, "owner_id": str(owner_id)}
+        )
+        if ref_row is not None and ref_row["domain_id"] is not None:
+            return UUID(str(ref_row["domain_id"]))
+        for h_row in await db.fetch_all(_TOPIC_HINT_EVENTS, {"learner_id": learner_id}):
+            for hint in _topic_hints(str(h_row["type"]), h_row["payload"]):
+                topic_key = " ".join(hint.strip().casefold().split())
+                if (
+                    topic_key
+                    and UUID(deterministic_id(learner_id, int(h_row["seq"]), f"topic:{topic_key}"))
+                    == owner_id
+                ):
+                    return UUID(str(h_row["domain_id"]))
+    raise ArtifactNotFound(f"{field.removesuffix('_id')} {owner_id} not found")
 
 
 async def _ensure_artifact(

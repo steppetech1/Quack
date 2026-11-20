@@ -1,6 +1,7 @@
 """ТЗ Ф4 WP13.10 (library part, on `Db`): the session lifecycle — start (domain, intent, topic
-or hub), heartbeat, end (`session.ended`), end by inactivity, return to a session the sweeper
-ended (`П-4.10`), reading. The HTTP routes move to it after D-C-119 (D-B-155)."""
+or hub), heartbeat, end by inactivity (the only way a session closes), return to a closed
+session on any action or heartbeat (`П-4.10`), reading. The HTTP routes move to it after
+D-C-119 (D-B-155)."""
 
 from __future__ import annotations
 
@@ -12,19 +13,19 @@ import pytest
 
 from quack.config import Settings
 from quack.db.db import Db
-from quack.events.event_types import DomainCreated
+from quack.events.event_types import DomainCreated, SessionEnded
 from quack.events.log import NewEvent, append_events
 from quack.session import sessions
 from quack.session.sessions import (
     SessionConflictError,
     StartSession,
     end_if_inactive,
-    end_session,
     get_session,
     heartbeat,
     list_sessions,
-    resume_if_swept,
+    resume_if_ended,
     start_session,
+    touch_session,
 )
 from tests.db.fixtures import create_learner
 
@@ -178,22 +179,61 @@ async def test_heartbeat_moves_the_activity(pg_db: Db) -> None:
         await heartbeat(pg_db, learner_id=other, session_id=started.session_id)
 
 
-async def test_end_writes_session_ended_once(pg_db: Db) -> None:
-    learner_id = await create_learner(pg_db)
+async def _close(db: Db, learner_id: UUID, session_id: UUID) -> None:
+    """The inactivity sweep for a session whose activity is old enough."""
+    started = await get_session(db, learner_id=learner_id, session_id=session_id)
+    late = started.last_activity_at + timedelta(minutes=SETTINGS.session_inactivity_timeout_min + 1)
+    assert await end_if_inactive(
+        db, learner_id=learner_id, session_id=session_id, settings=SETTINGS, now=late
+    )
+
+
+async def test_heartbeat_of_a_closed_session_resumes_it_and_a_foreign_one_is_unknown(
+    pg_db: Db,
+) -> None:
+    """A heartbeat in a closed session opens it again (`resumed`), a repeat writes nothing new;
+    the session of another learner or none is `LookupError` (404 on the route)."""
+    learner_id, other = await create_learner(pg_db), await create_learner(pg_db)
     domain_id = await _domain(pg_db, learner_id)
     started = await start_session(pg_db, learner_id=learner_id, body=_body(domain_id))
+    await _close(pg_db, learner_id, started.session_id)
 
-    ended = await end_session(pg_db, learner_id=learner_id, session_id=started.session_id)
-    again = await end_session(pg_db, learner_id=learner_id, session_id=started.session_id)
+    beaten = await heartbeat(pg_db, learner_id=learner_id, session_id=started.session_id)
+    await heartbeat(pg_db, learner_id=learner_id, session_id=started.session_id)
 
-    assert ended.status == again.status == "ended" and ended.ended_at is not None
-    events = await _events(pg_db, learner_id, started.session_id)
-    assert [(e["type"], e["payload"].get("reason")) for e in events] == [
-        ("session.started", None),
-        ("session.ended", "learner"),
-    ]
+    assert beaten.status == "active" and beaten.ended_at is None
+    types = [e["type"] for e in await _events(pg_db, learner_id, started.session_id)]
+    assert types == ["session.started", "session.ended", "session.started"]
     with pytest.raises(LookupError):
-        await heartbeat(pg_db, learner_id=learner_id, session_id=started.session_id)
+        await heartbeat(pg_db, learner_id=other, session_id=started.session_id)
+    with pytest.raises(LookupError):
+        await heartbeat(pg_db, learner_id=learner_id, session_id=uuid4())
+
+
+async def test_touch_keeps_a_session_the_sweep_would_close(pg_db: Db) -> None:
+    """An activity moves `last_activity_at`: the sweep does not close a session with a recent
+    action; a closed or foreign session is not touched."""
+    learner_id, other = await create_learner(pg_db), await create_learner(pg_db)
+    domain_id = await _domain(pg_db, learner_id)
+    started = await start_session(pg_db, learner_id=learner_id, body=_body(domain_id))
+    old = datetime.now(UTC) - timedelta(minutes=SETTINGS.session_inactivity_timeout_min + 5)
+    await pg_db.execute(
+        "UPDATE content.sessions SET last_activity_at = %(old)s WHERE session_id = %(s)s",
+        {"old": old, "s": started.session_id},
+    )
+    assert not await touch_session(pg_db, learner_id=other, session_id=started.session_id)
+    assert await touch_session(pg_db, learner_id=learner_id, session_id=started.session_id)
+
+    swept = await end_if_inactive(
+        pg_db,
+        learner_id=learner_id,
+        session_id=started.session_id,
+        settings=SETTINGS,
+        now=datetime.now(UTC),
+    )
+    assert not swept
+    await _close(pg_db, learner_id, started.session_id)
+    assert not await touch_session(pg_db, learner_id=learner_id, session_id=started.session_id)
 
 
 async def test_inactive_session_is_ended_and_returns_on_action(pg_db: Db) -> None:
@@ -215,8 +255,8 @@ async def test_inactive_session_is_ended_and_returns_on_action(pg_db: Db) -> Non
         await get_session(pg_db, learner_id=learner_id, session_id=started.session_id)
     ).status == ("ended")
 
-    assert await resume_if_swept(pg_db, learner_id=learner_id, session_id=started.session_id)
-    assert not await resume_if_swept(pg_db, learner_id=learner_id, session_id=started.session_id)
+    assert await resume_if_ended(pg_db, learner_id=learner_id, session_id=started.session_id)
+    assert not await resume_if_ended(pg_db, learner_id=learner_id, session_id=started.session_id)
 
     events = await _events(pg_db, learner_id, started.session_id)
     assert [(e["type"], e["payload"].get("reason")) for e in events] == [
@@ -234,15 +274,38 @@ async def test_inactive_session_is_ended_and_returns_on_action(pg_db: Db) -> Non
     assert row.status == "active" and row.ended_at is None
 
 
-async def test_session_ended_by_the_learner_does_not_return(pg_db: Db) -> None:
-    """Only a session the sweeper ended is open for a return (WP13.10)."""
+async def test_session_closed_with_the_retired_reason_learner_still_resumes(pg_db: Db) -> None:
+    """Any closed session comes back (WP13.10): an old log holds `session.ended {reason:
+    learner}` (the explicit end is cut), it is read and the session opens again."""
     learner_id = await create_learner(pg_db)
     domain_id = await _domain(pg_db, learner_id)
     started = await start_session(pg_db, learner_id=learner_id, body=_body(domain_id))
-    await end_session(pg_db, learner_id=learner_id, session_id=started.session_id)
+    await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="session.ended",
+                payload=SessionEnded(session_id=started.session_id, reason="learner"),
+                actor="learner",
+                idempotency_key=f"old-end:{started.session_id}",
+                session_id=started.session_id,
+                domain_id=domain_id,
+            )
+        ],
+    )
+    await pg_db.execute(
+        "UPDATE content.sessions SET status = 'ended', ended_at = now() WHERE session_id = %(s)s",
+        {"s": started.session_id},
+    )
 
-    assert not await resume_if_swept(pg_db, learner_id=learner_id, session_id=started.session_id)
-    assert len(await _events(pg_db, learner_id, started.session_id)) == 2
+    assert await resume_if_ended(pg_db, learner_id=learner_id, session_id=started.session_id)
+    row = await get_session(pg_db, learner_id=learner_id, session_id=started.session_id)
+    assert row.status == "active" and row.ended_at is None
+    types = [e["type"] for e in await _events(pg_db, learner_id, started.session_id)]
+    assert types == ["session.started", "session.ended", "session.started"]
+    other = await create_learner(pg_db)
+    assert not await resume_if_ended(pg_db, learner_id=other, session_id=started.session_id)
 
 
 async def test_sessions_of_another_learner_are_not_seen(pg_db: Db) -> None:
@@ -252,8 +315,6 @@ async def test_sessions_of_another_learner_are_not_seen(pg_db: Db) -> None:
 
     with pytest.raises(LookupError):
         await get_session(pg_db, learner_id=other, session_id=started.session_id)
-    with pytest.raises(LookupError):
-        await end_session(pg_db, learner_id=other, session_id=started.session_id)
     assert await list_sessions(pg_db, learner_id=other) == []
     assert datetime.now(UTC) >= started.started_at
 
@@ -300,3 +361,113 @@ async def test_session_of_a_today_item_takes_the_prepared_plan(pg_db: Db) -> Non
         pg_db, learner_id=learner_id, body=_body(domain_id, topic_id=uuid4())
     )
     assert other.session_id not in (planned, again.session_id)
+
+
+def test_enrich_feed_links_responses_answers_and_verdicts_deterministically() -> None:
+    """`FeedEvent` carries `causation_seq`, `turn_seq`, `element_id` and `outcome` linked via
+    causal chains and task ids, even when two turns reuse `e1` and a verdict arrives late."""
+    from quack.session.sessions import _enrich_feed, _FeedRow
+
+    now = datetime.now(UTC)
+    task1, task2 = str(uuid4()), str(uuid4())
+    rows = [
+        _FeedRow(
+            seq=10,
+            type="turn.committed",
+            actor="teacher@3",
+            occurred_at=now,
+            payload={"markup": {"tasks": [{"task_id": task1, "element_id": "e1"}]}},
+        ),
+        _FeedRow(
+            seq=11,
+            type="element.responded",
+            actor="learner",
+            occurred_at=now,
+            payload={"turn_seq": 10, "element_id": "e1", "response": "wrong"},
+        ),
+        _FeedRow(
+            seq=12,
+            type="answer.submitted",
+            actor="learner",
+            occurred_at=now,
+            causation_seq=11,
+            payload={"task_id": task1, "element_id": "e1"},
+        ),
+        _FeedRow(
+            seq=20,
+            type="turn.committed",
+            actor="teacher@3",
+            occurred_at=now,
+            payload={"markup": {"tasks": [{"task_id": task2, "element_id": "e1"}]}},
+        ),
+        _FeedRow(
+            seq=21,
+            type="answer.submitted",
+            actor="learner",
+            occurred_at=now,
+            causation_seq=None,
+            payload={"task_id": task2},
+        ),
+        _FeedRow(
+            seq=22,
+            type="verdict.recorded",
+            actor="code",
+            occurred_at=now,
+            causation_seq=21,
+            payload={"answer_seq": 21, "outcome": "correct"},
+        ),
+        # Late slow verdict for turn 10 arriving after turn 20.
+        _FeedRow(
+            seq=25,
+            type="verdict.recorded",
+            actor="code",
+            occurred_at=now,
+            causation_seq=12,
+            payload={"answer_seq": 12, "outcome": "incorrect"},
+        ),
+        _FeedRow(
+            seq=26,
+            type="item.flagged_unclear",
+            actor="learner",
+            occurred_at=now,
+            payload={"turn_seq": 20, "block_id": "b1", "text": "why"},
+        ),
+    ]
+
+    feed = {e.seq: e for e in _enrich_feed(rows)}
+    assert (feed[11].turn_seq, feed[11].element_id, feed[11].outcome) == (10, "e1", "incorrect")
+    assert (feed[12].causation_seq, feed[12].turn_seq, feed[12].element_id) == (11, 10, "e1")
+    assert (feed[21].turn_seq, feed[21].element_id) == (20, "e1")
+    assert (feed[22].causation_seq, feed[22].turn_seq, feed[22].element_id, feed[22].outcome) == (
+        21,
+        20,
+        "e1",
+        "correct",
+    )
+    assert (feed[25].causation_seq, feed[25].turn_seq, feed[25].element_id, feed[25].outcome) == (
+        12,
+        10,
+        "e1",
+        "incorrect",
+    )
+    assert feed[26].turn_seq == 20
+
+
+def test_answer_from_response_handles_choice_and_scalar_answers() -> None:
+    from quack.events.values import AnswerOption, AnswerSpec, MathValue
+    from quack.session.record import _answer_from_response
+
+    choice = AnswerSpec(
+        type="choice",
+        options=[
+            AnswerOption(option_id="A", text="Converges", correct=True),
+            AnswerOption(option_id="B", text="Diverges", correct=False),
+        ],
+    )
+    assert _answer_from_response(" A ", choice).value == "A"
+    assert _answer_from_response("b", choice).value == "B"
+    assert _answer_from_response("converges", choice).value == "A"
+
+    num = AnswerSpec(type="number", value=MathValue(latex="1/2", sympy="1/2"))
+    ans = _answer_from_response(" 0.5 ", num)
+    assert (ans.kind, ans.value) == ("number", "0.5")

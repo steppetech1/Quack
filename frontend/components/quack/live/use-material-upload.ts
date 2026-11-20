@@ -12,7 +12,7 @@ import { useErrorText } from "./error-text";
  * with the material in status `uploaded`; the parser then works on it in the background. Shared by the chapter page and the input box.
  * The result is the new material, or `null` when the upload failed (the toast already said why).
  */
-export function useMaterialUpload(domainId: string, sessionId?: string) {
+export function useMaterialUpload(domainId: string, sessionId?: string, opts: { quiet?: boolean } = {}) {
   const t = useT().live;
   const notice = useNotice();
   const errorText = useErrorText();
@@ -27,7 +27,7 @@ export function useMaterialUpload(domainId: string, sessionId?: string) {
         form.append("file", file);
         if (sessionId) form.append("session_id", sessionId);
         const made = await upload<MaterialView>(`/v1/domains/${domainId}/materials`, form);
-        notice(t.materialUploaded);
+        if (!opts.quiet) notice(t.materialUploaded);
         return made;
       } catch (e) {
         notice(e instanceof ApiError && e.code === "UPLOAD_REJECTED" ? t.materialRejected : errorText(e));
@@ -36,7 +36,7 @@ export function useMaterialUpload(domainId: string, sessionId?: string) {
         setUploading(false);
       }
     },
-    [domainId, sessionId, notice, errorText, t.materialUploaded, t.materialRejected],
+    [domainId, sessionId, opts.quiet, notice, errorText, t.materialUploaded, t.materialRejected],
   );
 
   return { send, uploading };

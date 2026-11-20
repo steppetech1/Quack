@@ -30,6 +30,7 @@ from quack.db import Db
 from quack.events.event_types import VoiceTranscribed
 from quack.events.log import NewEvent, append_events
 from quack.llm.gateway import LLMGateway
+from quack.practice.session_resume import resume_if_ended, touch_session
 from quack.storage.uploads import UploadRejected
 
 # Limits of the endpoint of the model (documentation, WP0 п.3д), not tunable parameters.
@@ -179,7 +180,7 @@ async def transcribe_segment(
     """`SessionNotFound`, `InvalidSegment`, `UploadRejected` (the audio), and the errors of the
     gateway (the model is down or over budget: nothing is written). The key of the event is the
     session and the time of the segment (law 5): the same segment again gives the recorded
-    answer and calls nothing."""
+    answer and calls nothing. A segment of a closed session opens it again first (WP13.10)."""
     found = await db.fetch_one(_SESSION, {"learner_id": learner_id, "session_id": str(session_id)})
     if found is None:
         raise SessionNotFound(f"session {session_id} not found")
@@ -202,5 +203,9 @@ async def transcribe_segment(
         idempotency_key=key,
         session_id=session_id,
     )
+    # WP13.10: a closed session comes back before the segment is written, and the segment is
+    # an activity (a session of the log without a row has nothing to open).
+    await resume_if_ended(db, learner_id=learner_id, session_id=session_id)
     (stored,) = await append_events(db, learner_id, [event], redis=redis)
+    await touch_session(db, learner_id=learner_id, session_id=session_id)
     return Voice(text, started_at_ms, ended_at_ms, stored.seq)

@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -49,6 +49,7 @@ from quack.session.actions import (
     ErrorFrame,
     VerdictFrame,
 )
+from quack.session.elements import Element
 from quack.session.record import RecordedAction
 from quack.session.teacher_output import TurnTask
 from quack.session.turn_commit import (
@@ -56,6 +57,7 @@ from quack.session.turn_commit import (
     LearnerText,
     TurnManifestRow,
     commit_turn,
+    record_guard_samples,
     turn_batch,
 )
 from quack.session.turn_graph import (
@@ -67,6 +69,7 @@ from quack.session.turn_graph import (
     TurnToCommit,
     run_turn,
 )
+from quack.session.turn_timings import TurnTimer, merged, now_ns, since_ms
 
 log = get_logger(__name__)
 
@@ -112,7 +115,7 @@ class TurnSetup:
     """The output of the context source (WP14): the model request and guard inputs, the
     streaming provider of the role (`LLMGateway.streaming`), the label table and the manifest
     row of the call, the memory tools, what the commit needs to check a deadline and to close
-    or help a task."""
+    or help a task; the milliseconds of the parts of the assembly (`timings`, numbers only)."""
 
     assembled: AssembledTurn
     provider: StreamingLLMProvider
@@ -122,6 +125,8 @@ class TurnSetup:
     learner_texts: Sequence[LearnerText] = ()
     learner_timezone: str | None = None
     answered: AnsweredAction | None = None
+    timings: dict[str, int] = field(default_factory=dict)
+    fix_markup: Callable[[MarkupFix], Awaitable[TurnTask | Element | None]] | None = None
 
 
 class TurnContextSource(Protocol):
@@ -187,6 +192,7 @@ class ApiTurnPorts:
 
     async def commit(self, turn: TurnToCommit) -> int:
         setup = self._ready()
+        turn = replace(turn, timings=merged(setup.timings, turn.timings))
         manifest = replace(
             setup.manifest,
             role=turn.role,
@@ -205,15 +211,48 @@ class ApiTurnPorts:
             learner_texts=setup.learner_texts,
             learner_timezone=setup.learner_timezone,
         )
-        return await commit_turn(self._db, batch, learner_id=self._learner_id, redis=self._redis)
+        commit_started = now_ns()
+        seq = await commit_turn(self._db, batch, learner_id=self._learner_id, redis=self._redis)
+        self._log_timings(seq, turn, since_ms(commit_started))
+        await record_guard_samples(
+            self._db,
+            learner_id=self._learner_id,
+            session_id=self._session_id,
+            turn_seq=seq,
+            samples=turn.guard_samples,
+        )
+        return seq
+
+    def _log_timings(self, seq: int, turn: TurnToCommit, commit_ms: int) -> None:
+        """`turn_timings`: the numbers of `turn.committed.timings` and the write itself; best
+        effort, a failure here never touches the turn (law 7)."""
+        try:
+            log.info(
+                "turn_timings",
+                turn_seq=seq,
+                manifest_id=str(self._ready().manifest.manifest_id),
+                role=turn.role,
+                model=turn.model,
+                commit_ms=commit_ms,
+                **turn.timings,
+            )
+        except Exception as exc:
+            log.warning("turn_timings_log_failed", error=repr(exc))
 
     async def emit(self, frame: Frame) -> None:
         await self._frames.put(frame)
 
-    async def fix_markup(self, fix: MarkupFix) -> TurnTask | None:
-        """D-B-156: the model call «fix the markup for this text» has no instruction in
-        `teacher@2` yet; no fix — the element is removed after the check (WP13.5)."""
-        return None
+    async def fix_markup(self, fix: MarkupFix) -> TurnTask | Element | None:
+        """WP13.4 п.4: repair bad task or element markup while keeping the shown text intact;
+        on failure return `None` so the element is safely dropped (law 9)."""
+        fn = self._ready().fix_markup
+        if fn is None:
+            return None
+        try:
+            return await fn(fix)
+        except Exception as exc:
+            log.warning("fix_markup_failed", element_id=fix.element.element_id, error=repr(exc))
+            return None
 
     async def release(self) -> None:
         """Free the turn lock if this turn holds it (compare-and-delete)."""
@@ -337,10 +376,13 @@ async def turn_frames(
     )
 
     async def turn() -> int | None:
+        timer = TurnTimer()
+        claimed = now_ns()
         async with slots.claim(session_id) as cancel:
+            timer.put_since("slot_wait_ms", claimed)
             try:
                 return await run_turn(
-                    ports, _SetupProvider(ports), settings=settings, cancel=cancel
+                    ports, _SetupProvider(ports), settings=settings, cancel=cancel, timer=timer
                 )
             finally:
                 await ports.release()

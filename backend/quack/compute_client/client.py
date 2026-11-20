@@ -16,6 +16,8 @@ from quack.compute_client.contracts import (
     ImageResponse,
     PdfPagesRequest,
     PdfPagesResponse,
+    PptxSlidesRequest,
+    PptxSlidesResponse,
     RenderPdfRequest,
     RenderPdfResponse,
     RenderSnapshotsRequest,
@@ -59,6 +61,12 @@ class MathCheckResponse(BaseModel):
 
 class ComputeUnavailableError(Exception):
     """compute did not answer in time or returned a non-200 status."""
+
+
+class ComputeRejected(ComputeUnavailableError):
+    """compute answered 422: the file or the request is wrong and will be wrong again (a file that
+    is not what its type says). It is still `ComputeUnavailableError` for the callers that retry on
+    any failure; a job that knows its input can tell the difference and stop."""
 
 
 class ComputeJobTimeout(ComputeUnavailableError):
@@ -116,6 +124,9 @@ class ComputeClient:
     async def pdf_pages(self, request: PdfPagesRequest) -> PdfPagesResponse:
         return await self._post("/v1/pdf/pages", request, PdfPagesResponse)
 
+    async def pptx_slides(self, request: PptxSlidesRequest) -> PptxSlidesResponse:
+        return await self._post("/v1/pptx/slides", request, PptxSlidesResponse)
+
     async def image_align(self, request: ImageRequest) -> AlignResponse:
         return await self._post("/v1/image/align", request, AlignResponse)
 
@@ -144,6 +155,8 @@ class ComputeClient:
             raise ComputeUnavailableError(f"compute request failed: {exc!r}") from exc
         if response.status_code == 504:
             raise ComputeJobTimeout(f"compute job timed out: {path}")
+        if response.status_code == 422:
+            raise ComputeRejected(f"compute refused the input of {path}")
         if response.status_code != 200:
             raise ComputeUnavailableError(f"compute returned HTTP {response.status_code}")
         try:

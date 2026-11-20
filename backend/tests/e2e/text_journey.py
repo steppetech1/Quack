@@ -4,13 +4,16 @@ scripted teacher turn, the session, an action, and the journey up to the answer.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
 
+from quack.jobs.types import ClaimedJob
+from quack.session.lifecycle import sweep_inactive_sessions
 from tests.e2e.journey import ok, onboard, sse_events
-from tests.e2e.system import Learner, System
+from tests.e2e.system import Learner, System, job_context
 
 SCHEMA = "TeacherOutputV2"
 TEXT = "Every term is a third of the one before it."
@@ -61,9 +64,10 @@ def teacher_turn(*, with_task: bool, with_skills: bool = True) -> dict[str, Any]
             ),
             "targetsMisconception": None,
             "planUpdate": {
-                "completed_steps": [],
-                "current_step": "geometric sum",
+                "goal": None,
+                "current_step": {"id": "geometric-sum", "text": "geometric sum", "landmark": None},
                 "next_steps": [],
+                "landmark_edits": None,
                 "branches": [],
                 "cancel_requests": [],
             },
@@ -73,6 +77,16 @@ def teacher_turn(*, with_task: bool, with_skills: bool = True) -> dict[str, Any]
             "deadline": None,
         },
     }
+
+
+async def close_by_inactivity(system: System, session_id: UUID) -> None:
+    """Close a session the only way there is (WP13.10): its activity is a day old and the
+    sweep of inactive sessions runs; the closing `session.ended` is the boundary of the episode."""
+    await system.resources.db.execute(
+        "UPDATE content.sessions SET last_activity_at = %(old)s WHERE session_id = %(session_id)s",
+        {"old": datetime.now(UTC) - timedelta(days=1), "session_id": session_id},
+    )
+    await sweep_inactive_sessions(cast(ClaimedJob, None), job_context(system.resources))
 
 
 async def event_types(system: System, learner: Learner) -> list[tuple[int, str]]:

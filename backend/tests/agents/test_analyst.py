@@ -244,6 +244,8 @@ async def test_analyst_job_reads_memory_for_the_session(pg_db: Db) -> None:
     goals, the profile, the slice); a trigger outside a session writes nothing."""
     from types import SimpleNamespace
 
+    from psycopg.types.json import Jsonb
+
     from quack.agents.analyst import analyst_job
     from quack.events.log import NewEvent, append_events
     from quack.jobs.runner import JobContext
@@ -266,6 +268,19 @@ async def test_analyst_job_reads_memory_for_the_session(pg_db: Db) -> None:
             )
             for t, s in (("session.ended", session_id), ("session.ended", None))
         ],
+    )
+    plan = {
+        "v": 2,
+        "goal": "the ratio test",
+        "current_step": {"id": "example", "text": "try an example", "landmark": None},
+        "next_steps": [{"id": "task", "text": "solve a task", "landmark": None}],
+        "landmark_edits": {"added": [], "removed": []},
+        "branches": [],
+    }
+    await pg_db.execute(
+        "INSERT INTO content.session_plans (session_id, learner_id, plan, status) "
+        "VALUES (%(s)s, %(l)s, %(p)s, 'active')",
+        {"s": session_id, "l": learner_id, "p": Jsonb(plan)},
     )
     gateway = _Gateway(_output())
     ctx = cast(JobContext, SimpleNamespace(db=pg_db, llm=gateway, settings=SETTINGS))
@@ -292,4 +307,7 @@ async def test_analyst_job_reads_memory_for_the_session(pg_db: Db) -> None:
     variables = gateway.calls[0]["variables"]
     assert 'Hub "fractions exam"' in variables["goals"]
     assert "Preference language: ru" in variables["profile"]
+    assert variables["session_plan"] == (
+        "Goal: the ratio test; Current step: try an example; next: solve a task"
+    )
     assert gateway.calls[0]["role"] == "analyst_deep"

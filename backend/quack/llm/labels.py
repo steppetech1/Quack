@@ -90,17 +90,21 @@ class LabelMap:
         lines: Sequence[UUID] = (),
         domains: Sequence[UUID] = (),
         skills_limit: int | None = None,
+        topics_limit: int | None = None,
     ) -> LabelMap:
         """Labels in the given order, cut at the limits of `settings`. Misconceptions have
         no limit of their own (`M1…Mn`, ТЗ §2.3 row 18). `skills_limit` replaces
         `candidate_skills_k` for a call that needs more skills than a teacher turn (the split of
-        a topic, `topic_split_skills_k`)."""
+        a topic, `topic_split_skills_k`); `topics_limit` replaces `label_max_topics` when a
+        background builder needs every topic of the domain."""
         return cls(
             {
                 "skill": _unique(skills)[
                     : settings.candidate_skills_k if skills_limit is None else skills_limit
                 ],
-                "topic": _unique(topics)[: settings.label_max_topics],
+                "topic": _unique(topics)[
+                    : settings.label_max_topics if topics_limit is None else topics_limit
+                ],
                 "task": _unique(tasks)[: settings.label_max_tasks],
                 "misconception": _unique(misconceptions),
                 "hub": _unique(hubs),

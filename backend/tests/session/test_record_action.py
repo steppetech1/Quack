@@ -372,3 +372,120 @@ async def test_the_turn_finds_the_answer_of_a_task_element(pg_db: Db) -> None:
     assert journal.answered.task_id == task_id and journal.answered.solved
     assert journal.answered_verdict is not None and journal.answered_verdict.outcome == "correct"
     assert journal.answer_seq == recorded.seq + 1
+
+
+async def test_plain_element_response_on_a_task_writes_answer_and_verdict(pg_db: Db) -> None:
+    """When the UI submits `element_response` with `response` only (`answer: null`), a task
+    element still writes `answer.submitted` and its instant `verdict.recorded`; a non-task
+    element writes only `element.responded`."""
+    from quack.events.values import AnswerOption
+
+    learner_id = await create_learner(pg_db)
+    session_id = uuid4()
+    num_task = await _task(pg_db, learner_id)
+    choice_task = uuid4()
+    choice_spec = AnswerSpec(
+        type="choice",
+        options=[
+            AnswerOption(option_id="A", text="1/2", correct=True),
+            AnswerOption(option_id="B", text="1/4", correct=False),
+        ],
+    )
+    await create_task(
+        pg_db,
+        learner_id=learner_id,
+        task_id=choice_task,
+        family_id=choice_task,
+        source="teacher",
+        condition=TaskCondition(text="Pick one", latex=None),
+        markup=records.TaskMarkupRecord(
+            tests=[records.TestedLevelRecord(skill_id=uuid4(), level=1)],
+            method_named=False,
+            answer=choice_spec,
+        ),
+        verification="unchecked",
+        actor="teacher@3",
+        idempotency_key=f"task:{choice_task}",
+    )
+    payload = _turn(num_task, 1)
+    choice_markup = records.TaskMarkupRecord(
+        tests=[records.TestedLevelRecord(skill_id=uuid4(), level=1)],
+        method_named=False,
+        answer=choice_spec,
+    )
+    payload["markup"]["tasks"].append(
+        {**choice_markup.model_dump(mode="json"), "element_id": "e2", "task_id": str(choice_task)}
+    )
+    [turn] = await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="turn.committed",
+                payload=payload,
+                actor="teacher@3",
+                idempotency_key=f"turn:{uuid4()}",
+                session_id=session_id,
+            )
+        ],
+    )
+
+    num_recorded = await record_action(
+        pg_db,
+        ACTION.validate_python(
+            {
+                "kind": "element_response",
+                "idempotency_key": str(uuid4()),
+                "turn_seq": turn.seq,
+                "element_id": "e1",
+                "response": "0.5",
+            }
+        ),
+        learner_id=learner_id,
+        session_id=session_id,
+        domain_id=None,
+        settings=SETTINGS,
+    )
+    assert num_recorded.verdict is not None and num_recorded.verdict.outcome == "correct"
+    assert (await _types(pg_db, learner_id))[-3:] == [
+        "element.responded",
+        "answer.submitted",
+        "verdict.recorded",
+    ]
+
+    choice_recorded = await record_action(
+        pg_db,
+        ACTION.validate_python(
+            {
+                "kind": "element_response",
+                "idempotency_key": str(uuid4()),
+                "turn_seq": turn.seq,
+                "element_id": "e2",
+                "response": "B",
+            }
+        ),
+        learner_id=learner_id,
+        session_id=session_id,
+        domain_id=None,
+        settings=SETTINGS,
+    )
+    assert choice_recorded.verdict is not None and choice_recorded.verdict.outcome == "incorrect"
+
+    non_task = await record_action(
+        pg_db,
+        ACTION.validate_python(
+            {
+                "kind": "element_response",
+                "idempotency_key": str(uuid4()),
+                "turn_seq": turn.seq,
+                "element_id": "e_info",
+                "response": "noted",
+            }
+        ),
+        learner_id=learner_id,
+        session_id=session_id,
+        domain_id=None,
+        settings=SETTINGS,
+    )
+    assert non_task.verdict is None
+    assert (await _types(pg_db, learner_id))[-1] == "element.responded"

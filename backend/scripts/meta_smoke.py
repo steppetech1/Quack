@@ -147,11 +147,13 @@ ROLE_SCHEMAS: dict[str, type[BaseModel]] = {
     "task_arbiter": role_outputs.TaskCheckOutput,
     "solution_space": role_outputs.SolutionSpace,
     "viz_builder": agents.VizBuilderOutput,
+    "viz_planner": agents.VizPlannerOutput,
     "misconception_describer": agents.MisconceptionDescription,
     "artifact_writer": ArtifactWriterOutput,
     "material_parser": MaterialParserOutput,
     "today_planner": agents.TodayPlannerOutput,
     "domain_classifier": agents.DomainClassifierOutput,
+    "session_titler": role_outputs.SessionTitleOutput,
     "release_judge": agents.ReleaseJudgeOutput,
 }
 # The roles that are not text calls (D-B-187).

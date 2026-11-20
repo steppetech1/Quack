@@ -125,14 +125,24 @@ export function sse<P extends WritePath<"post">>(
   body: BodyOf<P, "post">,
   onEvent: (e: SseEvent) => void,
   signal?: AbortSignal,
+  onActivity?: () => void,
 ): Promise<void>;
-export function sse(method: "GET", path: string, body: undefined, onEvent: (e: SseEvent) => void, signal?: AbortSignal): Promise<void>;
+export function sse(
+  method: "GET",
+  path: string,
+  body: undefined,
+  onEvent: (e: SseEvent) => void,
+  signal?: AbortSignal,
+  onActivity?: () => void,
+): Promise<void>;
 export async function sse(
   method: "GET" | "POST",
   path: string,
   body: unknown,
   onEvent: (e: SseEvent) => void,
   signal?: AbortSignal,
+  /** Called on every chunk of the stream, keepalive comments included: the connection is alive */
+  onActivity?: () => void,
 ): Promise<void> {
   const res = await fetch(BASE + path, {
     method,
@@ -140,12 +150,21 @@ export async function sse(
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
-  if (!res.ok || !res.body) throw await toError(res);
+  if (!res.ok) throw await toError(res);
+  if (res.status === 201 || res.headers.get("content-type")?.includes("application/json")) {
+    onActivity?.();
+    const parsed = await res.json().catch(() => ({}));
+    const data = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    onEvent({ event: "action_accepted", data });
+    return;
+  }
+  if (!res.body) throw await toError(res);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
+    onActivity?.();
     buf += value.replace(/\r\n/g, "\n");
     let cut: number;
     while ((cut = buf.indexOf("\n\n")) >= 0) {

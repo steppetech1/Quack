@@ -70,16 +70,8 @@ STREAM = Stream(
         ),
         Route(
             "POST",
-            "/v1/sessions/{session_id}/end",
-            requires=("session_id",),
-            body_key="none",
-            body=lambda ids, v: {},
-            no_key="WP13.10: the end is keyed by the session, a repeat writes nothing new",
-        ),
-        Route(
-            "POST",
             "/v1/sessions/{session_id}/heartbeat",
-            no_key="no event; refreshes presence only",
+            no_key="presence; a closed session is reopened under the key session.resume:{seq}",
             body_key="none",
             body=lambda ids, v: {},
         ),
@@ -98,6 +90,7 @@ STREAM = Stream(
             ("GET", "/v1/sessions/{session_id}"),
             ("GET", "/v1/sessions/{session_id}/events"),
             ("GET", "/v1/sessions/{session_id}/jobs"),
+            ("GET", "/v1/sessions/{session_id}/plan"),
             ("GET", "/v1/llm/access"),
             ("GET", "/v1/viz/{viz_id}"),
         }

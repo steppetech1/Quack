@@ -67,6 +67,7 @@ CROSS_LEARNER_ALLOWED |= (
         "quack/graph/projection/process.py:_PENDING": "the projector walks every learner",
         # D-A-204: `manifests.cleanup` deletes the old manifests of every learner (Т-§3.6).
         "quack/jobs/cleanup_p4.py:_DELETE_OLD": "the periodic cleanup of every learner",
+        "quack/jobs/cleanup_p4.py:_DELETE_OLD_SAMPLES": "the periodic cleanup of every learner",
         # D-A-215: `exports.cleanup` deletes the expired archives of every learner (Д-§8.4).
         "quack/jobs/cleanup_p4.py:_EXPIRED_EXPORTS": "the periodic cleanup of every learner",
         "quack/jobs/cleanup_p4.py:_MARK_EXPIRED": "a row found by its global export_id",

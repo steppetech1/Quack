@@ -39,7 +39,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from quack.compute_client.contracts import ImageRequest, PdfPagesRequest
+from quack.compute_client.client import ComputeRejected
+from quack.compute_client.contracts import ImageRequest, PdfPagesRequest, PptxSlidesRequest
 from quack.config import Settings
 from quack.db import Db
 from quack.events.event_types import (
@@ -64,11 +65,15 @@ log = get_logger(__name__)
 
 PARSER_ROLE = "material_parser"
 RECOGNIZER_ROLE = "recognizer"
-RECOGNIZER_VERSION = 1
+RECOGNIZER_VERSION = 2
 SHEET_MODE = "sheet"
 PAGE_MIME = "image/webp"
 PDF_MIME = "application/pdf"
+PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 STATUS_PARSED = "parsed"
+# The text of the pages is stored and can be read by the teacher; the structure (topics, skills,
+# chunks of the graph) is still being made, or could not be made (the graph work needs embeddings).
+STATUS_READ = "read"
 STATUS_FAILED = "failed"
 STEP_STRUCTURE = "structure"
 HUB_CONTROL_TYPE = "no_goal"
@@ -178,7 +183,7 @@ class SheetLine(BaseModel):
 
 
 class SheetReading(BaseModel):
-    """`recognizer@1` in the sheet mode as the parse of a photo of notes reads it. A copy of
+    """`recognizer@2` in the sheet mode as the parse of a photo of notes reads it. A copy of
     `quack.canvas.recognition.RecognizerSheetOutput`: product packages do not import each other
     (§4.1); a test keeps the two equal (D-C-203)."""
 
@@ -309,13 +314,34 @@ async def _set_parsed(db: Db, learner_id: UUID, material_id: UUID, pages: int) -
 
 _SET_FAILED = (
     "UPDATE content.materials SET status = %(status)s WHERE learner_id = %(learner_id)s "
-    "AND material_id = %(material_id)s AND status <> %(parsed)s"
+    "AND material_id = %(material_id)s AND status NOT IN (%(parsed)s, %(read)s)"
 )
+_SET_READ = (
+    "UPDATE content.materials SET status = %(status)s, pages_count = %(pages)s "
+    "WHERE learner_id = %(learner_id)s AND material_id = %(material_id)s "
+    "AND status NOT IN (%(parsed)s)"
+)
+
+
+async def _set_read(db: Db, learner_id: UUID, material_id: UUID, pages: int) -> None:
+    """The pages are stored: the material is readable now, whatever happens to its structure."""
+    await db.execute(
+        _SET_READ,
+        {
+            "status": STATUS_READ,
+            "parsed": STATUS_PARSED,
+            "pages": pages,
+            "learner_id": learner_id,
+            "material_id": material_id,
+        },
+    )
 
 
 async def mark_failed(db: Db, job: ClaimedJob) -> None:
     """The parse of the material is over for good (a permanent error or the last attempt): the
-    status is `failed`, so the client stops waiting. A parsed material keeps its status."""
+    status is `failed`, so the client stops waiting. A parsed material keeps its status, and so
+    does a material whose pages are read: its text is there for the teacher, only the graph work
+    did not happen."""
     await mark_material_failed(db, job.learner_id, job.payload)
 
 
@@ -327,6 +353,7 @@ async def mark_material_failed(db: Db, learner_id: UUID | None, payload: dict[st
         {
             "status": STATUS_FAILED,
             "parsed": STATUS_PARSED,
+            "read": STATUS_READ,
             "learner_id": learner_id,
             "material_id": UUID(str(payload["material_id"])),
         },
@@ -399,6 +426,24 @@ async def _read_scans(
     return out
 
 
+def slide_text(title: str, text: str, notes: str) -> str:
+    """The text of a slide as a page: the title, the body, then the notes of the speaker."""
+    parts = [title.strip(), text.strip()]
+    if notes.strip():
+        parts.append("Notes: " + notes.strip())
+    return _clean_text("\n".join(p for p in parts if p))
+
+
+async def _read_slides(ctx: JobContext, encoded: str) -> list[tuple[int, str, bytes]]:
+    """The slides of a presentation as pages: text only (a slide has no page image here; the
+    pictures of a slide are not read). A file compute refuses is not a presentation: permanent."""
+    try:
+        found = await ctx.compute.pptx_slides(PptxSlidesRequest(pptx_b64=encoded))
+    except ComputeRejected as exc:
+        raise JobFailedPermanently(f"the presentation cannot be read: {exc}") from exc
+    return [(s.slide, slide_text(s.title, s.text, s.notes), b"") for s in found.slides]
+
+
 async def _extract_pages(
     ctx: JobContext, job: ClaimedJob, material: _Material
 ) -> list[tuple[int, str, bytes]]:
@@ -412,6 +457,8 @@ async def _extract_pages(
             (p.page, _clean_text(p.text), base64.b64decode(p.image_webp_b64)) for p in found.pages
         ]
         return await _read_scans(ctx, job, material, pages)
+    if material.mime == PPTX_MIME:
+        return await _read_slides(ctx, encoded)
     if not material.mime.startswith("image/"):
         raise JobFailedPermanently(
             f"material {material.material_id}: unreadable type {material.mime}"
@@ -433,11 +480,15 @@ async def _store_pages(
     whole material (law 7, WP20.2)."""
     prefix = material_page_key(learner_id, material_id, 0).rsplit("/", 1)[0] + "/"
     present = {o.key for o in await ctx.storage.list_objects(prefix)}
-    keys: dict[int, str] = {}
+    keys: dict[int, str | None] = {}
     for page, _, image in pages:
-        keys[page] = material_page_key(learner_id, material_id, page)
-        if keys[page] not in present:
-            await ctx.storage.put(keys[page], image, PAGE_MIME)
+        if not image:  # a slide of a presentation: no image
+            keys[page] = None
+            continue
+        key = material_page_key(learner_id, material_id, page)
+        keys[page] = key
+        if key not in present:
+            await ctx.storage.put(key, image, PAGE_MIME)
     async with ctx.db.transaction():
         for page, text, _ in pages:
             await ctx.db.execute(
@@ -565,6 +616,9 @@ async def parse_step(ctx: JobContext, job: ClaimedJob) -> None:
         extracted = await _extract_pages(ctx, job, material)
         await _store_pages(ctx, learner_id, material.material_id, extracted)
         pages = [(page, text) for page, text, _ in extracted]
+    # From here the text of the material is stored: the teacher can read it before the graph work
+    # (marks by the model, topics and skills, embeddings) is done, or if it never is.
+    await _set_read(ctx.db, learner_id, material.material_id, len(pages))
     chunks = split_chunks(settings, material.material_id, pages)
     size = settings.material_parser_batch
     batches = [chunks[i : i + size] for i in range(0, len(chunks), size)]

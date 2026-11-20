@@ -7,7 +7,7 @@ import { useFmt, useLocale, useMocks, useT } from "@/lib/i18n/provider";
 import { getStubData } from "@/lib/mock/stubs";
 import { cn } from "@/lib/utils";
 import { API_MODE } from "@/lib/api/client";
-import { LibraryLive, NoteLive, PracticeLive, SessionSummaryLive } from "../live/study-live";
+import { LibraryLive, NoteLive, PracticeLive } from "../live/study-live";
 import { BackLink, PageShell, PageSection, PILL } from "../page-parts";
 import { Inline } from "../rich-text";
 import { AREA, DANGER_BTN, FIELD, Field, PRIMARY_BTN, SECONDARY_BTN, StubHeader, StubNote } from "./stub-parts";
@@ -124,43 +124,6 @@ function PracticeMock({ topicId }: { topicId: string }) {
           "POST /v1/sessions/{id}/tasks/{task_id}/submit",
         ]}
       />
-    </PageShell>
-  );
-}
-
-/** Session summary after "Finish session" */
-function SessionSummaryMock() {
-  const tx = useT();
-  const t = tx.stubs.summary;
-  const { locale } = useLocale();
-  const { summary } = getStubData(locale);
-  const stats: [string, number][] = [
-    [t.turns, summary.turns],
-    [t.minutes, summary.minutes],
-    [t.tasks, summary.tasks],
-  ];
-  return (
-    <PageShell>
-      <BackLink href="/">{tx.shell.subjects}</BackLink>
-      <StubHeader title={t.title} body={t.body(summary.title)} />
-      <dl className="mt-8 grid grid-cols-3 gap-3">
-        {stats.map(([label, value]) => (
-          <div key={label} className="rounded-[2px] border border-seam p-4">
-            <dt className="caps text-paper-dim">{label}</dt>
-            <dd className="num mt-1 text-[28px] leading-none text-paper">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="mt-6 text-body text-paper-dim">{t.cheat}</p>
-      <div className="mt-6 flex flex-wrap gap-2">
-        <Link href={`/topic/${summary.topicId}`} className={PRIMARY_BTN}>
-          {tx.page.chipTopic(summary.title)}
-        </Link>
-        <Link href="/domain" className={SECONDARY_BTN}>
-          {t.back}
-        </Link>
-      </div>
-      <StubNote className="mt-10" endpoints={["POST /v1/sessions/{id}/finish", "GET /v1/sessions/{id}/events (cheatsheet_ready)"]} />
     </PageShell>
   );
 }
@@ -291,10 +254,6 @@ function NoteMock({ noteId }: { noteId: string }) {
 // With the backend the same screens are live (components/quack/live); on mocks they stay stubs
 export function PracticeStub({ topicId }: { topicId: string }) {
   return API_MODE ? <PracticeLive topicId={topicId} /> : <PracticeMock topicId={topicId} />;
-}
-
-export function SessionSummaryStub({ id }: { id: string }) {
-  return API_MODE ? <SessionSummaryLive id={id} /> : <SessionSummaryMock />;
 }
 
 export function LibraryStub() {

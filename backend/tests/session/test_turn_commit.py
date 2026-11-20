@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from quack.config import Settings
 from quack.db.db import Db
@@ -82,9 +83,14 @@ def _output(**markup: Any) -> TeacherOutputV2:
         "exposures": [{"skill": "S1", "kind": "explained", "approach": "none"}],
         "targetsMisconception": "M1",
         "planUpdate": {
-            "completed_steps": ["definition"],
-            "current_step": "sum of a geometric series",
-            "next_steps": [],
+            "goal": "learn geometric series",
+            "current_step": {
+                "id": "geometric-sum",
+                "text": "sum of a geometric series",
+                "landmark": "S1",
+            },
+            "next_steps": None,
+            "landmark_edits": None,
             "branches": [],
             "cancel_requests": [],
         },
@@ -177,6 +183,7 @@ def _batch(
     output: TeacherOutputV2 | None = None,
     *,
     session_id: UUID | None = None,
+    action_seq: int = 1,
     answered: AnsweredAction | None = None,
     learner_texts: list[LearnerText] = LEARNER,
     learner_timezone: str | None = None,
@@ -186,7 +193,7 @@ def _batch(
         _turn(output),
         labels,
         manifest=_manifest(learner_id, session_id or uuid4(), labels),
-        action_seq=1,
+        action_seq=action_seq,
         domain_id=DOMAIN,
         settings=SETTINGS,
         answered=answered,
@@ -225,6 +232,24 @@ async def test_turn_atomic_and_manifest(pg_db: Db) -> None:
     assert turn["head"]["target_skill_ids"] == [str(SKILL)]
     assert turn["markup"]["exposures"][0]["skill_id"] == str(SKILL)
     assert turn["markup"]["targets_misconception_id"] == str(MISCONCEPTION)
+    # the plan of the turn in ids (labels are turn-local), `null` stays `null`
+    assert turn["markup"]["plan_update"] == {
+        "goal": "learn geometric series",
+        "current_step": {
+            "id": "geometric-sum",
+            "text": "sum of a geometric series",
+            "landmark": {"kind": "skill", "id": str(SKILL)},
+        },
+        "next_steps": None,
+        "landmark_edits": None,
+        "branches": [],
+        "cancel_request_ids": [],
+    }
+    versions = await pg_db.fetch_all(
+        "SELECT type, schema_version FROM core.events WHERE learner_id = %(l)s AND seq = %(s)s",
+        {"l": learner_id, "s": events[1]["seq"]},
+    )
+    assert [(v["type"], v["schema_version"]) for v in versions] == [("turn.committed", 2)]
     [task] = turn["markup"]["tasks"]
     assert task["tests"] == [{"skill_id": str(SKILL), "new_skill": None, "level": 3}]
     assert events[0]["payload"]["task_id"] == task["task_id"]
@@ -427,7 +452,8 @@ async def test_hint_steps_counted_by_code(pg_db: Db) -> None:
     answered = AnsweredAction(kind="hint_request", task_id=task_id)
 
     batches = [
-        _batch(learner_id, _bare(), session_id=session_id, answered=answered) for _ in range(4)
+        _batch(learner_id, _bare(), session_id=session_id, action_seq=i + 1, answered=answered)
+        for i in range(4)
     ]
     for batch in batches:
         await commit_turn(pg_db, batch, learner_id=learner_id)
@@ -474,42 +500,156 @@ async def _plan(db: Db, session_id: UUID) -> dict[str, Any] | None:
     )
 
 
-def _plan_update(current: str, done: list[str]) -> dict[str, Any]:
-    return {
-        "completed_steps": done,
-        "current_step": current,
-        "next_steps": ["ratio test"],
-        "branches": [{"description": "why does 1/3 converge", "type": "curiosity"}],
+def _step(step_id: str, landmark: str | None = None) -> dict[str, Any]:
+    return {"id": step_id, "text": step_id.replace("-", " "), "landmark": landmark}
+
+
+def _plan_update(current: str | None, **fields: Any) -> dict[str, Any]:
+    """The `planUpdate` of a turn: everything `null` («no change») unless given."""
+    base: dict[str, Any] = {
+        "goal": None,
+        "current_step": None if current is None else _step(current),
+        "next_steps": None,
+        "landmark_edits": None,
+        "branches": [],
         "cancel_requests": [],
     }
+    return {**base, **fields}
 
 
 async def test_turn_writes_the_session_plan(pg_db: Db) -> None:
-    """`planUpdate` of every turn → `content.session_plans` of the session, in the turn's
-    transaction; the latest turn's plan is the document."""
+    """`planUpdate` of every turn is merged into `content.session_plans` of the session, in the
+    turn's transaction: what the turn names replaces, `null` leaves what was (version 2)."""
     learner_id, session_id = await create_learner(pg_db), uuid4()
-    first = _bare(planUpdate=_plan_update("definition", []))
-    second = _bare(planUpdate=_plan_update("geometric sum", ["definition"]))
+    first = _bare(
+        planUpdate=_plan_update(
+            "definition",
+            goal="the geometric series",
+            next_steps=[_step("geometric-sum", "S1"), _step("ratio-test")],
+            branches=[{"description": "why does 1/3 converge", "type": "curiosity"}],
+        )
+    )
+    second = _bare(planUpdate=_plan_update("geometric-sum", next_steps=[_step("ratio-test")]))
 
     await commit_turn(
         pg_db, _batch(learner_id, first, session_id=session_id), learner_id=learner_id
     )
     row = await _plan(pg_db, session_id)
     assert row is not None and row["learner_id"] == learner_id and row["status"] == "active"
-    assert row["plan"]["current_step"] == "definition"
+    assert row["plan"]["v"] == 2 and row["plan"]["current_step"]["id"] == "definition"
 
-    batch = _batch(learner_id, second, session_id=session_id)
+    batch = _batch(learner_id, second, session_id=session_id, action_seq=2)
     await commit_turn(pg_db, batch, learner_id=learner_id)
     await commit_turn(pg_db, batch, learner_id=learner_id)  # a repeat changes nothing
 
     row = await _plan(pg_db, session_id)
     assert row is not None
     assert row["plan"] == {
-        "completed_steps": ["definition"],
-        "current_step": "geometric sum",
-        "next_steps": ["ratio test"],
-        "branches": [{"description": "why does 1/3 converge", "type": "curiosity"}],
+        "v": 2,
+        "goal": "the geometric series",  # the second turn did not name it: it stays
+        "current_step": {"id": "geometric-sum", "text": "geometric sum", "landmark": None},
+        "next_steps": [{"id": "ratio-test", "text": "ratio test", "landmark": None}],
+        "landmark_edits": {"added": [], "removed": []},
+        "branches": [],  # the branches are those of the last turn
+    }
+
+
+async def test_a_turn_that_names_nothing_leaves_the_plan(pg_db: Db) -> None:
+    learner_id, session_id = await create_learner(pg_db), uuid4()
+    first = _bare(planUpdate=_plan_update("definition", goal="g", next_steps=[_step("example")]))
+    await commit_turn(
+        pg_db, _batch(learner_id, first, session_id=session_id), learner_id=learner_id
+    )
+    before = await _plan(pg_db, session_id)
+
+    quiet = _bare(planUpdate=_plan_update(None))
+    await commit_turn(
+        pg_db, _batch(learner_id, quiet, session_id=session_id, action_seq=2), learner_id=learner_id
+    )
+
+    after = await _plan(pg_db, session_id)
+    assert before is not None and after is not None and after["plan"] == before["plan"]
+    # an empty list is not `null`: the teacher has no next steps in mind
+    empty = _bare(planUpdate=_plan_update(None, next_steps=[]))
+    await commit_turn(
+        pg_db, _batch(learner_id, empty, session_id=session_id, action_seq=3), learner_id=learner_id
+    )
+    row = await _plan(pg_db, session_id)
+    assert row is not None and row["plan"]["next_steps"] == []
+    assert row["plan"]["current_step"]["id"] == "definition"
+
+
+async def test_landmark_edits_are_resolved_and_accumulate(pg_db: Db) -> None:
+    """Labels `S…`/`T…` of the edits become `{kind, id}`; the document keeps what was added and
+    removed over the session, the last word on a landmark wins."""
+    learner_id, session_id = await create_learner(pg_db), uuid4()
+    add = {"add": [{"label": "S1", "before": "T1"}], "remove": []}
+    drop = {"add": [], "remove": ["T1"]}
+    swap = {"add": [{"label": "T1", "before": None}], "remove": ["S1"]}
+    docs = []
+    for action_seq, edits in enumerate((add, drop, swap), start=1):
+        batch = _batch(
+            learner_id,
+            _bare(planUpdate=_plan_update(None, landmark_edits=edits)),
+            session_id=session_id,
+            action_seq=action_seq,
+        )
+        await commit_turn(pg_db, batch, learner_id=learner_id)
+        row = await _plan(pg_db, session_id)
+        assert row is not None
+        docs.append(row["plan"]["landmark_edits"])
+
+    skill, topic = str(SKILL), str(TOPIC)
+    assert docs[0] == {
+        "added": [{"kind": "skill", "id": skill, "before_kind": "topic", "before_id": topic}],
+        "removed": [],
+    }
+    assert docs[1] == {"added": docs[0]["added"], "removed": [{"kind": "topic", "id": topic}]}
+    # T1 added again cancels its removal; S1 removed cancels its addition
+    assert docs[2] == {
+        "added": [{"kind": "topic", "id": topic, "before_kind": None, "before_id": None}],
+        "removed": [{"kind": "skill", "id": skill}],
+    }
+
+
+async def test_a_plan_of_the_old_form_is_lifted_by_the_next_turn(pg_db: Db) -> None:
+    """A document written before version 2 (no `v`, `current_step` a string) is read as «no goal,
+    no landmarks» and rewritten as version 2 by the next turn; what the turn leaves `null` is
+    what the old document had."""
+    learner_id, session_id = await create_learner(pg_db), uuid4()
+    await commit_turn(
+        pg_db,
+        _batch(learner_id, _bare(planUpdate=_plan_update("x")), session_id=session_id),
+        learner_id=learner_id,
+    )
+    old = {
+        "completed_steps": ["a"],
+        "current_step": "Recall the ratio",
+        "next_steps": ["Try a task"],
+        "branches": [],
         "cancel_request_ids": [],
+    }
+    await pg_db.execute(
+        "UPDATE content.session_plans SET plan = %(p)s WHERE session_id = %(s)s",
+        {"p": Jsonb(old), "s": session_id},
+    )
+
+    turn = _bare(planUpdate=_plan_update(None, goal="the ratio test"))
+    await commit_turn(
+        pg_db,
+        _batch(learner_id, turn, session_id=session_id, action_seq=2),
+        learner_id=learner_id,
+    )
+
+    row = await _plan(pg_db, session_id)
+    assert row is not None
+    assert row["plan"] == {
+        "v": 2,
+        "goal": "the ratio test",
+        "current_step": {"id": "Recall the ratio", "text": "Recall the ratio", "landmark": None},
+        "next_steps": [{"id": "Try a task", "text": "Try a task", "landmark": None}],
+        "landmark_edits": {"added": [], "removed": []},
+        "branches": [],
     }
 
 
@@ -517,17 +657,19 @@ async def test_failed_turn_leaves_the_plan(pg_db: Db) -> None:
     learner_id, session_id = await create_learner(pg_db), uuid4()
     await commit_turn(
         pg_db,
-        _batch(learner_id, _bare(planUpdate=_plan_update("definition", [])), session_id=session_id),
+        _batch(learner_id, _bare(planUpdate=_plan_update("definition")), session_id=session_id),
         learner_id=learner_id,
     )
-    batch = _batch(learner_id, _bare(planUpdate=_plan_update("later", [])), session_id=session_id)
+    batch = _batch(
+        learner_id, _bare(planUpdate=_plan_update("later")), session_id=session_id, action_seq=2
+    )
     broken = replace(batch, manifest=replace(batch.manifest, prompt_version=None))
 
     with pytest.raises(Exception):  # noqa: B017 — the NOT NULL violation of the manifest
         await commit_turn(pg_db, broken, learner_id=learner_id)
 
     row = await _plan(pg_db, session_id)
-    assert row is not None and row["plan"]["current_step"] == "definition"
+    assert row is not None and row["plan"]["current_step"]["id"] == "definition"
 
 
 async def test_plan_of_another_learner_session_is_not_taken(pg_db: Db) -> None:
@@ -535,44 +677,20 @@ async def test_plan_of_another_learner_session_is_not_taken(pg_db: Db) -> None:
     owner, other, session_id = await create_learner(pg_db), await create_learner(pg_db), uuid4()
     await commit_turn(
         pg_db,
-        _batch(owner, _bare(planUpdate=_plan_update("mine", [])), session_id=session_id),
+        _batch(owner, _bare(planUpdate=_plan_update("mine")), session_id=session_id),
         learner_id=owner,
     )
 
     with pytest.raises(LookupError):
         await commit_turn(
             pg_db,
-            _batch(other, _bare(planUpdate=_plan_update("theirs", [])), session_id=session_id),
+            _batch(other, _bare(planUpdate=_plan_update("theirs")), session_id=session_id),
             learner_id=other,
         )
 
     row = await _plan(pg_db, session_id)
     assert row is not None and row["learner_id"] == owner
     assert await _events(pg_db, other) == []
-
-
-async def test_completed_steps_are_history(pg_db: Db) -> None:
-    """П-4.6: done steps are a history that does not change — a turn that leaves a done step
-    out of `completed_steps` does not erase it; new ones are added in order, once."""
-    learner_id, session_id = await create_learner(pg_db), uuid4()
-    turns = [
-        _plan_update("geometric sum", ["definition", "example"]),
-        _plan_update("ratio test", ["geometric sum"]),
-        _plan_update("root test", ["example", "ratio test"]),
-    ]
-    for plan in turns:
-        batch = _batch(learner_id, _bare(planUpdate=plan), session_id=session_id)
-        await commit_turn(pg_db, batch, learner_id=learner_id)
-
-    row = await _plan(pg_db, session_id)
-    assert row is not None
-    assert row["plan"]["completed_steps"] == [
-        "definition",
-        "example",
-        "geometric sum",
-        "ratio test",
-    ]
-    assert row["plan"]["current_step"] == "root test"
 
 
 def test_known_check_without_topic_is_not_requested() -> None:
@@ -596,6 +714,33 @@ def test_known_check_without_topic_is_not_requested() -> None:
     assert [(a.kind, a.params.topic_id) for a in asked] == [("known_check", TOPIC)]
     [turn] = [e.payload for e in batch.events if e.type == "turn.committed"]
     assert [r.params.topic_id for r in turn.markup.agent_requests] == [TOPIC]
+
+
+def test_task_generation_without_a_skill_or_a_level_is_not_requested() -> None:
+    """The job `agent.task_generation` fails for good without a skill and a level (17 requests on
+    a stand, 9 of them without): such a request is dropped at the commit, the complete one stays."""
+    params = {
+        "skill": None,
+        "level": None,
+        "topic": None,
+        "task": None,
+        "misconception": None,
+        "description": "short word problems",
+    }
+    requests = [
+        {"kind": "task_generation", "params": params, "needed_in_session": True},
+        {"kind": "task_generation", "params": {**params, "level": 3}, "needed_in_session": True},
+        {"kind": "task_generation", "params": {**params, "skill": "S1"}, "needed_in_session": True},
+        {
+            "kind": "task_generation",
+            "params": {**params, "skill": "S1", "level": 3},
+            "needed_in_session": False,
+        },
+    ]
+    batch = _batch(uuid4(), _bare(agentRequests=requests))
+
+    asked = [e.payload for e in batch.events if e.type == "agent.requested"]
+    assert [(a.params.skill_id, a.params.level) for a in asked] == [(SKILL, 3)]
 
 
 def test_split_topic_requests_the_split_of_a_known_topic_only() -> None:
@@ -632,13 +777,7 @@ def test_what_the_guard_leaves_the_write_can_resolve() -> None:
         requests=[uuid4()],
     )
     output = _output(
-        planUpdate={
-            "completed_steps": [],
-            "current_step": "s",
-            "next_steps": [],
-            "branches": [],
-            "cancel_requests": ["R1", "R9"],
-        },
+        planUpdate=_plan_update("s", cancel_requests=["R1", "R9"]),
         deadline=_deadline(coverage=["T1", "T7"]),
         elements=[
             {
@@ -714,3 +853,99 @@ def test_a_card_series_of_labelled_cards_is_committed_with_the_card_ids() -> Non
     committed = TurnCommitted.model_validate(batch.events[0].payload)
     (element,) = committed.markup.elements
     assert element.kind == "card_series" and element.card_ids == [str(other), str(card)]
+
+
+async def test_guard_events_are_in_the_turn_and_the_samples_after_it(pg_db: Db) -> None:
+    """`guard_events` ride in `turn.committed` (names only; an old event without them reads as
+    `[]`); the sentences go to `ops.guard_samples` after the commit, by the learner and session."""
+    from quack.session.turn_commit import record_guard_samples
+    from quack.session.turn_graph import GuardSample
+
+    learner_id, session_id = await create_learner(pg_db), uuid4()
+    turn = replace(
+        _turn(),
+        guard_events=(
+            records.GuardEventRecord(
+                rule="spoiler", reason="answer_in_text", phase="spoiler_shadow", retried=False
+            ),
+        ),
+    )
+    labels = _labels()
+    batch = turn_batch(
+        turn,
+        labels,
+        manifest=_manifest(learner_id, session_id, labels),
+        action_seq=1,
+        domain_id=DOMAIN,
+        settings=SETTINGS,
+        answered=None,
+        learner_texts=LEARNER,
+        learner_timezone=None,
+    )
+    seq = await commit_turn(pg_db, batch, learner_id=learner_id)
+    committed = next(e for e in await _events(pg_db, learner_id) if e["type"] == "turn.committed")
+    assert committed["payload"]["guard_events"] == [
+        {"rule": "spoiler", "reason": "answer_in_text", "phase": "spoiler_shadow", "retried": False}
+    ]
+    old = {k: v for k, v in committed["payload"].items() if k != "guard_events"}
+    assert TurnCommitted.model_validate(old).guard_events == []
+
+    await record_guard_samples(
+        pg_db,
+        learner_id=learner_id,
+        session_id=session_id,
+        turn_seq=seq,
+        samples=[GuardSample("spoiler", "shadow", "The sum is 1/3.", "1/3")],
+    )
+    [row] = await pg_db.fetch_all(
+        "SELECT * FROM ops.guard_samples WHERE learner_id = %(l)s", {"l": learner_id}
+    )
+    assert (row["session_id"], row["turn_seq"], row["rule"], row["reason"]) == (
+        session_id,
+        seq,
+        "spoiler",
+        "shadow",
+    )
+    assert (row["sentence"], row["answer_token"]) == ("The sum is 1/3.", "1/3")
+
+
+async def test_a_failed_sample_write_never_reaches_the_turn() -> None:
+    """Law 7: the write is best effort; a broken store is a log line, not an error."""
+    from quack.session.turn_commit import record_guard_samples
+    from quack.session.turn_graph import GuardSample
+
+    class Broken:
+        def transaction(self) -> Any:
+            raise ConnectionError("the database is gone")
+
+    await record_guard_samples(
+        Broken(),  # type: ignore[arg-type]
+        learner_id=uuid4(),
+        session_id=uuid4(),
+        turn_seq=1,
+        samples=[GuardSample("spoiler", "shadow", "s", "1/3")],
+    )
+
+
+async def test_timings_ride_in_the_turn_and_an_old_event_reads_without_them(pg_db: Db) -> None:
+    """`timings` is optional (no new `schema_version`): the numbers are in the payload, an event
+    written before it reads as `{}`."""
+    learner_id, session_id = await create_learner(pg_db), uuid4()
+    turn = replace(_turn(), timings={"admit_ms": 3, "ttft_ms": 900, "total_ms": 4000})
+    labels = _labels()
+    batch = turn_batch(
+        turn,
+        labels,
+        manifest=_manifest(learner_id, session_id, labels),
+        action_seq=1,
+        domain_id=DOMAIN,
+        settings=SETTINGS,
+        answered=None,
+        learner_texts=LEARNER,
+        learner_timezone=None,
+    )
+    await commit_turn(pg_db, batch, learner_id=learner_id)
+    committed = next(e for e in await _events(pg_db, learner_id) if e["type"] == "turn.committed")
+    assert committed["payload"]["timings"] == {"admit_ms": 3, "ttft_ms": 900, "total_ms": 4000}
+    old = {k: v for k, v in committed["payload"].items() if k != "timings"}
+    assert TurnCommitted.model_validate(old).timings == {}

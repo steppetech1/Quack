@@ -119,9 +119,12 @@ class _Captured:
 class _OfflinePorts:
     """`TurnPorts` without a lock, a stream and a write: the commit keeps the turn."""
 
-    def __init__(self, source: MemoryTurnContextSource, request: TurnRequest) -> None:
+    def __init__(
+        self, source: MemoryTurnContextSource, request: TurnRequest, settings: Settings
+    ) -> None:
         self._source = source
         self._request = request
+        self._settings = settings
         self._setup: TurnSetup | None = None
         self.captured: _Captured | None = None
 
@@ -155,6 +158,7 @@ class _OfflinePorts:
             skill_labels=guard.skill_labels,
             misconception_labels=guard.misconception_labels,
             labels=guard.labels,
+            next_steps_max=self._settings.plan_next_steps_max,
         )
         reasons = [v.reason for v in found]
         if guard.has_spoiler(turn.text):
@@ -230,7 +234,7 @@ async def _replay_turn(
         reader=lambda learner: cast(GraphReader, AsOfReader(reader(learner), projected, seen)),
         neo4j=None,
     )
-    ports = _OfflinePorts(source, request)
+    ports = _OfflinePorts(source, request, settings)
 
     await run_turn(ports, _Provider(ports), settings=settings, cancel=asyncio.Event())
     new = ports.captured
