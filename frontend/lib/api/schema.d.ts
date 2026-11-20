@@ -2531,6 +2531,8 @@ export interface components {
             session_id: string | null;
             /** Status */
             status: string;
+            /** Title */
+            title: string | null;
         };
         /**
          * MathValue
@@ -2710,6 +2712,28 @@ export interface components {
             seq: number;
             /** Session Id */
             session_id?: string | null;
+        };
+        /**
+         * PlanDemo
+         * @description An interactive demo made ahead for a step of the plan (`viz.plan`): `request_id` opens the
+         *     page at `GET /v1/viz/{request_id}` once `status` is `ready`; `preparing` while it is being
+         *     built, `failed` when no page passed the check (the learner just goes on without it).
+         */
+        PlanDemo: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "preparing" | "ready" | "failed";
+            /** Step Id */
+            step_id: string;
+            /** Title */
+            title: string;
         };
         /**
          * PlanLandmark
@@ -3036,6 +3060,8 @@ export interface components {
          */
         SessionPlanView: {
             current_step: components["schemas"]["PlanStep"] | null;
+            /** Demos */
+            demos: components["schemas"]["PlanDemo"][];
             /** Goal */
             goal: string | null;
             /** Landmarks */

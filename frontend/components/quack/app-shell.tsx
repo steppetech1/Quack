@@ -3,6 +3,7 @@
 import { History, PanelLeft, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from "react";
+import type { FileRef } from "./attachments";
 import type { GraphMode } from "@/lib/graph-layout";
 import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
@@ -23,9 +24,11 @@ type Shell = {
   selectDomain: (id: string) => void;
   /** Новая сессия из поля ввода: сообщение студента, пока бэкенда нет */
   pending: string | null;
+  /** Files attached to the message that starts the session */
+  pendingFiles: FileRef[];
   /** Тема, к которой привязана новая сессия (поле ввода на странице темы) */
   pendingTopic: string | null;
-  startSession: (text: string, topicId?: string | null) => void;
+  startSession: (text: string, topicId?: string | null, files?: FileRef[]) => void;
   /** Режим графа домена: обзор глав, одна глава или все темы */
   graphMode: GraphMode;
   setGraphMode: (m: GraphMode) => void;
@@ -81,6 +84,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [domainId, setDomainId] = useState(domains[0].id);
   const [pending, setPending] = useState<string | null>(null);
   const [pendingTopic, setPendingTopic] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
   // null — решает ширина экрана: на узком десктопе панель свёрнута
   const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
   // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
@@ -148,9 +152,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (pathname !== "/" || window.location.search.includes("view=canvases")) router.push("/");
   };
 
-  const startSession = (text: string, topicId: string | null = null) => {
+  const startSession = (text: string, topicId: string | null = null, files: FileRef[] = []) => {
     setPending(text);
     setPendingTopic(topicId);
+    setPendingFiles(files);
     if (!API_MODE) setDomainId(SESSION_DOMAIN);
     router.push("/session/new");
   };
@@ -180,7 +185,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
         <a
           href="#main"
           onClick={(e) => {

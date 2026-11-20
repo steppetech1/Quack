@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { IconButton } from "./icon-button";
 import { PixelDuck } from "./pixel-duck";
-import { useMaterialUpload } from "./live/use-material-upload";
+import { AttachmentChips, useAttachments, type FileRef } from "./attachments";
 import { useSoon } from "./soon";
 import { useSkills } from "./use-skills";
 import { useVoiceInput, type VoiceProps } from "./use-voice-input";
@@ -21,7 +21,10 @@ const SLASH = /(^|\s)\/([^\s/]*)$/;
 type Props = {
   /** Подпись для скринридера: что произойдёт при отправке */
   label: string;
-  onSend?: (text: string) => void;
+  /** `files` is set when the message carries attached files (they are read already: the box waits for that) */
+  onSend?: (text: string, files?: FileRef[]) => void;
+  /** The session the files belong to (their reading gets the priority of a live session) */
+  sessionId?: string;
   placeholder?: string;
   submitText?: string;
   /** Главное действие экрана — бежевая заливка. Одна такая кнопка на экран */
@@ -39,6 +42,7 @@ type Props = {
 export function Composer({
   label,
   onSend,
+  sessionId,
   placeholder,
   submitText,
   primary = true,
@@ -52,8 +56,9 @@ export function Composer({
   submitText ??= t.composer.submit;
   const soon = useSoon();
   const { domain } = useShell();
-  // with the backend, the clip uploads a lecture or a photo into the current subject; on mocks it stays a "soon"
-  const { send: sendFile, uploading } = useMaterialUpload(domain.id);
+  // with the backend, the clip attaches a lecture, a presentation or a photo to the message (it goes into the current
+  // subject and is read in the background); on mocks it stays a "soon"
+  const files = useAttachments(domain.id, sessionId);
   const fileRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -73,7 +78,9 @@ export function Composer({
     ? skills.filter((s) => s.enabled && s.command && (s.command.includes(query) || s.name.toLowerCase().includes(query)))
     : [];
   const open = !!match && !dismissed;
-  const empty = !value.trim();
+  const hasFiles = files.ready.length > 0;
+  // a message needs words or a file that is read; while a file is being read the box waits (the teacher must not get a file it cannot see yet)
+  const empty = (!value.trim() && !hasFiles) || files.busy;
   const total = found.length + 1; // последняя строка — «Все скиллы →»
   const cur = Math.min(active, total - 1);
 
@@ -104,14 +111,16 @@ export function Composer({
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    const text = value.trim();
+    if (files.busy) return;
+    const text = value.trim() || (hasFiles ? t.composer.attachedDefault : "");
     if (!text) {
       ref.current?.focus();
       return;
     }
     if (onSend) {
-      onSend(text);
+      onSend(text, hasFiles ? files.ready.map((a) => ({ id: a.materialId, name: a.name })) : undefined);
       setValue("");
+      files.clear();
     } else {
       soon(t.composer.soonReply);
     }
@@ -168,6 +177,7 @@ export function Composer({
       <label htmlFor="composer" className="sr-only">
         {label}
       </label>
+      <AttachmentChips items={files.items} onRemove={files.remove} />
       {chip && (
         <div className="flex px-1.5 pt-1">
           <span className="caps inline-flex h-8 items-center rounded-pill border border-seam pl-3 text-paper-dim">
@@ -269,19 +279,20 @@ export function Composer({
             ref={fileRef}
             type="file"
             accept={MATERIAL_ACCEPT}
+            multiple
             tabIndex={-1}
             aria-hidden
             className="hidden"
             onChange={(e) => {
-              const file = e.target.files?.[0];
+              const picked = Array.from(e.target.files ?? []);
               e.target.value = "";
-              if (file) void sendFile(file);
+              if (picked.length) void files.add(picked);
             }}
           />
         )}
         <IconButton
           label={t.composer.attach}
-          disabled={uploading}
+          disabled={files.full}
           onClick={() => (API_MODE && domain.id ? fileRef.current?.click() : soon(t.composer.soonAttach))}
         >
           <Paperclip />

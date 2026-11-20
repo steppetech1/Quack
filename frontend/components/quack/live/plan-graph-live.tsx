@@ -1,13 +1,15 @@
 "use client";
 
-import { Check, ListTree, Maximize2, Minimize2, Minus } from "lucide-react";
+import { Check, ListTree, Loader2, Maximize2, Minimize2, Minus, Play } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { get, type S } from "@/lib/api/client";
 import { useT } from "@/lib/i18n/provider";
+import type { OpenDemo } from "./demo-panel";
 import { JobsLines, type JobRow } from "./jobs-plaque";
 import { cn } from "@/lib/utils";
 
 export type SessionPlanView = S["SessionPlanView"];
+export type PlanDemo = SessionPlanView["demos"][number];
 
 /**
  * The plan of a session: read once on open and again after each finished teacher turn (`refresh()`), no polling.
@@ -57,7 +59,20 @@ const DUCK_CLEARANCE = 44;
  * The stack stands above the composer and the duck: its bottom is the height of the next sibling (the composer row) plus the
  * duck clearance. Read-only: no clicks on points or steps.
  */
-export function SessionCorner({ plan, jobs, topicId, className }: { plan: SessionPlanView | null; jobs: JobRow[]; topicId?: string | null; className?: string }) {
+export function SessionCorner({
+  plan,
+  jobs,
+  topicId,
+  onOpenDemo,
+  className,
+}: {
+  plan: SessionPlanView | null;
+  jobs: JobRow[];
+  topicId?: string | null;
+  /** The learner pressed the demo of a step: the session opens it on the right */
+  onOpenDemo?: (demo: OpenDemo) => void;
+  className?: string;
+}) {
   const tx = useT();
   const p = tx.plan;
   const root = useRef<HTMLDivElement>(null);
@@ -154,7 +169,7 @@ export function SessionCorner({ plan, jobs, topicId, className }: { plan: Sessio
     >
       {showPlan &&
         (open ? (
-          <PlanWindow plan={plan} full={fullOn} fullRef={fullBtn} onFull={() => setFull((f) => !f)} onFold={() => setOpen(false)} />
+          <PlanWindow plan={plan} full={fullOn} fullRef={fullBtn} onFull={() => setFull((f) => !f)} onFold={() => setOpen(false)} onOpenDemo={onOpenDemo} />
         ) : (
           <button
             type="button"
@@ -176,18 +191,18 @@ export function SessionCorner({ plan, jobs, topicId, className }: { plan: Sessio
 }
 
 type NodeKind = "done" | "current" | "upcoming" | "step-now" | "step-next";
-type GraphNode = { key: string; kind: NodeKind; label: string; dashed?: boolean; srAdded?: string };
+type GraphNode = { key: string; kind: NodeKind; label: string; dashed?: boolean; srAdded?: string; stepId?: string };
 
 /** Points (landmarks) in a chain; under the current one its steps, smaller and paler. Only steps: they form the chain themselves */
 function graphNodes(plan: SessionPlanView, addedLabel: string): GraphNode[] {
   const steps = [...(plan.current_step ? [plan.current_step] : []), ...plan.next_steps];
   if (!plan.landmarks.length) {
-    return steps.map((s, i) => ({ key: s.id, kind: i === 0 ? "current" : "upcoming", label: s.text }));
+    return steps.map((s, i) => ({ key: s.id, kind: i === 0 ? "current" : "upcoming", label: s.text, stepId: s.id }));
   }
   const out: GraphNode[] = [];
   for (const l of plan.landmarks) {
     out.push({ key: `${l.kind}:${l.id}`, kind: l.status, label: l.title, dashed: l.added_by_teacher, srAdded: l.added_by_teacher ? addedLabel : undefined });
-    if (l.status === "current") steps.forEach((s, i) => out.push({ key: s.id, kind: i === 0 ? "step-now" : "step-next", label: s.text }));
+    if (l.status === "current") steps.forEach((s, i) => out.push({ key: s.id, kind: i === 0 ? "step-now" : "step-next", label: s.text, stepId: s.id }));
   }
   return out;
 }
@@ -198,18 +213,25 @@ function PlanWindow({
   fullRef,
   onFull,
   onFold,
+  onOpenDemo,
 }: {
   plan: SessionPlanView;
   full: boolean;
   fullRef: RefObject<HTMLButtonElement | null>;
   onFull: () => void;
   onFold: () => void;
+  onOpenDemo?: (demo: OpenDemo) => void;
 }) {
   const tx = useT();
   const p = tx.plan;
   const scroller = useRef<HTMLDivElement>(null);
   const nodes = graphNodes(plan, p.addedByTeacher);
   const stamp = `${plan.updated_at ?? ""}|${nodes.map((n) => `${n.key}:${n.kind}`).join(",")}`;
+  const demos = plan.demos ?? [];
+  const shown = new Set(nodes.map((n) => n.stepId));
+  // demos of steps that are no longer on the chain stay reachable under it
+  const others = demos.filter((d) => d.status === "ready" && !shown.has(d.step_id));
+  const open = (d: PlanDemo) => onOpenDemo?.({ requestId: d.request_id, title: d.title });
 
   // bring the current point to the top of the window (3-4 nodes are in view by default)
   useEffect(() => {
@@ -263,15 +285,35 @@ function PlanWindow({
         <ol className={cn("relative mx-auto flex flex-col", full ? "max-w-xl gap-4" : "gap-3")}>
           <span aria-hidden className="absolute top-2 bottom-2 left-3.5 w-px bg-seam" />
           {nodes.map((n) => (
-            <Node key={n.key} node={n} big={full} />
+            <Node key={n.key} node={n} big={full} demo={demos.find((d) => d.step_id === n.stepId)} onOpen={open} />
           ))}
         </ol>
+        {others.length > 0 && (
+          <div className={cn("mx-auto mt-4 border-t border-seam-soft pt-2", full && "max-w-xl")}>
+            <p className="caps text-paper-dim">{p.demosHeading}</p>
+            <ul className="mt-1">
+              {others.map((d) => (
+                <li key={d.request_id}>
+                  <button
+                    type="button"
+                    onClick={() => open(d)}
+                    aria-label={p.demoOpen(d.title)}
+                    className="flex min-h-10 w-full items-center gap-2 text-left text-small text-paper-dim hover:text-paper"
+                  >
+                    <Play aria-hidden className="size-3.5 shrink-0 text-ribbon" />
+                    <span className="min-w-0 truncate">{d.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function Node({ node, big }: { node: GraphNode; big: boolean }) {
+function Node({ node, big, demo, onOpen }: { node: GraphNode; big: boolean; demo?: PlanDemo; onOpen: (d: PlanDemo) => void }) {
   const tx = useT();
   const p = tx.plan;
   const step = node.kind === "step-now" || node.kind === "step-next";
@@ -298,6 +340,22 @@ function Node({ node, big }: { node: GraphNode; big: boolean }) {
           {node.kind === "current" && <span className="sr-only"> {p.current}</span>}
           {node.srAdded && <span className="sr-only"> ({node.srAdded})</span>}
         </span>
+        {demo?.status === "ready" && (
+          <button
+            type="button"
+            onClick={() => onOpen(demo)}
+            aria-label={p.demoOpen(demo.title)}
+            title={demo.title}
+            className="-mr-1.5 ml-auto inline-flex size-7 shrink-0 items-center justify-center rounded-pill text-ribbon hover:bg-cloth-hover focus-visible:outline-2 focus-visible:outline-ribbon"
+          >
+            <Play aria-hidden className="size-3.5" />
+          </button>
+        )}
+        {demo?.status === "preparing" && (
+          <span role="img" aria-label={p.demoPreparing} title={p.demoPreparing} className="-mr-0.5 ml-auto inline-flex size-6 shrink-0 items-center justify-center text-paper-dim">
+            <Loader2 aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" />
+          </span>
+        )}
       </div>
     </li>
   );

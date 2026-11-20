@@ -38,6 +38,8 @@ const orNone = <T,>(p: Promise<T>) =>
 const ACTION_BTN =
   "caps inline-flex h-10 items-center justify-center rounded-pill px-6 transition-colors duration-(--dur-s) ease-out disabled:opacity-50";
 
+const SKILLS_OPEN_KEY = "quack.topicSkills.open";
+
 /** Topic page on backend data: state, skills, mix-ups, notes and the cheat sheet */
 export function TopicLive({ id }: { id: string }) {
   const tx = useT();
@@ -53,6 +55,22 @@ export function TopicLive({ id }: { id: string }) {
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // the skills list folds away; the choice is remembered in this browser (the same for every topic). The list is drawn
+  // only after the topic is loaded on the client, so reading the choice at init cannot mismatch the server markup
+  const [skillsOpen, setSkillsOpen] = useState(() => {
+    try {
+      return typeof window === "undefined" || localStorage.getItem(SKILLS_OPEN_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleSkills = () => {
+    const next = !skillsOpen;
+    setSkillsOpen(next);
+    try {
+      localStorage.setItem(SKILLS_OPEN_KEY, next ? "1" : "0");
+    } catch {}
+  };
   /** rename / merge form under the title */
   const [panel, setPanel] = useState<"rename" | "merge" | null>(null);
   const [nameDraft, setNameDraft] = useState("");
@@ -536,7 +554,7 @@ export function TopicLive({ id }: { id: string }) {
           </button>
         </div>
 
-        <PageSection id="topic-skills" title={t.skillsTitle} count={skills.length}>
+        <PageSection id="topic-skills" title={t.skillsTitle} count={skills.length} collapse={{ open: skillsOpen, onToggle: toggleSkills }}>
           {skills.length === 0 ? (
             <p className="text-paper-dim">{t.noSkills}</p>
           ) : (

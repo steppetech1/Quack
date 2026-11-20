@@ -228,7 +228,7 @@ export function DomainView() {
       </div>
 
       <div className="px-4 pb-4 md:px-7 md:pb-5">
-        <Composer label={tx.domain.composerLabel(domain.title)} onSend={startSession} />
+        <Composer label={tx.domain.composerLabel(domain.title)} onSend={(text, files) => startSession(text, null, files)} />
       </div>
     </>
   );

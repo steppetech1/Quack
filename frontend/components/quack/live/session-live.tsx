@@ -15,10 +15,13 @@ import { useShell } from "../app-shell";
 import { Composer } from "../composer";
 import { RichText } from "../rich-text";
 import { PRIMARY_BTN, AREA } from "../stubs/stub-parts";
-import { firstTurnKey } from "./domain-setup-live";
+import { SentFiles, type FileRef } from "../attachments";
+import { decodeFirstTurn, encodeFirstTurn, firstTurnKey } from "./domain-setup-live";
 import { ChatTurnActions } from "./chat-actions";
 import { useErrorText } from "./error-text";
 import { jobRows } from "./jobs-plaque";
+import { DemoPanel, type OpenDemo } from "./demo-panel";
+import { PlotCard, type PlotSpec } from "./plot-card";
 import { SessionCorner, useSessionPlan } from "./plan-graph-live";
 
 const orNone = <T,>(p: Promise<T>) =>
@@ -40,6 +43,8 @@ type Line = {
   interrupted?: boolean;
   /** a committed teacher turn: its `seq`; the elements of the turn are drawn right after its text */
   seq?: number;
+  /** a learner message: the files that went with it */
+  files?: FileRef[];
 };
 /** An interactive element of a turn (task, question…): comes as an `element` frame and is answered with an `element_response` action */
 type Elem = {
@@ -61,7 +66,7 @@ export function NewSessionLive() {
   const tx = useT();
   const router = useRouter();
   const errorText = useErrorText();
-  const { pending, pendingTopic, domain } = useShell();
+  const { pending, pendingFiles, pendingTopic, domain } = useShell();
   const { setActive } = useData();
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
@@ -74,14 +79,14 @@ export function NewSessionLive() {
         // the typed message is the first action of the session, not a "goal": the session page sends it
         if (pending) {
           try {
-            sessionStorage.setItem(firstTurnKey(s.session_id), pending);
+            sessionStorage.setItem(firstTurnKey(s.session_id), encodeFirstTurn(pending, pendingFiles));
           } catch {}
         }
         setActive(s);
         router.replace(`/session/${s.session_id}`);
       })
       .catch((e) => setError(errorText(e)));
-  }, [domain.id, pending, pendingTopic, router, setActive, errorText]);
+  }, [domain.id, pending, pendingFiles, pendingTopic, router, setActive, errorText]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col px-4 pt-4 md:px-7 md:pt-6">
@@ -165,10 +170,22 @@ export function SessionLive({ id }: { id: string }) {
         closed.current = true;
       });
   }, [id, setActive]);
-  const bg = useSessionJobs(id, { onDone: refreshElements });
-  const refreshJobs = bg.refresh;
   /** The plan changes only when a teacher turn is committed: read it again when a turn ends, no polling */
   const { plan, refresh: refreshPlan } = useSessionPlan(id);
+  const bg = useSessionJobs(id, {
+    onDone: (kinds) => {
+      refreshElements();
+      // a demo made ahead is ready (or failed): the plan carries where each one stands
+      if (kinds.includes("agent.viz")) refreshPlan();
+    },
+  });
+  const refreshJobs = bg.refresh;
+  const [demo, setDemo] = useState<OpenDemo | null>(null);
+  // a demo goes into the queue a moment after the turn: the plan shows it as being made once the builder starts
+  const building = bg.jobs.some((j) => j.kind === "agent.viz");
+  useEffect(() => {
+    if (building) refreshPlan();
+  }, [building, refreshPlan]);
 
   const activeTopicId = (() => {
     if (!detail) return null;
@@ -198,7 +215,7 @@ export function SessionLive({ id }: { id: string }) {
 
   /** One action of the learner; the answer of the teacher streams back as frames (ТЗ Ф4 §4.7) */
   const act = useCallback(
-    async (body: Record<string, unknown>, studentText?: string, onVerdict?: (o: Outcome) => void): Promise<boolean> => {
+    async (body: Record<string, unknown>, studentText?: string, onVerdict?: (o: Outcome) => void, files?: FileRef[]): Promise<boolean> => {
       if (busy) {
         setError(t.turnLocked);
         return false;
@@ -222,7 +239,7 @@ export function SessionLive({ id }: { id: string }) {
       const shown = onVerdict ?? setVerdict;
       const lineId = `s-${Date.now()}`;
       const turnId = `t-${Date.now()}-${++turnNo.current}`;
-      if (studentText) setLines((l) => [...l, { id: lineId, role: "student", text: studentText }]);
+      if (studentText) setLines((l) => [...l, { id: lineId, role: "student", text: studentText, files }]);
       setStreamId(turnId);
       setStreaming("");
       scrollDown();
@@ -322,7 +339,18 @@ export function SessionLive({ id }: { id: string }) {
     [busy, id, t.turnLocked, t.interrupted, t.busyTimeout, errorText, reopened, refreshJobs, refreshPlan],
   );
 
-  const send = useCallback((text: string) => (text.trim() ? act({ kind: "message", text, skill_invocation: skillInvocation(text) }, text) : undefined), [act]);
+  const send = useCallback(
+    (text: string, files?: FileRef[]) =>
+      text.trim()
+        ? act(
+            { kind: "message", text, skill_invocation: skillInvocation(text), ...(files?.length ? { material_ids: files.map((f) => f.id) } : {}) },
+            text,
+            undefined,
+            files,
+          )
+        : undefined,
+    [act],
+  );
 
   /** A recorded clip → the recognized text goes to the teacher once: the message points at the recorded voice segment (`voice_seq`) and carries no text. Returns an error text, or null */
   const sendVoice = useCallback(
@@ -359,8 +387,18 @@ export function SessionLive({ id }: { id: string }) {
   useEffect(() => {
     let off = false;
     get<S["SessionDetail"]>(`/v1/sessions/${id}`)
-      .then((d) => {
+      .then(async (d) => {
         if (off) return;
+        // the names of the files that went with messages (the log holds their ids)
+        const names = new Map<string, string>();
+        const withFiles = d.events.some((e) => e.type === "message.sent" && Array.isArray(e.payload.material_ids) && e.payload.material_ids.length > 0);
+        if (withFiles) {
+          try {
+            const list = await get<S["MaterialList"]>(`/v1/domains/${d.domain_id}/materials`);
+            for (const m of list.materials) if (m.title) names.set(m.material_id, m.title);
+          } catch {}
+          if (off) return;
+        }
         setDetail(d);
         closed.current = d.status !== "active";
         focusDomain(d.domain_id);
@@ -403,7 +441,10 @@ export function SessionLive({ id }: { id: string }) {
         for (const ev of d.events) {
           const text = typeof ev.payload.text === "string" ? ev.payload.text : "";
           // a spoken message: its words are the `voice.transcribed` event, the `message.sent` after it has none
-          if ((ev.type === "message.sent" || ev.type === "voice.transcribed") && text) past.push({ id: `e-${ev.seq}`, role: "student", text });
+          if ((ev.type === "message.sent" || ev.type === "voice.transcribed") && text) {
+            const ids = ev.type === "message.sent" && Array.isArray(ev.payload.material_ids) ? (ev.payload.material_ids as unknown[]).filter((x): x is string => typeof x === "string") : [];
+            past.push({ id: `e-${ev.seq}`, role: "student", text, files: ids.map((id) => ({ id, name: names.get(id) ?? tx.composer.attachFallbackName })) });
+          }
           else if (ev.type === "turn.committed") {
             const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
             // a turn of one task has no text; its line only holds the place of the forms
@@ -446,7 +487,10 @@ export function SessionLive({ id }: { id: string }) {
       first = sessionStorage.getItem(firstTurnKey(id));
       sessionStorage.removeItem(firstTurnKey(id));
     } catch {}
-    if (first) void send(first);
+    if (first) {
+      const turn = decodeFirstTurn(first);
+      void send(turn.text, turn.files);
+    }
     // a fresh session already has `session.started` in its log: "fresh" means nobody has spoken yet
     else if (detail.intent && detail.intent !== "free" && !detail.events.some((e) => e.type === "message.sent" || e.type === "turn.committed")) {
       void act({ kind: "intent", intent: detail.intent, topic_id: detail.topic_id, hub_id: detail.hub_id });
@@ -517,7 +561,7 @@ export function SessionLive({ id }: { id: string }) {
           {/* one keyed list: the streamed article of a turn and its committed line share a key, so React keeps the node and the text never blinks out */}
           {[
             ...lines.flatMap((l, idx) => {
-              if (l.role === "student") return [<StudentLine key={l.id} text={l.text} />];
+              if (l.role === "student") return [<StudentLine key={l.id} text={l.text} files={l.files} />];
               let studentPrompt: string | null = null;
               for (let j = idx - 1; j >= 0; j--) {
                 if (lines[j].role === "student") {
@@ -595,14 +639,16 @@ export function SessionLive({ id }: { id: string }) {
         </div>
       </div>
 
-      <SessionCorner plan={plan} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} />
+      <SessionCorner plan={plan} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={setDemo} />
+      {demo && <DemoPanel demo={demo} onClose={() => setDemo(null)} />}
 
       <div className="px-4 pb-4 md:px-7 md:pb-5">
         <Composer
           label={tx.session.composerLabel}
           placeholder={tx.session.replyPlaceholder}
           submitText={tx.session.send}
-          onSend={(text) => void send(text)}
+          onSend={(text, files) => void send(text, files)}
+          sessionId={id}
           voice={{ onClip: sendVoice, disabled: busy }}
           duck
         />
@@ -639,8 +685,9 @@ function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean;
             className="mt-2 h-80 w-full rounded-[2px] border border-seam-soft bg-paper"
           />
         ) : (
-          <p className="mt-2 text-small text-paper-dim">{viz.plot ? tx.live.vizPlotUnsupported : tx.live.vizPreparing}</p>
+          viz.plot ? null : <p className="mt-2 text-small text-paper-dim">{tx.live.vizPreparing}</p>
         ))}
+      {viz?.plot ? <PlotCard plot={viz.plot as PlotSpec} /> : null}
       {answerable && (
         <form
           className="mt-3"
@@ -679,10 +726,10 @@ function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean;
   );
 }
 
-function StudentLine({ text }: { text: string }) {
+function StudentLine({ text, files }: { text: string; files?: FileRef[] }) {
   const tx = useT();
   return (
-    <div className="flex justify-end">
+    <div className="flex flex-col items-end">
       <p
         role="group"
         aria-label={tx.session.you}
@@ -690,6 +737,7 @@ function StudentLine({ text }: { text: string }) {
       >
         {text}
       </p>
+      {files?.length ? <SentFiles files={files} /> : null}
     </div>
   );
 }
