@@ -202,6 +202,34 @@
         ],
         "type": "string"
       },
+      "ArtifactConsentRequest": {
+        "additionalProperties": false,
+        "description": "Consent to generate topic notes or a hub cheat sheet, optionally within a session.",
+        "properties": {
+          "idempotency_key": {
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "idempotency_key"
+        ],
+        "title": "ArtifactConsentRequest",
+        "type": "object"
+      },
       "ArtifactResponse": {
         "description": "An artifact at its current version; blocks with the names of Т-§17.2.",
         "properties": {
@@ -3546,6 +3574,16 @@
             ],
             "title": "Landmark Id"
           },
+          "status": {
+            "default": "upcoming",
+            "enum": [
+              "done",
+              "current",
+              "upcoming"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -4118,6 +4156,17 @@
               }
             ],
             "title": "Topic Id"
+          },
+          "unanswered_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unanswered Seq"
           }
         },
         "required": [
@@ -4230,6 +4279,13 @@
               "$ref": "#/components/schemas/PlanDemo"
             },
             "title": "Demos",
+            "type": "array"
+          },
+          "done_steps": {
+            "items": {
+              "$ref": "#/components/schemas/PlanStep"
+            },
+            "title": "Done Steps",
             "type": "array"
           },
           "goal": {
@@ -4478,6 +4534,17 @@
               }
             ],
             "title": "Topic Id"
+          },
+          "unanswered_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unanswered Seq"
           }
         },
         "required": [
@@ -8516,7 +8583,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/KeyedRequest"
+                "$ref": "#/components/schemas/ArtifactConsentRequest"
               }
             }
           },
@@ -11840,7 +11907,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/KeyedRequest"
+                "$ref": "#/components/schemas/ArtifactConsentRequest"
               }
             }
           },

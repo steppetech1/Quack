@@ -65,6 +65,7 @@ class PlanStep(StrictModel):
     id: str
     text: str
     landmark_id: UUID | None
+    status: Literal["done", "current", "upcoming"] = "upcoming"
 
 
 class PlanProgress(StrictModel):
@@ -91,6 +92,7 @@ class SessionPlanView(StrictModel):
 
     goal: str | None
     landmarks: list[PlanLandmark]
+    done_steps: list[PlanStep] = Field(default_factory=list)
     current_step: PlanStep | None
     next_steps: list[PlanStep]
     progress: PlanProgress | None

@@ -39,6 +39,7 @@ from redis.asyncio import Redis
 from quack.artifacts.accuracy import WRITER_ROLE, write_blocks
 from quack.artifacts.cards import topic_cards, write_system_cards
 from quack.artifacts.documents import (
+    ArtifactNotFound,
     Block,
     Card,
     _domain_of_owner,
@@ -46,6 +47,7 @@ from quack.artifacts.documents import (
     write_system_blocks,
 )
 from quack.artifacts.learner_skills import bound_skill, writer_text
+from quack.artifacts.session_demos import merge_demo_links_block, topic_ready_demos
 from quack.artifacts.writer import ArtifactWriterOutput, WrittenCard
 from quack.compute_client.client import ComputeClient
 from quack.config import Settings
@@ -87,6 +89,7 @@ class WriterInput:
     chunks: dict[UUID, ChunkHit]
     current: tuple[Block, ...]
     skill_version: int | None = None  # the learner's skill the artifact is written under
+    skill_ids: tuple[UUID, ...] = ()
 
 
 async def worked_phrasings(
@@ -164,6 +167,7 @@ async def writer_input(
         chunks={h.chunk_id: h for h in hits},
         current=current,
         skill_version=None if skill is None else skill.version,
+        skill_ids=tuple(skill_ids),
     )
 
 
@@ -307,21 +311,44 @@ async def refresh_topic_notes(
     context = await writer_input(
         db, reader, prefetch, settings, learner_id=learner_id, topic_id=topic_id
     )
+    skill_fallback = {sid: topic_id for sid in context.skill_ids} if context is not None else {}
+    demos = await topic_ready_demos(
+        db, learner_id=learner_id, topic_id=topic_id, skill_topic_fallback=skill_fallback
+    )
     if context is None:
         log.info("topic_refresh_unknown_topic", topic_id=str(topic_id))
-        return None
+        if not demos:
+            return None
+        try:
+            current_notes = await get_artifact(
+                db, learner_id=learner_id, kind="notes", owner_id=topic_id
+            )
+        except ArtifactNotFound:
+            return None
+        demo_blocks = merge_demo_links_block([], current_notes.blocks, demos)
+        notes = await write_system_blocks(
+            db,
+            learner_id=learner_id,
+            kind="notes",
+            owner_id=topic_id,
+            blocks=demo_blocks,
+            created_by="system",
+            redis=redis,
+        )
+        return notes.version
     blocks, prompt = await write_blocks(
         gateway, settings, compute, context,
         learner_id=learner_id, key=f"artifact_writer:notes:{topic_id}:{key}",
     )  # fmt: skip
-    if not blocks:
+    if not blocks and not demos:
         return None
+    final_blocks = merge_demo_links_block(blocks, context.current, demos)
     notes = await write_system_blocks(
         db,
         learner_id=learner_id,
         kind="notes",
         owner_id=topic_id,
-        blocks=blocks,
+        blocks=final_blocks,
         created_by=prompt,
         skill_version=context.skill_version,
         redis=redis,

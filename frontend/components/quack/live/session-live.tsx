@@ -1,8 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiUrl, ApiError, get, idem, post, sse, type S } from "@/lib/api/client";
+import { allTopicsHubId } from "@/lib/api/adapters";
 import { useData } from "@/lib/api/data";
 import { startSession } from "@/lib/api/sessions";
 import { useSessionJobs } from "@/lib/api/use-session-jobs";
@@ -10,6 +12,7 @@ import { uploadVoice } from "@/lib/api/voice";
 import type { VoiceClip } from "@/lib/audio/voice-recorder";
 import { useT } from "@/lib/i18n/provider";
 import { skillInvocation } from "@/lib/skills";
+import { useSendQueue } from "@/lib/use-send-queue";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { Composer } from "../composer";
@@ -17,23 +20,19 @@ import { RichText } from "../rich-text";
 import { PRIMARY_BTN, AREA } from "../stubs/stub-parts";
 import { SentFiles, type FileRef } from "../attachments";
 import { decodeFirstTurn, encodeFirstTurn, firstTurnKey } from "./domain-setup-live";
-import { ChatTurnActions } from "./chat-actions";
+import { ChatTurnActions, type NoteHubTarget, type NoteTopicTarget, type ResolvedNoteTargets } from "./chat-actions";
 import { useErrorText } from "./error-text";
 import { jobRows } from "./jobs-plaque";
 import { DemoPanel, type OpenDemo } from "./demo-panel";
 import { PlotCard, type PlotSpec } from "./plot-card";
 import { SessionCorner, useSessionPlan } from "./plan-graph-live";
 
-const orNone = <T,>(p: Promise<T>) =>
-  p.catch((e) => {
-    if (e instanceof ApiError && e.status === 404) return null;
-    throw e;
-  });
-
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
 /** No data (not even a keepalive) on the turn's stream for this long: the request is cut and the learner may send again, so `busy` never hangs for good */
 const BUSY_TIMEOUT_MS = 90_000;
+
+type SessionDetailExt = S["SessionDetail"] & { unanswered_seq?: number | null };
 
 type Line = {
   id: string;
@@ -41,7 +40,7 @@ type Line = {
   text: string;
   degraded?: string | null;
   interrupted?: boolean;
-  /** a committed teacher turn: its `seq`; the elements of the turn are drawn right after its text */
+  /** a committed teacher turn or recorded student event: its `seq` */
   seq?: number;
   /** a learner message: the files that went with it */
   files?: FileRef[];
@@ -58,8 +57,127 @@ type Elem = {
 };
 type Outcome = "correct" | "incorrect" | "partial" | "unclear";
 
+type FailedAction = {
+  body: Record<string, unknown>;
+  recorded: boolean;
+  studentLineId?: string;
+  onVerdict?: (o: Outcome) => void;
+};
+
 /** Elements the learner answers with text; the rest of the kinds are shown as a card with their title */
 const ANSWERABLE = new Set(["task", "short_answer", "free_answer", "choice", "prediction", "why_choice"]);
+
+function isRealHubId(hubId: string | null | undefined, domainId: string): hubId is string {
+  return Boolean(hubId && hubId !== "all" && hubId !== allTopicsHubId(domainId));
+}
+
+function extractNoteTargets(
+  d: SessionDetailExt,
+  domainTopics: { id: string; title: string; hubId?: string }[],
+  hubs: S["HubGoal"][],
+  fallbackTopicTitle: string,
+  allTopicsTitle: string,
+): ResolvedNoteTargets {
+  const orderedIds: string[] = [];
+  const eventTopicNames = new Map<string, string>();
+  const addId = (tid: unknown) => {
+    if (typeof tid === "string" && tid && !orderedIds.includes(tid)) orderedIds.push(tid);
+  };
+
+  if (d.topic_id) addId(d.topic_id);
+
+  const byTitleLower = new Map<string, string>();
+  for (const t of domainTopics) byTitleLower.set(t.title.trim().toLowerCase(), t.id);
+  for (const h of hubs) {
+    for (const t of h.topics ?? []) {
+      if (t.name) byTitleLower.set(t.name.trim().toLowerCase(), t.topic_id);
+    }
+  }
+
+  for (const ev of d.events) {
+    const pl = ev.payload;
+    if (ev.type === "topic.created" || ev.type === "topic.proposed") {
+      if (typeof pl.topic_id === "string" && typeof pl.name === "string" && pl.name.trim()) {
+        eventTopicNames.set(pl.topic_id, pl.name.trim());
+      }
+      addId(pl.topic_id);
+    } else if (ev.type === "skill.placed" || ev.type === "skill.created") {
+      addId(pl.topic_id);
+    } else if (ev.type === "observation.extracted") {
+      addId(pl.topic_id);
+      if (Array.isArray(pl.elements)) {
+        for (const el of pl.elements) {
+          if (!el || typeof el !== "object") continue;
+          const rec = el as Record<string, unknown>;
+          addId(rec.topic_id);
+          const ns = rec.new_skill as { topic_hint?: unknown } | null | undefined;
+          if (typeof ns?.topic_hint === "string") {
+            const matched = byTitleLower.get(ns.topic_hint.trim().toLowerCase());
+            if (matched) addId(matched);
+          }
+        }
+      }
+    } else if (ev.type === "turn.committed") {
+      addId(pl.topic_id);
+      const markup = pl.markup as { plan_update?: { current_step?: { landmark?: { kind?: string; id?: string } | null }; next_steps?: { landmark?: { kind?: string; id?: string } | null }[] } } | undefined;
+      const curLm = markup?.plan_update?.current_step?.landmark;
+      if (curLm?.kind === "topic") addId(curLm.id);
+      for (const ns of markup?.plan_update?.next_steps ?? []) {
+        if (ns?.landmark?.kind === "topic") addId(ns.landmark.id);
+      }
+    } else {
+      addId(pl.topic_id);
+    }
+  }
+
+  const chapterHubs = hubs.filter((h) => h.kind !== "domain_all");
+  const domainAllHub = hubs.find((h) => h.kind === "domain_all");
+
+  const hubTopicName = new Map<string, string>();
+  const topicChapterHub = new Map<string, string>();
+  for (const h of chapterHubs) {
+    for (const t of h.topics ?? []) {
+      if (t.name) hubTopicName.set(t.topic_id, t.name);
+      if (!topicChapterHub.has(t.topic_id) && isRealHubId(h.hub_id, d.domain_id)) {
+        topicChapterHub.set(t.topic_id, h.hub_id);
+      }
+    }
+  }
+  for (const t of domainTopics) {
+    if (!topicChapterHub.has(t.id) && isRealHubId(t.hubId, d.domain_id)) {
+      topicChapterHub.set(t.id, t.hubId);
+    }
+  }
+
+  const domainTopicById = new Map(domainTopics.map((t) => [t.id, t]));
+  const topics: NoteTopicTarget[] = orderedIds.slice(0, 3).map((tid) => ({
+    id: tid,
+    title: domainTopicById.get(tid)?.title ?? hubTopicName.get(tid) ?? eventTopicNames.get(tid) ?? fallbackTopicTitle,
+    hubId: topicChapterHub.get(tid) ?? null,
+  }));
+
+  let hub: NoteHubTarget | null = null;
+  if (topics.length > 0) {
+    const hubIds = topics.map((t) => t.hubId);
+    if (hubIds.every((h): h is string => h !== null) && new Set(hubIds).size === 1) {
+      const hid = hubIds[0];
+      const found = chapterHubs.find((h) => h.hub_id === hid);
+      hub = { id: hid, title: found?.name ?? allTopicsTitle };
+    }
+  }
+  if (!hub) {
+    if (domainAllHub) {
+      hub = { id: domainAllHub.hub_id, title: domainAllHub.name || allTopicsTitle };
+    } else if (isRealHubId(d.hub_id, d.domain_id)) {
+      const found = hubs.find((h) => h.hub_id === d.hub_id);
+      hub = { id: d.hub_id, title: found?.name ?? allTopicsTitle };
+    } else if (chapterHubs[0]) {
+      hub = { id: chapterHubs[0].hub_id, title: chapterHubs[0].name };
+    }
+  }
+
+  return { topics, hub };
+}
 
 /** /session/new: create the session in the current subject, then open it */
 export function NewSessionLive() {
@@ -107,8 +225,9 @@ export function SessionLive({ id }: { id: string }) {
   const errorText = useErrorText();
   const { domains, setActive, appliedSeq } = useData();
   const { focusDomain } = useShell();
-  const [detail, setDetail] = useState<S["SessionDetail"] | null>(null);
-  const [notesState, setNotesState] = useState<{ topicId: string; has: boolean } | null>(null);
+  const [detail, setDetail] = useState<SessionDetailExt | null>(null);
+  const detailRef = useRef<SessionDetailExt | null>(null);
+  const [hubs, setHubs] = useState<S["HubGoal"][]>([]);
   const [lines, setLines] = useState<Line[]>([]);
   const [elems, setElems] = useState<Elem[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
@@ -125,6 +244,9 @@ export function SessionLive({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [unansweredSeq, setUnansweredSeq] = useState<number | null>(null);
+  const [lastFailedAction, setLastFailedAction] = useState<FailedAction | null>(null);
+  const [artifactTick, setArtifactTick] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
   const sentFirst = useRef(false);
   /** The session was closed by the idle timer when it was read: the first accepted action or heartbeat reopens it, then `detail` is read again */
@@ -132,10 +254,20 @@ export function SessionLive({ id }: { id: string }) {
   /** bumped by "Try again" when the history could not be read */
   const [historyTry, setHistoryTry] = useState(0);
 
+  useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
+
+  const clearLiveError = useCallback(() => {
+    if (detailRef.current) setError(null);
+  }, []);
+
   /** A finished background job (a demo, say) leaves its result in the committed turn: re-read it, a visualization gets its `request_id` there */
   const refreshElements = useCallback(() => {
-    get<S["SessionDetail"]>(`/v1/sessions/${id}`)
+    get<SessionDetailExt>(`/v1/sessions/${id}`)
       .then((d) => {
+        setDetail(d);
+        setUnansweredSeq(d.unanswered_seq ?? null);
         const resolved = new Map<string, S["Element"]>();
         for (const ev of d.events) {
           if (ev.type !== "turn.committed") continue;
@@ -160,9 +292,10 @@ export function SessionLive({ id }: { id: string }) {
   const reopened = useCallback(() => {
     if (!closed.current) return;
     closed.current = false;
-    get<S["SessionDetail"]>(`/v1/sessions/${id}`)
+    get<SessionDetailExt>(`/v1/sessions/${id}`)
       .then((d) => {
         setDetail(d);
+        setUnansweredSeq(d.unanswered_seq ?? null);
         if (d.status === "active") setActive(d);
         else closed.current = true;
       })
@@ -171,12 +304,16 @@ export function SessionLive({ id }: { id: string }) {
       });
   }, [id, setActive]);
   /** The plan changes only when a teacher turn is committed: read it again when a turn ends, no polling */
-  const { plan, refresh: refreshPlan } = useSessionPlan(id);
+  const { plan, stale: planStale, refresh: refreshPlan } = useSessionPlan(id, { onSuccess: clearLiveError });
   const bg = useSessionJobs(id, {
     onDone: (kinds) => {
+      clearLiveError();
       refreshElements();
       // a demo made ahead is ready (or failed): the plan carries where each one stands
       if (kinds.includes("agent.viz")) refreshPlan();
+      if (kinds.some((k) => k === "agent.artifact" || k === "artifact.topic_refresh" || k === "artifact.cheatsheet")) {
+        setArtifactTick((n) => n + 1);
+      }
     },
   });
   const refreshJobs = bg.refresh;
@@ -187,6 +324,29 @@ export function SessionLive({ id }: { id: string }) {
     if (building) refreshPlan();
   }, [building, refreshPlan]);
 
+  // Clear red session error once jobs poll succeeds/updates
+  useEffect(() => {
+    if (!error || !detail) return;
+    if (bg.jobs.length > 0 || bg.finished.length > 0) {
+      const timer = setTimeout(() => setError(null), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [bg.jobs, bg.finished, error, detail]);
+
+  const domainId = detail?.domain_id;
+  useEffect(() => {
+    if (!domainId) return;
+    let off = false;
+    get<S["HubGoal"][]>(`/v1/domains/${domainId}/hubs`)
+      .then((h) => {
+        if (!off) setHubs(h);
+      })
+      .catch(() => {});
+    return () => {
+      off = true;
+    };
+  }, [domainId, appliedSeq]);
+
   const activeTopicId = (() => {
     if (!detail) return null;
     if (detail.topic_id) return detail.topic_id;
@@ -196,26 +356,18 @@ export function SessionLive({ id }: { id: string }) {
     }
     return null;
   })();
-  const hasTopicNotes = Boolean(activeTopicId) && notesState?.topicId === activeTopicId && notesState.has;
-
-  useEffect(() => {
-    if (!activeTopicId) return;
-    let off = false;
-    void orNone(get<S["ArtifactResponse"]>(`/v1/topics/${activeTopicId}/notes`))
-      .then((notes) => {
-        if (!off) setNotesState({ topicId: activeTopicId, has: (notes?.blocks.length ?? 0) > 0 });
-      })
-      .catch(() => {});
-    return () => {
-      off = true;
-    };
-  }, [activeTopicId, appliedSeq]);
 
   const scrollDown = () => requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
 
   /** One action of the learner; the answer of the teacher streams back as frames (ТЗ Ф4 §4.7) */
   const act = useCallback(
-    async (body: Record<string, unknown>, studentText?: string, onVerdict?: (o: Outcome) => void, files?: FileRef[]): Promise<boolean> => {
+    async (
+      body: Record<string, unknown>,
+      studentText?: string,
+      onVerdict?: (o: Outcome) => void,
+      files?: FileRef[],
+      opts?: { skipStudentEcho?: boolean; existingStudentLineId?: string },
+    ): Promise<boolean> => {
       if (busy) {
         setError(t.turnLocked);
         return false;
@@ -223,6 +375,7 @@ export function SessionLive({ id }: { id: string }) {
       setBusy(true);
       setError(null);
       setVerdict(null);
+      setLastFailedAction(null);
       // a turn whose stream goes silent (no frame, no keepalive) is cut after `BUSY_TIMEOUT_MS`; every chunk restarts the clock
       const cut = new AbortController();
       let stalled = false;
@@ -237,9 +390,11 @@ export function SessionLive({ id }: { id: string }) {
       arm();
       /** the verdict of an answer given inside an element goes into that form, not under the reply */
       const shown = onVerdict ?? setVerdict;
-      const lineId = `s-${Date.now()}`;
+      const lineId = opts?.existingStudentLineId ?? `s-${Date.now()}`;
       const turnId = `t-${Date.now()}-${++turnNo.current}`;
-      if (studentText) setLines((l) => [...l, { id: lineId, role: "student", text: studentText, files }]);
+      if (studentText && !opts?.skipStudentEcho) {
+        setLines((l) => [...l, { id: lineId, role: "student", text: studentText, files }]);
+      }
       setStreamId(turnId);
       setStreaming("");
       scrollDown();
@@ -248,6 +403,7 @@ export function SessionLive({ id }: { id: string }) {
       let retry = false;
       let degraded: string | null = null;
       let committed: number | null = null;
+      let actionRecorded = false;
       const fresh: { block: string; element: S["Element"] }[] = [];
       const showLive = () => setLive(fresh.map((f) => ({ blockId: `live:${f.block}`, element: f.element, turnSeq: null, answered: false })));
       try {
@@ -258,6 +414,7 @@ export function SessionLive({ id }: { id: string }) {
           { ...body, idempotency_key: idem() } as never,
           ({ event, data }) => {
             if (event === "action_recorded") {
+              actionRecorded = true;
               reopened();
               const v = data.verdict as { outcome?: Outcome } | null | undefined;
               if (v?.outcome) shown(v.outcome);
@@ -306,6 +463,7 @@ export function SessionLive({ id }: { id: string }) {
         if (committed === null) {
           if (reply) setLines((l) => [...l, { id: turnId, role: "teacher", text: reply, interrupted: true }]);
           else setError(t.interrupted);
+          setLastFailedAction({ body, recorded: actionRecorded, studentLineId: studentText ? lineId : opts?.existingStudentLineId, onVerdict });
           return false;
         }
         // one batch with the `finally` below: the streamed article becomes the committed line (same key), the live cards become answerable
@@ -317,9 +475,12 @@ export function SessionLive({ id }: { id: string }) {
           const done = fresh.map((f) => ({ blockId: `${seq}:${(f.element as { element_id?: string }).element_id ?? f.block}`, element: f.element, turnSeq: seq, answered: false }));
           setElems((e) => [...e, ...done.filter((d) => !e.some((x) => x.blockId === d.blockId))]);
         }
+        setUnansweredSeq(null);
+        setLastFailedAction(null);
         return true;
       } catch (e) {
         setError(stalled ? t.busyTimeout : e instanceof ApiError && e.code === "TURN_LOCKED" ? t.turnLocked : errorText(e));
+        setLastFailedAction({ body, recorded: actionRecorded, studentLineId: studentText ? lineId : opts?.existingStudentLineId, onVerdict });
         // what was already shown stays on screen, marked: this part is not committed and is gone after a reload
         if (reply) setLines((l) => [...l, { id: turnId, role: "teacher", text: reply, interrupted: true }]);
         return false;
@@ -334,9 +495,10 @@ export function SessionLive({ id }: { id: string }) {
         // a turn queues background agents (demo, tasks, checks) shortly after it is committed
         refreshJobs();
         refreshPlan();
+        refreshElements();
       }
     },
-    [busy, id, t.turnLocked, t.interrupted, t.busyTimeout, errorText, reopened, refreshJobs, refreshPlan],
+    [busy, id, t.turnLocked, t.interrupted, t.busyTimeout, errorText, reopened, refreshJobs, refreshPlan, refreshElements],
   );
 
   const send = useCallback(
@@ -350,6 +512,23 @@ export function SessionLive({ id }: { id: string }) {
           )
         : undefined,
     [act],
+  );
+
+  const queue = useSendQueue<FileRef>({
+    busy,
+    onSend: (item) => send(item.text, item.files),
+  });
+
+  const handleComposerSend = useCallback(
+    (text: string, files?: FileRef[]) => {
+      if (!text.trim() && !files?.length) return;
+      if (busy || queue.items.length > 0) {
+        queue.enqueue(text, files);
+        return;
+      }
+      void send(text, files);
+    },
+    [busy, queue, send],
   );
 
   /** A recorded clip → the recognized text goes to the teacher once: the message points at the recorded voice segment (`voice_seq`) and carries no text. Returns an error text, or null */
@@ -386,7 +565,7 @@ export function SessionLive({ id }: { id: string }) {
   // History: the feed of the session; text lives in `message.sent` / `voice.transcribed` (student) and `turn.committed` (teacher)
   useEffect(() => {
     let off = false;
-    get<S["SessionDetail"]>(`/v1/sessions/${id}`)
+    get<SessionDetailExt>(`/v1/sessions/${id}`)
       .then(async (d) => {
         if (off) return;
         // the names of the files that went with messages (the log holds their ids)
@@ -400,6 +579,7 @@ export function SessionLive({ id }: { id: string }) {
           if (off) return;
         }
         setDetail(d);
+        setUnansweredSeq(d.unanswered_seq ?? null);
         closed.current = d.status !== "active";
         focusDomain(d.domain_id);
         // a session opened from a topic page becomes the active one in the sessions panel
@@ -443,7 +623,7 @@ export function SessionLive({ id }: { id: string }) {
           // a spoken message: its words are the `voice.transcribed` event, the `message.sent` after it has none
           if ((ev.type === "message.sent" || ev.type === "voice.transcribed") && text) {
             const ids = ev.type === "message.sent" && Array.isArray(ev.payload.material_ids) ? (ev.payload.material_ids as unknown[]).filter((x): x is string => typeof x === "string") : [];
-            past.push({ id: `e-${ev.seq}`, role: "student", text, files: ids.map((id) => ({ id, name: names.get(id) ?? tx.composer.attachFallbackName })) });
+            past.push({ id: `e-${ev.seq}`, role: "student", text, seq: ev.seq, files: ids.map((id) => ({ id, name: names.get(id) ?? tx.composer.attachFallbackName })) });
           }
           else if (ev.type === "turn.committed") {
             const markup = ev.payload.markup as { elements?: unknown[] } | undefined;
@@ -502,12 +682,44 @@ export function SessionLive({ id }: { id: string }) {
     const timer = setInterval(
       () =>
         void post(`/v1/sessions/${id}/heartbeat`)
-          .then(reopened)
+          .then(() => {
+            clearLiveError();
+            reopened();
+          })
           .catch(() => {}),
       HEARTBEAT_MS,
     );
     return () => clearInterval(timer);
-  }, [id, reopened]);
+  }, [id, reopened, clearLiveError]);
+
+  const resolveTargets = useCallback(async (): Promise<ResolvedNoteTargets> => {
+    const cur = detailRef.current;
+    if (!cur) return { topics: [], hub: null };
+    const [freshRes, hubsRes] = await Promise.allSettled([
+      get<SessionDetailExt>(`/v1/sessions/${id}`),
+      get<S["HubGoal"][]>(`/v1/domains/${cur.domain_id}/hubs`),
+    ]);
+    const freshDetail = freshRes.status === "fulfilled" ? freshRes.value : cur;
+    const freshHubs = hubsRes.status === "fulfilled" ? hubsRes.value : hubs;
+    if (freshRes.status === "fulfilled") setDetail(freshDetail);
+    if (hubsRes.status === "fulfilled") setHubs(freshHubs);
+    const domainTopics = domains.find((d) => d.id === freshDetail.domain_id)?.topics ?? [];
+    return extractNoteTargets(freshDetail, domainTopics, freshHubs, tx.meta.topic, tx.live.allTopics);
+  }, [id, hubs, domains, tx.meta.topic, tx.live.allTopics]);
+
+  const retryAction = useCallback(
+    async (studentLineId?: string) => {
+      if (lastFailedAction && !lastFailedAction.recorded && (!studentLineId || lastFailedAction.studentLineId === studentLineId)) {
+        await act(lastFailedAction.body, undefined, lastFailedAction.onVerdict, undefined, {
+          skipStudentEcho: true,
+          existingStudentLineId: lastFailedAction.studentLineId,
+        });
+        return;
+      }
+      await act({ kind: "retry_turn" });
+    },
+    [act, lastFailedAction],
+  );
 
   if (missing) {
     return (
@@ -544,6 +756,40 @@ export function SessionLive({ id }: { id: string }) {
   const topic = domain?.topics.find((x) => x.id === detail.topic_id);
   const title = topic?.title ?? modeLabel ?? tx.session.newTitle;
 
+  // Orphaned student message: either backend `unanswered_seq` is set, or client-side there is no committed teacher turn after the last student line
+  let lastStudentIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].role === "student") {
+      lastStudentIdx = i;
+      break;
+    }
+  }
+  const hasCommittedTeacherAfter =
+    lastStudentIdx >= 0 && lines.slice(lastStudentIdx + 1).some((l) => l.role === "teacher" && !l.interrupted);
+  const hasOrphanedStudent =
+    !busy &&
+    streaming === null &&
+    lastStudentIdx >= 0 &&
+    (!hasCommittedTeacherAfter || (unansweredSeq !== null && lines[lastStudentIdx].seq === unansweredSeq));
+  const hasStandaloneUnanswered =
+    !busy && streaming === null && unansweredSeq !== null && !hasOrphanedStudent;
+
+  const hasBgCheck = bg.jobs.some((j) => j.kind === "check.symbolic" || j.kind === "check.model" || j.kind === "task.check");
+  const hasBgViz = bg.jobs.some((j) => j.kind === "agent.viz");
+  const teacherStatusKey: keyof typeof tx.session.teacherStatus | null = busy
+    ? refining
+      ? "checking"
+      : streaming
+        ? "writing"
+        : thinking
+          ? "thinking"
+          : "reading"
+    : hasBgCheck
+      ? "checking"
+      : hasBgViz
+        ? "makingDemo"
+        : null;
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
@@ -561,7 +807,18 @@ export function SessionLive({ id }: { id: string }) {
           {/* one keyed list: the streamed article of a turn and its committed line share a key, so React keeps the node and the text never blinks out */}
           {[
             ...lines.flatMap((l, idx) => {
-              if (l.role === "student") return [<StudentLine key={l.id} text={l.text} files={l.files} />];
+              if (l.role === "student") {
+                const showOrphanRetry = hasOrphanedStudent && idx === lastStudentIdx;
+                return [
+                  <StudentLine
+                    key={l.id}
+                    text={l.text}
+                    files={l.files}
+                    onRetry={showOrphanRetry ? () => void retryAction(l.id) : undefined}
+                    retryLabel={t.retry}
+                  />,
+                ];
+              }
               let studentPrompt: string | null = null;
               for (let j = idx - 1; j >= 0; j--) {
                 if (lines[j].role === "student") {
@@ -586,10 +843,9 @@ export function SessionLive({ id }: { id: string }) {
                           turnSeq: l.seq,
                           turnText: l.text,
                           studentPrompt,
-                          hasTopicNotes,
-                          onTopicNotesSaved: () => {
-                            if (activeTopicId) setNotesState({ topicId: activeTopicId, has: true });
-                          },
+                          resolveTargets,
+                          onJobsRefresh: refreshJobs,
+                          artifactTick,
                         }}
                       />
                     )}
@@ -631,23 +887,72 @@ export function SessionLive({ id }: { id: string }) {
               {verdict === "correct" ? tx.stubs.practice.correct : tx.live.notQuite}
             </p>
           )}
+          {hasStandaloneUnanswered && !error && (
+            <div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void retryAction()}
+                className="caps rounded-pill border border-seam px-3.5 py-1.5 text-small text-paper transition-colors hover:border-ribbon hover:text-ribbon disabled:opacity-50"
+              >
+                {t.retry}
+              </button>
+            </div>
+          )}
           {error && (
-            <p role="alert" className="text-small text-st-confused">
-              {error}
-            </p>
+            <div role="alert" className="flex flex-wrap items-center gap-3 text-small text-st-confused">
+              <p className="min-w-0 flex-1">{error}</p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void retryAction()}
+                className="caps shrink-0 rounded-pill border border-st-confused/60 px-3 py-1 text-st-confused transition-colors hover:border-st-confused hover:bg-cloth-hover disabled:opacity-50"
+              >
+                {t.retry}
+              </button>
+            </div>
           )}
         </div>
       </div>
 
-      <SessionCorner plan={plan} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={setDemo} />
+      <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={setDemo} />
       {demo && <DemoPanel demo={demo} onClose={() => setDemo(null)} />}
 
       <div className="px-4 pb-4 md:px-7 md:pb-5">
+        {teacherStatusKey && (
+          <p role="status" className="mb-1.5 flex items-center gap-2 pr-12 text-small text-paper-dim">
+            <span aria-hidden className="size-1.5 rounded-pill bg-ribbon motion-safe:animate-pulse" />
+            <span>{tx.session.teacherStatus[teacherStatusKey]}</span>
+          </p>
+        )}
+        {queue.items.length > 0 && (
+          <ul aria-label={tx.session.queueLabel} className="mb-2 flex flex-wrap gap-1.5 pr-12">
+            {queue.items.map((item) => (
+              <li
+                key={item.id}
+                className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-pill border border-seam bg-cloth-raised px-3 py-1 text-small text-paper"
+              >
+                <span className="min-w-0 truncate">{item.text}</span>
+                {item.files?.length ? (
+                  <span className="shrink-0 text-paper-dim">{tx.session.queueFiles(item.files.length)}</span>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label={tx.session.queueRemove}
+                  onClick={() => queue.remove(item.id)}
+                  className="-mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-pill text-paper-dim hover:bg-cloth-hover hover:text-paper"
+                >
+                  <X aria-hidden className="size-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <Composer
           label={tx.session.composerLabel}
           placeholder={tx.session.replyPlaceholder}
           submitText={tx.session.send}
-          onSend={(text, files) => void send(text, files)}
+          onSend={handleComposerSend}
           sessionId={id}
           voice={{ onClip: sendVoice, disabled: busy }}
           duck
@@ -726,7 +1031,17 @@ function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean;
   );
 }
 
-function StudentLine({ text, files }: { text: string; files?: FileRef[] }) {
+function StudentLine({
+  text,
+  files,
+  onRetry,
+  retryLabel,
+}: {
+  text: string;
+  files?: FileRef[];
+  onRetry?: () => void;
+  retryLabel?: string;
+}) {
   const tx = useT();
   return (
     <div className="flex flex-col items-end">
@@ -738,6 +1053,15 @@ function StudentLine({ text, files }: { text: string; files?: FileRef[] }) {
         {text}
       </p>
       {files?.length ? <SentFiles files={files} /> : null}
+      {onRetry && retryLabel && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="caps mt-1.5 rounded-pill border border-seam px-3 py-1 text-small text-paper-dim transition-colors hover:border-ribbon hover:text-ribbon"
+        >
+          {retryLabel}
+        </button>
+      )}
     </div>
   );
 }

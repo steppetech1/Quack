@@ -1351,6 +1351,16 @@ export interface components {
         /** @enum {string} */
         AnswerType: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text";
         /**
+         * ArtifactConsentRequest
+         * @description Consent to generate topic notes or a hub cheat sheet, optionally within a session.
+         */
+        ArtifactConsentRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /**
          * ArtifactResponse
          * @description An artifact at its current version; blocks with the names of Т-§17.2.
          */
@@ -2782,6 +2792,12 @@ export interface components {
             id: string;
             /** Landmark Id */
             landmark_id: string | null;
+            /**
+             * Status
+             * @default upcoming
+             * @enum {string}
+             */
+            status?: "done" | "current" | "upcoming";
             /** Text */
             text: string;
         };
@@ -3023,6 +3039,8 @@ export interface components {
             title: string | null;
             /** Topic Id */
             topic_id: string | null;
+            /** Unanswered Seq */
+            unanswered_seq?: number | null;
         };
         /** @enum {string} */
         SessionIntent: "learn" | "practice" | "review" | "free";
@@ -3062,6 +3080,8 @@ export interface components {
             current_step: components["schemas"]["PlanStep"] | null;
             /** Demos */
             demos: components["schemas"]["PlanDemo"][];
+            /** Done Steps */
+            done_steps?: components["schemas"]["PlanStep"][];
             /** Goal */
             goal: string | null;
             /** Landmarks */
@@ -3145,6 +3165,8 @@ export interface components {
             title: string | null;
             /** Topic Id */
             topic_id: string | null;
+            /** Unanswered Seq */
+            unanswered_seq?: number | null;
         };
         /**
          * SetPreferenceRequest
@@ -5943,7 +5965,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["KeyedRequest"];
+                "application/json": components["schemas"]["ArtifactConsentRequest"];
             };
         };
         responses: {
@@ -8614,7 +8636,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["KeyedRequest"];
+                "application/json": components["schemas"]["ArtifactConsentRequest"];
             };
         };
         responses: {

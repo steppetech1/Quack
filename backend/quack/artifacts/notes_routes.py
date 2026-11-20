@@ -50,6 +50,12 @@ class KeyedRequest(BaseModel):
     idempotency_key: str = Field(min_length=1)
 
 
+class ArtifactConsentRequest(KeyedRequest):
+    """Consent to generate topic notes or a hub cheat sheet, optionally within a session."""
+
+    session_id: UUID | None = None
+
+
 class BlockEdit(KeyedRequest):
     content: str
 
@@ -129,7 +135,7 @@ async def put_topic_notes(
 )
 async def request_topic_notes(
     topic_id: UUID,
-    body: KeyedRequest,
+    body: ArtifactConsentRequest,
     learner_id: CurrentLearnerId,
     resources: Resources,
 ) -> TopicNotesConsentResponse:
@@ -157,6 +163,7 @@ async def request_topic_notes(
                 actor="learner",
                 idempotency_key=f"topic-notes:{topic_id}:{body.idempotency_key}",
                 domain_id=notes.domain_id,
+                session_id=body.session_id,
             )
         ],
         redis=resources.redis,

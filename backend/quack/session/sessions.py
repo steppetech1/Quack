@@ -42,12 +42,31 @@ _FIRST_WORDS = (
     "AND f.session_id = s.session_id AND f.type IN ('message.sent', 'voice.transcribed') "
     "AND btrim(f.payload ->> 'text') <> '' ORDER BY f.seq LIMIT 1)"
 )
+# The seq of the latest turn-triggering learner input in the session with no subsequent
+# `turn.committed` (`None` when answered or no input yet; `answer.submitted` caused by
+# `element.responded` resolves to the parent `element.responded` seq).
+_UNANSWERED_SEQ = (
+    "(SELECT CASE WHEN last_in.seq IS NOT NULL "
+    "AND (last_turn.seq IS NULL OR last_in.seq > last_turn.seq) "
+    "THEN last_in.seq END "
+    "FROM (SELECT max(u.seq) AS seq FROM core.events u "
+    "WHERE u.learner_id = s.learner_id AND u.session_id = s.session_id "
+    "AND (u.type IN ('message.sent', 'element.responded', 'hint.requested', "
+    "'solution.requested', 'check.skipped', 'item.flagged_unclear') "
+    "OR (u.type = 'answer.submitted' AND NOT EXISTS ("
+    "SELECT 1 FROM core.events p WHERE p.learner_id = u.learner_id "
+    "AND p.seq = u.causation_seq AND p.type = 'element.responded')))) AS last_in "
+    "CROSS JOIN (SELECT max(t.seq) AS seq FROM core.events t "
+    "WHERE t.learner_id = s.learner_id AND t.session_id = s.session_id "
+    "AND t.type = 'turn.committed') AS last_turn)"
+)
 _COLUMNS = (
     "s.session_id, s.domain_id, s.intent, s.topic_id, s.hub_id, s.status, s.started_at, "
     "s.ended_at, s.last_activity_at, (SELECT min(e.seq) FROM core.events e "
     "WHERE e.learner_id = s.learner_id AND e.session_id = s.session_id "
     "AND e.type = 'session.started') AS start_seq, s.title AS stored_title, "
-    f"CASE WHEN s.title IS NULL THEN {_FIRST_WORDS} END AS first_words"
+    f"CASE WHEN s.title IS NULL THEN {_FIRST_WORDS} END AS first_words, "
+    f"{_UNANSWERED_SEQ} AS unanswered_seq"
 )
 _SESSION = (
     f"SELECT {_COLUMNS} FROM content.sessions s "
@@ -131,6 +150,7 @@ class SessionView(BaseModel):
     last_activity_at: datetime
     start_seq: int | None
     title: str | None
+    unanswered_seq: int | None = None
 
 
 class _SessionRow(BaseModel):
@@ -150,6 +170,7 @@ class _SessionRow(BaseModel):
     start_seq: int | None
     stored_title: str | None
     first_words: str | None
+    unanswered_seq: int | None = None
 
     def view(self, title_chars: int) -> SessionView:
         title = self.stored_title or provisional_title(self.first_words, title_chars)
