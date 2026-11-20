@@ -106,6 +106,8 @@ _DELETES = (
     "AND session_id = ANY(%(sessions)s)",
     "DELETE FROM ops.turn_manifests WHERE learner_id = %(learner_id)s "
     "AND session_id = ANY(%(sessions)s)",
+    "DELETE FROM ops.guard_samples WHERE learner_id = %(learner_id)s "
+    "AND session_id = ANY(%(sessions)s)",
     "DELETE FROM content.sessions WHERE learner_id = %(learner_id)s "
     "AND session_id = ANY(%(sessions)s)",
 )

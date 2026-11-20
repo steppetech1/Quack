@@ -7,8 +7,9 @@ import json
 from uuid import uuid4
 
 from quack.db import Db
-from quack.events.records import PlanUpdateRecord
+from quack.events.records import PlanStepRecord
 from quack.graph.read import ProfileFacts
+from quack.practice.session_plan import PlanDoc
 from quack.session.teacher_context import LearnerSkill
 from quack.session.turn_inputs import (
     NO_DATA,
@@ -32,20 +33,36 @@ async def test_plan_and_learner_skill(pg_db: Db) -> None:
     stranger = await create_learner(pg_db)
     session_id = uuid4()
     assert await load_plan(pg_db, learner_id=learner_id, session_id=session_id) is None
-    plan = PlanUpdateRecord(
-        completed_steps=["idea"],
-        current_step="example",
-        next_steps=["task"],
-        branches=[],
-        cancel_request_ids=[],
+    plan = PlanDoc(
+        goal="understand the idea",
+        current_step=PlanStepRecord(id="example", text="example"),
+        next_steps=[PlanStepRecord(id="task", text="task")],
     )
     await pg_db.execute(
         "INSERT INTO content.session_plans (session_id, learner_id, plan, status) "
         "VALUES (%(s)s, %(l)s, %(p)s, 'active')",
-        {"s": session_id, "l": learner_id, "p": json.dumps(plan.model_dump(mode="json"))},
+        {"s": session_id, "l": learner_id, "p": json.dumps(plan.to_json())},
     )
     assert await load_plan(pg_db, learner_id=learner_id, session_id=session_id) == plan
     assert await load_plan(pg_db, learner_id=stranger, session_id=session_id) is None
+
+    # a document written before version 2 is read as the plan of version 2
+    older = uuid4()
+    await pg_db.execute(
+        "INSERT INTO content.session_plans (session_id, learner_id, plan, status) "
+        "VALUES (%(s)s, %(l)s, %(p)s, 'active')",
+        {
+            "s": older,
+            "l": learner_id,
+            "p": json.dumps(
+                {"completed_steps": ["idea"], "current_step": "example", "next_steps": ["task"]}
+            ),
+        },
+    )
+    lifted = await load_plan(pg_db, learner_id=learner_id, session_id=older)
+    assert lifted is not None and lifted.goal is None
+    assert lifted.current_step == PlanStepRecord(id="example", text="example")
+    assert [s.text for s in lifted.next_steps] == ["task"]
 
     skill_id = uuid4()
     await pg_db.executemany(

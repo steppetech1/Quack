@@ -11,10 +11,29 @@ import { BackLink, PageShell } from "../page-parts";
 import { NodeChains } from "../stubs/node-chain";
 import { DomainSteps } from "../stubs/domain-steps";
 import { PILL_FIELD, PRIMARY_BTN, SECONDARY_BTN } from "../stubs/stub-parts";
+import type { FileRef } from "../attachments";
 import { useErrorText } from "./error-text";
 
 /** The first message of a session started from an input box waits here while the page switches to the real id */
 export const firstTurnKey = (id: string) => `quack.firstTurn.${id}`;
+
+/** What waits under `firstTurnKey`: the plain text, or JSON `{text, files}` when the message carries attached files */
+export function encodeFirstTurn(text: string, files: FileRef[] = []): string {
+  return files.length ? JSON.stringify({ text, files }) : text;
+}
+
+export function decodeFirstTurn(raw: string): { text: string; files: FileRef[] } {
+  if (raw.startsWith("{")) {
+    try {
+      const v = JSON.parse(raw) as { text?: unknown; files?: unknown };
+      if (typeof v.text === "string") {
+        const files = Array.isArray(v.files) ? v.files.filter((f): f is FileRef => !!f && typeof (f as FileRef).id === "string" && typeof (f as FileRef).name === "string") : [];
+        return { text: v.text, files };
+      }
+    } catch {}
+  }
+  return { text: raw, files: [] };
+}
 
 type Suggestion = S["DomainSuggestion"];
 

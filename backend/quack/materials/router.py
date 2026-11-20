@@ -35,6 +35,7 @@ class MaterialView(BaseModel):
     status: str
     pages_count: int | None
     created_at: datetime
+    title: str | None
 
 
 class MaterialList(BaseModel):
@@ -79,6 +80,7 @@ def _view(material: library.Material) -> MaterialView:
         status=material.status,
         pages_count=material.pages_count,
         created_at=material.created_at,
+        title=material.title,
     )
 
 
@@ -99,6 +101,7 @@ async def upload_material(
             domain_id=domain_id,
             data=await read_upload(file, max_mb=resources.settings.upload_max_mb),
             session_id=session_id,
+            filename=file.filename,
             redis=resources.redis,
         )
     except library.MaterialNotFound as exc:

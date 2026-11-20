@@ -48,15 +48,19 @@ T111: dict[str, tuple[str, str | None, int | None, str]] = {
     "artifact_writer": (SPARK, "high", 4096, "P2"),
     "today_planner": (SPARK, "high", 4096, "P2"),
     "domain_classifier": (SPARK, "low", 4096, "P1"),
+    "session_titler": (SPARK, "low", 4096, "P3"),
+    "viz_planner": (SPARK, "low", 4096, "P3"),
     "release_judge": (WONDER, "high", 8192, "P3"),
     "illustrator": ("muse-image-1.0", None, None, "P2"),
 }
 
 
 def test_role_table_matches_t111() -> None:
-    """T-AI1: 26 roles — model, effort, max_output_tokens, class as Т-§11.1 / Т-§11.3."""
+    """T-AI1: 28 roles — model, effort, max_output_tokens, class as Т-§11.1 / Т-§11.3; the 27th,
+    `session_titler` (owner decision 2026-11-19), and the 28th, `viz_planner` (owner decision
+    2026-11-20), are not in the document table."""
     roles = Settings().llm_roles
-    assert len(T111) == 26
+    assert len(T111) == 28
     assert set(roles) == set(T111)
     for name, (model, effort, max_out, klass) in T111.items():
         row = roles[name]
@@ -67,7 +71,7 @@ def test_role_table_matches_t111() -> None:
             klass,
         ), name
         assert (row.prompt is None) == (effort is None), name
-    assert roles["teacher_fallback"].prompt == roles["teacher"].prompt == "teacher@2"
+    assert roles["teacher_fallback"].prompt == roles["teacher"].prompt == "teacher@3"
     assert roles["analyst_deep"].prompt == roles["analyst"].prompt
     assert all(r.max_output_tokens is None or r.max_output_tokens <= 16384 for r in roles.values())
 
@@ -96,9 +100,10 @@ def _turn(blocks: list[dict[str, Any]]) -> dict[str, Any]:
             "planUpdate": {
                 "branches": [],
                 "cancel_requests": [],
-                "completed_steps": [],
-                "current_step": "idea",
-                "next_steps": ["example"],
+                "current_step": {"id": "idea", "landmark": "S1", "text": "idea"},
+                "goal": "learn the ratio test",
+                "landmark_edits": None,
+                "next_steps": [{"id": "example", "landmark": None, "text": "example"}],
             },
             "targetsMisconception": None,
             "tasks": [],

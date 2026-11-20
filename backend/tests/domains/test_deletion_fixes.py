@@ -233,3 +233,37 @@ async def test_account_deletion_clears_the_stopped_dispatcher_stream(
     await apply_account_record(pg_db, neo4j, InMemoryObjectStore(), learner, record)
     rows = await pg_db.fetch_all("SELECT learner_id FROM ops.dispatcher_failures")
     assert [r["learner_id"] for r in rows] == [other]
+
+
+_INSERT_SAMPLE = (
+    "INSERT INTO ops.guard_samples (learner_id, session_id, turn_seq, rule, reason, sentence, "
+    "answer_token) VALUES (%(l)s, %(s)s, 3, 'spoiler', 'shadow', 'The sum is 1/3.', '1/3')"
+)
+_COUNT_SAMPLES = "SELECT count(*) AS n FROM ops.guard_samples WHERE learner_id = %(l)s"
+
+
+async def test_account_deletion_takes_the_guard_samples(pg_db: Db, neo4j: AsyncDriver) -> None:
+    """`ops.guard_samples` holds a sentence of a teacher reply: it goes with the account, the
+    rows of another learner stay."""
+    learner, other = await create_learner(pg_db), await create_learner(pg_db)
+    for who in (learner, other):
+        await pg_db.execute(_INSERT_SAMPLE, {"l": who, "s": uuid4()})
+    record = DeletionRecord(uuid4(), learner, "account", learner, NOW)
+    await apply_account_record(pg_db, neo4j, InMemoryObjectStore(), learner, record)
+    assert await _count(pg_db, _COUNT_SAMPLES, learner) == 0
+    assert await _count(pg_db, _COUNT_SAMPLES, other) == 1
+
+
+async def test_domain_deletion_takes_the_guard_samples_of_its_sessions(pg_db: Db) -> None:
+    learner, domain, kept_domain = await create_learner(pg_db), uuid4(), uuid4()
+    sessions = {"gone": uuid4(), "kept": uuid4()}
+    for key, session_domain in (("gone", domain), ("kept", kept_domain)):
+        await pg_db.execute(
+            "INSERT INTO content.sessions (session_id, learner_id, domain_id, status) "
+            "VALUES (%(s)s, %(l)s, %(d)s, 'active')",
+            {"s": sessions[key], "l": learner, "d": session_domain},
+        )
+        await pg_db.execute(_INSERT_SAMPLE, {"l": learner, "s": sessions[key]})
+    await erase_domain(pg_db, InMemoryObjectStore(), learner, domain)
+    rows = await pg_db.fetch_all("SELECT session_id FROM ops.guard_samples")
+    assert [r["session_id"] for r in rows] == [sessions["kept"]]

@@ -2,7 +2,8 @@
 
 `manifests.cleanup` (Т-§3.2, Т-§3.6; closes Ф3 R14): once a day it deletes the turn manifests
 older than `turn_manifest_retention_days`: the manifest is the trace of one turn for debugging,
-not memory (law 1 — the log is the truth).
+not memory (law 1 — the log is the truth). The same run deletes the rows of `ops.guard_samples`
+older than `guard_samples_retention_days` (the sentences of the spoiler hits kept for review).
 
 `exports.cleanup` (Д-§8.4, Т-§19.6; D-A-215): once a day it deletes the archives of the data
 export whose link has expired (`expires_at`), in case the lifecycle rule of the export prefix is
@@ -23,6 +24,8 @@ log = get_logger(__name__)
 
 # Every learner's old manifests (D-A-204): a cross-learner statement of the periodic job.
 _DELETE_OLD = "DELETE FROM ops.turn_manifests WHERE created_at < %(before)s"
+# Every learner's old guard samples: a cross-learner statement of the same periodic job.
+_DELETE_OLD_SAMPLES = "DELETE FROM ops.guard_samples WHERE created_at < %(before)s"
 # Every learner's expired archives (D-A-215): a cross-learner statement of the periodic job.
 _EXPIRED_EXPORTS = (
     "SELECT export_id, object_key FROM content.exports "
@@ -40,11 +43,25 @@ async def delete_old_manifests(db: Db, before: datetime) -> int:
         return cursor.rowcount
 
 
+async def delete_old_guard_samples(db: Db, before: datetime) -> int:
+    async with db.transaction() as conn:
+        cursor = await conn.execute(_DELETE_OLD_SAMPLES, {"before": before})
+        return cursor.rowcount
+
+
 @register_job_handler("manifests.cleanup")
 async def handle_manifests_cleanup(job: ClaimedJob, ctx: JobContext) -> None:
+    now = datetime.now(UTC)
     days = ctx.settings.turn_manifest_retention_days
-    deleted = await delete_old_manifests(ctx.db, datetime.now(UTC) - timedelta(days=days))
-    log.info("manifests_cleaned", deleted=deleted, period=job.payload.get("period"))
+    deleted = await delete_old_manifests(ctx.db, now - timedelta(days=days))
+    sample_days = ctx.settings.guard_samples_retention_days
+    samples = await delete_old_guard_samples(ctx.db, now - timedelta(days=sample_days))
+    log.info(
+        "manifests_cleaned",
+        deleted=deleted,
+        guard_samples_deleted=samples,
+        period=job.payload.get("period"),
+    )
 
 
 async def delete_expired_exports(db: Db, store: ObjectStore, now: datetime) -> int:

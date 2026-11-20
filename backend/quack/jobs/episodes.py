@@ -6,8 +6,11 @@
 (`ops.dispatcher_offsets`) and moves with the offset. Boundaries (`Т-§7.5`):
 
 * `task.closed` — the episode ends with that event;
-* a change of `head.intent` or of the plan step (`markup.plan_update.current_step`) in
-  `turn.committed` — the episode ends before that turn, the turn opens the next one (D-A-160);
+* a change of `head.intent` or of the plan step in `turn.committed` — the episode ends before
+  that turn, the turn opens the next one (D-A-160). The key of the step: `current_step.id` (schema
+  version 2: the teacher keeps the slug while the step is the same, so a rewording is not a
+  boundary); the text itself for an event of version 1 (`current_step` is a string); a `null`
+  step — the step did not change, no boundary and the key stays;
 * `episode_max_turns` teacher turns without a boundary — ends with the last of them;
 * `episode_idle_min` minutes without events — by the event times (a gap between two events of the
   session, so a replay of the log closes the same episodes) and by the clock (`idle`, the periodic
@@ -138,6 +141,8 @@ class EpisodeTracker:
             return closed  # a late verdict or a close without an episode: nothing to join
         turn = event.type == "turn.committed"
         intent, step = _turn_head(event) if turn else (None, None)
+        if turn and step is _UNCHANGED:
+            step = ep.step if ep is not None else None
         if ep is not None and turn and ep.turns > 0 and _changed(ep, intent, step):
             closed.append(self._close(sid, ep.last_seq, "boundary", event.occurred_at))
             ep = None
@@ -167,10 +172,26 @@ class EpisodeTracker:
         return out
 
 
+# The turn left the plan step as it was (`current_step: null` of schema version 2).
+_UNCHANGED: Any = object()
+
+
+def step_key(plan: dict[str, Any]) -> str | None:
+    """The key of the step of a `plan_update` payload (Т-§7.5 boundary): the `id` of a step
+    object (version 2), the string itself (version 1), `None` when the payload has no step."""
+    step = plan.get("current_step")
+    if isinstance(step, dict):
+        step_id = step.get("id")
+        return step_id if isinstance(step_id, str) else None
+    return step if isinstance(step, str) else None
+
+
 def _turn_head(event: StoredEvent) -> tuple[str | None, str | None]:
     head = event.payload.get("head") or {}
     plan = (event.payload.get("markup") or {}).get("plan_update") or {}
-    return head.get("intent"), plan.get("current_step")
+    if "current_step" in plan and plan["current_step"] is None:
+        return head.get("intent"), _UNCHANGED
+    return head.get("intent"), step_key(plan)
 
 
 def _changed(ep: OpenEpisode, intent: str | None, step: str | None) -> bool:

@@ -19,10 +19,30 @@ services:
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-quack}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-quack12345}
+      # Signed links (canvas replay, exports, materials) go to the browser: it reaches MinIO at the
+      # published port, not at the container name the API itself uses.
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      # The canvas WebSocket refuses a browser `Origin` outside `cors_origins` (cross-site hijack
+      # guard); the default list holds only the production hosts, so on a local stand the page at
+      # localhost:3000 got 403 and the board neither saved strokes nor heard the teacher.
+      CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
       SESSION_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN:-}"
       AUTH_SUCCESS_REDIRECT_URL: "${AUTH_SUCCESS_REDIRECT_URL:-http://localhost:3000/}"
       GOOGLE_OIDC_REDIRECT_URL: "${GOOGLE_OIDC_REDIRECT_URL:-http://localhost:3000/api/auth/google/callback}"
+  # compute runs the code of the working tree too (a new endpoint, such as the one that reads a
+  # presentation, would not exist in the image until a rebuild).
+  compute:
+    volumes:
+      - ./compute/quack_compute:/app/quack_compute:ro
+  # The code of the background processes comes from the working tree like the API's: the dispatcher
+  # (`projector`) and the job handlers (`workers`) otherwise run the code baked into the image, and a
+  # change to a rule or a handler would not reach them until a rebuild.
+  projector:
+    volumes:
+      - ./backend/quack:/app/quack
   workers:
+    volumes:
+      - ./backend/quack:/app/quack
     environment:
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-quack}

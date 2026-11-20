@@ -265,7 +265,7 @@ class CandidateSkill(_Fact):
 
     skill_id: UUID
     name: str
-    topic_id: UUID
+    topic_id: UUID | None = None
 
 
 class ExtractionCandidates(_Fact):

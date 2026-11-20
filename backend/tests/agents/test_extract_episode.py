@@ -47,6 +47,7 @@ from quack.events.records import (
     BodyBlockRecord,
     ElementRecord,
     ExposureRecord,
+    PlanStepRecord,
     PlanUpdateRecord,
     TaskElementRecord,
     TaskMarkupRecord,
@@ -163,9 +164,10 @@ def _committed(action_seq: int, text: str, *, task: bool = False) -> TurnCommitt
             else [],
             targets_misconception_id=None,
             plan_update=PlanUpdateRecord(
-                completed_steps=[],
-                current_step="s",
+                goal=None,
+                current_step=PlanStepRecord(id="s", text="s"),
                 next_steps=[],
+                landmark_edits=None,
                 branches=[],
                 cancel_request_ids=[],
             ),
@@ -740,7 +742,7 @@ def test_task_tests_from_the_stored_markup() -> None:
         return TaskMarkupRecord(
             tests=[
                 TestedLevelRecord(skill_id=SKILL, level=level),
-                TestedLevelRecord(new_skill=NewSkill(name="new", topic_hint="t"), level=1),
+                TestedLevelRecord(new_skill=NewSkill(name="new"), level=1),
             ],
             method_named=False,
             answer=spec,

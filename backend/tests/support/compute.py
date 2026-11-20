@@ -21,6 +21,7 @@ type ComputeAnswer = BaseModel | int
 MATH_PATHS = ("/v1/math/check", "/v1/math/transition")
 WP24_PATHS = (
     "/v1/pdf/pages",
+    "/v1/pptx/slides",
     "/v1/image/align",
     "/v1/image/clean-drawing",
     "/v1/image/render-strokes",

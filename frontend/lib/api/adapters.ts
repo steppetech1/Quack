@@ -99,16 +99,21 @@ export function todayFromGraph(graph: S["DomainGraphResponse"], topics: Topic[],
 
 export type SessionLabels = { activeSession: string; modes: Record<string, string> };
 
-/** Session history row → the sessions panel: topic, else the intent */
+/** Session history row → the sessions panel. Title: the name from the API (generated, or the
+ * first words of the learner), else — nobody has spoken yet — the intent and the topic.
+ * Subtitle: the intent and the topic (not repeated when the title is already made of them). */
 export function sessionFromApi(s: S["SessionView"], topics: Topic[], labels: SessionLabels): Session {
   const intent = s.intent ?? "free";
   const mode = labels.modes[intent] ?? intent;
+  const topic = topics.find((t) => t.id === s.topic_id)?.title;
+  const named = !!s.title?.trim();
+  const sub = named ? (topic ? [mode, topic] : [mode]) : [];
   return {
     id: s.session_id,
     href: `/session/${s.session_id}`,
     date: localIso(Date.parse(s.started_at) || Date.now()),
-    title: topics.find((t) => t.id === s.topic_id)?.title ?? mode,
-    topics: s.status === "active" ? [labels.activeSession] : [mode],
+    title: named ? (s.title as string) : topic ? `${mode}: ${topic}` : mode,
+    topics: s.status === "active" ? [labels.activeSession, ...sub] : sub,
   };
 }
 

@@ -186,19 +186,21 @@ def _role(
 
 def default_llm_roles() -> dict[str, RoleConfig]:
     """Т-§11.1 (models, effort, output limits), Т-§11.3 (priority classes), Т-§1.3 (model ids).
-    Timeouts: teacher 45 s and teacher_fallback 30 s as in Phase 3, others `llm_timeout_sec`
-    (60 s). Classes of roles with two uses (`recognizer`, `builder`) and of `voice` — D-B-101.
+    Timeouts: teacher 45 s and teacher_fallback 30 s as in Phase 3, `viz_builder` 180 s (a page of
+    a demo takes about a minute: at 60 s most builds timed out and were repeated), others
+    `llm_timeout_sec` (60 s). Classes of roles with two uses (`recognizer`, `builder`) and of
+    `voice` — D-B-101.
     Output limits of ten roles are set by the stand measurement with `effort` (D-B-134): the
     Т-§11.1 figure of 4096 came from a spike without a reasoning level."""
     return {
-        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@2", 45.0),
-        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@2", 30.0),
+        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@3", 45.0),
+        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@3", 30.0),
         "extractor": _role(SPARK, "high", 16384, "P2", "extractor@3"),
         "verdict_free": _role(SPARK, "high", 8192, "P1", "verdict_free@1"),
         "verdict_proof": _role(WONDER, "high", 8192, "P1", "verdict_proof@1"),
         "second_opinion": _role(WONDER, "high", 8192, "P1", "second_opinion@1"),
         "canvas_diagnoser": _role(SPARK, "low", 4096, "P0", "canvas_diagnoser@1"),
-        "recognizer": _role(SPARK, "low", 4096, "P0", "recognizer@1"),
+        "recognizer": _role(SPARK, "low", 4096, "P0", "recognizer@2"),
         "segmenter": _role("sam-3.1", None, None, "P1", None),
         "voice": _role("muse-voice-transcribe-1.0", None, None, "P1", None),
         "analyst": _role(SPARK, "high", 16384, "P2", "analyst@1"),
@@ -213,12 +215,14 @@ def default_llm_roles() -> dict[str, RoleConfig]:
         "solution_space": _role(SPARK, "high", 8192, "P2", "solution_space@1").model_copy(
             update={"hard_model": WONDER}
         ),
-        "viz_builder": _role(WONDER, "high", 16384, "P2", "viz_builder@1"),
+        "viz_builder": _role(WONDER, "high", 16384, "P2", "viz_builder@2", 180.0),
+        "viz_planner": _role(SPARK, "low", 4096, "P3", "viz_planner@1"),
         "viz_checker": _role(SPARK, "low", 4096, "P2", "viz_checker@1"),
         "misconception_describer": _role(SPARK, "high", 4096, "P3", "misconception_describer@1"),
         "artifact_writer": _role(SPARK, "high", 4096, "P2", "artifact_writer@1"),
         "today_planner": _role(SPARK, "high", 4096, "P2", "today_planner@1"),
         "domain_classifier": _role(SPARK, "low", 4096, "P1", "domain_classifier@1"),
+        "session_titler": _role(SPARK, "low", 4096, "P3", "session_titler@1"),
         "release_judge": _role(WONDER, "high", 8192, "P3", "release_judge@1"),
         "illustrator": _role("muse-image-1.0", None, None, "P2", None),
     }
@@ -479,6 +483,17 @@ class Settings(BaseSettings):
     # GET /v1/sessions: session history page size (frontend sessions panel).
     session_list_default_limit: int = 50
     session_list_max_limit: int = 200
+    # The name of a session (owner decision 2026-11-19): until the job `session.title` has named it,
+    # the first learner message cut to this many characters at a word boundary is shown; the job
+    # reads the first `session_title_messages` messages (each cut to `session_title_message_chars`)
+    # and the name it writes is cut to `session_title_max_chars`. Starting values.
+    session_title_provisional_chars: int = Field(default=40, ge=1)
+    session_title_messages: int = Field(default=3, ge=1)
+    session_title_message_chars: int = Field(default=300, ge=1)
+    session_title_max_chars: int = Field(default=60, ge=1)
+    # GET /v1/sessions/{id}/plan: the most landmarks (skills or topics) of the action graph the
+    # code builds from memory. Owner decision 2026-11-19 (3-7 big nodes); starting value 7.
+    plan_landmarks_max: int = 7
     # WP6.3: SSE keepalive comment interval. Phase 3 decision (ТЗ §6.2).
     sse_keepalive_s: float = 15.0
     # WP13 (Т-§10.3): verbatim window and batch collapse into episode lines.
@@ -518,6 +533,11 @@ class Settings(BaseSettings):
     # WP15 (Т-§12.1, Т-§12.4): spoiler guard retries; numbers with |x| below this are not checked.
     guard_max_retries: int = 2
     spoiler_ignore_abs_below: int = 10
+    # Plan graph of the session: the teacher names at most this many next steps in `planUpdate`
+    # (the headlights of the graph: the current step and one or two after it). A parameter, not
+    # a schema limit: a limit in the strict schema fails the whole answer, the guard settles the
+    # plan by code (a slug, the cut list) and logs it.
+    plan_next_steps_max: int = Field(default=2, ge=0)
     # --- Phase 4, stream B (ТЗ Ф4 §6.7; starting values Т-§21.3, Т-§22.11) ---
     # WP10.1: the role table Т-§11.1, one row per role.
     llm_roles: dict[str, RoleConfig] = Field(default_factory=default_llm_roles)
@@ -544,6 +564,15 @@ class Settings(BaseSettings):
     meta_judge_preference_key: str = "meta_judge"
     # WP13.4 (Т-§12.2).
     spoiler_holdback_chars: int = 120
+    # Owner decision (2026-11-19): the spoiler guard runs in `shadow` — the check is computed on
+    # the finished body, the hit is recorded (`turn.committed.guard_events`, `ops.guard_samples`)
+    # and changes nothing in the turn: no stop of the stream, no `reset`, no new attempt, no cut
+    # sentence, no holdback of the text. `enforce` is the guard of WP15 (Т-§12.1, Т-§12.4).
+    spoiler_guard_mode: Literal["enforce", "shadow"] = "shadow"
+    # `ops.guard_samples`: the matched sentence of the teacher reply (never the whole reply, never
+    # a learner's text) is cut to this many characters; the rows live this many days.
+    guard_sample_max_chars: int = Field(default=300, ge=1)
+    guard_samples_retention_days: int = Field(default=14, ge=1)
     # WP14.5 (Т-§10.1).
     teacher_context_target_tokens: int = 30000
     teacher_context_max_tokens: int = 60000
@@ -607,6 +636,15 @@ class Settings(BaseSettings):
     turn_context_sample_rate: float = 0.02
     # WP16.5 (Т-§22.10: one fix round; target value Т-§21.3 is 3).
     viz_max_fix_rounds: int = 1
+    # Demos prepared ahead (`viz.plan`): after a turn that changes the plan, the planner looks at
+    # the current step and the next ones (`viz_prefetch_horizon` steps in all) and orders a demo
+    # only for the steps where seeing helps; at most `viz_prefetch_max_per_session` demos are
+    # ordered this way in one session. Starting values.
+    viz_prefetch_enabled: bool = True
+    viz_prefetch_horizon: int = Field(default=3, ge=1)
+    # the title of a finished demo in the link block of notes and cheat sheets is cut to this
+    session_demo_title_chars: int = Field(default=80, ge=10)
+    viz_prefetch_max_per_session: int = Field(default=6, ge=1)
     viz_static_base_url: str = ""
     # WP16.5 (Т-§13.6 п.1): the allowed libraries, name → path under `viz_static_base_url`; the
     # documents name D3, Plotly, KaTeX but no files or versions (D-B-177 [ПРОВЕРИТЬ], C: WP9.2).
@@ -688,6 +726,11 @@ class Settings(BaseSettings):
     export_events_page: int = Field(default=1000, ge=1)
     s3_bucket_learners: str = "quack-learners"
     s3_endpoint: SecretStr = SecretStr("")
+    # The address a browser reaches the object store at, when it differs from `s3_endpoint` (the
+    # address of the process, for example a container name on a local stand): signed links that go
+    # to the learner (canvas replay, exports, materials) are signed for it. Empty — the same
+    # address as `s3_endpoint` (production).
+    s3_public_endpoint: str = ""
     s3_access_key: SecretStr = SecretStr("")
     s3_secret_key: SecretStr = SecretStr("")
     # WP25 seam S9 (Д-§8.5). Phase 4 decision D-C-103: the R2 endpoint is a config address.
@@ -697,6 +740,12 @@ class Settings(BaseSettings):
     deletions_s3_secret_key: SecretStr = SecretStr("")
     # WP20 (Т-§10.5, ТЗ §2.3 п.17)
     materials_k: int = 5
+    # Files the learner attached to messages of the session (`message.sent.material_ids`): the
+    # teacher gets the text of the last `material_attached_files` of them straight from the stored
+    # pages, no matter whether the graph work on the material is done; at most
+    # `material_attached_chars` characters in all (the rest of a long file is found by the search).
+    material_attached_files: int = Field(default=3, ge=1)
+    material_attached_chars: int = Field(default=12000, ge=500)
     # WP20.2 (Т-§3.4.5 «около 1–2 КБ», Т-§4.3 «параллельно для больших материалов»;
     # Phase 4 decision D-C-201): chunk size in characters, chunks per `material_parser` call,
     # calls in flight, marks kept per chunk.

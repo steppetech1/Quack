@@ -969,3 +969,24 @@ async def test_a_failed_chunked_rebuild_is_finished_by_the_batch_loop(
     assert await _graph(neo4j, learner) == projected
     assert await store.read_watermark(neo4j, str(learner)) == (6, RULES_VERSION)
     assert learner not in await ProjectorP4(settings, pg_db, neo4j).pending_learners()
+
+
+async def test_manifests_cleanup_deletes_only_old_guard_samples(pg_db: Db) -> None:
+    """The same daily job: guard samples older than `guard_samples_retention_days` go."""
+    from datetime import UTC, datetime, timedelta
+
+    from quack.jobs.cleanup_p4 import delete_old_guard_samples
+
+    learner, now = await create_learner(pg_db), datetime(2026, 11, 19, tzinfo=UTC)
+    for age in (20, 5):
+        await pg_db.execute(
+            "INSERT INTO ops.guard_samples (learner_id, session_id, turn_seq, rule, reason, "
+            "sentence, answer_token, created_at) VALUES (%(l)s, %(s)s, 1, 'spoiler', 'shadow', "
+            "'x', '1/3', %(at)s)",
+            {"l": learner, "s": uuid4(), "at": now - timedelta(days=age)},
+        )
+    assert await delete_old_guard_samples(pg_db, now - timedelta(days=14)) >= 1
+    rows = await pg_db.fetch_all(
+        "SELECT created_at FROM ops.guard_samples WHERE learner_id = %(l)s", {"l": learner}
+    )
+    assert [r["created_at"] for r in rows] == [now - timedelta(days=5)]

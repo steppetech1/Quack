@@ -73,6 +73,8 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
     _k("embedding.compute", "P2"),
     _k("graph.hygiene", "P3", roles=("builder",)),
     _k("misconception.describe", "P3", roles=("misconception_describer",)),
+    _k("session.title", "P3", roles=("session_titler",)),
+    _k("viz.plan", "P3", roles=("viz_planner",)),
     _k("session.sweep_inactive", "P3", periodic=True),
     _k("deletions.reconcile", "P3", periodic=True),
     _k("manifests.cleanup", "P3", periodic=True),
@@ -295,6 +297,34 @@ def _turn_committed(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
     return [_plan(event, "task.check", graph=False, payload={"task_ids": task_ids})]
 
 
+def _turn_titled(event: StoredEvent, _s: Settings, _p: Any) -> list[JobPlan]:
+    """The name of the session: one job per session (its key ends with the session), planned by
+    the first committed turn; the later turns hit the same key and add nothing."""
+    if event.session_id is None:
+        return []
+    return [_plan(event, "session.title", key_tail=str(event.session_id))]
+
+
+def _turn_viz_plan(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
+    """Demos ahead: a turn that set the current step or the next ones has changed what comes
+    soon, so `viz.plan` looks at it. One job waits per session (the later turn takes its place);
+    a turn that left the steps as they were adds nothing."""
+    if event.session_id is None or not s.viz_prefetch_enabled:
+        return []
+    update = p.markup.plan_update
+    if update.current_step is None and update.next_steps is None:
+        return []
+    key = f"viz.plan:{event.learner_id}:{event.session_id}"
+    return [
+        _plan(
+            event,
+            "viz.plan",
+            lock_key=f"session:{event.session_id}:viz_plan",
+            coalesce_key=key,
+        )
+    ]
+
+
 def _manifests(p: Any, event_type: str) -> list[UUID | None]:
     """Misconception ids of a manifestation: an id, or None for a hypothesis in words."""
     if event_type == "verdict.recorded":
@@ -353,10 +383,24 @@ def _material_uploaded(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan
     return [_plan(event, "material.parse", cls=cls, payload={"material_id": str(p.material_id)})]
 
 
+def _has_new_skill(markup: Any) -> bool:
+    tests = [*markup.tests, *(t for part in markup.parts or () for t in part.tests or ())]
+    return any(t.new_skill is not None for t in tests)
+
+
 def _task_created(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
-    if p.source not in BANK_TASK_SOURCES:
+    plans: list[JobPlan] = []
+    if p.source in BANK_TASK_SOURCES:
+        plans.append(_plan(event, "task.solution_space", payload={"task_id": str(p.task_id)}))
+    if event.domain_id is not None and _has_new_skill(p.markup):
+        plans.append(_hygiene(event, event.domain_id, "new_skills"))
+    return plans
+
+
+def _observation_hygiene(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+    if event.domain_id is None or not any(el.new_skill is not None for el in p.elements):
         return []
-    return [_plan(event, "task.solution_space", payload={"task_id": str(p.task_id)})]
+    return [_hygiene(event, event.domain_id, "new_skills")]
 
 
 def _agent_requested(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
@@ -573,11 +617,34 @@ RULES: tuple[RuleRow, ...] = (
     ),
     RuleRow("check.failed", ("check.model",), "always", _check_failed),
     RuleRow("turn.committed", ("task.check",), "markup.tasks is not empty", _turn_committed),
+    RuleRow(
+        "turn.committed",
+        ("session.title",),
+        "always: one job per session, the first turn wins the key; the job names it once",
+        _turn_titled,
+    ),
+    RuleRow(
+        "turn.committed",
+        ("viz.plan",),
+        "the turn set the current step or the next steps: the demos for them are decided ahead",
+        _turn_viz_plan,
+    ),
     RuleRow("photo.uploaded", ("photo.pipeline",), "always", _photo_uploaded),
     RuleRow(
         "material.uploaded", ("material.parse",), "P1 with session_id, else P2", _material_uploaded
     ),
-    RuleRow("task.created", ("task.solution_space",), "source of the bank", _task_created),
+    RuleRow(
+        "task.created",
+        ("task.solution_space", "graph.hygiene"),
+        "source of the bank -> solution_space; new_skill -> graph.hygiene",
+        _task_created,
+    ),
+    RuleRow(
+        "observation.extracted",
+        ("graph.hygiene",),
+        "an element names a new skill",
+        _observation_hygiene,
+    ),
     RuleRow(
         "agent.requested",
         (*AGENT_JOB_KINDS.values(), "artifact.cheatsheet"),

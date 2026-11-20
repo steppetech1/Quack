@@ -47,6 +47,7 @@ from quack.jobs.types import ClaimedJob
 from quack.llm.gateway import LLMGateway
 from quack.llm.labels import LabelMap
 from quack.practice.repo import event_by_seq, session_events_up_to
+from quack.practice.session_plan import lift_plan
 
 ANALYST_ROLE = "analyst"
 DEEP_ROLE = "analyst_deep"
@@ -312,10 +313,11 @@ async def analyst_job(
     observations = [e for e in events if e.type == "observation.extracted"]
     row = await ctx.db.fetch_one(_PLAN, {"learner_id": learner_id, "session_id": session_id})
     if row is not None:
-        doc = row["plan"]
-        plan = f"Current step: {doc.get('current_step', '')}; next: " + "; ".join(
-            doc.get("next_steps", [])
-        )
+        doc = lift_plan(row["plan"])
+        current = doc.current_step.text if doc.current_step is not None else ""
+        plan = f"Current step: {current}; next: " + "; ".join(s.text for s in doc.next_steps)
+        if doc.goal:
+            plan = f"Goal: {doc.goal}; {plan}"
     skill_ids = list(
         dict.fromkeys(
             el.skill_id

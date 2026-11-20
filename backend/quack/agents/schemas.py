@@ -156,6 +156,31 @@ class SplitOutput(_Strict):
     parts: list[SplitPart]
 
 
+class TopicPlacement(_Strict):
+    """Place an unassigned skill `skill` (label `S…`) into an existing topic (`topic` `T…`) or
+    a new topic (`new_topic`, canonical short name without domain prefix). Exactly one of
+    `topic` or `new_topic` is set."""
+
+    skill: str
+    topic: str | None
+    new_topic: str | None
+
+
+class TopicMergeDecision(_Strict):
+    """Merge duplicate topic `from_topic` (`T…`) into canonical topic `into_topic` (`T…`)."""
+
+    from_topic: str
+    into_topic: str
+
+
+class TopicsOutput(_Strict):
+    """Output of `builder@1` in Mode `Topics`: topic placements for unassigned skills and
+    merges of duplicate topics."""
+
+    placements: list[TopicPlacement]
+    merges: list[TopicMergeDecision]
+
+
 # --- misconception_describer@1 (Т-§9.3) ---
 
 
@@ -197,6 +222,24 @@ class VizBuilderOutput(_Strict):
     content: str
     parameter_values: list[str]
     answer_action: str | None
+
+
+# --- viz_planner@1 (the demos prepared ahead for the next steps of a session) ---
+
+
+class VizPlanItem(_Strict):
+    """The decision for one step: a demo with its title and the builder's brief, or none."""
+
+    step_id: str
+    demo: bool
+    title: str | None
+    brief: str | None
+
+
+class VizPlannerOutput(_Strict):
+    """One entry for each step of the input, in order."""
+
+    steps: list[VizPlanItem]
 
 
 # --- release_judge@1 (Т-§18.4, WP16.7) ---

@@ -1,4 +1,4 @@
-"""Recognition of canvas lines and the `recognizer@1` schema (ТЗ Ф4 WP21.3, S8; Т-§15.3, Т-§22.7).
+"""Recognition of canvas lines and the `recognizer@2` schema (ТЗ Ф4 WP21.3, S8; Т-§15.3, Т-§22.7).
 
 The API renders the strokes of a finished line into an image and sends it to `recognizer` (Spark
 with an image, class P0, called by the WebSocket handler directly, without a queue). The model
@@ -73,7 +73,7 @@ class SheetLine(BaseModel):
 
 
 class RecognizerSheetOutput(BaseModel):
-    """`recognizer@1` in the sheet mode: every line of the photo in one call, top to bottom
+    """`recognizer@2` in the sheet mode: every line of the photo in one call, top to bottom
     (ТЗ Ф4 WP22.3 п.2; a prompt with two modes has one schema per mode, D-B-140)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -84,11 +84,11 @@ class RecognizerSheetOutput(BaseModel):
 # --- recognition of a pen line (WP21.3, D-C-131) ---------------------------------------------
 
 RECOGNIZER_ROLE = "recognizer"
-RECOGNIZER_VERSION = 1
+RECOGNIZER_VERSION = 2
 # compute `/v1/image/render-strokes` answers WebP (WP24); `ImageInput` takes it (D-B-170).
 # Whether Spark reads WebP — [ПРОВЕРИТЬ] on the stand (DoD п.6a), PNG otherwise.
 RENDER_MIME = "image/webp"
-# The two modes of `recognizer@1` (D-C-134): one pen line, or a whole sheet photo (WP22.3).
+# The two modes of `recognizer@2` (D-C-134): one pen line, or a whole sheet photo (WP22.3).
 LINE_MODE = "line"
 SHEET_MODE = "sheet"
 
@@ -151,7 +151,7 @@ async def recognize_line(
     max_side_px: int,
     redis: Redis | None = None,
 ) -> CanvasLineCommitted | None:
-    """Render the line, read it with `recognizer@1` and write `canvas.line_committed {source:
+    """Render the line, read it with `recognizer@2` and write `canvas.line_committed {source:
     pen}`; `None` — the line has no strokes of this socket, it is too large to draw
     (`max_side_px`), or compute or the model is down (nothing is written, the client may send
     `line_ready` again). A repeated `line_ready` writes nothing new: the event key is the line

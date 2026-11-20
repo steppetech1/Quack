@@ -44,6 +44,7 @@ from quack.events.event_types import (
 )
 from quack.events.log import NewEvent, append_events
 from quack.graph.ids import QUACK_UUID_NS
+from quack.graph.topic_names import canonical_topic_name
 from quack.jobs.runner import JobContext
 from quack.llm.labels import LabelKind, LabelMap, UnknownLabelError
 
@@ -356,15 +357,14 @@ def _decide(
     resolved: dict[tuple[Kind, str], UUID] = {}
 
     def topic_by_name(name: str) -> UUID:
-        key = normalize(name)
+        clean = canonical_topic_name(name)
+        key = normalize(clean)
         if key not in topic_names:
-            tid = node_id(learner_id, domain_id, "topic", name)
+            tid = node_id(learner_id, domain_id, "topic", clean)
             topic_names[key] = tid
             plan.topics.setdefault(
                 tid,
-                TopicCreated(
-                    topic_id=tid, domain_id=domain_id, name=" ".join(name.split()), origin=origin
-                ),
+                TopicCreated(topic_id=tid, domain_id=domain_id, name=clean, origin=origin),
             )
         return topic_names[key]
 

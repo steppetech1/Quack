@@ -134,8 +134,18 @@ async def test_today_prepares_plans_and_requests(
         "SELECT plan, status FROM content.session_plans WHERE session_id = %(s)s", {"s": first}
     )
     assert row is not None and row["status"] == "prepared"
-    assert row["plan"]["current_step"] == "recall the rule"
-    assert row["plan"]["next_steps"] == ["Task: Reduce 4/6"]  # K9 is not a candidate
+    # a plan of version 2: no goal yet (the teacher states it in the first turn), the draft
+    # steps at the skill of the item
+    skill = {"kind": "skill", "id": str(fx.SKILL_FAILED)}
+    assert row["plan"] == {
+        "v": 2,
+        "goal": None,
+        "current_step": {"id": "draft-1", "text": "recall the rule", "landmark": skill},
+        # K9 is not a candidate
+        "next_steps": [{"id": "draft-2", "text": "Task: Reduce 4/6", "landmark": skill}],
+        "landmark_edits": {"added": [], "removed": []},
+        "branches": [],
+    }
     requests = await pg_db.fetch_all(
         "SELECT payload FROM core.events WHERE learner_id = %(l)s AND type = 'agent.requested'",
         {"l": learner_id},

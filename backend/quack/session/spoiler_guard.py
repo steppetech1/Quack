@@ -1,8 +1,12 @@
 """Spoiler guard of the teacher turn (ТЗ Фазы 3 WP15; Т-§12.1, Т-§12.4, П-4.9).
 
 The answer of an active task (shown in the session, not closed, the solution not requested)
-must not appear in the teacher reply. The check runs on the full reply before the first SSE
-`token`; on a violation the turn goes back to the model, then code removes the sentence.
+must not appear in the teacher reply. Two modes (`Settings.spoiler_guard_mode`). `enforce`: the
+check runs while the body streams (`HoldbackBuffer`); on a violation the turn goes back to the
+model, then code removes the sentence. `shadow` (the default, owner decision 2026-11-19): the same
+check runs on the finished body and only records the hit — `SpoilerHit` is the matched sentence
+and answer for `ops.guard_samples`; the turn is not changed. A task whose solution the learner
+requested is not guarded in either mode: its answer is not among the guarded ones.
 
 The answer is taken from `reference_solution` in the format of WP6.4 (`ReferenceSolution`):
 `math` — `expression`, `choice` — `answer` (the text of the correct option), `open` — not
@@ -17,6 +21,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from quack.config import Settings
 from quack.practice.evaluation import TaskToCheck
@@ -89,6 +94,26 @@ def remove_answer_sentences(text: str, answers: Sequence[str], settings: Setting
         if index + 1 < len(parts):
             kept.append(parts[index + 1])
     return "".join(kept).strip()
+
+
+@dataclass(frozen=True)
+class SpoilerHit:
+    """A sentence of the reply that holds an answer of an active task (for `ops.guard_samples`):
+    the sentence and the answer as it is compared (normalized)."""
+
+    sentence: str
+    answer: str
+
+
+def spoiler_hits(text: str, answers: Sequence[str], settings: Settings) -> list[SpoilerHit]:
+    """The sentences of `text` that contain any of `answers`, each with the first answer found
+    in it; the same test as `answer_in_text`, sentence by sentence."""
+    hits: list[SpoilerHit] = []
+    for sentence in _SENTENCE_BREAK.split(text)[::2]:
+        found = next((a for a in answers if answer_in_text(sentence, a, settings)), None)
+        if found is not None:
+            hits.append(SpoilerHit(sentence.strip(), _normalize(found)))
+    return hits
 
 
 def find_spoiler(text: str, tasks: Sequence[TaskToCheck], settings: Settings) -> TaskToCheck | None:

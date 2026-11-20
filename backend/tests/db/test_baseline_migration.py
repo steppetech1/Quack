@@ -47,6 +47,9 @@ EXTENSIONS: tuple[frozenset[tuple[str, str]], ...] = (
     frozenset({("ops", "dispatcher_failures")}),  # bug audit 2026-11-15: stopped streams
     frozenset(),  # its index `uq_jobs_in_work_lock` (running and cancel_requested), CONCURRENTLY
     frozenset(),  # the drop of `uq_jobs_running_lock`, CONCURRENTLY
+    frozenset({("ops", "guard_samples")}),  # owner decision 2026-11-19: spoiler hits for review
+    frozenset(),  # `content.sessions.title`: the stored title of a session
+    frozenset(),  # `content.materials.title`: the name of the uploaded file
 )
 
 # dbmate keeps its own bookkeeping table in `public`; everything of ours is in core/content/ops.

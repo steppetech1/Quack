@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, FileText, MoreHorizontal, Presentation } from "lucide-react";
+import { BookOpen, ChevronDown, FileText, MoreHorizontal, Presentation } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useFmt, useT } from "@/lib/i18n/provider";
@@ -127,24 +127,51 @@ export function PageSection({
   title,
   count,
   action,
+  collapse,
   children,
 }: {
   id: string;
   title: string;
   count?: number;
   action?: React.ReactNode;
+  /** A section that folds away: the title becomes a button, the body is not drawn while `open` is false */
+  collapse?: { open: boolean; onToggle: () => void };
   children: React.ReactNode;
 }) {
+  const heading = (
+    <>
+      § {title}
+      {count !== undefined && <span className="num ml-2 text-paper">{count}</span>}
+    </>
+  );
   return (
     <section aria-labelledby={`${id}-h`} id={id} className="mt-9 scroll-mt-4 border-t border-seam-soft pt-4">
       <div className="mb-3 flex min-h-10 items-center justify-between gap-3">
         <h2 id={`${id}-h`} className="caps text-paper-dim">
-          § {title}
-          {count !== undefined && <span className="num ml-2 text-paper">{count}</span>}
+          {collapse ? (
+            <button
+              type="button"
+              aria-expanded={collapse.open}
+              aria-controls={`${id}-body`}
+              onClick={collapse.onToggle}
+              className="caps -ml-2 inline-flex min-h-10 items-center gap-1.5 rounded-pill px-2 text-paper-dim transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover hover:text-paper focus-visible:outline-2 focus-visible:outline-ribbon"
+            >
+              <ChevronDown aria-hidden className={cn("size-4 shrink-0 transition-transform duration-(--dur-s) ease-(--ease-out)", !collapse.open && "-rotate-90")} />
+              <span>{heading}</span>
+            </button>
+          ) : (
+            heading
+          )}
         </h2>
         {action}
       </div>
-      {children}
+      {collapse ? (
+        <div id={`${id}-body`} hidden={!collapse.open}>
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </section>
   );
 }
@@ -319,7 +346,7 @@ export function PageFrame({ chipLabel, topicId, children }: { chipLabel: string;
         <div className="mx-auto w-full max-w-[720px]">
           <Composer
             label={t.page.composerLabel(chipLabel)}
-            onSend={(text) => startSession(text, chip ? topicId : null)}
+            onSend={(text, files) => startSession(text, chip ? topicId : null, files)}
             primary={false}
             chip={chip ? { label: chipLabel, onRemove: () => setChip(false) } : undefined}
           />

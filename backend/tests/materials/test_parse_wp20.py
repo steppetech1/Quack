@@ -15,7 +15,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import BaseModel
 
-from quack.compute_client.contracts import AlignResponse, PdfPage, PdfPagesResponse
+from quack.compute_client.contracts import (
+    AlignResponse,
+    PdfPage,
+    PdfPagesResponse,
+    PptxSlide,
+    PptxSlidesResponse,
+)
 from quack.config import Settings
 from quack.db import Db
 from quack.events.log import NewEvent, append_events
@@ -28,6 +34,7 @@ from quack.materials.parse import (
     MaterialParserOutput,
     SheetReading,
     SubjectSpec,
+    mark_failed,
     parse_step,
     split_chunks,
     structure_step,
@@ -43,6 +50,7 @@ from tests.support.storage import InMemoryObjectStore
 PDF = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 PAGES = "/v1/pdf/pages"
+SLIDES = "/v1/pptx/slides"
 ALIGN = "/v1/image/align"
 WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 page"
 
@@ -171,6 +179,13 @@ class _World:
             for i, t in enumerate(texts, 1)
         ]
         self.scenario.push_for(PAGES, PdfPagesResponse(pages=pages))
+
+    def slides(self, *slides: tuple[str, str, str]) -> None:
+        found = [
+            PptxSlide(slide=i, title=t, text=body, notes=n)
+            for i, (t, body, n) in enumerate(slides, 1)
+        ]
+        self.scenario.push_for(SLIDES, PptxSlidesResponse(slides=found))
 
     async def types(self, learner: UUID, *types: str) -> list[dict[str, Any]]:
         return await self.db.fetch_all(
@@ -478,7 +493,7 @@ async def test_a_parsed_material_is_not_parsed_again(world: _World) -> None:
 
 def test_sheet_reading_is_the_schema_of_the_recognizer() -> None:
     """The materials package may not import `quack.canvas`, so it keeps a copy of the sheet
-    schema; the copy must not drift from the one the prompt `recognizer@1` is written for."""
+    schema; the copy must not drift from the one the prompt `recognizer@2` is written for."""
     from quack.canvas.recognition import RecognizerSheetOutput
 
     def shape(model: type[BaseModel]) -> Any:
@@ -700,3 +715,95 @@ async def test_a_scan_is_read_up_to_the_cap_of_pages(world: _World) -> None:
         "SELECT text FROM content.material_pages WHERE material_id = %(m)s", {"m": material}
     )
     assert len(rows) == cap + 2 and sum(1 for r in rows if r["text"] == "") == 2
+
+
+DECK = b"PK\x03\x04"  # a zip: the structure decides, and the test deck is built below
+
+
+def _deck_bytes() -> bytes:
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("ppt/presentation.xml", "<p/>")
+    return buffer.getvalue()
+
+
+async def test_a_presentation_is_read_slide_by_slide_and_is_readable_before_the_graph_work(
+    world: _World,
+) -> None:
+    """A lecture in PowerPoint: the slides become pages (title, text, notes of the speaker), with no
+    page image; from the moment the pages are stored the material is `read`, and a parse that
+    fails later keeps that status (the text is there for the teacher; the graph work is not)."""
+    learner, _, material = await world.upload(_deck_bytes())
+    world.slides(
+        ("Derivatives", "Chain rule: f'(g(x)) g'(x)", "Stress the order"),
+        ("", "A slide with no title", ""),
+    )
+
+    await parse_step(world.ctx, _job(learner, material, trigger_seq=3))
+
+    rows = await world.db.fetch_all(
+        "SELECT page, text, image_key FROM content.material_pages "
+        "WHERE material_id = %(m)s ORDER BY page",
+        {"m": material},
+    )
+    assert [(r["page"], r["text"]) for r in rows] == [
+        (1, "Derivatives\nChain rule: f'(g(x)) g'(x)\nNotes: Stress the order"),
+        (2, "A slide with no title"),
+    ]
+    assert all(r["image_key"] is None for r in rows) and world.storage.objects == {
+        k: v for k, v in world.storage.objects.items() if "/pages/" not in k
+    }
+    row = await world.db.fetch_one(
+        "SELECT status, pages_count, mime FROM content.materials WHERE material_id = %(m)s",
+        {"m": material},
+    )
+    assert row is not None and (row["status"], row["pages_count"]) == ("read", 2)
+
+    # the structure step cannot be made (say, no embeddings): the last attempt marks the failure,
+    # and a material whose pages are read stays readable
+    await mark_failed(world.ctx.db, _job(learner, material))
+    again = await world.db.fetch_one(
+        "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
+    )
+    assert again is not None and again["status"] == "read"
+
+
+async def test_a_material_that_was_never_read_is_marked_failed(world: _World) -> None:
+    learner, _, material = await world.upload()
+    await mark_failed(world.ctx.db, _job(learner, material))
+    row = await world.db.fetch_one(
+        "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
+    )
+    assert row is not None and row["status"] == "failed"
+
+
+def test_slide_text_puts_the_title_first_and_the_notes_last() -> None:
+    from quack.materials.parse import slide_text
+
+    assert slide_text("T", "body", "n") == "T\nbody\nNotes: n"
+    assert slide_text("", "body", "") == "body"
+    assert slide_text("T\x00", "", "") == "T"
+
+
+async def test_a_presentation_compute_refuses_fails_the_job_for_good(world: _World) -> None:
+    """compute answers 422 for a file that is not what its type says: retrying cannot help, so the
+    job stops at once (not five attempts), and the material is marked failed."""
+    from quack.compute_client.client import ComputeRejected, ComputeUnavailableError
+    from quack.jobs.types import JobFailedPermanently
+
+    assert issubclass(ComputeRejected, ComputeUnavailableError)  # callers that retry still work
+    learner, _, material = await world.upload(_deck_bytes())
+    world.scenario.push_for(SLIDES, 422)
+
+    with pytest.raises(JobFailedPermanently, match="cannot be read"):
+        await parse_step(world.ctx, _job(learner, material, trigger_seq=3))
+
+    await mark_failed(world.ctx.db, _job(learner, material))
+    row = await world.db.fetch_one(
+        "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
+    )
+    assert row is not None and row["status"] == "failed"

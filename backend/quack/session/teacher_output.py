@@ -1,4 +1,5 @@
-"""Output of a teacher turn `teacher@2` (Т-§12.2; ТЗ Ф4 WP13.3, seam S11).
+"""Output of a teacher turn `teacher@3` (Т-§12.2; ТЗ Ф4 WP13.3, seam S11; `teacher@2` before the
+plan graph).
 
 Three nested objects; the model writes JSON keys in alphabetical order (Т-§11.8), so the
 names `p1_head` < `p2_body` < `p3_markup` give the head first. Field names inside the
@@ -13,6 +14,8 @@ the techniques of П-4.2.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -108,14 +111,45 @@ class Branch(_Strict):
     type: BranchType
 
 
-class PlanUpdate(_Strict):
-    """`planUpdate` (Т-§12.5, WP13.6): done steps, the current one, one or two hypotheses of
-    the next, branches; `cancel_requests` — labels `R…` of agent requests no longer needed
-    (Т-§13.7, D-B-108)."""
+class Step(_Strict):
+    """A step of the plan. `id` — the slug of the step (`a-z0-9_-`), the same in every turn while
+    it is the same step, so a reworded step is not a new one; `text` — what the learner sees;
+    `landmark` — a label `S…` (skill) or `T…` (topic) of the turn's table, or null."""
 
-    completed_steps: list[str]
-    current_step: str
-    next_steps: list[str] = Field(max_length=2)
+    id: str
+    text: str
+    landmark: str | None
+
+
+class LandmarkAdd(_Strict):
+    """A skill or topic (label `S…`/`T…`) the teacher adds to the landmarks, before the landmark
+    `before` (the same kind of labels), or at the end when `before` is null."""
+
+    label: str
+    before: str | None
+
+
+class LandmarkEdits(_Strict):
+    """Rare corrections of the landmarks code built from memory; `remove` — labels `S…`/`T…`."""
+
+    add: list[LandmarkAdd]
+    remove: list[str]
+
+
+class PlanUpdate(_Strict):
+    """`planUpdate` (Т-§12.5, WP13.6; the plan graph): everything but `branches` and
+    `cancel_requests` is `null` for «no change» — `goal` is written once, the steps only when they
+    change, `landmark_edits` rarely. The position in the plan is computed by code from the steps.
+    `next_steps` is at most `Settings.plan_next_steps_max` long: the limit is a parameter, so the
+    guard settles it (`guards.drop_unknown_markup_labels`: a slug is made of a step `id`, the list
+    is cut) and logs it, instead of the schema failing the whole answer; the turn is not returned
+    to the model, its text is already shown. `cancel_requests` — labels `R…` of
+    agent requests no longer needed (Т-§13.7, D-B-108)."""
+
+    goal: str | None
+    current_step: Step | None
+    next_steps: list[Step] | None
+    landmark_edits: LandmarkEdits | None
     branches: list[Branch]
     cancel_requests: list[str]
 
@@ -175,8 +209,88 @@ class TurnMarkup(_Strict):
 
 
 class TeacherOutputV2(_Strict):
-    """`teacher@2`; `teacher_fallback` uses the same prompt and schema (ТЗ Ф4 §6.6)."""
+    """`teacher@3`; `teacher_fallback` uses the same prompt and schema (ТЗ Ф4 §6.6)."""
 
     p1_head: TurnHead
     p2_body: TurnBody
     p3_markup: TurnMarkup
+
+
+class PlanUpdateLegacyV2(_Strict):
+    """`planUpdate` of `teacher@2` (before the plan graph): kept for offline replay."""
+
+    completed_steps: list[str]
+    current_step: str
+    next_steps: list[str] = Field(max_length=2)
+    branches: list[Branch]
+    cancel_requests: list[str]
+
+
+class TurnMarkupLegacyV2(_Strict):
+    """`p3_markup` of `teacher@2` (before the plan graph)."""
+
+    tasks: list[TurnTask]
+    elements: list[Element]
+    exposures: list[Exposure]
+    targets_misconception: str | None = Field(alias="targetsMisconception")
+    plan_update: PlanUpdateLegacyV2 = Field(alias="planUpdate")
+    agent_requests: list[AgentRequest] = Field(alias="agentRequests")
+    corrections_acknowledged: list[int] = Field(alias="correctionsAcknowledged")
+    decision_reason: str = Field(alias="decisionReason")
+    deadline: DeadlineFromTalk | None
+
+
+def _legacy_step_id(text: str) -> str:
+    return re.sub(r"[^a-z0-9_-]+", "-", text.lower()).strip("-") or "step"
+
+
+class TeacherOutputLegacyV2(_Strict):
+    """Output schema of `teacher@2`, lifted to `TeacherOutputV2` after parsing."""
+
+    p1_head: TurnHead
+    p2_body: TurnBody
+    p3_markup: TurnMarkupLegacyV2
+
+    def to_current(self) -> TeacherOutputV2:
+        old = self.p3_markup.plan_update
+        plan = PlanUpdate(
+            goal=None,
+            current_step=(
+                Step(id=_legacy_step_id(old.current_step), text=old.current_step, landmark=None)
+                if old.current_step.strip()
+                else None
+            ),
+            next_steps=[
+                Step(id=_legacy_step_id(s), text=s, landmark=None)
+                for s in old.next_steps
+                if s.strip()
+            ],
+            landmark_edits=None,
+            branches=old.branches,
+            cancel_requests=old.cancel_requests,
+        )
+        markup = TurnMarkup(
+            tasks=self.p3_markup.tasks,
+            elements=self.p3_markup.elements,
+            exposures=self.p3_markup.exposures,
+            targetsMisconception=self.p3_markup.targets_misconception,
+            planUpdate=plan,
+            agentRequests=self.p3_markup.agent_requests,
+            correctionsAcknowledged=self.p3_markup.corrections_acknowledged,
+            decisionReason=self.p3_markup.decision_reason,
+            deadline=self.p3_markup.deadline,
+        )
+        return TeacherOutputV2(p1_head=self.p1_head, p2_body=self.p2_body, p3_markup=markup)
+
+
+def parse_legacy_teacher_output(raw: str) -> TeacherOutputV2:
+    return TeacherOutputLegacyV2.model_validate_json(raw).to_current()
+
+
+def teacher_schema_for_prompt(
+    prompt_name: str, version: int
+) -> tuple[type[BaseModel], Callable[[str], TeacherOutputV2]]:
+    """Select the strict JSON schema and parser matching `prompt_name` and `version`."""
+    if prompt_name == "teacher" and version == 2:
+        return TeacherOutputLegacyV2, parse_legacy_teacher_output
+    return TeacherOutputV2, TeacherOutputV2.model_validate_json

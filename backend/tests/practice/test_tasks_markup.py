@@ -96,7 +96,7 @@ def test_markup_common_rules() -> None:
 
     both = TaskMarkup.model_validate(
         {
-            "tests": [{"skill": "S1", "new_skill": {"name": "n", "topic_hint": "t"}, "level": 3}],
+            "tests": [{"skill": "S1", "new_skill": {"name": "n"}, "level": 3}],
             "methodNamed": False,
             "answer": NUMBER,
         }
@@ -104,7 +104,7 @@ def test_markup_common_rules() -> None:
     assert "skill_label_and_new" in _rules(both)
     new_only = TaskMarkup.model_validate(
         {
-            "tests": [{"new_skill": {"name": "n", "topic_hint": "t"}, "level": 3}],
+            "tests": [{"new_skill": {"name": "n"}, "level": 3}],
             "methodNamed": False,
             "answer": NUMBER,
         }

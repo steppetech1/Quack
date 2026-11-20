@@ -16,11 +16,14 @@ from quack.practice.check import Verdict
 from quack.session.guards import (
     Boundary,
     GuardViolation,
+    boundary_gaps,
     drop_unknown_head_labels,
     drop_unknown_markup_labels,
+    head_rejections,
     head_violations,
     markup_violations,
     settle_stance,
+    unresolved_element_labels,
 )
 from quack.session.teacher_output import TurnHead, TurnMarkup
 
@@ -59,9 +62,10 @@ def _markup(**fields: Any) -> TurnMarkup:
         "exposures": [],
         "targetsMisconception": None,
         "planUpdate": {
-            "completed_steps": [],
-            "current_step": "s",
+            "goal": None,
+            "current_step": {"id": "s", "text": "s", "landmark": None},
             "next_steps": [],
+            "landmark_edits": None,
             "branches": [],
             "cancel_requests": [],
         },
@@ -265,9 +269,10 @@ def _request(**params: Any) -> dict[str, Any]:
 
 def _plan(*cancel: str) -> dict[str, Any]:
     return {
-        "completed_steps": [],
-        "current_step": "s",
+        "goal": None,
+        "current_step": {"id": "s", "text": "s", "landmark": None},
         "next_steps": [],
+        "landmark_edits": None,
         "branches": [],
         "cancel_requests": list(cancel),
     }
@@ -358,3 +363,195 @@ def test_unknown_request_cancel_element_and_deadline_labels_are_dropped() -> Non
         unknown_hub, skill_labels={"S1"}, misconception_labels=set(), labels=labels
     )
     assert dropped.deadline is None
+
+
+# --- the plan graph: steps, landmarks, the limit of next steps ---------------------------------
+
+
+def _step(step_id: str, landmark: str | None = None) -> dict[str, Any]:
+    return {"id": step_id, "text": step_id, "landmark": landmark}
+
+
+def _graph_plan(**fields: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "goal": None,
+        "current_step": None,
+        "next_steps": None,
+        "landmark_edits": None,
+        "branches": [],
+        "cancel_requests": [],
+    }
+    return {**base, **fields}
+
+
+def _plan_violations(
+    markup: TurnMarkup, labels: LabelMap, *, limit: int = 2
+) -> list[GuardViolation]:
+    return markup_violations(
+        markup,
+        skill_labels={"S1"},
+        misconception_labels=set(),
+        labels=labels,
+        next_steps_max=limit,
+    )
+
+
+def test_the_landmarks_of_steps_and_edits_must_exist() -> None:
+    """`S…` is a skill and `T…` a topic of the label table; an unknown one is an
+    `unknown_label` like any other label of the markup, the retry names it."""
+    labels = _label_table()
+    clean = _markup(
+        planUpdate=_graph_plan(
+            current_step=_step("a", "S1"),
+            next_steps=[_step("b", "T1"), _step("c")],
+            landmark_edits={"add": [{"label": "S1", "before": "T1"}], "remove": ["T1"]},
+        )
+    )
+    assert _plan_violations(clean, labels) == []
+
+    cases = [
+        (_graph_plan(current_step=_step("a", "S9")), "S9"),
+        (_graph_plan(next_steps=[_step("a", "T9")]), "T9"),
+        (_graph_plan(next_steps=[_step("a", "K1")]), "K1"),  # a task is not a landmark
+        (
+            _graph_plan(landmark_edits={"add": [{"label": "S9", "before": None}], "remove": []}),
+            "S9",
+        ),
+        (
+            _graph_plan(landmark_edits={"add": [{"label": "S1", "before": "T9"}], "remove": []}),
+            "T9",
+        ),
+        (_graph_plan(landmark_edits={"add": [], "remove": ["S9"]}), "S9"),
+    ]
+    for plan, label in cases:
+        [violation] = _plan_violations(_markup(planUpdate=plan), labels)
+        assert violation.reason == "unknown_label" and label in violation.detail
+
+
+def test_a_step_id_is_a_slug() -> None:
+    labels = _label_table()
+    for bad in ("Ratio test", "ratio.test", "", "рейтинг"):
+        markup = _markup(planUpdate=_graph_plan(current_step=_step(bad)))
+        [violation] = _plan_violations(markup, labels)
+        assert violation.reason == "plan_step" and "slug" in violation.detail
+    good = _markup(planUpdate=_graph_plan(current_step=_step("ratio-test_2")))
+    assert _plan_violations(good, labels) == []
+
+
+def test_next_steps_are_limited_by_the_setting() -> None:
+    labels = _label_table()
+    steps = [_step("a"), _step("b"), _step("c")]
+    markup = _markup(planUpdate=_graph_plan(next_steps=steps))
+    [violation] = _plan_violations(markup, labels, limit=2)
+    assert violation.reason == "plan_step" and "more than 2" in violation.detail
+    assert _plan_violations(markup, labels, limit=3) == []
+    # the limit is Settings.plan_next_steps_max; without it the guard does not count
+    assert markup_violations(markup, skill_labels={"S1"}, misconception_labels=set()) == []
+    assert Settings().plan_next_steps_max == 2
+
+
+def test_a_plan_that_names_nothing_is_not_a_violation() -> None:
+    assert _plan_violations(_markup(planUpdate=_graph_plan()), _label_table()) == []
+
+
+def test_the_plan_after_the_retries_keeps_what_is_right() -> None:
+    """The write resolves every label: after the retries the unknown landmark of a step is
+    nulled (the step stays), unknown edits are dropped (an unknown `before` — the end), a bad
+    id is made a slug, the extra next steps go. The result passes the guard."""
+    labels = _label_table()
+    markup = _markup(
+        planUpdate=_graph_plan(
+            current_step=_step("Ratio Test!", "S9"),
+            next_steps=[_step("a", "S1"), _step("b", "T9"), _step("c")],
+            landmark_edits={
+                "add": [
+                    {"label": "S9", "before": None},
+                    {"label": "S1", "before": "T9"},
+                    {"label": "T1", "before": "S1"},
+                ],
+                "remove": ["T1", "S9"],
+            },
+        )
+    )
+    settled = drop_unknown_markup_labels(
+        markup,
+        skill_labels={"S1"},
+        misconception_labels=set(),
+        labels=labels,
+        next_steps_max=2,
+    )
+    plan = settled.plan_update
+    assert plan.current_step is not None
+    assert (plan.current_step.id, plan.current_step.landmark) == ("ratio-test", None)
+    assert [(s.id, s.landmark) for s in plan.next_steps or []] == [("a", "S1"), ("b", None)]
+    assert plan.landmark_edits is not None
+    assert [(a.label, a.before) for a in plan.landmark_edits.add] == [("S1", None), ("T1", "S1")]
+    assert plan.landmark_edits.remove == ["T1"]
+    assert _plan_violations(settled, labels) == []
+    # nothing wrong: the very same markup comes back
+    clean = _markup(planUpdate=_graph_plan(current_step=_step("a", "S1")))
+    assert (
+        drop_unknown_markup_labels(
+            clean, skill_labels={"S1"}, misconception_labels=set(), labels=labels, next_steps_max=2
+        )
+        == clean
+    )
+
+
+# --- what returns the turn to the model, and what code settles (the turn graph reacts to it) ----
+
+
+def test_only_the_head_rejections_return_the_turn() -> None:
+    """Before the body is shown an empty or unknown `targetSkills` goes back to the model; a
+    `code` stance without a code verdict and a jumped boundary are settled or logged by code."""
+    link = RequiresLink(skill_id=PRE, confidence=0.9)
+    found = head_violations(
+        _head(targetSkills=[], verdict_stance="code"),
+        answered_verdict=_verdict("model"),
+        skill_labels=SKILLS,
+        boundary=_boundary(link),
+    )
+    assert _reasons(found) == ["stance_without_code_verdict", "no_target_skills"]
+    assert _reasons(head_rejections(found)) == ["no_target_skills"]
+    jump = head_violations(
+        _head(verdict_stance="code"),
+        answered_verdict=_verdict("model"),
+        skill_labels=SKILLS,
+        boundary=_boundary(link),
+    )
+    assert _reasons(jump) == ["stance_without_code_verdict", "boundary_jump"]
+    assert head_rejections(jump) == []
+    unknown = head_violations(
+        _head(targetSkills=["S9"]), answered_verdict=None, skill_labels=SKILLS
+    )
+    assert _reasons(head_rejections(unknown)) == ["unknown_skill_label"]
+
+
+def test_boundary_gaps_name_the_labels_and_count_the_rest() -> None:
+    links = (
+        RequiresLink(skill_id=PRE, confidence=0.9),
+        RequiresLink(skill_id=PRE2, confidence=0.8),
+    )
+    [gap] = boundary_gaps(_head(), _boundary(*links))
+    assert (gap.skill, gap.missing, gap.unlabeled) == ("S1", ("S2",), 1)
+    taken = boundary_gaps(_head(targetSkills=["S1", "S2"]), _boundary(*links))
+    assert [(g.skill, g.unlabeled) for g in taken] == [("S1", 1)] and taken[0].missing == ()
+
+
+def test_unresolved_element_labels_and_keeping_the_element_for_the_fix() -> None:
+    labels = _label_table()
+    bad, good = _link("e3", "P9"), _link("e2", "P1")
+    markup = _markup(elements=[good, bad])
+    [good_el, bad_el] = markup.elements
+    assert unresolved_element_labels(good_el, labels) == []
+    assert unresolved_element_labels(bad_el, labels) == ["P9 (chunk)"]
+    assert unresolved_element_labels(bad_el, None) == []  # no table, nothing to check
+    kwargs: dict[str, Any] = {
+        "skill_labels": {"S1"},
+        "misconception_labels": set(),
+        "labels": labels,
+    }
+    kept = drop_unknown_markup_labels(markup, keep_elements=True, **kwargs)
+    assert [e.element_id for e in kept.elements] == ["e2", "e3"]
+    dropped = drop_unknown_markup_labels(markup, **kwargs)
+    assert [e.element_id for e in dropped.elements] == ["e2"]

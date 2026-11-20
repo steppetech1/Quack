@@ -23,6 +23,7 @@ from quack.db import Db
 
 STRUCTURE_TYPES: tuple[str, ...] = (
     "skill.created",
+    "skill.placed",
     "skill.split",
     "skill.merged",
     "topic.split",
@@ -40,7 +41,7 @@ class HomeTopics:
         self._topic_alias: dict[str, str] = {}
 
     def apply(self, event_type: str, payload: dict[str, Any]) -> None:
-        if event_type == "skill.created":
+        if event_type in ("skill.created", "skill.placed"):
             self._skill_topic[payload["skill_id"]] = payload["topic_id"]
         elif event_type == "skill.split":
             for part in payload["into"]:

@@ -1,4 +1,5 @@
-"""Event catalog of Phase 4 (Т-§2.2; ТЗ Ф4 §6.3, WP2.1, seam S3). All types `schema_version = 1`.
+"""Event catalog of Phase 4 (Т-§2.2; ТЗ Ф4 §6.3, WP2.1, seam S3). All types `schema_version = 1`;
+`turn.committed` also has 2.
 
 Fields: named in §6.3 and the owning sections of Т-§ (snake_case, Т-§0.4); the rest is the
 minimum the reading rule needs (§0.4.3 «частые случаи», row 1). Stream B's payload shapes come
@@ -21,6 +22,7 @@ from quack.events.records import (
     DiagnosisRecord,
     DigestStructuredRecord,
     ExtractedElementRecord,
+    GuardEventRecord,
     RejectedElementRecord,
     TaskMarkupRecord,
     TurnHeadRecord,
@@ -190,9 +192,24 @@ class GradeReported(EventPayload):
 # --- teacher turn ------------------------------------------------------------------------
 
 
+@register("turn.committed", projector=True, dispatcher=True, schema_version=2)
 @register("turn.committed", projector=True, dispatcher=True)
 class TurnCommitted(EventPayload):
-    """Т-§12.2: the turn text and markup with ids; side effects go in the same append (WP2.2)."""
+    """Т-§12.2: the turn text and markup with ids; side effects go in the same append (WP2.2).
+
+    Version 2 (the plan graph of the session): `markup.plan_update` has a goal, steps with a
+    slug and a landmark, edits of landmarks, and `null` as «no change». Version 1 events stay as
+    they are in the journal; the one model reads both, `plan_update` lifts the old form when read
+    (`records.upcast_plan_update`, Т-§2.1).
+
+    `guard_events` (owner decision 2026-11-19): what the code rules of the turn fired on, names
+    only (`GuardEventRecord`). An optional field with an empty default, so it needs no new
+    `schema_version`: the events written before it read as `[]`.
+
+    `timings` (owner decision 2026-11-19): the stage timings of the turn, milliseconds and counts
+    by name (`admit_ms`, `assemble_total_ms`, `first_status_ms`, `ttft_ms`, `total_ms`, parts of
+    the assembly, `model_attempts`, `guard_retries`, `tool_steps`), numbers only. Optional with an
+    empty default, no new `schema_version`: the events written before it read as `{}`."""
 
     action_seq: int
     text: str
@@ -205,6 +222,8 @@ class TurnCommitted(EventPayload):
     degraded_mode: DegradedMode | None
     guard_retries: int = Field(ge=0)
     manifest_id: UUID
+    guard_events: list[GuardEventRecord] = Field(default_factory=list)
+    timings: dict[str, int] = Field(default_factory=dict)
 
 
 # --- verdicts ----------------------------------------------------------------------------
@@ -308,6 +327,15 @@ class SkillCreated(EventPayload):
     summary: str
     status: Literal["provisional", "active"]
     origin: Origin
+
+
+@register("skill.placed", projector=True, dispatcher=False)
+class SkillPlaced(EventPayload):
+    """Places a skill into its canonical home topic (replacing any prior `COVERS`)."""
+
+    skill_id: UUID
+    topic_id: UUID
+    domain_id: UUID
 
 
 @register("skill.merged", projector=True, dispatcher=True)
@@ -519,6 +547,16 @@ class SessionStarted(_SessionRef):
 class SessionEnded(EventPayload):
     session_id: UUID
     reason: str
+
+
+@register("session.titled", projector=False, dispatcher=False)
+class SessionTitled(EventPayload):
+    """The short name of the session (the history panel), written once by the job
+    `session.title` under the key `session.title:{session_id}`; `content.sessions.title` is its
+    reading. A retry of the job is the same event (law 5)."""
+
+    session_id: UUID
+    title: str
 
 
 @register("hint.shown", projector=False, dispatcher=True)

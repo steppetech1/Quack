@@ -15,6 +15,8 @@ The body lives in `practice`: the route is declared in `quack/artifacts/viz_rout
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from uuid import UUID
 
 from quack.config import Settings
@@ -22,6 +24,19 @@ from quack.db.db import Db
 from quack.storage.objects import ObjectStore, learner_prefix
 
 VIZ_KIND = "viz"
+
+# The helpers of `window.QV` (`viz_builder@2`, `quack/practice/viz_kit.js`): put into every page by
+# the builder, and put back as the current ones when a stored page is served, so a fix of the kit
+# reaches the pages built before it. The kit is a fixed, checked library, not model output.
+KIT_JS = (Path(__file__).with_name("viz_kit.js")).read_text(encoding="utf-8")
+_KIT_BLOCK = re.compile(r"<script>/\* Quack visualization kit.*?</script>", re.DOTALL)
+
+
+def current_kit(html: str) -> str:
+    """The page with its copy of the kit replaced by the current one; a page without the kit (an
+    older builder, an SVG) is returned as it is."""
+    return _KIT_BLOCK.sub(lambda _m: f"<script>{KIT_JS}</script>", html, count=1)
+
 
 _RESULT = (
     "SELECT payload->>'result_ref' AS result_ref FROM core.events "
@@ -63,6 +78,7 @@ async def load_viz_page(db: Db, storage: ObjectStore, *, learner_id: UUID, viz_i
     if not key or not key.startswith(learner_prefix(learner_id)):
         raise VizNotFound(str(viz_id))
     try:
-        return await storage.get(key)
+        page = await storage.get(key)
     except KeyError as exc:
         raise VizNotFound(str(viz_id)) from exc
+    return current_kit(page.decode("utf-8", errors="replace")).encode()

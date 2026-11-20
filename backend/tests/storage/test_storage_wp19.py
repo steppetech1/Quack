@@ -204,3 +204,35 @@ async def test_presigned_get_is_path_style_with_ttl() -> None:
     assert parts.netloc == "eu2.contabostorage.com"
     assert parts.path == "/quack-learners/learners/x/photos/p/original-1.webp"
     assert parse_qs(parts.query)["X-Amz-Expires"] == ["300"]
+
+
+async def test_presigned_get_is_signed_for_the_public_address() -> None:
+    """A link goes to a browser: when the process reaches the store at one address (a container
+    name) and the browser at another, the link is signed for the browser's. The signature covers
+    the host, so rewriting the host of an ordinary link afterwards would not do."""
+    store = S3ObjectStore(
+        endpoint="http://minio:9000",
+        access_key="k",
+        secret_key="s",
+        bucket="quack-learners",
+        public_endpoint="http://localhost:9000",
+    )
+    try:
+        url = await store.presigned_get_url("learners/x/canvas/c.bin", 300)
+    finally:
+        await store.aclose()
+    parts = urlsplit(url)
+    assert (parts.scheme, parts.netloc) == ("http", "localhost:9000")
+    assert parts.path == "/quack-learners/learners/x/canvas/c.bin"
+    assert "X-Amz-Signature" in parse_qs(parts.query)
+
+
+async def test_presigned_get_without_public_address_uses_the_endpoint() -> None:
+    store = S3ObjectStore(
+        endpoint="http://minio:9000", access_key="k", secret_key="s", bucket="quack-learners"
+    )
+    try:
+        url = await store.presigned_get_url("learners/x/a.bin", 60)
+    finally:
+        await store.aclose()
+    assert urlsplit(url).netloc == "minio:9000"

@@ -167,7 +167,8 @@ type GapType = Literal[
 
 
 class NewSkill(_Value):
-    """Description of a new skill (Т-§4.4): name and the topic it belongs to in words."""
+    """Description of a new skill (Т-§4.4): name and optional legacy topic hint (kept optional
+    so historical journal events still validate while new model outputs omit `topic_hint`)."""
 
     name: str
-    topic_hint: str
+    topic_hint: str | None = None

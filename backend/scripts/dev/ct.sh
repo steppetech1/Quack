@@ -24,5 +24,5 @@ MSYS_NO_PATHCONV=1 docker run --rm --add-host=host.docker.internal:host-gateway 
     apt-get -qq update >/dev/null && apt-get -qq install -y curl >/dev/null
     curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/$DBMATE_VERSION/dbmate-linux-amd64
     echo '$DBMATE_SHA256  /usr/local/bin/dbmate' | sha256sum -c - >/dev/null && chmod +x /usr/local/bin/dbmate
-    cp -r /src /app && cd /app && rm -rf .venv && uv sync -q --frozen
+    cp -r /src /app && cd /app && rm -rf .venv .env && uv sync -q --frozen
     uv run pytest -q -p no:cacheprovider $*"

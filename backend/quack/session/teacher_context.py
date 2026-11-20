@@ -20,10 +20,12 @@ from datetime import UTC, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from quack.events.records import PlanUpdateRecord
+from quack.events.records import LandmarkAddRecord, LandmarkRefRecord, PlanStepRecord
 from quack.events.values import Level
 from quack.llm.labels import LABEL_PREFIX, LabelMap
+from quack.practice.session_plan import PlanDoc
 from quack.session.memory_picture import LEVEL_NAMES
+from quack.session.schemas import PlanLandmark
 from quack.session.tools import TOOLS, MaterialChunk, render_chunks
 
 # The slot variables of `teacher@2` in the order of Т-§10.1 (slot 1 is the prompt text), then
@@ -133,6 +135,13 @@ def render_tools_and_elements() -> str:
     lines = ["Memory tools:"]
     lines.extend(f"- {tool.name}: {tool.description}" for tool in TOOLS)
     lines.append("Interactive elements: " + ", ".join(ELEMENT_KINDS) + ".")
+    lines.append(
+        "A `visualization` element shows either a plot of one function (`plot`: the function in "
+        "LaTeX and SymPy, its variable and the range of the variable, with `request` null) or a "
+        "finished demo (`request`: the label of a `viz` agent request, with `plot` null). Use the "
+        "plot when the learner needs to see the shape of one function; a plot is drawn by the "
+        "client from your SymPy, so write it in plain SymPy (`10*t - 4.9*t**2`)."
+    )
     return "\n".join(lines)
 
 
@@ -202,8 +211,23 @@ def frozen_slots(
     return FrozenSlots(profile=profile, domain_and_goals=goals, changes=changes)
 
 
-def render_session_plan(goal: SessionGoal, plan: PlanUpdateRecord | None, labels: LabelMap) -> str:
-    """Slot 6 (Т-§12.5): the intent and its target, the plan document of the session."""
+def _landmark_line(landmark: PlanLandmark, labels: LabelMap) -> str:
+    label = labels.label(landmark.kind, landmark.id)
+    tags = f"{landmark.status}, added by teacher" if landmark.added_by_teacher else landmark.status
+    prefix = f"- {label} ({tags})" if label else f"- ({tags})"
+    return f"{prefix}: {landmark.title}"
+
+
+def render_session_plan(
+    goal: SessionGoal,
+    plan: PlanDoc | None,
+    labels: LabelMap,
+    landmarks: Sequence[PlanLandmark] = (),
+    *,
+    has_topic_notes: bool = False,
+) -> str:
+    """Slot 6 (Т-§12.5): the intent and its target, the code-built landmarks, and the plan
+    document of the session."""
     if goal.topic_id is not None:
         target = labels.label("topic", goal.topic_id) or "a topic"
     elif goal.hub_id is not None:
@@ -211,14 +235,49 @@ def render_session_plan(goal: SessionGoal, plan: PlanUpdateRecord | None, labels
     else:
         target = "the domain"
     lines = [f"Goal: {_INTENT_WORDS.get(goal.intent, goal.intent)} {target}"]
+    if goal.topic_id is not None and has_topic_notes:
+        lines.append(
+            "Topic notes: already saved in this topic (if the learner asks for notes or a summary "
+            "in chat, write the notes in your reply, mention that notes already exist in this "
+            "topic, and tell them they can update the topic notes with the button below)."
+        )
+    if plan is not None and plan.goal:
+        lines.append(f"Plan goal: {plan.goal}")
+    if landmarks:
+        lines.append("Landmarks (built by code; use their labels in planUpdate):")
+        lines.extend(_landmark_line(lm, labels) for lm in landmarks)
     if plan is not None:
-        if plan.completed_steps:
-            lines.append("Done: " + "; ".join(plan.completed_steps))
-        lines.append(f"Current step: {plan.current_step}")
-        if plan.next_steps:
-            lines.append("Next: " + "; ".join(plan.next_steps))
-        lines.extend(f"Branch ({branch.type}): {branch.description}" for branch in plan.branches)
+        lines.extend(_plan_lines(plan, labels))
     return "\n".join(lines)
+
+
+def _step_line(prefix: str, step: PlanStepRecord, labels: LabelMap) -> str:
+    point = None if step.landmark is None else labels.label(step.landmark.kind, step.landmark.id)
+    where = f" [landmark {point}]" if point else ""
+    return f"{prefix} (id {step.id}){where}: {step.text}"
+
+
+def _landmark_names(refs: Sequence[LandmarkRefRecord | LandmarkAddRecord], labels: LabelMap) -> str:
+    named = [n for r in refs if (n := labels.label(r.kind, r.id)) is not None]
+    hidden = len(refs) - len(named)
+    return ", ".join(named) + (f" (+{hidden} not in this table)" if hidden else "")
+
+
+def _plan_lines(plan: PlanDoc, labels: LabelMap) -> list[str]:
+    """The plan of the session: the steps with their ids (the teacher keeps an id while the step
+    is the same), the landmarks the teacher changed, and the open branches (`Plan goal` is emitted
+    ahead of the landmarks in `render_session_plan`)."""
+    lines: list[str] = []
+    if plan.current_step is not None:
+        lines.append(_step_line("Current step", plan.current_step, labels))
+    lines.extend(_step_line("Next step", step, labels) for step in plan.next_steps)
+    edits = plan.landmark_edits
+    if edits.added:
+        lines.append("Landmarks you added: " + _landmark_names(edits.added, labels))
+    if edits.removed:
+        lines.append("Landmarks you removed: " + _landmark_names(edits.removed, labels))
+    lines.extend(f"Branch ({branch.type}): {branch.description}" for branch in plan.branches)
+    return lines
 
 
 def render_materials(chunks: Sequence[MaterialChunk], labels: LabelMap) -> str:

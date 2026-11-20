@@ -12,11 +12,12 @@ from quack.llm.strict_schema import to_strict_json_schema
 from quack.practice import role_outputs
 from quack.session.actions import ACTION_EVENT_TYPES, TURN_ACTION_KINDS, Action
 from quack.session.elements import Element
-from quack.session.teacher_output import TeacherOutputV2
+from quack.session.teacher_output import TeacherOutputLegacyV2, TeacherOutputV2
 from quack.session.tools import TOOLS, tool_definition
 
 ROLE_SCHEMAS: list[type[BaseModel]] = [
     TeacherOutputV2,
+    TeacherOutputLegacyV2,
     role_outputs.ModelVerdictOutput,
     role_outputs.SolutionSpace,
     role_outputs.TaskGeneratorOutput,
@@ -76,10 +77,12 @@ def test_element_union_by_kind() -> None:
 
 
 def test_action_kinds_cover_wp13_1() -> None:
-    """S11: every action kind maps to its event; only `confidence` has no teacher turn."""
+    """S11: every action kind maps to its event, except `retry_turn` (it runs a turn on an input
+    already in the journal and writes none); only `confidence` has no teacher turn."""
     union = get_args(Action.__value__)[0]
     kinds = {get_args(cls.model_fields["kind"].annotation)[0] for cls in get_args(union)}
-    assert kinds == set(ACTION_EVENT_TYPES)
+    assert kinds - {"retry_turn"} == set(ACTION_EVENT_TYPES)
+    assert "retry_turn" in TURN_ACTION_KINDS
     assert set(ACTION_EVENT_TYPES) - TURN_ACTION_KINDS == {"confidence"}
     action = TypeAdapter(Action).validate_python(
         {

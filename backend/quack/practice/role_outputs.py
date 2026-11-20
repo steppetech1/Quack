@@ -120,3 +120,13 @@ class DomainClassifierOutput(_Strict):
     domain: str | None
     new_name: str | None
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+# --- session_titler@1 (the name of a session in the history panel) ---
+
+
+class SessionTitleOutput(_Strict):
+    """`title` — two to six words in the language of the learner; the code cuts it to
+    `session_title_max_chars` and strips quotes and the final full stop."""
+
+    title: str

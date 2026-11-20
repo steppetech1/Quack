@@ -36,6 +36,7 @@ from quack.events.event_types import (
     PreferenceSet,
     SessionEnded,
     SkillCreated,
+    SkillPlaced,
     SkillSplit,
     TaskClosed,
     TaskCreated,
@@ -210,6 +211,30 @@ def _skill_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
         ),
         MergeRel("Topic", topic, "COVERS", "Skill", skill, {}),
     ]
+
+
+def _skill_placed_needs(event: StoredEvent) -> Need:
+    p = _payload(event, SkillPlaced)
+    return Need(
+        nodes=frozenset({("Topic", str(p.topic_id))}),
+        neighbourhoods=frozenset({("Skill", str(p.skill_id))}),
+    )
+
+
+def _skill_placed(event: StoredEvent, view: SliceView) -> list[Mutation]:
+    """Place a skill into its canonical home topic, replacing any prior `COVERS` link."""
+    p = _payload(event, SkillPlaced)
+    topic = view.resolve("Topic", str(p.topic_id))
+    skill = view.resolve("Skill", str(p.skill_id))
+    if topic is None or skill is None:
+        return []
+    changes: list[Mutation] = [
+        DeleteRel("Topic", r.from_id, "COVERS", "Skill", skill)
+        for r in view.in_rels("Skill", str(p.skill_id), "COVERS")
+        if r.from_id != topic
+    ]
+    changes.append(MergeRel("Topic", topic, "COVERS", "Skill", skill, {}))
+    return changes
 
 
 _EDGE_TYPES = {"requires": "REQUIRES", "same_idea": "SAME_IDEA"}
@@ -734,8 +759,9 @@ class _Markup:
         return deterministic_id(self.event.learner_id, self.event.seq, key)
 
     def skill_for(self, description: NewSkill) -> str | None:
-        """One provisional skill per normalized name in the domain; a hint without a topic of
-        that name makes a temporary topic (Т-§4.4)."""
+        """One provisional skill per normalized name in the domain (Т-§4.4). Without a legacy
+        `topic_hint`, the skill stays unassigned until the background builder places it via
+        `skill.placed`; historical events with `topic_hint` still link/propose a topic."""
         if self.event.domain_id is None:
             return None
         if self._skills is None:
@@ -746,28 +772,8 @@ class _Markup:
         key = _norm(description.name)
         if key in self._skills:
             return self._skills[key]
-        topic_key = _norm(description.topic_hint)
-        topic = self._topics.get(topic_key)
-        if topic is None:
-            topic = self._new_id(f"topic:{topic_key}")
-            self.changes += [
-                MergeNode(
-                    "Topic",
-                    topic,
-                    {
-                        "learnerId": self.learner,
-                        "domainId": self.domain,
-                        "name": description.topic_hint.strip(),
-                        "origin": "session",
-                        "status": "proposed",
-                        "knownClaimedAtMs": 0,
-                    },
-                ),
-                MergeRel("Domain", self.domain, "HAS_TOPIC", "Topic", topic, {}),
-            ]
-            self._topics[topic_key] = topic
         skill = self._new_id(f"skill:{key}")
-        self.changes += [
+        self.changes.append(
             MergeNode(
                 "Skill",
                 skill,
@@ -779,9 +785,31 @@ class _Markup:
                     "status": "provisional",
                     "origin": "session",
                 },
-            ),
-            MergeRel("Topic", topic, "COVERS", "Skill", skill, {}),
-        ]
+            )
+        )
+        hint = description.topic_hint.strip() if description.topic_hint else ""
+        if hint:
+            topic_key = _norm(hint)
+            topic = self._topics.get(topic_key)
+            if topic is None:
+                topic = self._new_id(f"topic:{topic_key}")
+                self.changes += [
+                    MergeNode(
+                        "Topic",
+                        topic,
+                        {
+                            "learnerId": self.learner,
+                            "domainId": self.domain,
+                            "name": hint,
+                            "origin": "session",
+                            "status": "proposed",
+                            "knownClaimedAtMs": 0,
+                        },
+                    ),
+                    MergeRel("Domain", self.domain, "HAS_TOPIC", "Topic", topic, {}),
+                ]
+                self._topics[topic_key] = topic
+            self.changes.append(MergeRel("Topic", topic, "COVERS", "Skill", skill, {}))
         self._skills[key] = skill
         return skill
 
@@ -1499,6 +1527,7 @@ HANDLERS: dict[str, Handler] = {
     "topic.renamed": Handler(_ref("Topic", "topic_id"), _topic_set),
     "topic.hidden": Handler(_ref("Topic", "topic_id"), _topic_set),
     "skill.created": Handler(_ref("Topic", "topic_id"), _skill_created),
+    "skill.placed": Handler(_skill_placed_needs, _skill_placed),
     "edge.added": Handler(_edge_needs, _edge),
     "edge.removed": Handler(_edge_needs, _edge),
     "hub.created": Handler(_ref("Domain", "domain_id"), _hub_created),

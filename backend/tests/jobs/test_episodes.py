@@ -100,6 +100,91 @@ def test_change_of_plan_step_ends_the_episode() -> None:
     assert got == [(1, 3, "boundary")]
 
 
+def _turn_v2(
+    seq: int, step_id: str | None, *, text: str = "t", intent: str = "practice"
+) -> StoredEvent:
+    """A `turn.committed` of schema version 2: `step_id` None is `current_step: null`."""
+    event = _turn(seq, intent=intent)
+    plan = {
+        "goal": None,
+        "current_step": None
+        if step_id is None
+        else {"id": step_id, "text": text, "landmark": None},
+        "next_steps": None,
+        "landmark_edits": None,
+        "branches": [],
+        "cancel_request_ids": [],
+    }
+    event.payload["markup"]["plan_update"] = plan
+    return event.model_copy(update={"schema_version": 2})
+
+
+def test_v2_the_step_key_is_the_id_so_a_rewording_is_no_boundary() -> None:
+    tracker = EpisodeTracker(SETTINGS)
+    got = _run(
+        tracker,
+        [
+            _turn_v2(1, "ratio-test", text="try the ratio test"),
+            _turn_v2(2, "ratio-test", text="apply the ratio test to the series"),
+        ],
+    )
+    assert got == []
+    assert _run(tracker, [_turn_v2(3, "root-test")]) == [(1, 2, "boundary")]
+
+
+def test_v2_a_null_step_is_no_boundary_and_keeps_the_key() -> None:
+    """A, null, A: no boundary. A, null, B: the boundary is at B (the key stayed A)."""
+    roomy = Settings(episode_max_turns=10, episode_idle_min=10)  # the turn limit is not the subject
+    quiet = EpisodeTracker(roomy)
+    assert _run(quiet, [_turn_v2(1, "a"), _turn_v2(2, None), _turn_v2(3, "a")]) == []
+    moved = EpisodeTracker(roomy)
+    got = _run(moved, [_turn_v2(1, "a"), _turn_v2(2, None), _turn_v2(3, "b")])
+    assert got == [(1, 2, "boundary")]
+
+
+def test_v2_the_intent_still_decides_when_the_step_is_null() -> None:
+    tracker = EpisodeTracker(SETTINGS)
+    got = _run(tracker, [_turn_v2(1, "a"), _turn_v2(2, None, intent="review")])
+    assert got == [(1, 1, "boundary")]
+
+
+def test_old_and_new_events_of_one_session_use_the_same_key_for_the_same_text() -> None:
+    """A step of version 1 is its own text, the key of a step of version 2 is its id: a session
+    written across the change breaks only where the key differs."""
+    tracker = EpisodeTracker(SETTINGS)
+    assert _run(tracker, [_turn(1, step="practice"), _turn_v2(2, "practice")]) == []
+    assert _run(tracker, [_turn_v2(3, "review")]) == [(1, 2, "boundary")]
+
+
+def test_old_events_give_the_episodes_they_always_gave() -> None:
+    """Regression: a log of version 1 turns, literal payloads of the form the journal holds,
+    is cut the same as before the plan graph (the key is the string of `current_step`)."""
+
+    def old_turn(seq: int, step: str) -> StoredEvent:
+        event = _ev("turn.committed", seq)
+        event.payload["markup"]["plan_update"] = {
+            "completed_steps": [],
+            "current_step": step,
+            "next_steps": ["next"],
+            "branches": [],
+            "cancel_request_ids": [],
+        }
+        return event
+
+    log = [
+        old_turn(1, "definition"),
+        _ev("message.sent", 2),
+        old_turn(3, "definition"),
+        old_turn(4, "example"),
+        _ev("message.sent", 5),
+        old_turn(6, "example"),
+        old_turn(7, "task"),
+    ]
+    assert _run(EpisodeTracker(SETTINGS), log) == [(1, 3, "boundary"), (4, 6, "boundary")]
+    # a repeat over the same log (a rebuild) cuts the same
+    assert _run(EpisodeTracker(SETTINGS), log) == [(1, 3, "boundary"), (4, 6, "boundary")]
+
+
 def test_same_intent_and_step_is_no_boundary() -> None:
     tracker = EpisodeTracker(SETTINGS)
     assert _run(tracker, [_turn(1), _turn(2)]) == []

@@ -75,6 +75,35 @@ def test_pdf_pages(client: TestClient) -> None:
         assert _image(page["image_webp_b64"]).shape[0] > 0
 
 
+def test_pptx_slides_endpoint_reads_a_presentation_and_refuses_other_files(
+    client: TestClient,
+) -> None:
+    """A lecture in PowerPoint: the slides with their titles and text; a file that is not a
+    presentation is a 422 the job turns into a permanent failure, never a crash of compute."""
+    import io
+    import zipfile
+
+    ns = (
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    )
+    slide = (
+        f'<p:sld {ns}><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="1" name="t"/><p:cNvSpPr/>'
+        '<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r>'
+        "<a:t>Limits</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("ppt/presentation.xml", f"<p:presentation {ns}/>")
+        archive.writestr("ppt/slides/slide1.xml", slide)
+    ok = client.post("/v1/pptx/slides", json={"pptx_b64": _b64(buffer.getvalue())})
+    assert ok.status_code == 200
+    assert ok.json()["slides"] == [{"slide": 1, "title": "Limits", "text": "", "notes": ""}]
+    bad = client.post("/v1/pptx/slides", json={"pptx_b64": _b64(b"plain text")})
+    assert bad.status_code == 422 and "not a presentation" in bad.json()["error"]
+
+
 def _sheet_photo() -> np.ndarray:
     """A light sheet as a tilted quadrilateral on a dark table."""
     photo = np.full((600, 800, 3), 40, dtype=np.uint8)

@@ -75,7 +75,12 @@ async def start_session(
     """`POST /v1/sessions`: a domain of another learner or none — `404`; the key of another
     start — `409 IDEMPOTENCY_CONFLICT`."""
     try:
-        started = await sessions.start_session(resources.db, learner_id=learner_id, body=body)
+        started = await sessions.start_session(
+            resources.db,
+            learner_id=learner_id,
+            body=body,
+            title_chars=settings.session_title_provisional_chars,
+        )
     except LookupError as exc:
         raise _not_found(exc) from exc
     except (SessionConflictError, IdempotencyConflictError) as exc:
@@ -85,7 +90,11 @@ async def start_session(
 
 
 async def get_active_session(resources: AppResources, learner_id: UUID) -> SessionView | None:
-    return await sessions.active_session(resources.db, learner_id=learner_id)
+    return await sessions.active_session(
+        resources.db,
+        learner_id=learner_id,
+        title_chars=resources.settings.session_title_provisional_chars,
+    )
 
 
 async def list_sessions(
@@ -93,7 +102,11 @@ async def list_sessions(
 ) -> SessionListResponse:
     """Session history, newest first."""
     found = await sessions.list_sessions(
-        resources.db, learner_id=learner_id, domain_id=domain_id, limit=limit
+        resources.db,
+        learner_id=learner_id,
+        domain_id=domain_id,
+        limit=limit,
+        title_chars=resources.settings.session_title_provisional_chars,
     )
     return SessionListResponse(sessions=found)
 
@@ -101,7 +114,12 @@ async def list_sessions(
 async def get_session(resources: AppResources, learner_id: UUID, session_id: UUID) -> SessionDetail:
     db = resources.db
     try:
-        view = await sessions.get_session(db, learner_id=learner_id, session_id=session_id)
+        view = await sessions.get_session(
+            db,
+            learner_id=learner_id,
+            session_id=session_id,
+            title_chars=resources.settings.session_title_provisional_chars,
+        )
     except LookupError as exc:
         raise _not_found(exc) from exc
     feed = await sessions.session_feed(db, learner_id=learner_id, session_id=session_id)
@@ -111,7 +129,8 @@ async def get_session(resources: AppResources, learner_id: UUID, session_id: UUI
 async def heartbeat(
     resources: AppResources, settings: Settings, learner_id: UUID, session_id: UUID
 ) -> HeartbeatResponse:
-    """`POST …/heartbeat`: activity of an open session; an ended or foreign one — `404`."""
+    """`POST …/heartbeat`: activity of the session; a closed one is opened again and answers `ok`;
+    a foreign or unknown one — `404`."""
     try:
         await sessions.heartbeat(resources.db, learner_id=learner_id, session_id=session_id)
     except LookupError as exc:
@@ -120,22 +139,10 @@ async def heartbeat(
     return HeartbeatResponse(status="ok", ttl_sec=settings.heartbeat_ttl_sec)
 
 
-async def end_session(resources: AppResources, learner_id: UUID, session_id: UUID) -> SessionView:
-    """`POST …/end`: `session.ended {reason: learner}`; a repeat changes nothing."""
-    try:
-        ended = await sessions.end_session(
-            resources.db, learner_id=learner_id, session_id=session_id
-        )
-    except LookupError as exc:
-        raise _not_found(exc) from exc
-    await _release_presence(resources.redis, learner_id, session_id)
-    return ended
-
-
 @register_job_handler("session.sweep_inactive")
 async def sweep_inactive_sessions(job: ClaimedJob, ctx: JobContext) -> None:
     """Close the open sessions without activity (`session.ended {reason: inactive}`); a session
-    the learner comes back to is reopened by the first action (WP13.10)."""
+    the learner comes back to is reopened by the first action or heartbeat (WP13.10)."""
     _ = job
     stale = await ctx.db.fetch_all(_STALE, {"minutes": ctx.settings.session_inactivity_timeout_min})
     for row in stale:

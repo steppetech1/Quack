@@ -191,6 +191,23 @@ STREAM = Stream(
             stage=30,
             body=lambda ids, v: {"version": ["2026-11", "2026-12"][v]},
         ),
+        # The learner's own notes of a topic (PUT) and the consent to build the system's (POST).
+        Route(
+            "PUT",
+            "/v1/topics/{topic_id}/notes",
+            stage=210,
+            prepare=_topic_with_notes,
+            requires=("topic_id",),
+            body=lambda ids, v: {"content": ["# Mine\nMy notes", "# Mine\nOther notes"][v]},
+        ),
+        Route(
+            "POST",
+            "/v1/topics/{topic_id}/notes",
+            stage=211,
+            requires=("topic_id",),
+            body=lambda ids, v: {},
+            no_other_body="the body has no field besides the key",
+        ),
         Route(
             "PUT",
             "/v1/artifacts/{artifact_id}/blocks/{block_id}",

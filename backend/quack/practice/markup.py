@@ -15,8 +15,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from quack.events import records
-from quack.events.values import NewSkill
+from quack.events import records, values
 from quack.llm.labels import LabelMap
 from quack.practice.answer_spec import AnswerSpec
 from quack.practice.grammar import grammar_ok
@@ -28,6 +27,13 @@ type Level = Annotated[int, Field(ge=1, le=6)]
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+
+class NewSkill(_Strict):
+    """Description of a new skill (Т-§4.4) in model outputs: name only; topic placement is
+    performed by the background builder."""
+
+    name: str
 
 
 class TestedLevel(_Strict):
@@ -226,7 +232,7 @@ def markup_record(markup: TaskMarkup, labels: LabelMap) -> records.TaskMarkupRec
 def _tested(tested: TestedLevel, labels: LabelMap) -> records.TestedLevelRecord:
     return records.TestedLevelRecord(
         skill_id=_resolved(labels, "skill", tested.skill),
-        new_skill=tested.new_skill,
+        new_skill=None if tested.new_skill is None else values.NewSkill(name=tested.new_skill.name),
         level=tested.level,
     )
 
