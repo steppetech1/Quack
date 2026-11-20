@@ -430,9 +430,7 @@ def _topics_problem(output: TopicsOutput, labels: LabelMap) -> str | None:
     return None
 
 
-def _render_topics_input(
-    graph: DomainGraph, labels: LabelMap
-) -> tuple[str, str]:
+def _render_topics_input(graph: DomainGraph, labels: LabelMap) -> tuple[str, str]:
     dom = f"Domain: {graph.domain_name}\n" if graph.domain_name else ""
     skill_lines = [
         f"{lbl}: {s.name}"
@@ -581,9 +579,7 @@ async def _run_topics_placement(
     surviving_by_key: dict[str, UUID] = {}
     for t in graph.topics:
         if t.topic_id not in merge_map:
-            surviving_by_key.setdefault(
-                normalized_topic_key(t.name, graph.domain_name), t.topic_id
-            )
+            surviving_by_key.setdefault(normalized_topic_key(t.name, graph.domain_name), t.topic_id)
     created_topics: set[UUID] = set()
     placed_skills: set[UUID] = set()
 
@@ -686,9 +682,7 @@ async def cleanup_duplicate_topics(
     """Deterministic duplicate-topic cleanup using `topic.merged` (and `topic.renamed` if
     needed) via `append_events`. Returns the list of `(from_id, into_id)` merges written."""
     graph = await read_domain_graph(neo4j, learner_id=learner_id, domain_id=domain_id)
-    merges, renames = deterministic_topic_cleanup_plan(
-        graph.topics, domain_name=graph.domain_name
-    )
+    merges, renames = deterministic_topic_cleanup_plan(graph.topics, domain_name=graph.domain_name)
     events: list[NewEvent] = [
         NewEvent(
             type="topic.merged",

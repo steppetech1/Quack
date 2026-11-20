@@ -135,6 +135,13 @@ def render_tools_and_elements() -> str:
     lines = ["Memory tools:"]
     lines.extend(f"- {tool.name}: {tool.description}" for tool in TOOLS)
     lines.append("Interactive elements: " + ", ".join(ELEMENT_KINDS) + ".")
+    lines.append(
+        "A `visualization` element shows either a plot of one function (`plot`: the function in "
+        "LaTeX and SymPy, its variable and the range of the variable, with `request` null) or a "
+        "finished demo (`request`: the label of a `viz` agent request, with `plot` null). Use the "
+        "plot when the learner needs to see the shape of one function; a plot is drawn by the "
+        "client from your SymPy, so write it in plain SymPy (`10*t - 4.9*t**2`)."
+    )
     return "\n".join(lines)
 
 

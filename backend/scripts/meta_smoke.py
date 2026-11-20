@@ -147,6 +147,7 @@ ROLE_SCHEMAS: dict[str, type[BaseModel]] = {
     "task_arbiter": role_outputs.TaskCheckOutput,
     "solution_space": role_outputs.SolutionSpace,
     "viz_builder": agents.VizBuilderOutput,
+    "viz_planner": agents.VizPlannerOutput,
     "misconception_describer": agents.MisconceptionDescription,
     "artifact_writer": ArtifactWriterOutput,
     "material_parser": MaterialParserOutput,

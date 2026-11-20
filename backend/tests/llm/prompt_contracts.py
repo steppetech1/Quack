@@ -72,9 +72,11 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     "domain_classifier@1": (agents.DomainClassifierOutput,),
     "session_titler@1": (role_outputs.SessionTitleOutput,),
     "viz_builder@1": (agents.VizBuilderOutput,),
+    "viz_builder@2": (agents.VizBuilderOutput,),
+    "viz_planner@1": (agents.VizPlannerOutput,),
     "release_judge@1": (agents.ReleaseJudgeOutput,),
     # Stream C, layer 2 by §7.3 п.2 (D-C-123).
-    "recognizer@1": (RecognizerOutput, RecognizerSheetOutput),
+    "recognizer@2": (RecognizerOutput, RecognizerSheetOutput),
     "artifact_writer@1": (ArtifactWriterOutput,),
     "canvas_diagnoser@1": (CanvasDiagnoserOutput,),
     "material_parser@1": (MaterialParserOutput,),
@@ -190,6 +192,7 @@ MARKERS: dict[str, list[str]] = {
     "teacher@2": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@3": [MEMORY_UNAVAILABLE_MARKER],
     "viz_builder@1": [VIZ_PARAMS_MARKER],
+    "viz_builder@2": [VIZ_PARAMS_MARKER],
 }
 
 # §7.6 п.2: places that may still change after G1.

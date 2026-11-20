@@ -1,22 +1,32 @@
 """Uploads through the API: the type by content, not by name, and the size limit (Т-§19.8,
-Д-§8.4, ТЗ Ф4 WP19). Only PDF and images; anything else is `UPLOAD_REJECTED`."""
+Д-§8.4, ТЗ Ф4 WP19). PDF, images and PowerPoint presentations (`.pptx`, a lecture); anything
+else is `UPLOAD_REJECTED`."""
 
 from __future__ import annotations
 
+import io
+import zipfile
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-type UploadKind = Literal["pdf", "png", "jpeg", "webp"]
+type UploadKind = Literal["pdf", "png", "jpeg", "webp", "pptx"]
 type RejectReason = Literal["type", "size"]
 
-ALL_KINDS: frozenset[UploadKind] = frozenset({"pdf", "png", "jpeg", "webp"})
+ALL_KINDS: frozenset[UploadKind] = frozenset({"pdf", "png", "jpeg", "webp", "pptx"})
 CONTENT_TYPES: dict[UploadKind, str] = {
     "pdf": "application/pdf",
     "png": "image/png",
     "jpeg": "image/jpeg",
     "webp": "image/webp",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
-EXTENSIONS: dict[UploadKind, str] = {"pdf": "pdf", "png": "png", "jpeg": "jpg", "webp": "webp"}
+EXTENSIONS: dict[UploadKind, str] = {
+    "pdf": "pdf",
+    "png": "png",
+    "jpeg": "jpg",
+    "webp": "webp",
+    "pptx": "pptx",
+}
 _BYTES_PER_MB = 1024 * 1024
 # ТЗ Ф4 §4.5: wrong type — 415, too large — 413.
 _STATUS: dict[RejectReason, int] = {"type": 415, "size": 413}
@@ -44,8 +54,21 @@ class DetectedUpload:
         return EXTENSIONS[self.kind]
 
 
+def _is_pptx(data: bytes) -> bool:
+    """A zip that holds a presentation: `ppt/presentation.xml` among its entries (only the list of
+    entries is read, nothing is unpacked). A `.docx` or `.xlsx` is a zip too: not accepted."""
+    if not data.startswith(b"PK\x03\x04"):
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = set(archive.namelist())
+    except (zipfile.BadZipFile, OSError):
+        return False
+    return "ppt/presentation.xml" in names and "[Content_Types].xml" in names
+
+
 def _sniff(data: bytes) -> UploadKind | None:
-    """File signatures of PDF, PNG, JPEG and WebP."""
+    """File signatures of PDF, PNG, JPEG and WebP, and the structure of a PowerPoint zip."""
     if data.startswith(b"%PDF-"):
         return "pdf"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -54,6 +77,8 @@ def _sniff(data: bytes) -> UploadKind | None:
         return "jpeg"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "webp"
+    if _is_pptx(data):
+        return "pptx"
     return None
 
 

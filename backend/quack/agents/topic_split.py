@@ -79,9 +79,7 @@ def split_problem(output: SplitOutput, labels: LabelMap, skill_count: int) -> st
 
 def plan_parts(output: SplitOutput, labels: LabelMap) -> list[PartPlan]:
     return [
-        PartPlan(
-            canonical_topic_name(p.name), tuple(labels.resolve("skill", s) for s in p.skills)
-        )
+        PartPlan(canonical_topic_name(p.name), tuple(labels.resolve("skill", s) for s in p.skills))
         for p in output.parts
     ]
 

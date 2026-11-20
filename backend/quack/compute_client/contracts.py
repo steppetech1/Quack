@@ -31,6 +31,25 @@ class PdfPagesResponse(_Model):
     pages: list[PdfPage]
 
 
+class PptxSlidesRequest(_Model):
+    pptx_b64: str
+
+
+class PptxSlide(_Model):
+    """One slide: `title` (the title placeholder), `text` (every other text of the slide in reading
+    order: paragraphs, table rows as `cell | cell`, formulas as their text), `notes` (the speaker's
+    notes). Pictures are not read."""
+
+    slide: int  # 1-based, in the order of the presentation
+    title: str
+    text: str
+    notes: str
+
+
+class PptxSlidesResponse(_Model):
+    slides: list[PptxSlide]
+
+
 class ImageRequest(_Model):
     image_b64: str
 

@@ -560,9 +560,17 @@ def _optional(labels: LabelMap, kind: Any, label: str | None) -> UUID | None:
 
 def _requestable(request: AgentRequest) -> bool:
     """`known_check` is `check.known_claim` over the skills of a topic (WP8.2): without a topic
-    label there is nothing to check (review B of #117)."""
+    label there is nothing to check (review B of #117). A `task_generation` without a skill or a
+    level cannot be made either."""
     if request.kind == "known_check" and request.params.topic is None:
         log.warning("turn_known_check_without_topic")
+        return False
+    # `agent.task_generation` needs the skill and the level to make a task for (it fails for good
+    # without them): such a request would only be a failed job and a wait for nothing.
+    if request.kind == "task_generation" and (
+        request.params.skill is None or request.params.level is None
+    ):
+        log.warning("turn_task_generation_without_skill_or_level")
         return False
     return True
 

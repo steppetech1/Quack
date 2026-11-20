@@ -536,7 +536,84 @@ async def test_empty_plan_and_a_session_without_a_goal(
         "next_steps": [],
         "progress": None,
         "updated_at": None,
+        "demos": [],
     }
+
+
+async def test_plan_lists_the_demos_ordered_ahead_with_where_each_stands(
+    client: httpx.AsyncClient, pg_db: Db, settings: Settings
+) -> None:
+    """A demo ordered for a step is a pair of events of its request: `agent.requested` with the
+    step id, then `agent.completed {ok}` once the job finished. No second event — still `preparing`;
+    `ok: false` — `failed`. Requests of the teacher (no step id) are not listed."""
+    from quack.events.event_types import AgentCompleted, AgentRequested
+    from quack.events.records import AgentParamsRecord
+
+    learner, session, cookies = await _learner(pg_db, settings)
+    ids = {name: uuid4() for name in ("ready", "failed", "preparing", "teacher")}
+    events: list[NewEvent] = []
+    for name, request_id in ids.items():
+        params = AgentParamsRecord(
+            description="demo",
+            step_id=None if name == "teacher" else f"step-{name}",
+            title=None if name == "ready" else f"Demo {name}",
+        )
+        events.append(
+            NewEvent(
+                type="agent.requested",
+                payload=AgentRequested(
+                    request_id=request_id, kind="viz", params=params, needed_in_session=False
+                ),
+                actor="viz_planner@1",
+                idempotency_key=f"req:{request_id}",
+                session_id=session,
+            )
+        )
+    for name, ok in (("ready", True), ("failed", False)):
+        events.append(
+            NewEvent(
+                type="agent.completed",
+                payload=AgentCompleted(request_id=ids[name], kind="viz", ok=ok),
+                actor="viz_builder@2",
+                idempotency_key=f"done:{ids[name]}",
+                session_id=session,
+            )
+        )
+    # a step the planner turned down is an `agent.completed` of a job (no request id): not a demo
+    events.append(
+        NewEvent(
+            type="agent.completed",
+            payload=AgentCompleted(job_key="viz.plan.declined:s:step-no", kind="viz_plan", ok=True),
+            actor="viz_planner@1",
+            idempotency_key="viz.plan.declined:s:step-no",
+            session_id=session,
+        )
+    )
+    await append_events(pg_db, learner, events)
+
+    seen = await client.get(f"/v1/sessions/{session}/plan", cookies=cookies)
+
+    assert seen.status_code == 200, seen.text
+    assert seen.json()["demos"] == [
+        {
+            "request_id": str(ids["ready"]),
+            "step_id": "step-ready",
+            "title": "step-ready",  # no title: the step id stands in
+            "status": "ready",
+        },
+        {
+            "request_id": str(ids["failed"]),
+            "step_id": "step-failed",
+            "title": "Demo failed",
+            "status": "failed",
+        },
+        {
+            "request_id": str(ids["preparing"]),
+            "step_id": "step-preparing",
+            "title": "Demo preparing",
+            "status": "preparing",
+        },
+    ]
 
 
 async def test_plan_of_another_learner_or_no_session_is_404(

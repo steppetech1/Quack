@@ -897,12 +897,18 @@ def test_new_skill_without_topic_hint_is_unassigned_until_skill_placed() -> None
                 },
                 domain_id=UUID(DOMAIN),
             ),
-            _event(72, "skill.placed", {
-                "skill_id": skill_id, "topic_id": other_topic, "domain_id": DOMAIN
-            }, domain_id=UUID(DOMAIN)),
-            _event(73, "skill.placed", {
-                "skill_id": skill_id, "topic_id": TOPIC, "domain_id": DOMAIN
-            }, domain_id=UUID(DOMAIN)),
+            _event(
+                72,
+                "skill.placed",
+                {"skill_id": skill_id, "topic_id": other_topic, "domain_id": DOMAIN},
+                domain_id=UUID(DOMAIN),
+            ),
+            _event(
+                73,
+                "skill.placed",
+                {"skill_id": skill_id, "topic_id": TOPIC, "domain_id": DOMAIN},
+                domain_id=UUID(DOMAIN),
+            ),
         ],
         *_task_graph(),
     )

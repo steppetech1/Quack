@@ -707,6 +707,33 @@ def test_known_check_without_topic_is_not_requested() -> None:
     assert [r.params.topic_id for r in turn.markup.agent_requests] == [TOPIC]
 
 
+def test_task_generation_without_a_skill_or_a_level_is_not_requested() -> None:
+    """The job `agent.task_generation` fails for good without a skill and a level (17 requests on
+    a stand, 9 of them without): such a request is dropped at the commit, the complete one stays."""
+    params = {
+        "skill": None,
+        "level": None,
+        "topic": None,
+        "task": None,
+        "misconception": None,
+        "description": "short word problems",
+    }
+    requests = [
+        {"kind": "task_generation", "params": params, "needed_in_session": True},
+        {"kind": "task_generation", "params": {**params, "level": 3}, "needed_in_session": True},
+        {"kind": "task_generation", "params": {**params, "skill": "S1"}, "needed_in_session": True},
+        {
+            "kind": "task_generation",
+            "params": {**params, "skill": "S1", "level": 3},
+            "needed_in_session": False,
+        },
+    ]
+    batch = _batch(uuid4(), _bare(agentRequests=requests))
+
+    asked = [e.payload for e in batch.events if e.type == "agent.requested"]
+    assert [(a.params.skill_id, a.params.level) for a in asked] == [(SKILL, 3)]
+
+
 def test_split_topic_requests_the_split_of_a_known_topic_only() -> None:
     """`intent = split_topic` with a label of the table writes `agent.requested {topic_split}`
     keyed by the turn and the topic after `turn.committed`; an unknown label writes nothing and

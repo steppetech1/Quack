@@ -56,8 +56,9 @@ def _answer(kind: str, **extra: Any) -> StoredEvent:
 
 def test_every_kind_of_the_spec_is_listed_once_and_removed_ones_are_gone() -> None:
     # 24 kinds of the list of ТЗ §6.5 + `agent.topic_split` (WP8.2, D-A-226) + `session.title`
-    # (the name of a session, owner decision 2026-11-19) + 5 periodic
-    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 5
+    # (the name of a session, owner decision 2026-11-19) + `viz.plan` (demos ahead, owner decision
+    # 2026-11-20) + 5 periodic
+    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 1 + 5
     assert not set(r.REMOVED_JOB_KINDS) & set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)
 
 
@@ -185,6 +186,60 @@ def test_first_turn_of_a_session_puts_one_title_job() -> None:
 def _title_plan(event: StoredEvent) -> r.JobPlan:
     (plan,) = [p for p in r.plan_jobs(event, SETTINGS) if p.kind == "session.title"]
     return plan
+
+
+def _plan_turn(plan_update: dict[str, Any], **changes: Any) -> StoredEvent:
+    """A turn of schema version 2: the update says `null` for what it leaves as it was."""
+    full = {
+        "goal": None,
+        "current_step": None,
+        "next_steps": None,
+        "landmark_edits": None,
+        "branches": [],
+        "cancel_request_ids": [],
+        **plan_update,
+    }
+    markup = {**sample_payload("turn.committed")["markup"], "plan_update": full}
+    return _event("turn.committed", payload={"markup": markup}, **changes).model_copy(
+        update={"schema_version": 2}
+    )
+
+
+def _step(step_id: str) -> dict[str, Any]:
+    return {"id": step_id, "text": step_id, "landmark": None}
+
+
+def _viz_plans(event: StoredEvent, settings: Settings = SETTINGS) -> list[r.JobPlan]:
+    return [p for p in r.plan_jobs(event, settings) if p.kind == "viz.plan"]
+
+
+def test_a_turn_that_sets_steps_puts_one_waiting_viz_plan_job_per_session() -> None:
+    """Demos ahead: a turn that names the current step or the next ones plans `viz.plan`. The job
+    coalesces per session (a later turn takes the place of the waiting one) and holds the lock of
+    the session's planner; P3, off the plaque (the demo itself, `agent.viz`, is what shows)."""
+    update = {"current_step": _step("practice"), "next_steps": [_step("review")]}
+    (first,) = _viz_plans(_plan_turn(update, seq=10))
+    (later,) = _viz_plans(_plan_turn(update, seq=57))
+    session = UUID(int=99)
+    assert first.coalesce_key == later.coalesce_key == f"viz.plan:{LEARNER}:{session}"
+    assert first.job_key == f"viz.plan:{LEARNER}:{session}:10"
+    assert first.lock_key == f"session:{session}:viz_plan"
+    assert (first.priority_class, first.visible, first.required_seq) == ("P3", False, None)
+    assert r.KIND_SPEC["viz.plan"].roles == ("viz_planner",)
+    other = _viz_plans(_plan_turn(update, session_id=UUID(int=100)))
+    assert other[0].coalesce_key != first.coalesce_key
+
+
+def test_viz_plan_is_not_planned_without_a_session_or_when_switched_off() -> None:
+    update = {"current_step": _step("practice"), "next_steps": [_step("review")]}
+    assert not _viz_plans(_plan_turn(update, session_id=None))
+    off = Settings(viz_prefetch_enabled=False)
+    assert not _viz_plans(_plan_turn(update), off)
+
+
+def test_viz_plan_skips_a_turn_that_left_the_steps_alone() -> None:
+    """Version 2 of the plan update: `null` is "no change"; nothing came to be decided."""
+    assert not _viz_plans(_plan_turn({"goal": "a goal only"}))
 
 
 def test_photo_uploaded_locks_the_canvas() -> None:

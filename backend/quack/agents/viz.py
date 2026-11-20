@@ -18,6 +18,7 @@ D-B-177.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
@@ -33,6 +34,7 @@ from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob
 from quack.llm.gateway import LLMGateway
 from quack.practice.repo import event_by_key
+from quack.practice.viz_page import KIT_JS
 from quack.storage.keys import viz_key
 from quack.storage.objects import ObjectStore
 
@@ -50,6 +52,14 @@ _REQUEST = (
     "AND type = 'agent.requested' AND payload->>'request_id' = %(request_id)s LIMIT 1"
 )
 _SCALARS = (str, int, float, bool)
+
+# The helpers every page may use as `window.QV` (`viz_builder@2`). They are put into the page
+# itself, before the check and before publication, so the bytes that passed the check are the
+# bytes the learner gets and no static file has to exist on any host (the page is sandboxed with
+# no network, D-B-178). The kit lives in `practice` because the route that serves a page
+# (`practice.viz_page`) brings a stored page to the current kit when it is read.
+_HEAD_OPEN = re.compile(r"<head[^>]*>", re.IGNORECASE)
+_SCRIPT_OPEN = re.compile(r"<script", re.IGNORECASE)
 
 
 def completed_key(request_id: UUID) -> str:
@@ -83,11 +93,26 @@ def param_sets(values: Sequence[str]) -> tuple[list[dict[str, Any]], list[str]]:
     return (sets or [{}]), errors
 
 
+def with_kit(html: str) -> str:
+    """The kit goes first among the scripts of the page: after `<head>`, else before the first
+    script, else at the very start. A page that already carries it is left as it is."""
+    if "window.QV = {}" in html or "window.QV=" in html:
+        return html
+    tag = f"<script>{KIT_JS}</script>"
+    head = _HEAD_OPEN.search(html)
+    if head is not None:
+        return html[: head.end()] + tag + html[head.end() :]
+    script = _SCRIPT_OPEN.search(html)
+    if script is not None:
+        return html[: script.start()] + tag + html[script.start() :]
+    return tag + html
+
+
 def page_html(output: VizBuilderOutput) -> str:
-    """An SVG is rendered and served as the body of a page."""
+    """An SVG is rendered and served as the body of a page; an HTML page gets the kit."""
     if output.format == "svg":
         return f'<!doctype html><html><body style="margin:0">{output.content}</body></html>'
-    return output.content
+    return with_kit(output.content)
 
 
 async def _check(

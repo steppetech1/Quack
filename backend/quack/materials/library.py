@@ -38,19 +38,19 @@ _SESSION_OF_LEARNER = (
 )
 _INSERT_MATERIAL = (
     "INSERT INTO content.materials "
-    "(material_id, learner_id, domain_id, session_id, object_key, mime, status) "
+    "(material_id, learner_id, domain_id, session_id, object_key, mime, status, title) "
     "VALUES (%(material_id)s, %(learner_id)s, %(domain_id)s, %(session_id)s, %(object_key)s, "
-    "%(mime)s, %(status)s) "
-    "RETURNING material_id, domain_id, session_id, mime, status, pages_count, created_at"
+    "%(mime)s, %(status)s, %(title)s) "
+    "RETURNING material_id, domain_id, session_id, mime, status, pages_count, created_at, title"
 )
 _MATERIALS_OF_DOMAIN = (
-    "SELECT material_id, domain_id, session_id, mime, status, pages_count, created_at "
+    "SELECT material_id, domain_id, session_id, mime, status, pages_count, created_at, title "
     "FROM content.materials WHERE learner_id = %(learner_id)s AND domain_id = %(domain_id)s "
     "ORDER BY created_at DESC, material_id"
 )
 _MATERIAL = (
     "SELECT material_id, domain_id, session_id, mime, status, pages_count, created_at, "
-    "object_key FROM content.materials "
+    "object_key, title FROM content.materials "
     "WHERE learner_id = %(learner_id)s AND material_id = %(material_id)s"
 )
 _PAGES = (
@@ -79,6 +79,7 @@ class Material:
     status: str
     pages_count: int | None
     created_at: datetime
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,19 @@ class MaterialDetail:
     material: Material
     file_url: str
     pages: list[MaterialPage]
+
+
+_TITLE_MAX = 120
+
+
+def clean_title(filename: str | None) -> str | None:
+    """The name of an upload for display: the last part of a path, no control characters, at most
+    `_TITLE_MAX` characters; nothing left means no name."""
+    if not filename:
+        return None
+    name = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(ch for ch in name if ch.isprintable()).strip()
+    return name[:_TITLE_MAX] or None
 
 
 async def upload_material(
@@ -97,9 +111,11 @@ async def upload_material(
     domain_id: UUID,
     data: bytes,
     session_id: UUID | None = None,
+    filename: str | None = None,
     redis: Redis | None = None,
 ) -> Material:
-    """Store a PDF or an image (type by content, `upload_max_mb`) and record it.
+    """Store a PDF, an image or a presentation (type by content, `upload_max_mb`) and record it.
+    `filename` is the name the learner knows the file by: only its last part is kept, cut short.
     `UploadRejected`, `MaterialNotFound` (unknown domain or a session that is not the learner's),
     `StorageUnavailable`."""
     upload = detect_upload(data, max_mb=settings.upload_max_mb)
@@ -134,6 +150,7 @@ async def upload_material(
                 "object_key": object_key,
                 "mime": upload.content_type,
                 "status": STATUS_UPLOADED,
+                "title": clean_title(filename),
             },
         )
         await append_events(db, learner_id, [event], redis=redis)
@@ -202,4 +219,5 @@ def _material(row: dict[str, Any]) -> Material:
         status=row["status"],
         pages_count=row["pages_count"],
         created_at=row["created_at"],
+        title=row.get("title"),
     )

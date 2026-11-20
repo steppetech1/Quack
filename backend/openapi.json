@@ -3048,6 +3048,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
         "required": [
@@ -3057,7 +3068,8 @@
           "mime",
           "status",
           "pages_count",
-          "created_at"
+          "created_at",
+          "title"
         ],
         "title": "MaterialView",
         "type": "object"
@@ -3411,6 +3423,42 @@
           "seq"
         ],
         "title": "Place",
+        "type": "object"
+      },
+      "PlanDemo": {
+        "additionalProperties": false,
+        "description": "An interactive demo made ahead for a step of the plan (`viz.plan`): `request_id` opens the\npage at `GET /v1/viz/{request_id}` once `status` is `ready`; `preparing` while it is being\nbuilt, `failed` when no page passed the check (the learner just goes on without it).",
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "preparing",
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "step_id": {
+            "title": "Step Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "step_id",
+          "title",
+          "status"
+        ],
+        "title": "PlanDemo",
         "type": "object"
       },
       "PlanLandmark": {
@@ -4177,6 +4225,13 @@
               }
             ]
           },
+          "demos": {
+            "items": {
+              "$ref": "#/components/schemas/PlanDemo"
+            },
+            "title": "Demos",
+            "type": "array"
+          },
           "goal": {
             "anyOf": [
               {
@@ -4231,7 +4286,8 @@
           "current_step",
           "next_steps",
           "progress",
-          "updated_at"
+          "updated_at",
+          "demos"
         ],
         "title": "SessionPlanView",
         "type": "object"

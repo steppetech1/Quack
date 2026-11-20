@@ -753,6 +753,30 @@ Output fields:
 Input blocks: `description`, `libraries`, `previous_errors`
 Markers: "window.QUACK_VIZ_PARAMS"
 
+## `viz_builder@2` → `VizBuilderOutput`
+
+Output fields:
+
+- `format`: "html" | "svg"
+- `content`: string
+- `parameter_values`: list[string]
+- `answer_action`: string | null
+
+Input blocks: `description`, `libraries`, `previous_errors`
+Markers: "window.QUACK_VIZ_PARAMS"
+
+## `viz_planner@1` → `VizPlannerOutput`
+
+Output fields:
+
+- `steps`: list[object]
+- `steps.step_id`: string
+- `steps.demo`: boolean
+- `steps.title`: string | null
+- `steps.brief`: string | null
+
+Input blocks: `goal`, `steps`, `existing`
+
 ## `release_judge@1` → `ReleaseJudgeOutput`
 
 Output fields:
@@ -762,7 +786,7 @@ Output fields:
 
 Input blocks: `situation`, `turn_a`, `turn_b`, `criteria`
 
-## `recognizer@1` → `RecognizerOutput`, `RecognizerSheetOutput`
+## `recognizer@2` → `RecognizerOutput`, `RecognizerSheetOutput`
 
 Output fields of `RecognizerOutput`:
 

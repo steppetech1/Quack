@@ -101,7 +101,7 @@ async def commit(db: Db, learner: UUID, session_id: UUID | None, row: CanvasLine
             NewEvent(
                 type="canvas.line_committed",
                 payload=row,
-                actor="recognizer@1",
+                actor="recognizer@2",
                 idempotency_key=f"canvas.line_committed:{row.canvas_id}:{row.line_id}:{row.text}",
                 session_id=session_id,
             )

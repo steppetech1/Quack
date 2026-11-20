@@ -364,6 +364,10 @@ class AgentParamsRecord(_Record):
     # hub of a cheat sheet — data, not words in `description` (law 2).
     hub_id: UUID | None = None
     artifact: Literal["notes", "cards", "cheatsheet"] | None = None
+    # A demo prepared ahead for a step of the session plan (`viz.plan`): the slug of the step it
+    # belongs to and its name for the learner. Null for every other request.
+    step_id: str | None = None
+    title: str | None = None
 
 
 class AgentRequestRecord(_Record):

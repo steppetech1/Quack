@@ -34,7 +34,7 @@ from quack.events.records import LandmarkRefRecord, PlanStepRecord, PlanUpdateRe
 from quack.graph.read import GraphReader, HubGoal, SkillFact, SliceFocus, TopicMemory
 from quack.logging import get_logger
 from quack.practice.session_plan import PlanDoc, lift_plan
-from quack.session.schemas import PlanLandmark, PlanProgress, PlanStep, SessionPlanView
+from quack.session.schemas import PlanDemo, PlanLandmark, PlanProgress, PlanStep, SessionPlanView
 from quack.session.sessions import SessionView
 
 log = get_logger(__name__)
@@ -50,6 +50,17 @@ _TURN_PLANS = (
     "SELECT payload FROM core.events "
     "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s "
     "AND type = 'turn.committed' ORDER BY seq"
+)
+_DEMOS = (
+    "SELECT r.payload ->> 'request_id' AS request_id, "
+    "r.payload -> 'params' ->> 'step_id' AS step_id, r.payload -> 'params' ->> 'title' AS title, "
+    "(SELECT c.payload ->> 'ok' FROM core.events c WHERE c.learner_id = r.learner_id "
+    "AND c.type = 'agent.completed' AND c.payload ->> 'kind' = 'viz' "
+    "AND c.payload ->> 'request_id' = r.payload ->> 'request_id' "
+    "ORDER BY c.seq DESC LIMIT 1) AS ok "
+    "FROM core.events r WHERE r.learner_id = %(learner_id)s AND r.session_id = %(session_id)s "
+    "AND r.type = 'agent.requested' AND r.payload ->> 'kind' = 'viz' "
+    "AND r.payload -> 'params' ->> 'step_id' IS NOT NULL ORDER BY r.seq"
 )
 _REACHED = ("proven", "implied")
 
@@ -443,6 +454,26 @@ def _step_view(step: PlanStepRecord) -> PlanStep:
     )
 
 
+async def session_demos(db: Db, *, learner_id: UUID, session_id: UUID) -> list[PlanDemo]:
+    """The demos ordered ahead for the steps of the session, with where each one stands: the pair of
+    events of its request (`agent.requested` and, when the job finished, `agent.completed`)."""
+    rows = await db.fetch_all(_DEMOS, {"learner_id": learner_id, "session_id": session_id})
+    demos: list[PlanDemo] = []
+    for row in rows:
+        status: Literal["preparing", "ready", "failed"] = (
+            "preparing" if row["ok"] is None else "ready" if row["ok"] == "true" else "failed"
+        )
+        demos.append(
+            PlanDemo(
+                request_id=UUID(row["request_id"]),
+                step_id=row["step_id"],
+                title=row["title"] or row["step_id"],
+                status=status,
+            )
+        )
+    return demos
+
+
 async def session_plan_view(
     db: Db,
     reader: GraphReader,
@@ -481,4 +512,5 @@ async def session_plan_view(
         next_steps=[_step_view(s) for s in doc.next_steps],
         progress=progress,
         updated_at=updated_at,
+        demos=await session_demos(db, learner_id=learner_id, session_id=session.session_id),
     )

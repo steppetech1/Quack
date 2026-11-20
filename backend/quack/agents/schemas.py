@@ -224,6 +224,24 @@ class VizBuilderOutput(_Strict):
     answer_action: str | None
 
 
+# --- viz_planner@1 (the demos prepared ahead for the next steps of a session) ---
+
+
+class VizPlanItem(_Strict):
+    """The decision for one step: a demo with its title and the builder's brief, or none."""
+
+    step_id: str
+    demo: bool
+    title: str | None
+    brief: str | None
+
+
+class VizPlannerOutput(_Strict):
+    """One entry for each step of the input, in order."""
+
+    steps: list[VizPlanItem]
+
+
 # --- release_judge@1 (Т-§18.4, WP16.7) ---
 
 

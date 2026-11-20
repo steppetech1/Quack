@@ -74,6 +74,7 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
     _k("graph.hygiene", "P3", roles=("builder",)),
     _k("misconception.describe", "P3", roles=("misconception_describer",)),
     _k("session.title", "P3", roles=("session_titler",)),
+    _k("viz.plan", "P3", roles=("viz_planner",)),
     _k("session.sweep_inactive", "P3", periodic=True),
     _k("deletions.reconcile", "P3", periodic=True),
     _k("manifests.cleanup", "P3", periodic=True),
@@ -302,6 +303,26 @@ def _turn_titled(event: StoredEvent, _s: Settings, _p: Any) -> list[JobPlan]:
     if event.session_id is None:
         return []
     return [_plan(event, "session.title", key_tail=str(event.session_id))]
+
+
+def _turn_viz_plan(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
+    """Demos ahead: a turn that set the current step or the next ones has changed what comes
+    soon, so `viz.plan` looks at it. One job waits per session (the later turn takes its place);
+    a turn that left the steps as they were adds nothing."""
+    if event.session_id is None or not s.viz_prefetch_enabled:
+        return []
+    update = p.markup.plan_update
+    if update.current_step is None and update.next_steps is None:
+        return []
+    key = f"viz.plan:{event.learner_id}:{event.session_id}"
+    return [
+        _plan(
+            event,
+            "viz.plan",
+            lock_key=f"session:{event.session_id}:viz_plan",
+            coalesce_key=key,
+        )
+    ]
 
 
 def _manifests(p: Any, event_type: str) -> list[UUID | None]:
@@ -601,6 +622,12 @@ RULES: tuple[RuleRow, ...] = (
         ("session.title",),
         "always: one job per session, the first turn wins the key; the job names it once",
         _turn_titled,
+    ),
+    RuleRow(
+        "turn.committed",
+        ("viz.plan",),
+        "the turn set the current step or the next steps: the demos for them are decided ahead",
+        _turn_viz_plan,
     ),
     RuleRow("photo.uploaded", ("photo.pipeline",), "always", _photo_uploaded),
     RuleRow(

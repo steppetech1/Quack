@@ -14,6 +14,7 @@
   "material_parser@1": "4bff6c474e4ee16dfd31876a19e66ed5b699c92db02ecaf5d298d0d2aa461afb",
   "misconception_describer@1": "d09ca390c811251acdb702bac64e693d588b755b15a82e311ccdec0e4d55db80",
   "recognizer@1": "3b3ee6577034cec2befd873b8fa8288c16d68133d73af0fa4ed88dd989bb8312",
+  "recognizer@2": "25906b0e832e70a39f680ae714c7b29e7203315017c424b3f0b3aed8ffd73d5d",
   "release_judge@1": "79acc6c1f732baa789de750ab43eea4758f8fae6a911a005859b5cfc927d2889",
   "second_opinion@1": "3430b753c6f5cb6e8bbd0bfebf77147ad88906c2bcb580a00dac0ffd60892bec",
   "session_titler@1": "f58bbc190548ddb122a4094c2e10e81861cc488fc9c9cf2ba99f6347cf60dd97",
@@ -29,5 +30,7 @@
   "today_planner@1": "0e4da292de20a65e3fe8a2df6842d896bb7b6ee22d5f9c43ff303d62d07e1fbd",
   "verdict_free@1": "51c2cb9c9b9e7428c1be05a19d2ac596b2c37aa4120415b127a37fbc60b15943",
   "verdict_proof@1": "2d81781371123f2f43a969af4a4fff5a94f442bc2c5e44538fe25cedf3701f28",
-  "viz_builder@1": "e9a61f4134f4812277a0ea21da10438b5ceec19b31d360bc849436229a0e4ca3"
+  "viz_builder@1": "e9a61f4134f4812277a0ea21da10438b5ceec19b31d360bc849436229a0e4ca3",
+  "viz_builder@2": "a1de6b306ddeeeff22c38a7ba4dc22d8910fa7b1b38cf4180703d9e25bcddeda",
+  "viz_planner@1": "b87f34441f71d1be8cb4934e3f0ace149184fb04d229d300d1b8da9beb9393b3"
 }

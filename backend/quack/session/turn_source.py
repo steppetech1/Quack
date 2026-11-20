@@ -22,6 +22,7 @@ import asyncio
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
+from typing import Any
 from uuid import UUID
 
 from neo4j import AsyncDriver
@@ -152,6 +153,14 @@ _COMPLETED = (
     "SELECT payload FROM core.events WHERE learner_id = %(learner_id)s "
     "AND type = 'agent.completed' AND payload->>'request_id' = ANY(%(ids)s) ORDER BY seq"
 )
+_ATTACHED_MATERIALS = (
+    "SELECT material_id, title, mime, status, pages_count FROM content.materials "
+    "WHERE learner_id = %(learner_id)s AND material_id = ANY(%(ids)s)"
+)
+_ATTACHED_PAGES = (
+    "SELECT material_id, page, text FROM content.material_pages "
+    "WHERE learner_id = %(learner_id)s AND material_id = ANY(%(ids)s) ORDER BY material_id, page"
+)
 _LINE_EVENTS = ("canvas.line_committed", "canvas.line_erased", "handwriting.corrected")
 _TASK_ACTIONS = {
     "hint.requested": "hint_request",
@@ -279,6 +288,64 @@ def _revised(events: Sequence[StoredEvent]) -> list[RevisedCheck]:
         for (seq, part), seen in sorted(history.items())
         if seen[-1] != seen[0] and seq not in acknowledged
     ]
+
+
+_KIND_WORDS = (
+    ("presentation", "a presentation (slides)"),
+    ("pdf", "a PDF"),
+    ("image", "a photo or a picture"),
+)
+_SLIDES = "presentationml.presentation"
+
+
+def render_attached(
+    materials: Sequence[tuple[dict[str, Any], Sequence[tuple[int, str]]]], *, budget: int
+) -> str:
+    """The attached files for slot 8. Material text is data (Т-§19.8): every line is quoted."""
+    out: list[str] = []
+    left = budget
+    for row, pages in materials:
+        mime = str(row["mime"])
+        kind = (
+            "a presentation (slides)"
+            if mime.endswith(_SLIDES)
+            else ("a PDF" if mime == "application/pdf" else "a photo or a picture")
+        )
+        unit = "slide" if mime.endswith(_SLIDES) else "page"
+        name = row["title"] or "a file without a name"
+        status = str(row["status"])
+        head = f'The learner attached {kind} to the conversation: "{name}"'
+        if status == "failed":
+            out.append(f"{head}. It could not be read. Say so plainly and ask for another copy.")
+            continue
+        if status == "uploaded" or not pages:
+            out.append(
+                f"{head}. It is still being read, its text is not available yet. Say that you "
+                "cannot see it yet; do not guess what is in it."
+            )
+            continue
+        out.append(f"{head} ({len(pages)} {unit}s). Its text, as data:")
+        shown = 0
+        cut = False
+        for number, text in pages:
+            body = text.strip()
+            if not body:
+                continue  # an empty slide or page has nothing to quote
+            if left <= 0:
+                cut = True
+                break
+            if len(body) > left:
+                body, cut = body[:left].rstrip() + "…", True
+            left -= len(body)
+            out.append(f"{unit.capitalize()} {number}:")
+            out.extend(f"> {line}" for line in body.splitlines())
+            shown += 1
+        if cut:
+            out.append(
+                f"(Only the first {shown} of {len(pages)} {unit}s fit here; "
+                "the search over the materials finds the rest.)"
+            )
+    return "\n".join(out)
 
 
 def _requests(events: Sequence[StoredEvent]) -> dict[UUID, str]:
@@ -689,6 +756,34 @@ class MemoryTurnContextSource:
             return []
         return [MaterialChunk(h.chunk_id, None, h.page, h.text) for h in hits]
 
+    async def _attached(self, learner_id: UUID, events: Sequence[StoredEvent]) -> str:
+        """Slot 8, the files the learner attached to messages of this session: the text of the
+        stored pages, quoted as data. It does not wait for the graph work on the material (that
+        needs the model and the embeddings): a file that is `read` is shown whole up to the
+        budget; a file still being read, or one that could not be read, is said to be so, so
+        the teacher neither pretends to know it nor ignores it."""
+        ids: list[UUID] = []
+        for event in events:
+            if event.type != "message.sent":
+                continue
+            for raw in event.payload.get("material_ids") or []:
+                found = UUID(str(raw))
+                if found in ids:
+                    ids.remove(found)
+                ids.append(found)
+        ids = ids[-self._settings.material_attached_files :]
+        if not ids:
+            return ""
+        params = {"learner_id": learner_id, "ids": [str(i) for i in ids]}
+        rows = {r["material_id"]: r for r in await self._db.fetch_all(_ATTACHED_MATERIALS, params)}
+        pages: dict[UUID, list[tuple[int, str]]] = {}
+        for r in await self._db.fetch_all(_ATTACHED_PAGES, params):
+            pages.setdefault(r["material_id"], []).append((r["page"], r["text"]))
+        return render_attached(
+            [(rows[i], pages.get(i, [])) for i in ids if i in rows],
+            budget=self._settings.material_attached_chars,
+        )
+
     async def _digest(self, learner_id: UUID, domain_id: UUID) -> str | None:
         """The latest analyst summary of the domain (Т-§13.5): rebuilt by the analyst each
         time from structure, so reading the latest one is no accumulation (law 10)."""
@@ -859,6 +954,9 @@ class MemoryTurnContextSource:
             ),
         )
         put_since(parts, "parallel_ms", started)
+        # one query over the few files the learner attached: after the parallel part (the gather
+        # above is as long as it can be typed)
+        attached = await timed(parts, "attached_ms", self._attached(learner_id, events))
         memory_slice, unavailable, overlay_seqs = sliced
         known_topics = {m.topic_id for m in memory}
         extra_topic_ids = (
@@ -986,7 +1084,9 @@ class MemoryTurnContextSource:
                     has_topic_notes=topic_has_notes,
                 ),
                 memory_picture=picture,
-                materials=render_materials(chunks, labels),
+                materials="\n".join(
+                    part for part in (render_materials(chunks, labels), attached) if part
+                ),
                 labels=render_labels(labels, {**names, **card_names}),
                 skill=skill,
             )

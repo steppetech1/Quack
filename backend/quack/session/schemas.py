@@ -74,6 +74,17 @@ class PlanProgress(StrictModel):
     total: int
 
 
+class PlanDemo(StrictModel):
+    """An interactive demo made ahead for a step of the plan (`viz.plan`): `request_id` opens the
+    page at `GET /v1/viz/{request_id}` once `status` is `ready`; `preparing` while it is being
+    built, `failed` when no page passed the check (the learner just goes on without it)."""
+
+    request_id: UUID
+    step_id: str
+    title: str
+    status: Literal["preparing", "ready", "failed"]
+
+
 class SessionPlanView(StrictModel):
     """`GET /v1/sessions/{id}/plan`: where the session is and where it goes. Read only; a graph
     that cannot be read gives `landmarks = []` and `progress = null`, the rest still comes."""
@@ -84,6 +95,7 @@ class SessionPlanView(StrictModel):
     next_steps: list[PlanStep]
     progress: PlanProgress | None
     updated_at: datetime | None
+    demos: list[PlanDemo]
 
 
 class HeartbeatResponse(StrictModel):

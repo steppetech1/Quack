@@ -232,9 +232,7 @@ def markup_record(markup: TaskMarkup, labels: LabelMap) -> records.TaskMarkupRec
 def _tested(tested: TestedLevel, labels: LabelMap) -> records.TestedLevelRecord:
     return records.TestedLevelRecord(
         skill_id=_resolved(labels, "skill", tested.skill),
-        new_skill=None
-        if tested.new_skill is None
-        else values.NewSkill(name=tested.new_skill.name),
+        new_skill=None if tested.new_skill is None else values.NewSkill(name=tested.new_skill.name),
         level=tested.level,
     )
 
