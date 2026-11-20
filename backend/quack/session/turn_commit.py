@@ -106,6 +106,12 @@ _PRIOR_HINT_STEP = (
     "AND type = 'hint.shown' AND payload->>'task_id' = %(task_id)s "
     "AND idempotency_key <> %(key)s"
 )
+# One turn per action: a `retry_turn` that raced the turn it retries finds the committed one.
+_TURN_OF_ACTION = (
+    "SELECT seq FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND session_id = %(session_id)s AND type = 'turn.committed' "
+    "AND payload ->> 'action_seq' = %(action_seq)s ORDER BY seq LIMIT 1"
+)
 _TASK_CLOSED = (
     "SELECT count(*) AS n FROM core.events WHERE learner_id = %(learner_id)s "
     "AND type = 'task.closed' AND payload->>'task_id' = %(task_id)s "
@@ -474,11 +480,27 @@ async def commit_turn(
 ) -> int:
     """Write the batch, the task documents and the manifest row in one transaction; the seq
     of `turn.committed`. A retry of the write passes the same `TurnBatch` object: a batch
-    built again has new ids (tasks, requests, hub) under the same keys and conflicts."""
+    built again has new ids (tasks, requests, hub) under the same keys and conflicts.
+
+    An action has one `turn.committed` (`retry_turn` runs a turn again only on an input without
+    one): if the action of the batch is answered already, nothing is written and the seq of that
+    turn comes back. The turn lock of the session makes the check and the write one step."""
     manifest = batch.manifest
     if manifest.learner_id != learner_id:
         raise ValueError("the manifest belongs to another learner")
     async with db.transaction():
+        action_seq = batch.common.get("causation_seq")
+        if action_seq is not None:
+            existing = await db.fetch_one(
+                _TURN_OF_ACTION,
+                {
+                    "learner_id": learner_id,
+                    "session_id": manifest.session_id,
+                    "action_seq": str(action_seq),
+                },
+            )
+            if existing is not None:
+                return int(existing["seq"])
         events = [*batch.events, *await _help_events(db, batch, learner_id)]
         stored = await append_events(db, learner_id, events, redis=redis)
         by_key = {event.idempotency_key: event for event in stored}

@@ -18,13 +18,15 @@ from quack.graph.read import create_graph_reader
 from quack.graph.read.summary import SessionNotFoundError, SessionSummary, session_summary
 from quack.jobs.queue_p4 import visible_jobs
 from quack.llm.access import AccessMode, access_mode, is_meta_judge, may_call_models
+from quack.practice.session_resume import touch_session
 from quack.session import lifecycle, sessions, stream
 from quack.session.action_turn import TurnContextSource, turn_frames
-from quack.session.actions import Action, ActionAccepted, ActionFrame
+from quack.session.actions import Action, ActionAccepted, ActionFrame, RetryTurnAction
 from quack.session.deps import current_learner_id, get_settings_dep
 from quack.session.keepalive import sse_keepalive_response
 from quack.session.plan_view import session_plan_view
-from quack.session.record import record_action
+from quack.session.record import RecordedAction, record_action
+from quack.session.retry_turn import retry_target
 from quack.session.schemas import (
     HeartbeatResponse,
     SessionDetail,
@@ -229,7 +231,10 @@ async def heartbeat(
             "content": {"text/event-stream": {"itemSchema": _SSE_ITEM}},
         },
         201: {
-            "description": "Actions without a teacher turn (`confidence`): the action event seq.",
+            "description": (
+                "Actions without a teacher turn (`confidence`): the action event seq; also a "
+                "`retry_turn` whose input is answered already: the seq of that input."
+            ),
             "content": {"application/json": {"schema": ActionAccepted.model_json_schema()}},
         },
     },
@@ -269,15 +274,26 @@ async def post_action(
             )
             if open_session.status != "active":
                 raise LookupError(f"session {session_id} cannot be opened again")
-        recorded = await record_action(
-            resources.db,
-            body,
-            learner_id=learner_id,
-            session_id=session_id,
-            domain_id=open_session.domain_id,
-            settings=settings,
-            redis=resources.redis,
-        )
+        if isinstance(body, RetryTurnAction):
+            # `retry_turn` writes no event: it runs the turn again on the latest input without
+            # a `turn.committed`. An input that is answered already is not asked again.
+            target = await retry_target(resources.db, learner_id=learner_id, session_id=session_id)
+            if target is None:
+                raise LookupError(f"session {session_id} has no input to answer")
+            if target.answered:
+                return JSONResponse(ActionAccepted(seq=target.seq).model_dump(), status_code=201)
+            await touch_session(resources.db, learner_id=learner_id, session_id=session_id)
+            recorded = RecordedAction(target.seq, starts_turn=True)
+        else:
+            recorded = await record_action(
+                resources.db,
+                body,
+                learner_id=learner_id,
+                session_id=session_id,
+                domain_id=open_session.domain_id,
+                settings=settings,
+                redis=resources.redis,
+            )
     except LookupError as exc:
         raise ApiError("NOT_FOUND", str(exc), status_code=404) from exc
     except IdempotencyConflictError as exc:

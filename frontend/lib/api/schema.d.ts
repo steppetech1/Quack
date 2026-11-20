@@ -2885,6 +2885,25 @@ export interface components {
             reason: "spoiler" | "guard";
         };
         /**
+         * RetryTurnAction
+         * @description `retry_turn`: run the teacher turn again on the last learner input of the session that
+         *     has no `turn.committed` (a turn lost to a dropped write or stream). Writes no event: the
+         *     input is already in the journal. Idempotent: an input that is answered is not asked again,
+         *     and `commit_turn` keeps one `turn.committed` per action.
+         */
+        RetryTurnAction: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "retry_turn";
+        };
+        /**
          * ReviewResponse
          * @description The sheet after the review; `remarks` — the system blocks added to the learner's sheet.
          */
@@ -7285,7 +7304,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MessageAction"] | components["schemas"]["IntentAction"] | components["schemas"]["AnswerAction"] | components["schemas"]["ElementResponseAction"] | components["schemas"]["HintRequestAction"] | components["schemas"]["SolutionRequestAction"] | components["schemas"]["CheckSkipAction"] | components["schemas"]["FlagUnclearAction"] | components["schemas"]["ConfidenceAction"];
+                "application/json": components["schemas"]["MessageAction"] | components["schemas"]["IntentAction"] | components["schemas"]["AnswerAction"] | components["schemas"]["ElementResponseAction"] | components["schemas"]["HintRequestAction"] | components["schemas"]["SolutionRequestAction"] | components["schemas"]["CheckSkipAction"] | components["schemas"]["FlagUnclearAction"] | components["schemas"]["ConfidenceAction"] | components["schemas"]["RetryTurnAction"];
             };
         };
         responses: {
@@ -7298,7 +7317,7 @@ export interface operations {
                     "text/event-stream": components["schemas"]["ActionFrame"];
                 };
             };
-            /** @description Actions without a teacher turn (`confidence`): the action event seq. */
+            /** @description Actions without a teacher turn (`confidence`): the action event seq; also a `retry_turn` whose input is answered already: the seq of that input. */
             201: {
                 headers: {
                     [name: string]: unknown;

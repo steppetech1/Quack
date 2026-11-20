@@ -43,6 +43,7 @@ from quack.session.actions import (
     HintRequestAction,
     IntentAction,
     MessageAction,
+    RetryTurnAction,
     SolutionRequestAction,
 )
 
@@ -69,7 +70,10 @@ async def record_action(
 ) -> RecordedAction:
     """Write the action's event(s) and refresh `last_activity_at` of the session, so the
     inactivity sweep does not close it in the middle of a talk (WP13.10); `LookupError` — the
-    task or the turn element it names is not the learner's."""
+    task or the turn element it names is not the learner's. A `retry_turn` has no event to write
+    (`retry_turn.py` finds its input), so it is refused here."""
+    if isinstance(action, RetryTurnAction):
+        raise ValueError("retry_turn writes no event")
     recorded = await _write_action(
         db,
         action,
@@ -189,6 +193,8 @@ def _payload(action: Action) -> EventPayload:
             return ConfidenceReported(target_seq=action.target_seq, value=action.value)
         case AnswerAction():
             raise AssertionError("answers go through record_answer")
+        case RetryTurnAction():
+            raise AssertionError("a retry writes no event")
 
 
 async def _answer(
