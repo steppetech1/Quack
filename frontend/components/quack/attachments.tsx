@@ -11,7 +11,7 @@ import { useWorkspaceOptional } from "./workspace/workspace-context";
 
 /**
  * How many files one message carries (as many as the new-subject card). Every file goes to the subject and is searchable; the
- * teacher reads the full text of the last few right away (`material_attached_files` on the backend, 3 by default).
+ * teacher reads the text of the last `material_attached_files` (15 by default) right away, the character budget shared between them.
  */
 export const MAX_ATTACHED = 15;
 /** The status of a file that was just uploaded is asked again this often: its text is stored within seconds */
