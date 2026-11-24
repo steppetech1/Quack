@@ -42,8 +42,8 @@ function Mark({ id, color }: { id: IndicatorId; color: string }) {
 }
 
 /**
- * Five fixed pills. They sit against the left edge of the sessions panel and are children of that panel,
- * so they ride on its edge as it opens and closes: one movement, no lag.
+ * Five fixed pills. They sit against the right edge of the centre column: the shell puts them in a zero-width
+ * anchor there and they stand to the left of it.
  */
 export function IndicatorPills() {
   const t = useT();

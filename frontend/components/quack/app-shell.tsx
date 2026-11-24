@@ -1,6 +1,6 @@
 "use client";
 
-import { History, PanelLeft, X } from "lucide-react";
+import { PanelLeft, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from "react";
 import type { FileRef } from "./attachments";
@@ -15,7 +15,6 @@ import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
 import { IndicatorPills } from "./graph/indicator-pills";
-import { SessionsPanel } from "./sessions-panel";
 import { BackLink } from "./page-parts";
 import { SoonProvider } from "./soon";
 
@@ -35,6 +34,8 @@ type Shell = {
   /** Показать граф в режиме: закрывает шторку и уводит на «/», если нужно */
   openGraph: (m: GraphMode) => void;
   closeDrawer: () => void;
+  /** Сессии текущего домена; только что начатая стоит первой */
+  sessions: Session[];
   /** Сделать домен текущим без перехода (страница темы или сессии реального домена) */
   focusDomain: (id: string) => void;
 };
@@ -75,7 +76,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const inSettings = pathname.startsWith("/settings");
   const inSession = /^\/(session|topic|hub|canvas)\//.test(pathname);
   const inSessionPage = pathname.startsWith("/session/");
-  // Доска канваса занимает весь экран: ни панели доменов, ни панели сессий
+  // Доска канваса занимает весь экран: ни панели доменов, ни индикаторов графа
   const fullscreen = pathname.startsWith("/canvas/");
   // Живой режим: пока данные грузятся (или «/» без предметов — сейчас уведёт на создание) — пустой центр; ошибка — плашка
   const busy = API_MODE && (!data.ready || (!data.error && data.domains.length === 0 && pathname === "/"));
@@ -85,17 +86,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<string | null>(null);
   const [pendingTopic, setPendingTopic] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
-  // null — решает ширина экрана: на узком десктопе панель свёрнута
-  const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
   // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
   const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
-  const [drawer, setDrawer] = useState<"domains" | "sessions" | null>(null);
+  const [drawer, setDrawer] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
   const closeBtn = useRef<HTMLButtonElement | null>(null);
-  const openDrawer = (side: "domains" | "sessions", el: HTMLElement) => {
+  const openDrawer = (el: HTMLElement) => {
     trigger.current = el;
-    setDrawer(side);
+    setDrawer(true);
   };
 
   // Моки: сессии есть только в матанализе. Бэкенд: домен выбирает сама страница сессии или темы
@@ -113,7 +112,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!drawer) return;
     closeBtn.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(false);
     window.addEventListener("keydown", onKey);
     const opener = trigger.current;
     return () => {
@@ -142,13 +141,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const selectDomain = (id: string) => {
     setDomainId(id);
     setGraphMode({ kind: "overview" });
-    setDrawer(null);
+    setDrawer(false);
     if (pathname !== "/") router.push("/");
   };
 
   const openGraph = (m: GraphMode) => {
     setGraphMode(m);
-    setDrawer(null);
+    setDrawer(false);
     if (pathname !== "/" || window.location.search.includes("view=canvases")) router.push("/");
   };
 
@@ -167,25 +166,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ? [{ id: "new", href: "/session/new", date: todayIso(), title: pending, topics: [] }, ...domain.sessions]
       : domain.sessions;
 
-  const toggleSessions = () =>
-    setSessionsPref((p) => !(p ?? window.matchMedia("(max-width: 1279px)").matches));
-
-  const panel = (collapsed?: boolean, onToggle?: () => void) => (
-    <SessionsPanel
-      sessions={sessions}
-      activeHref={pathname}
-      collapsed={collapsed}
-      onToggle={onToggle}
-      onNavigate={() => setDrawer(null)}
-    />
-  );
-
   return (
     <SoonProvider>
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(false), sessions, focusDomain: setDomainId }}>
         <a
           href="#main"
           onClick={(e) => {
@@ -196,7 +182,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           {t.shell.skip}
         </a>
-        <div inert={!!drawer} className="flex h-dvh">
+        <div inert={drawer} className="flex h-dvh">
           {!fullscreen && (
             <aside
               aria-label={t.shell.subjects}
@@ -216,14 +202,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
               {pathname !== "/" && (
-                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
+                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer(e.currentTarget)}>
                   <PanelLeft />
                 </IconButton>
               )}
               <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
-              {!inSettings && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
-                <History />
-              </IconButton>}
             </div>}
             {/* Сессия: путь назад в граф домена; граф открывается по «/» */}
             {inSessionPage && (
@@ -250,61 +233,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className={busy || failed ? "hidden" : "contents"}>{children}</div>
           </main>
 
-          {!inSettings && !fullscreen && <aside
-            aria-label={t.shell.sessions}
-            className={cn(
-              "relative hidden shrink-0 border-l border-seam-soft transition-[width] duration-300 ease-out md:block",
-              sessionsPref === null ? "w-14 xl:w-73" : sessionsPref ? "w-14" : "w-73",
-            )}
-          >
-            <IndicatorPills />
-            {sessionsPref === null ? (
-              <>
-                <div className="h-full xl:hidden">{panel(true, toggleSessions)}</div>
-                <div className="hidden h-full xl:block">{panel(false, toggleSessions)}</div>
-              </>
-            ) : (
-              panel(sessionsPref, toggleSessions)
-            )}
-          </aside>}
+          {/* Индикаторы графа стоят у правого края центра: нулевая ширина, сами «выезжают» влево */}
+          {!inSettings && !fullscreen && (
+            <div className="relative hidden w-0 shrink-0 md:block">
+              <IndicatorPills />
+            </div>
+          )}
         </div>
 
-        {/* Телефон: панели — шторки */}
+        {/* Телефон: левая панель (предметы, темы, сессии) — шторка */}
         <div
           aria-hidden
-          onClick={() => setDrawer(null)}
+          onClick={() => setDrawer(false)}
           className={cn(
             "fixed inset-0 z-40 bg-cloth-deep/70 transition-opacity duration-300 md:hidden",
             drawer ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         />
-        {(fullscreen ? ([] as const) : inSettings ? (["domains"] as const) : (["domains", "sessions"] as const)).map((side) => {
-          const open = drawer === side;
-          return (
-            <div
-              key={side}
-              role="dialog"
-              aria-modal="true"
-              aria-label={side === "domains" ? t.shell.subjects : t.shell.sessions}
-              inert={!open}
-              onKeyDown={trapTab}
-              className={cn(
-                "fixed inset-y-0 z-50 w-[min(20rem,86vw)] border-seam bg-cloth-deep transition-transform duration-300 ease-out md:hidden",
-                side === "domains" ? "left-0 border-r" : "right-0 border-l",
-                open ? "translate-x-0" : side === "domains" ? "-translate-x-full" : "translate-x-full",
-              )}
-            >
-              <IconButton ref={open ? closeBtn : undefined} label={t.shell.close} className="absolute top-2 right-2 z-10" onClick={() => setDrawer(null)}>
-                <X />
-              </IconButton>
-              {side === "domains" ? (
-                <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
-              ) : (
-                panel()
-              )}
-            </div>
-          );
-        })}
+        {!fullscreen && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={t.shell.subjects}
+            inert={!drawer}
+            onKeyDown={trapTab}
+            className={cn(
+              "fixed inset-y-0 left-0 z-50 w-[min(20rem,86vw)] border-r border-seam bg-cloth-deep transition-transform duration-300 ease-out md:hidden",
+              drawer ? "translate-x-0" : "-translate-x-full",
+            )}
+          >
+            <IconButton ref={drawer ? closeBtn : undefined} label={t.shell.close} className="absolute top-2 right-2 z-10" onClick={() => setDrawer(false)}>
+              <X />
+            </IconButton>
+            <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
+          </div>
+        )}
       </ShellContext.Provider>
     </SoonProvider>
   );

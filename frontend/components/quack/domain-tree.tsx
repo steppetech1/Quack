@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { useShell } from "./app-shell";
+import { SessionsBlock } from "./sessions-block";
 import { StateDot } from "./topic-card";
 import { useT } from "@/lib/i18n/provider";
 
@@ -34,9 +35,11 @@ export function DomainTree({
   openTopicId?: string | null;
 }) {
   const t = useT();
-  const { graphMode, openGraph } = useShell();
+  const { graphMode, openGraph, sessions, closeDrawer } = useShell();
   const pathname = usePathname();
   const onGraph = pathname === "/";
+  // Настройки прячут сессии, как раньше пряталась правая панель
+  const showSessions = !pathname.startsWith("/settings");
   // Какой хаб сейчас развёрнут (видны его темы); один за раз
   const [openHub, setOpenHub] = useState<string | null>(null);
   // Какой домен сейчас развёрнут (видны его хабы); не привязано к activeId — повторный клик по
@@ -162,6 +165,14 @@ export function DomainTree({
                         ))}
                     </ul>
                   </li>
+                )}
+                {showSessions && (
+                  <SessionsBlock
+                    domainId={d.id}
+                    sessions={active ? sessions : d.sessions}
+                    activeHref={pathname}
+                    onNavigate={closeDrawer}
+                  />
                 )}
               </ul>
             )}

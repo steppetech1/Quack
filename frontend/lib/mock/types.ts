@@ -49,6 +49,8 @@ export type Session = {
   date: string;
   title: string;
   topics: string[];
+  /** The last message of the learner has no answer yet */
+  unanswered?: boolean;
 };
 
 export type TodayItem = {
