@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from quack.events.payloads import Unit
 from quack.graph.read.models import TopicDisplay, TopicRequires
@@ -68,13 +68,22 @@ class SetPreferenceResponse(BaseModel):
 
 
 class CreateDomainRequest(BaseModel):
+    # `about`: what the learner wrote on the create card. It is only stored with the domain (no
+    # model reads it yet). Trimmed; an empty one is `None`.
     name: Annotated[str, Field(min_length=1, max_length=200)]
+    about: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
     idempotency_key: Annotated[str, Field(min_length=1, max_length=200)]
+
+    @field_validator("about")
+    @classmethod
+    def _empty_about_is_none(cls, value: str | None) -> str | None:
+        return value or None
 
 
 class CreateDomainResponse(BaseModel):
     domain_id: UUID
     name: str
+    about: str | None = None
     seq: int
 
 
@@ -83,6 +92,7 @@ class DomainSummary(BaseModel):
 
     domain_id: UUID
     name: str
+    about: str | None = None
     created_seq: int
     created_at: datetime
 

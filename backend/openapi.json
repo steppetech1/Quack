@@ -1064,6 +1064,18 @@
       },
       "CreateDomainRequest": {
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "idempotency_key": {
             "maxLength": 200,
             "minLength": 1,
@@ -1086,6 +1098,17 @@
       },
       "CreateDomainResponse": {
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "domain_id": {
             "format": "uuid",
             "title": "Domain Id",
@@ -1322,6 +1345,17 @@
       "DomainSummary": {
         "description": "A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1).",
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",

@@ -268,8 +268,12 @@ class ObservationSecondOpinion(EventPayload):
 
 @register("domain.created", projector=True, dispatcher=False)
 class DomainCreated(EventPayload):
+    """`about` - the learner's own words about the subject from the create card; stored only,
+    no handler or model reads it. Older events have none."""
+
     domain_id: UUID
     name: str
+    about: str | None = None
 
 
 class _TopicNew(EventPayload):
