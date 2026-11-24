@@ -5,6 +5,7 @@ import { domains } from "./ru/domains";
 import { radiusSession } from "./ru/session";
 import { skills } from "./ru/skills";
 import { cheatSheets, topicDetails } from "./ru/topic-details";
+import { workspace } from "./ru/workspace";
 
 export const ru: MockData = {
   domains,
@@ -16,4 +17,5 @@ export const ru: MockData = {
   skills,
   topicDetails,
   cheatSheets,
+  workspace,
 };

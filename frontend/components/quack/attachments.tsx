@@ -7,6 +7,7 @@ import { MATERIAL_POLL_LIMIT, materialReadable, materialState } from "@/lib/api/
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { useMaterialUpload } from "./live/use-material-upload";
+import { useWorkspaceOptional } from "./workspace/workspace-context";
 
 /** How many files one message carries (the teacher reads the last few of a session, `material_attached_files`) */
 export const MAX_ATTACHED = 3;
@@ -135,16 +136,31 @@ export function AttachmentChips({ items, onRemove }: { items: Attachment[]; onRe
   );
 }
 
-/** The files a sent message carried, under its bubble (read only) */
+/** The files a sent message carried, under its bubble. Inside a session a chip opens the file in the workspace pane */
 export function SentFiles({ files }: { files: FileRef[] }) {
   const tx = useT();
+  const ws = useWorkspaceOptional();
   if (!files.length) return null;
   return (
     <ul aria-label={tx.composer.attachedFiles} className="mt-1.5 flex flex-wrap justify-end gap-1.5">
       {files.map((f) => (
-        <li key={f.id} className={CHIP}>
-          <Paperclip aria-hidden className="size-3.5 shrink-0" />
-          <span className="min-w-0 truncate text-paper">{f.name}</span>
+        <li key={f.id} className={cn(CHIP, ws && "relative p-0 hover:border-ribbon")}>
+          {ws ? (
+            <button
+              type="button"
+              aria-label={tx.workspace.openMaterial(f.name)}
+              onClick={() => ws.open({ kind: "material", id: f.id, title: f.name })}
+              className="inline-flex min-w-0 items-center gap-1.5 rounded-pill px-2.5 py-1 after:absolute after:-inset-y-1.5 after:inset-x-0 focus-visible:outline-2 focus-visible:outline-ribbon"
+            >
+              <Paperclip aria-hidden className="size-3.5 shrink-0" />
+              <span className="min-w-0 truncate text-paper">{f.name}</span>
+            </button>
+          ) : (
+            <>
+              <Paperclip aria-hidden className="size-3.5 shrink-0" />
+              <span className="min-w-0 truncate text-paper">{f.name}</span>
+            </>
+          )}
         </li>
       ))}
     </ul>

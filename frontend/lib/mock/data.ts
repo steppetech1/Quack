@@ -1,4 +1,4 @@
-import type { Canvas, CheatSheet, ChatMsg, ChatPart, Domain, SessionData, Skill, TopicDetails } from "./types";
+import type { Canvas, CheatSheet, ChatMsg, ChatPart, Domain, SessionData, Skill, TopicDetails, WorkspaceMock } from "./types";
 
 /** Everything the app needs as locale-dependent mock content. One module per locale provides it. */
 export type MockData = {
@@ -16,4 +16,6 @@ export type MockData = {
   topicDetails: Record<string, TopicDetails>;
   /** Cheat sheets by hub id */
   cheatSheets: Record<string, CheatSheet>;
+  /** What the tabs of the workspace pane show in mock mode */
+  workspace: WorkspaceMock;
 };

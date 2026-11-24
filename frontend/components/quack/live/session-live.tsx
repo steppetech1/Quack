@@ -23,9 +23,10 @@ import { decodeFirstTurn, encodeFirstTurn, firstTurnKey } from "./domain-setup-l
 import { ChatTurnActions, type NoteHubTarget, type NoteTopicTarget, type ResolvedNoteTargets } from "./chat-actions";
 import { useErrorText } from "./error-text";
 import { jobRows } from "./jobs-plaque";
-import { DemoPanel, type OpenDemo } from "./demo-panel";
 import { PlotCard, type PlotSpec } from "./plot-card";
 import { SessionCorner, useSessionPlan } from "./plan-graph-live";
+import { StudentText } from "../workspace/student-text";
+import { useWorkspaceOptional } from "../workspace/workspace-context";
 
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
@@ -409,7 +410,8 @@ export function SessionLive({ id }: { id: string }) {
     },
   });
   const refreshJobs = bg.refresh;
-  const [demo, setDemo] = useState<OpenDemo | null>(null);
+  // a demo of the plan opens as a tab of the workspace pane (the pane is there for every session but a new one)
+  const workspace = useWorkspaceOptional();
   // a demo goes into the queue a moment after the turn: the plan shows it as being made once the builder starts
   const building = bg.jobs.some((j) => j.kind === "agent.viz");
   useEffect(() => {
@@ -966,8 +968,7 @@ export function SessionLive({ id }: { id: string }) {
         </div>
       </div>
 
-      <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={setDemo} />
-      {demo && <DemoPanel demo={demo} onClose={() => setDemo(null)} />}
+      <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={(d) => workspace?.open({ kind: "demo", id: d.requestId, title: d.title })} />
 
       <div className="px-4 pb-4 md:px-7 md:pb-5">
         {teacherStatusKey && (
@@ -1101,7 +1102,7 @@ function StudentLine({
         aria-label={tx.session.you}
         className="max-w-[85%] min-w-0 rounded-[1rem] border border-seam bg-cloth-hover px-4 py-2.5 whitespace-pre-wrap text-paper [overflow-wrap:anywhere]"
       >
-        {text}
+        <StudentText text={text} />
       </p>
       {files?.length ? <SentFiles files={files} /> : null}
       {onRetry && retryLabel && (

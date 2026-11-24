@@ -14,6 +14,9 @@ import { PlanGraph } from "./plan-graph";
 import { QuestionBlock, type Answer } from "./question-block";
 import { RichText } from "./rich-text";
 import { useSoon } from "./soon";
+import { SentFiles } from "./attachments";
+import { DemoCard, NoteRefCard } from "./workspace/doc-cards";
+import { StudentText } from "./workspace/student-text";
 import { StateDot } from "./topic-card";
 
 /** Колонка текста — мера страницы; справа на широком экране — поля с планом */
@@ -200,9 +203,7 @@ function TurnView({
   const tx = useT();
   const { dayLabel } = useFmt();
   if (turn.kind === "student") {
-    return (
-      <StudentLine id={turn.id} text={turn.text} />
-    );
+    return <StudentLine id={turn.id} text={turn.text} files={turn.files} />;
   }
   if (turn.kind === "question") {
     return <QuestionBlock id={turn.id} num={turn.num} prompt={turn.prompt} options={turn.options} answer={answer} onAnswer={onAnswer} />;
@@ -220,6 +221,12 @@ function TurnView({
         </button>
       )}
       <RichText text={turn.text} />
+      {(turn.demo || turn.note) && (
+        <div className="mt-4 flex flex-col gap-2">
+          {turn.demo && <DemoCard id={turn.demo.id} title={turn.demo.title} mock />}
+          {turn.note && <NoteRefCard id={turn.note.id} title={turn.note.title} preview={turn.note.preview} />}
+        </div>
+      )}
       {turn.thinking && (
         <details className="group mt-4">
           <summary className="caps flex min-h-10 w-fit cursor-pointer list-none items-center gap-1.5 rounded-control text-paper-dim transition-colors duration-(--dur-s) ease-out hover:text-paper [&::-webkit-details-marker]:hidden">
@@ -260,18 +267,19 @@ function NewSession() {
   );
 }
 
-/** Реплика студента — контурный пузырь справа у края колонки */
-function StudentLine({ id, text }: { id?: string; text: string }) {
+/** Реплика студента — контурный пузырь справа у края колонки; файлы сообщения — под ним */
+function StudentLine({ id, text, files }: { id?: string; text: string; files?: { id: string; name: string }[] }) {
   const tx = useT();
   return (
-    <div id={id} className="flex scroll-mt-16 justify-end">
+    <div id={id} className="flex scroll-mt-16 flex-col items-end">
       <p
         role="group"
         aria-label={tx.session.you}
         className="max-w-[85%] min-w-0 rounded-[1rem] border border-seam bg-cloth-hover px-4 py-2.5 whitespace-pre-wrap text-paper [overflow-wrap:anywhere]"
       >
-        {text}
+        <StudentText text={text} />
       </p>
+      {files?.length ? <SentFiles files={files} /> : null}
     </div>
   );
 }
