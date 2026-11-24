@@ -743,8 +743,9 @@ class Settings(BaseSettings):
     # Files the learner attached to messages of the session (`message.sent.material_ids`): the
     # teacher gets the text of the last `material_attached_files` of them straight from the stored
     # pages, no matter whether the graph work on the material is done; at most
-    # `material_attached_chars` characters in all (the rest of a long file is found by the search).
-    material_attached_files: int = Field(default=3, ge=1)
+    # `material_attached_chars` characters in all, shared fairly between the files (a short file
+    # leaves its unused share to the others; the rest of a long file is found by the search).
+    material_attached_files: int = Field(default=15, ge=1)
     material_attached_chars: int = Field(default=12000, ge=500)
     # WP20.2 (Т-§3.4.5 «около 1–2 КБ», Т-§4.3 «параллельно для больших материалов»;
     # Phase 4 decision D-C-201): chunk size in characters, chunks per `material_parser` call,

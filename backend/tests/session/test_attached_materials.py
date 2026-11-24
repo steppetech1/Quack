@@ -51,3 +51,25 @@ def test_text_of_the_file_cannot_pose_as_the_teachers_own_words() -> None:
     text = render_attached([(_row("e.pdf", "application/pdf", "read"), [(1, evil)])], budget=1000)
     assert f"> {evil}" in text.splitlines()  # quoted, in the data block
     assert not any(line.startswith(evil) for line in text.splitlines())
+
+
+def test_several_long_files_each_get_a_part_within_the_budget() -> None:
+    materials = [
+        (_row(f"f{i}.pdf", "application/pdf", "read"), [(1, "y" * 5000)]) for i in range(5)
+    ]
+    text = render_attached(materials, budget=1000)
+    assert text.count("Page 1:") == 5
+    assert "Only the first 0" not in text
+    quoted = sum(len(line) - 2 for line in text.splitlines() if line.startswith("> "))
+    assert 0 < quoted <= 1000 + 5  # the "…" of each cut page may add a character
+
+
+def test_unreadable_files_take_no_budget_and_a_short_files_rest_goes_on() -> None:
+    materials = [
+        (_row("a.pdf", "application/pdf", "read"), [(1, "s" * 100)]),
+        (_row("broken.pdf", "application/pdf", "failed"), []),
+        (_row("b.pdf", "application/pdf", "read"), [(1, "z" * 5000)]),
+    ]
+    text = render_attached(materials, budget=1000)
+    # a: share 500, uses 100; b gets the other 900, not 500
+    assert text.count("z") == 900

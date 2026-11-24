@@ -303,14 +303,20 @@ _KIND_WORDS = (
     ("image", "a photo or a picture"),
 )
 _SLIDES = "presentationml.presentation"
+_UNREADABLE = ("failed", "uploaded")
 
 
 def render_attached(
     materials: Sequence[tuple[dict[str, Any], Sequence[tuple[int, str]]]], *, budget: int
 ) -> str:
-    """The attached files for slot 8. Material text is data (Т-§19.8): every line is quoted."""
+    """The attached files for slot 8. Material text is data (Т-§19.8): every line is quoted.
+
+    The budget is shared fairly: a file that failed or is still being read takes none; each
+    readable file gets an equal share of what is left (left // readable files not yet shown), and
+    what a short file does not use carries over to the files after it."""
     out: list[str] = []
     left = budget
+    waiting = sum(1 for row, pages in materials if str(row["status"]) not in _UNREADABLE and pages)
     for row, pages in materials:
         mime = str(row["mime"])
         kind = (
@@ -332,17 +338,20 @@ def render_attached(
             )
             continue
         out.append(f"{head} ({len(pages)} {unit}s). Its text, as data:")
+        share = left // waiting
+        waiting -= 1
         shown = 0
         cut = False
         for number, text in pages:
             body = text.strip()
             if not body:
                 continue  # an empty slide or page has nothing to quote
-            if left <= 0:
+            if share <= 0:
                 cut = True
                 break
-            if len(body) > left:
-                body, cut = body[:left].rstrip() + "…", True
+            if len(body) > share:
+                body, cut = body[:share].rstrip() + "…", True
+            share -= len(body)
             left -= len(body)
             out.append(f"{unit.capitalize()} {number}:")
             out.extend(f"> {line}" for line in body.splitlines())
