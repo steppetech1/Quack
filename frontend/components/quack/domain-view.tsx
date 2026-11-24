@@ -16,6 +16,8 @@ import { Composer } from "./composer";
 import { DomainGraph, type GraphHandle } from "./domain-graph";
 import { DomainTree } from "./domain-tree";
 import { LayeredGraph } from "./graph/layered-graph";
+import { DomainJobsCorner } from "./live/domain-jobs-corner";
+import { useDomainJobs } from "./live/use-domain-jobs";
 import { NumText } from "./num-text";
 import { EmptyDomain } from "./empty-domain";
 import { TodayCards } from "./today-cards";
@@ -94,6 +96,8 @@ export function DomainView() {
   const [query, setQuery] = useState("");
   const [openTopic, setOpenTopic] = useState<string | null>(null);
   const graph = useRef<GraphHandle>(null);
+  // agents that grow the graph from the files of this subject (bottom right); while they work, new nodes pop in
+  const jobs = useDomainJobs(domain.id);
 
   useEffect(() => {
     const title = view === "canvases" ? tx.meta.canvasesTitle(domain.title) : tx.meta.title(domain.title);
@@ -146,6 +150,13 @@ export function DomainView() {
   // Hovering a card lights its topic (or hub) on the graph
   const [hot, setHot] = useState<TodayRec | null>(null);
   const highlight = useMemo(() => (hot ? { topicIds: hot.topicId ? [hot.topicId] : [], hubIds: hot.hubId ? [hot.hubId] : [] } : undefined), [hot]);
+
+  // A subject that had no graph when it was opened: when the graph first shows up (files being read), its first nodes pop in too
+  // (decided once the backend has answered about the graph, so a graph that is only still loading does not count as empty)
+  const graphKnown = !API_MODE || !!data.graphSettled[domain.id];
+  const [emptyOnEntry, setEmptyOnEntry] = useState<{ id: string; empty: boolean | null }>({ id: domain.id, empty: graphKnown ? !hasGraph : null });
+  if (emptyOnEntry.id !== domain.id) setEmptyOnEntry({ id: domain.id, empty: graphKnown ? !hasGraph : null });
+  else if (emptyOnEntry.empty === null && graphKnown) setEmptyOnEntry({ id: domain.id, empty: !hasGraph });
 
   const [seenDomain, setSeenDomain] = useState(domain.id);
   if (seenDomain !== domain.id) {
@@ -208,9 +219,10 @@ export function DomainView() {
             <CanvasesList query={query} onResetQuery={() => setQuery("")} />
           ) : hasGraph ? (
             <>
-              <div className="hidden min-h-0 flex-1 md:flex">
+              <div className="relative hidden min-h-0 flex-1 md:flex">
+                <DomainJobsCorner rows={jobs.rows} where="graph" />
                 {model ? (
-                  <LayeredGraph key={domain.id} ref={graph} model={model} domain={domain} highlight={highlight} />
+                  <LayeredGraph key={domain.id} ref={graph} model={model} domain={domain} highlight={highlight} popFirst={emptyOnEntry.empty === true && jobs.rows.length > 0} />
                 ) : (
                   <DomainGraph key={domain.id} ref={graph} domain={domain} mode={graphMode} onModeChange={setGraphMode} />
                 )}
@@ -227,7 +239,8 @@ export function DomainView() {
         </div>
       </div>
 
-      <div className="px-4 pb-4 md:px-7 md:pb-5">
+      <div className="relative px-4 pb-4 md:px-7 md:pb-5">
+        <DomainJobsCorner rows={jobs.rows} where="input" className={hasGraph && view === "graph" ? "md:hidden" : undefined} />
         <Composer label={tx.domain.composerLabel(domain.title)} onSend={(text, files) => startSession(text, null, files)} />
       </div>
     </>
