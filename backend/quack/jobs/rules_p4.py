@@ -20,6 +20,7 @@ from quack.config import Settings
 from quack.events import registry
 from quack.events.event_types import TurnCommitted
 from quack.events.log import StoredEvent
+from quack.events.service_turns import is_service_event
 
 type PriorityClass = Literal["P1", "P2", "P3"]
 
@@ -300,8 +301,8 @@ def _turn_committed(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
 def _turn_titled(event: StoredEvent, _s: Settings, _p: Any) -> list[JobPlan]:
     """The name of the session: one job per session (its key ends with the session), planned by
     the first committed turn; the later turns hit the same key and add nothing."""
-    if event.session_id is None:
-        return []
+    if event.session_id is None or is_service_event(event.type, event.payload):
+        return []  # a `/skill-creator` turn names nothing; the first learning turn does
     return [_plan(event, "session.title", key_tail=str(event.session_id))]
 
 

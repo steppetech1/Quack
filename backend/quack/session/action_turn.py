@@ -210,6 +210,7 @@ class ApiTurnPorts:
             answered=setup.answered,
             learner_texts=setup.learner_texts,
             learner_timezone=setup.learner_timezone,
+            service=setup.assembled.service,
         )
         commit_started = now_ns()
         seq = await commit_turn(self._db, batch, learner_id=self._learner_id, redis=self._redis)

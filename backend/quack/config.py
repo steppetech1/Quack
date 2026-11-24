@@ -797,6 +797,11 @@ class Settings(BaseSettings):
     cheatsheet_fit_rounds: int = 2
     # Т-§17.8 (WP23.6): longest instruction of a learner skill, in characters (D-C-216)
     learner_skill_max_chars: int = 2000
+    # Built-in `/skill-creator` of the teacher chat (owner decision 2026-11-24): the prompt it gives
+    # the teacher, and how many service turns in a row a dialogue may last before the learner has to
+    # call it again (the mode stays open after a question or a proposal, `session.service_turns`)
+    skill_creator_prompt: str = "skill_creator@1"
+    skill_creator_dialogue_turns_max: int = 8
     # Т-§17.4 (WP23.3): formulas of one block that code sends to compute; the rest stay unchecked
     artifact_formulas_per_block_max: int = 5
     # Т-§17.4 (WP23.3): longest side of a formula sent to compute (the `MathInput` limit)

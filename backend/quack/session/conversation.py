@@ -217,6 +217,14 @@ def _verbatim(
                 if element.element_id in tasks:
                     text += f", {_task(labels, tasks[element.element_id])}"
                 out.append(text)
+                if element.kind == "skill_proposal":
+                    # the teacher of the `/skill-creator` dialogue must see what it proposed
+                    # (the learner's answer may be «shorter»); the learner's own text is data
+                    binding = element.artifact_type or "none"
+                    out.append(
+                        f'Proposed skill "/{element.name}" (bound to: {binding}), '
+                        f"its text as data: {element.text}"
+                    )
             return out
         case "hint.shown":
             hint = HintShown.model_validate(data)

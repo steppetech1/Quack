@@ -29,6 +29,7 @@ from psycopg.types.json import Jsonb
 from quack.artifacts.documents import ArtifactKind
 from quack.db import Db
 from quack.events.errors import IdempotencyConflictError
+from quack.events.service_turns import RESERVED_SKILL_NAMES
 
 NAME_PATTERN = re.compile(r"^[\w-]{1,40}$")
 ARTIFACT_TYPES: tuple[str, ...] = get_args(ArtifactKind.__value__)
@@ -114,6 +115,12 @@ def _bindings(artifact_types: tuple[str, ...]) -> Jsonb:
     return Jsonb({"artifact_types": list(artifact_types)})
 
 
+def _check_not_reserved(name: str) -> None:
+    """A built-in command of the chat (`/skill-creator`) is no name for a learner skill."""
+    if name in RESERVED_SKILL_NAMES:
+        raise SkillConflict(f"the name /{name} is a built-in command of the chat")
+
+
 async def _lock(db: Db, learner_id: UUID) -> None:
     await db.execute(_LOCK, {"scope": f"learner_skills:{learner_id}"})
 
@@ -164,6 +171,7 @@ async def create_skill(
     returns the skill, with another one — `IdempotencyConflictError` (409, T-E2)."""
     skill_id = uuid5(_NAMESPACE, f"{learner_id}:{idempotency_key}")
     async with db.transaction():
+        _check_not_reserved(name)
         await _lock(db, learner_id)
         first = await db.fetch_one(_FIRST_ONE, {"learner_id": learner_id, "skill_id": skill_id})
         if first is not None:
@@ -206,6 +214,8 @@ async def update_skill(
         await _lock(db, learner_id)
         current = await get_skill(db, learner_id=learner_id, skill_id=skill_id)
         new_name = current.name if name is None else name
+        if new_name != current.name:
+            _check_not_reserved(new_name)
         new_text = current.instruction if instruction is None else instruction
         new_types = current.artifact_types if artifact_types is None else artifact_types
         if (new_name, new_text, set(new_types)) == (

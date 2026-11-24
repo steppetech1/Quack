@@ -247,6 +247,13 @@ class ReferenceCardElementRecord(_Element):
     items: list[ReferenceItemRecord]
 
 
+class SkillProposalElementRecord(_Element):
+    kind: Literal["skill_proposal"]
+    name: str
+    text: str
+    artifact_type: Literal["notes", "cards", "cheatsheet"] | None
+
+
 type ElementRecord = Annotated[
     ChoiceElementRecord
     | WhyChoiceElementRecord
@@ -260,7 +267,8 @@ type ElementRecord = Annotated[
     | TimedQuizElementRecord
     | VisualizationElementRecord
     | MaterialLinkElementRecord
-    | ReferenceCardElementRecord,
+    | ReferenceCardElementRecord
+    | SkillProposalElementRecord,
     Field(discriminator="kind"),
 ]
 

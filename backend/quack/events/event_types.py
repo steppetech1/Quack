@@ -209,7 +209,12 @@ class TurnCommitted(EventPayload):
     `timings` (owner decision 2026-11-19): the stage timings of the turn, milliseconds and counts
     by name (`admit_ms`, `assemble_total_ms`, `first_status_ms`, `ttft_ms`, `total_ms`, parts of
     the assembly, `model_attempts`, `guard_retries`, `tool_steps`), numbers only. Optional with an
-    empty default, no new `schema_version`: the events written before it read as `{}`."""
+    empty default, no new `schema_version`: the events written before it read as `{}`.
+
+    `service` (owner decision 2026-11-24): the built-in command the turn answered
+    (`/skill-creator`); a service turn changes no plan, makes no task and gives no exposure, and the
+    readers of the journal skip it (`quack.events.service_turns`). Optional with a `null` default,
+    no new `schema_version`: the events written before it read as `null`."""
 
     action_seq: int
     text: str
@@ -224,6 +229,7 @@ class TurnCommitted(EventPayload):
     manifest_id: UUID
     guard_events: list[GuardEventRecord] = Field(default_factory=list)
     timings: dict[str, int] = Field(default_factory=dict)
+    service: Literal["skill_creator"] | None = None
 
 
 # --- verdicts ----------------------------------------------------------------------------

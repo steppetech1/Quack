@@ -23,6 +23,8 @@ _SEARCH = (
     "'canvas.line_committed', 'voice.transcribed', 'item.flagged_unclear', 'chunk.indexed', "
     "'artifact.updated') "
     "AND to_tsvector('english', payload ->> 'text') @@ plainto_tsquery('english', %(query)s) "
+    "AND payload ->> 'skill_invocation' IS DISTINCT FROM 'skill-creator' "
+    "AND payload ->> 'service' IS NULL "
     "AND (%(domain_id)s::uuid IS NULL OR domain_id = %(domain_id)s::uuid) "
     "ORDER BY ts_rank(to_tsvector('english', payload ->> 'text'), "
     "plainto_tsquery('english', %(query)s)) DESC, seq DESC "
