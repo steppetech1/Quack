@@ -1704,6 +1704,8 @@ export interface components {
         };
         /** CreateDomainRequest */
         CreateDomainRequest: {
+            /** About */
+            about?: string | null;
             /** Idempotency Key */
             idempotency_key: string;
             /** Name */
@@ -1711,6 +1713,8 @@ export interface components {
         };
         /** CreateDomainResponse */
         CreateDomainResponse: {
+            /** About */
+            about?: string | null;
             /**
              * Domain Id
              * Format: uuid
@@ -1809,6 +1813,8 @@ export interface components {
          * @description A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1).
          */
         DomainSummary: {
+            /** About */
+            about?: string | null;
             /**
              * Created At
              * Format: date-time

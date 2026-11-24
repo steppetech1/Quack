@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 /** Kinds whose result lives on the topic page, not in the session feed */
 const TOPIC_RESULT = new Set(["agent.artifact", "agent.topic_split", "agent.task_generation", "agent.solution_space"]);
 
-export type JobRow = { id: string; kind: string; state: "queued" | "running" | "done" | "failed"; count: number };
+/** `label`: a ready line of text (a file of a subject: «Reading lecture.pdf»); without it the line is named by `kind` */
+export type JobRow = { id: string; kind: string; state: "queued" | "running" | "done" | "failed"; count: number; label?: string };
 
 export function jobRows(jobs: SessionJob[], finished: FinishedJob[]): JobRow[] {
   const out = new Map<string, JobRow>();
@@ -65,7 +66,7 @@ export function JobsLines({ rows, topicId, compact, className }: { rows: JobRow[
     <section aria-label={s.jobsLabel} className={cn("text-small", className)}>
       <ul role="status" className="flex flex-col">
         {shown.map((r, i) => {
-          const text = s.jobDoing[r.kind] ?? s.jobDoingGeneric;
+          const text = r.label ?? s.jobDoing[r.kind] ?? s.jobDoingGeneric;
           const tag = r.state === "queued" ? s.jobTagQueued : r.state === "done" ? s.jobTagDone : r.state === "failed" ? s.jobTagFailed : null;
           return (
             <li key={r.id} className={cn("flex min-h-6 items-center gap-1.5", r.state === "running" ? "text-paper" : "text-paper-dim", r.state === "failed" && "text-st-confused")}>
