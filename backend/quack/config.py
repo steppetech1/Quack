@@ -762,6 +762,15 @@ class Settings(BaseSettings):
     material_seminar_tasks_max: int = Field(default=30, ge=1)
     material_scan_min_chars: int = Field(default=20, ge=0)
     material_scan_max_pages: int = Field(default=50, ge=1)
+    # A course uploaded at once is put into the graph in the order of upload (decision of
+    # 2026-11-24): the structure step of a material waits while an older material of the domain
+    # is still being read, for at most `material_order_wait_minutes` after that one was uploaded;
+    # it asks again in `material_order_retry_s`.
+    material_order_wait_minutes: int = Field(default=30, ge=0)
+    material_order_retry_s: int = Field(default=5, ge=1)
+    # The reconciliation finds its candidates in Neo4j: before each call the structure step waits
+    # up to this long for the projector to apply the nodes and vectors written before it.
+    material_projection_wait_s: float = Field(default=20.0, ge=0)
     # Т-§3.4.6, Т-§10.5: the reserve taken inside SEARCH before post-filters and the final k.
     vector_search_reserve: int = 30
     embedding_dim: int = 768
