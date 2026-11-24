@@ -588,6 +588,18 @@ def _misconception_described(event: StoredEvent, _s: Settings, p: Any) -> list[J
     return _embedding(event, "misconception", p.misconception_id, p.statement)
 
 
+def _topic_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+    """A topic is embedded by its name (decision of 2026-11-24 on the `[ПРОВЕРИТЬ]` of
+    Т-§3.4.2): without a vector the reconciliation does not see it and creates its twin."""
+    return _embedding(event, "topic", p.topic_id, p.name)
+
+
+def _skill_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+    """A skill is embedded by its name and summary (the same text as the structure step of a
+    material uses, `quack.ops.material_parse.node_text`)."""
+    return _embedding(event, "skill", p.skill_id, "\n".join((p.name, p.summary)).strip())
+
+
 RULES: tuple[RuleRow, ...] = (
     RuleRow("episode.closed", ("extract.episode",), "has_content", _episode_closed),
     RuleRow("task.closed", ("analyst.run",), "always", _task_closed),
@@ -697,12 +709,22 @@ RULES: tuple[RuleRow, ...] = (
         _misconception_described,
     ),
     RuleRow(
+        "topic.created", ("embedding.compute",), "always: the name of the topic", _topic_embedding
+    ),
+    RuleRow(
+        "topic.proposed", ("embedding.compute",), "always: the name of the topic", _topic_embedding
+    ),
+    RuleRow(
+        "skill.created",
+        ("embedding.compute",),
+        "always: the name and the summary of the skill",
+        _skill_embedding,
+    ),
+    RuleRow(
         "*",
         ("embedding.compute",),
-        "new topic, skill or evidence with text",
-        needs="topic and skill: which property is embedded (`name`, for a skill `summary` too) "
-        "is [ПРОВЕРИТЬ] in Т-§3.4.2 (D-A-117); evidence: its id is given by the projector, not "
-        "the event",
+        "new evidence with text",
+        needs="evidence: its id is given by the projector, not the event",
     ),
     RuleRow(
         "session.ended",

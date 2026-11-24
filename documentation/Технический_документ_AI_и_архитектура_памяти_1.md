@@ -614,8 +614,8 @@ Neo4j хранит понимание ученика: структуру его 
 | :-- | :-- | :-- |
 | Learner | Якорь всех запросов ученика | projectedSeq, projectorVersion |
 | Domain | Предмет ученика | name, status |
-| Topic | То, что ученик видит узлом на графе | name, origin (session, material, learner), status (proposed, active, hidden, off\_domain), displayState, displayReason, nearestDueAtMs (ближайший срок повторения её навыков, §8.6), visibility (shown, pale, hidden) — их считает проектор в фазе В по правилам §4.7 (П-2.2, П-2.3, П-3.2) |
-| Skill | Единица измерения: к нему крепятся свидетельства | name, summary, status, origin и состояние навыка (§3.4.4) |
+| Topic | То, что ученик видит узлом на графе | name, origin (session, material, learner), status (proposed, active, hidden, off\_domain), displayState, displayReason, nearestDueAtMs (ближайший срок повторения её навыков, §8.6), visibility (shown, pale, hidden) — их считает проектор в фазе В по правилам §4.7 (П-2.2, П-2.3, П-3.2); embedding (считается по name) |
+| Skill | Единица измерения: к нему крепятся свидетельства | name, summary, status, origin, embedding (считается по name и summary) и состояние навыка (§3.4.4) |
 | Hub | Экзамен, коллоквиум, курс | name, kind, deadlineAtMs, origin, status |
 | Evidence | Свидетельство | domainId, atMs (время действия ученика), level, outcome, assistance, hintStep, novelty, confidence, tier, weight, verification (code, model), delayed, solveTimeMs, gapType, quote, sourceSessionId, sessionDomainId, sourceSeq, derivedKind (direct, indirect, transfer), status (active, disputed, superseded), observationSeq, extractor, searchable, embedding |
 | Exposure | Показ | atMs, kind, approach, sourceSeq, sessionDomainId |

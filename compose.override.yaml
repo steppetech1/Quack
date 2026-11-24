@@ -11,6 +11,11 @@ services:
   redis:
     networks: [backend, local]
     ports: ["127.0.0.1:6379:6379"]
+  # Migrations come from the working tree like the Python code below, so recreating the database
+  # applies new migrations without rebuilding the backend image.
+  migrate:
+    volumes:
+      - ./backend/db:/app/db:ro
   api:
     ports: ["127.0.0.1:8000:8000"]
     volumes:

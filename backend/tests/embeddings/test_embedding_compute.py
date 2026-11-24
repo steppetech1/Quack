@@ -94,3 +94,30 @@ async def test_modal_down_writes_nothing(pg_db: Db, settings: Settings) -> None:
         )
     assert await _ready(pg_db, learner) == []
     assert await compute_embeddings(pg_db, client, learner_id=learner, nodes=[]) == []
+
+
+async def test_concurrent_writer_with_different_ulp_is_skipped(
+    pg_db: Db, settings: Settings
+) -> None:
+    """Two workers embedding the same node concurrently (e.g. `embedding.compute` and the
+    structure step) can get 1-ULP different float32 vectors from GPU batching: the second drops
+    the already-written node and still writes the remaining ones."""
+    learner = await create_learner(pg_db)
+    raced = EmbeddingNode("skill", uuid4(), "standard error")
+    fresh = EmbeddingNode("skill", uuid4(), "confidence interval")
+    base = FakeEmbeddingClient(settings.embedding_dim)
+
+    class _RacingClient(FakeEmbeddingClient):
+        async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+            # Another worker writes `raced` while our call is in flight, with a 1-ULP difference.
+            await compute_embeddings(pg_db, base, learner_id=learner, nodes=[raced])
+            vecs = await super().embed_documents(texts)
+            vecs[0][0] += 1e-6
+            return vecs
+
+    seqs = await compute_embeddings(
+        pg_db, _RacingClient(settings.embedding_dim), learner_id=learner, nodes=[raced, fresh]
+    )
+    assert len(seqs) == 1
+    ready = await _ready(pg_db, learner)
+    assert {r["payload"]["node_id"] for r in ready} == {str(raced.node_id), str(fresh.node_id)}

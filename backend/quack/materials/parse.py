@@ -56,7 +56,7 @@ from quack.graph.ids import QUACK_UUID_NS
 from quack.jobs import queue_p4
 from quack.jobs.rules_p4 import JobPlan
 from quack.jobs.runner import JobContext
-from quack.jobs.types import ClaimedJob, JobFailedPermanently
+from quack.jobs.types import ClaimedJob, JobDeferred, JobFailedPermanently
 from quack.llm.provider import ImageInput
 from quack.logging import get_logger
 from quack.storage.keys import material_page_key
@@ -81,8 +81,23 @@ HUB_NAME_FALLBACK = "Untitled material"
 ACTOR = "material_parser@1"
 
 _MATERIAL = (
-    "SELECT material_id, domain_id, session_id, object_key, mime, status FROM content.materials "
-    "WHERE learner_id = %(learner_id)s AND material_id = %(material_id)s"
+    "SELECT material_id, domain_id, session_id, object_key, mime, status, created_at "
+    "FROM content.materials WHERE learner_id = %(learner_id)s AND material_id = %(material_id)s"
+)
+# Older materials of the same domain that are still being read (upload order, decision of
+# 2026-11-24): the structure of a course goes into the graph lecture after lecture.
+_OLDER_PENDING = (
+    "SELECT count(*) AS n FROM content.materials WHERE learner_id = %(learner_id)s "
+    "AND domain_id = %(domain_id)s AND material_id <> %(material_id)s "
+    "AND status IN ('uploaded', 'read') AND created_at < %(created_at)s "
+    "AND created_at > now() - make_interval(mins => %(minutes)s)"
+)
+# The topic each skill lives in now: its latest `skill.created` / `skill.placed`.
+_SKILL_TOPICS = (
+    "SELECT DISTINCT ON (payload->>'skill_id') payload->>'skill_id' AS skill_id, "
+    "payload->>'topic_id' AS topic_id FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND type IN ('skill.created', 'skill.placed') AND payload->>'skill_id' = ANY(%(ids)s) "
+    "ORDER BY payload->>'skill_id', seq DESC"
 )
 _PAGES = (
     "SELECT page, text FROM content.material_pages "
@@ -267,6 +282,7 @@ class _Material:
     object_key: str
     mime: str
     status: str
+    created_at: datetime | None = None
 
 
 def _learner(job: ClaimedJob) -> UUID:
@@ -288,7 +304,41 @@ async def _load(db: Db, learner_id: UUID, material_id: UUID) -> _Material:
         object_key=row["object_key"],
         mime=row["mime"],
         status=row["status"],
+        created_at=row["created_at"],
     )
+
+
+async def _wait_for_older(ctx: JobContext, learner_id: UUID, material: _Material) -> None:
+    """Upload order (decision of 2026-11-24): while an older material of the domain is still
+    being read, this one waits, so a later lecture finds the skills of the earlier ones and the
+    hubs of a course stand in its order. A material uploaded more than
+    `material_order_wait_minutes` ago is not waited for (a stuck one must not hold the rest)."""
+    minutes = ctx.settings.material_order_wait_minutes
+    if minutes <= 0 or material.created_at is None:
+        return
+    row = await ctx.db.fetch_one(
+        _OLDER_PENDING,
+        {
+            "learner_id": learner_id,
+            "domain_id": material.domain_id,
+            "material_id": material.material_id,
+            "created_at": material.created_at,
+            "minutes": minutes,
+        },
+    )
+    if row is not None and int(row["n"]) > 0:
+        raise JobDeferred(ctx.settings.material_order_retry_s, "an older material goes first")
+
+
+async def _topics_of_skills(db: Db, learner_id: UUID, skill_ids: Sequence[UUID]) -> list[UUID]:
+    """The topics the skills live in, in the order of the skills, each once."""
+    if not skill_ids:
+        return []
+    rows = await db.fetch_all(
+        _SKILL_TOPICS, {"learner_id": learner_id, "ids": [str(i) for i in skill_ids]}
+    )
+    by_skill = {r["skill_id"]: r["topic_id"] for r in rows if r["topic_id"]}
+    return list(dict.fromkeys(UUID(by_skill[str(i)]) for i in skill_ids if str(i) in by_skill))
 
 
 async def _stored_pages(db: Db, learner_id: UUID, material_id: UUID) -> list[tuple[int, str]]:
@@ -937,6 +987,7 @@ async def structure_step(
     material = await _load(ctx.db, learner_id, UUID(str(job.payload["material_id"])))
     if material.status == STATUS_PARSED:
         return
+    await _wait_for_older(ctx, learner_id, material)
     pages = await _stored_pages(ctx.db, learner_id, material.material_id)
     chunks = split_chunks(ctx.settings, material.material_id, pages)
     marks = {str(m["chunk_id"]): m for m in job.payload.get("chunks", [])}
@@ -979,7 +1030,11 @@ async def structure_step(
         "source_refs": refs,
     }
     events: list[NewEvent] = []
-    topic_ids = list(
+    # The hub of the material is for repeating this material: the topics its taught skills live
+    # in (the builder may put them into topics other than the chunk's own, which then stays empty
+    # and is no use in a hub). Without a placed skill — the topics of the chunks, as before.
+    taught = ids([n for c in chunks for n in marks.get(str(c.chunk_id), {}).get("teaches", [])])
+    topic_ids = await _topics_of_skills(ctx.db, learner_id, taught) or list(
         dict.fromkeys(found[("topic", t.name)] for t in topics if ("topic", t.name) in found)
     )
     if topic_ids:
