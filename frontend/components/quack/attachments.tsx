@@ -9,8 +9,11 @@ import { cn } from "@/lib/utils";
 import { useMaterialUpload } from "./live/use-material-upload";
 import { useWorkspaceOptional } from "./workspace/workspace-context";
 
-/** How many files one message carries (the teacher reads the last few of a session, `material_attached_files`) */
-export const MAX_ATTACHED = 3;
+/**
+ * How many files one message carries (as many as the new-subject card). Every file goes to the subject and is searchable; the
+ * teacher reads the full text of the last few right away (`material_attached_files` on the backend, 3 by default).
+ */
+export const MAX_ATTACHED = 15;
 /** The status of a file that was just uploaded is asked again this often: its text is stored within seconds */
 const READ_POLL_MS = 2000;
 
@@ -124,9 +127,16 @@ const CHIP =
 export function AttachmentChips({ items, onRemove }: { items: Attachment[]; onRemove: (key: string) => void }) {
   const tx = useT();
   const t = tx.composer;
+  const box = useRef<HTMLUListElement>(null);
+  // a new chip lands at the end: keep it in view when the list scrolls
+  useEffect(() => {
+    const el = box.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [items.length]);
   if (!items.length) return null;
+  // max height = 2.5 rows of chips (34px each, 6px gap, 4px padding): a half-seen third row shows the list scrolls
   return (
-    <ul aria-label={t.attachedFiles} className="mb-1.5 flex flex-wrap gap-1.5 px-1 pt-1">
+    <ul ref={box} aria-label={t.attachedFiles} className="mb-1.5 flex max-h-[6.5rem] flex-wrap content-start gap-1.5 overflow-y-auto overscroll-contain p-1">
       {items.map((a) => (
         <li key={a.key} className={cn(CHIP, a.state === "failed" && "border-st-confused/60 text-st-confused")}>
           {a.state === "uploading" || a.state === "reading" ? (
