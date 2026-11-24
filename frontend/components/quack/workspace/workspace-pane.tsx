@@ -8,6 +8,7 @@ import { DemoDoc } from "./doc-demo";
 import { MaterialDoc } from "./doc-material";
 import { NoteDoc } from "./doc-note";
 import { SkillDoc } from "./doc-skill";
+import { SkillDraftDoc } from "./doc-skill-draft";
 import { WorkspaceProvider, useWorkspace, type DocKind, type PaneMode, type WorkspaceDoc } from "./workspace-context";
 
 /** From this width of the session area the pane stands beside the chat; narrower it is a sheet over it; on a phone, a layer over everything */
@@ -15,7 +16,7 @@ const SIDE_MIN_PX = 1100;
 /** Below the `md` breakpoint (the left panel is a drawer there) the screen is a phone */
 const PHONE_MAX_PX = 768;
 
-const KIND_ICON: Record<DocKind, typeof Play> = { demo: Play, material: FileText, skill: Slash, note: BookOpen };
+const KIND_ICON: Record<DocKind, typeof Play> = { demo: Play, material: FileText, skill: Slash, note: BookOpen, skill_draft: Slash };
 
 const modeFor = (width: number): PaneMode => (window.innerWidth < PHONE_MAX_PX ? "full" : width >= SIDE_MIN_PX ? "side" : "sheet");
 
@@ -77,6 +78,8 @@ function DocBody({ doc }: { doc: WorkspaceDoc }) {
       return <MaterialDoc doc={doc} />;
     case "skill":
       return <SkillDoc doc={doc} />;
+    case "skill_draft":
+      return <SkillDraftDoc doc={doc} />;
     case "note":
       return <NoteDoc doc={doc} />;
   }

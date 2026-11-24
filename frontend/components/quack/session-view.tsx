@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { SessionData, Turn } from "@/lib/mock/types";
 import { scrollToId } from "@/lib/scroll";
+import { SKILL_CREATOR, skillInvocation } from "@/lib/skills";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
 import { Composer } from "./composer";
@@ -13,6 +14,7 @@ import { IntervalDemo } from "./interval-demo";
 import { PlanGraph } from "./plan-graph";
 import { QuestionBlock, type Answer } from "./question-block";
 import { RichText } from "./rich-text";
+import { SkillProposalCard, type Proposal } from "./skill-proposal";
 import { useSoon } from "./soon";
 import { SentFiles } from "./attachments";
 import { DemoCard, NoteRefCard } from "./workspace/doc-cards";
@@ -27,9 +29,54 @@ export function SessionView({ id }: { id: string }) {
   return id === "new" ? <NewSession /> : <RadiusSession data={radiusSession} />;
 }
 
+/** The mock of the built-in `/skill-creator` talk: what the learner and the teacher said, in order */
+type Talk = { id: string; role: "student" | "teacher"; text: string; proposal?: Proposal };
+
 function RadiusSession({ data }: { data: SessionData }) {
   const tx = useT();
   const soon = useSoon();
+  const mock = tx.skillCreatorMock;
+  const hit = (words: string, text: string) => new RegExp(words, "i").test(text);
+  const [talk, setTalk] = useState<Talk[]>([]);
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const stage = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+
+  // Without the backend `/skill-creator` is a script: one question, then a proposal; «shorter», «cards» change it, «thanks» ends it
+  const send = (text: string) => {
+    const call = skillInvocation(text);
+    if (call !== SKILL_CREATOR && !(creatorOpen && !call)) return soon(tx.composer.soonReply);
+    const n = talk.length;
+    setTalk((all) => [...all, { id: `m${n}`, role: "student", text }]);
+    setTyping(true);
+    const reply = (t: string, p?: Omit<Proposal, "element_id">): Talk => ({ id: `m${n + 1}`, role: "teacher", text: t, proposal: p && { ...p, element_id: `p${n + 1}` } });
+    const binding = (): Proposal["artifact_type"] => (hit(mock.cardsRe, text) ? "cards" : hit(mock.cheatRe, text) ? "cheatsheet" : "notes");
+    let next: Talk;
+    if (call === SKILL_CREATOR && stage.current === 0) {
+      stage.current = 1;
+      next = reply(mock.ask);
+    } else if (stage.current === 1) {
+      stage.current = 2;
+      next = reply(mock.first, { name: mock.name, text: mock.text, artifact_type: binding() });
+    } else if (hit(mock.byeRe, text)) {
+      stage.current = 0;
+      setCreatorOpen(false);
+      next = reply(mock.bye);
+    } else {
+      const short = hit(mock.shorterRe, text);
+      const cards = hit(mock.cardsRe, text);
+      next = reply(short ? mock.shorter : cards ? mock.cards : mock.again, { name: mock.name, text: short ? mock.textShort : mock.text, artifact_type: cards ? "cards" : "notes" });
+    }
+    if (stage.current > 0) setCreatorOpen(true);
+    timer.current = setTimeout(() => {
+      setTyping(false);
+      setTalk((all) => [...all, next]);
+      requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
+    }, 800);
+    requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
+  };
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [replied, setReplied] = useState(false);
   const [planOpen, setPlanOpen] = useState(true);
@@ -142,6 +189,27 @@ function RadiusSession({ data }: { data: SessionData }) {
             </p>
           )}
 
+          {talk.map((m) =>
+            m.role === "student" ? (
+              <StudentLine key={m.id} id={m.id} text={m.text} />
+            ) : (
+              <article key={m.id} id={m.id} aria-label={tx.session.teacherTurn} className="text-paper">
+                <RichText text={m.text} />
+                {m.proposal && (
+                  <div className="mt-4">
+                    <SkillProposalCard turnSeq={1000 + Number(m.id.slice(1))} proposal={m.proposal} />
+                  </div>
+                )}
+              </article>
+            ),
+          )}
+          {typing && (
+            <p role="status" className="flex items-center gap-2 text-small text-paper-dim">
+              {tx.session.teacherThinking}
+              <Dots />
+            </p>
+          )}
+
           {replied && answer && (
             <article id="reply" aria-label={tx.session.teacherReply} className="scroll-mt-6 text-paper">
               {answer.thought && (
@@ -183,6 +251,8 @@ function RadiusSession({ data }: { data: SessionData }) {
           submitText={tx.session.send}
           primary={!questionOpen}
           compact={questionOpen}
+          onSend={send}
+          creator
         />
       </div>
     </div>

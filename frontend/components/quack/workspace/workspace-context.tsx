@@ -1,5 +1,6 @@
 "use client";
 
+import type { Draft } from "@/lib/skill-drafts";
 import { createContext, useCallback, useContext, useMemo, useState, useSyncExternalStore } from "react";
 
 /**
@@ -8,7 +9,7 @@ import { createContext, useCallback, useContext, useMemo, useState, useSyncExter
  * The pane itself is `workspace-pane.tsx`; what it draws for each kind is `doc-*.tsx`.
  */
 
-export type DocKind = "demo" | "material" | "skill" | "note";
+export type DocKind = "demo" | "material" | "skill" | "note" | "skill_draft";
 
 type Base = {
   /** The id of the thing itself (the demo's request id, a material id, a skill id, a topic or hub id): unique within its kind */
@@ -21,6 +22,8 @@ export type DocInput =
   | (Base & { kind: "demo"; /** mock mode: the page is drawn from the app itself, there is no backend to ask */ mock?: boolean })
   | (Base & { kind: "material" })
   | (Base & { kind: "skill" })
+  /** a skill the teacher proposed in the chat, opened beside it: `id` is the key of the draft (`lib/skill-drafts.ts`), `base` the proposal */
+  | (Base & { kind: "skill_draft"; base: Draft })
   | (Base & { kind: "note"; noteKind: "topic" | "hub"; /** the full page of the same notes */ href?: string });
 
 export type WorkspaceDoc = DocInput & { key: string };
@@ -67,7 +70,7 @@ export function useWorkspace() {
 // ── what is remembered: sessionStorage by session id, with a copy in memory when the storage is not there ──────────────
 
 type Saved = { docs: DocInput[]; active: string | null };
-const KINDS = new Set<string>(["demo", "material", "skill", "note"]);
+const KINDS = new Set<string>(["demo", "material", "skill", "note", "skill_draft"]);
 const storageKey = (sessionId: string) => `quack.workspace.${sessionId}`;
 const memory = new Map<string, string>();
 const listeners = new Set<() => void>();
@@ -111,6 +114,11 @@ function parse(raw: string | null): Saved {
       if (x.kind === "note") {
         if (x.noteKind !== "topic" && x.noteKind !== "hub") continue;
         docs.push({ kind: "note", id: x.id, title: x.title, noteKind: x.noteKind, href: typeof x.href === "string" ? x.href : undefined });
+      } else if (x.kind === "skill_draft") {
+        const b = (x as { base?: Partial<Draft> }).base;
+        if (!b || typeof b.name !== "string" || typeof b.text !== "string") continue;
+        const binding = b.binding === "notes" || b.binding === "cards" || b.binding === "cheat" ? b.binding : null;
+        docs.push({ kind: "skill_draft", id: x.id, title: x.title, base: { name: b.name, text: b.text, binding } });
       } else if (x.kind === "demo") {
         docs.push({ kind: "demo", id: x.id, title: x.title, mock: x.mock === true ? true : undefined });
       } else {

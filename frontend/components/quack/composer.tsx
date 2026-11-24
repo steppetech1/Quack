@@ -3,6 +3,7 @@
 import { Loader2, Mic, Paperclip, PenLine, Square, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useId, useRef, useState } from "react";
+import { SKILL_CREATOR } from "@/lib/skills";
 import { API_MODE } from "@/lib/api/client";
 import { MATERIAL_ACCEPT } from "@/lib/api/materials";
 import { useT } from "@/lib/i18n/provider";
@@ -37,6 +38,8 @@ type Props = {
   voice?: VoiceProps;
   /** Пиксельная утка сидит на верхней кромке поля (в сессии) */
   duck?: boolean;
+  /** The chat of a session: the menu `/` always offers the built-in `/skill-creator` (it is not a learner skill) */
+  creator?: boolean;
 };
 
 export function Composer({
@@ -50,6 +53,7 @@ export function Composer({
   chip,
   voice,
   duck = false,
+  creator = false,
 }: Props) {
   const t = useT();
   placeholder ??= t.composer.placeholder;
@@ -74,8 +78,15 @@ export function Composer({
 
   const match = SLASH.exec(value.slice(0, caret));
   const query = match?.[2].toLowerCase() ?? "";
+  // the built-in command comes first; a learner skill of the same name (an old one) never shadows it
+  const builtin = creator && match && SKILL_CREATOR.includes(query) ? [{ id: `builtin-${SKILL_CREATOR}`, command: SKILL_CREATOR, label: t.composer.skillCreatorHint }] : [];
   const found = match
-    ? skills.filter((s) => s.enabled && s.command && (s.command.includes(query) || s.name.toLowerCase().includes(query)))
+    ? [
+        ...builtin,
+        ...skills
+          .filter((s) => s.enabled && s.command && s.command !== SKILL_CREATOR && (s.command.includes(query) || s.name.toLowerCase().includes(query)))
+          .map((s) => ({ id: s.id, command: s.command!, label: `${s.name}. ${s.text}` })),
+      ]
     : [];
   const open = !!match && !dismissed;
   const hasFiles = files.ready.length > 0;
@@ -100,7 +111,7 @@ export function Composer({
     });
   };
 
-  const choose = (i: number) => (i < found.length ? pick(found[i].command!) : router.push("/settings?tab=skills"));
+  const choose = (i: number) => (i < found.length ? pick(found[i].command) : router.push("/settings?tab=skills"));
 
   const grow = () => {
     const el = ref.current;
@@ -148,12 +159,12 @@ export function Composer({
               onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => {
                 e.preventDefault();
-                pick(s.command!);
+                pick(s.command);
               }}
               className={cn("cursor-pointer rounded-option px-3 py-2", cur === i && "bg-cloth-hover")}
             >
               <span className="num text-body text-paper">/{s.command}</span>
-              <span className="mt-0.5 line-clamp-1 block text-small text-paper-dim">{s.name}. {s.text}</span>
+              <span className="mt-0.5 line-clamp-1 block text-small text-paper-dim">{s.label}</span>
             </li>
           ))}
           {found.length === 0 && <li role="presentation" className="px-3 py-2 text-small text-paper-dim">{t.composer.noCommands}</li>}

@@ -16,6 +16,7 @@ import { useSendQueue } from "@/lib/use-send-queue";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { Composer } from "../composer";
+import { SkillProposalCard, type Proposal } from "../skill-proposal";
 import { RichText } from "../rich-text";
 import { PRIMARY_BTN, AREA } from "../stubs/stub-parts";
 import { SentFiles, type FileRef } from "../attachments";
@@ -1008,6 +1009,7 @@ export function SessionLive({ id }: { id: string }) {
           sessionId={id}
           voice={{ onClip: sendVoice, disabled: busy }}
           duck
+          creator
         />
       </div>
     </div>
@@ -1023,6 +1025,8 @@ function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean;
   /** A live card (its turn is not committed yet): the same box as the committed one, so nothing moves at commit, but it cannot be answered */
   const inactive = el.turnSeq === null;
   const viz = e.kind === "visualization" ? e : null;
+  // the teacher's draft of a skill (the built-in `/skill-creator`): the learner edits and saves it right here
+  if (e.kind === "skill_proposal") return <SkillProposalCard turnSeq={el.turnSeq} proposal={el.element as unknown as Proposal} />;
   return (
     <section aria-label={tx.live.taskFromTeacher} aria-busy={inactive || undefined} className="rounded-[2px] border border-seam p-4">
       <p className="caps text-paper-dim">{e.kind === "task" ? tx.live.taskFromTeacher : e.kind.replace(/_/g, " ")}</p>

@@ -1409,6 +1409,7 @@
             "reference_card": "#/components/schemas/ReferenceCardElement",
             "scaffold": "#/components/schemas/ScaffoldElement",
             "short_answer": "#/components/schemas/ShortAnswerElement",
+            "skill_proposal": "#/components/schemas/SkillProposalElement",
             "task": "#/components/schemas/TaskElement",
             "timed_quiz": "#/components/schemas/TimedQuizElement",
             "visualization": "#/components/schemas/VisualizationElement",
@@ -1455,6 +1456,9 @@
           },
           {
             "$ref": "#/components/schemas/ReferenceCardElement"
+          },
+          {
+            "$ref": "#/components/schemas/SkillProposalElement"
           }
         ]
       },
@@ -4721,6 +4725,14 @@
         "title": "SignedOut",
         "type": "object"
       },
+      "SkillArtifactType": {
+        "enum": [
+          "notes",
+          "cards",
+          "cheatsheet"
+        ],
+        "type": "string"
+      },
       "SkillChange": {
         "additionalProperties": false,
         "description": "`before` is `None` for a skill that did not exist before the session; `after` is `None`\nwhen the skill is no longer read under this id (merged away).",
@@ -4805,6 +4817,48 @@
           "levels"
         ],
         "title": "SkillCodes",
+        "type": "object"
+      },
+      "SkillProposalElement": {
+        "additionalProperties": false,
+        "description": "Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision\n2026-11-24): a draft of a learner skill the learner may edit and save from the browser\n(`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the\nname and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it\nis bound to, or null.",
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillArtifactType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "skill_proposal",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "name",
+          "text",
+          "artifact_type"
+        ],
+        "title": "SkillProposalElement",
         "type": "object"
       },
       "SkillView": {

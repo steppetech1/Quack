@@ -1843,7 +1843,7 @@ export interface components {
             /** Seq */
             seq: number;
         };
-        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"];
+        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"] | components["schemas"]["SkillProposalElement"];
         /**
          * ElementFrame
          * @description `element {block_id, element}`: after its markup passed the code check.
@@ -3245,6 +3245,8 @@ export interface components {
              */
             status?: "signed_out";
         };
+        /** @enum {string} */
+        SkillArtifactType: "notes" | "cards" | "cheatsheet";
         /**
          * SkillChange
          * @description `before` is `None` for a skill that did not exist before the session; `after` is `None`
@@ -3276,6 +3278,28 @@ export interface components {
             gap_type?: components["schemas"]["GapType"] | null;
             /** Levels */
             levels: components["schemas"]["LevelCode"][];
+        };
+        /**
+         * SkillProposalElement
+         * @description Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision
+         *     2026-11-24): a draft of a learner skill the learner may edit and save from the browser
+         *     (`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the
+         *     name and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it
+         *     is bound to, or null.
+         */
+        SkillProposalElement: {
+            artifact_type: components["schemas"]["SkillArtifactType"] | null;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "skill_proposal";
+            /** Name */
+            name: string;
+            /** Text */
+            text: string;
         };
         /** SkillView */
         SkillView: {

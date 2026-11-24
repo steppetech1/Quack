@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { PILL } from "../page-parts";
 import { useSkills } from "../use-skills";
 import { DocScroll } from "./doc-scroll";
-import { useWorkspace, type WorkspaceDoc } from "./workspace-context";
+import { useWorkspaceOptional } from "./workspace-context";
 
 const BTN = "caps h-10 rounded-pill border border-seam px-5 text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon disabled:opacity-50";
 const DANGER = "caps h-10 rounded-pill border border-seam px-5 text-st-confused transition-colors duration-(--dur-s) ease-out hover:border-st-confused disabled:opacity-50";
@@ -15,12 +15,13 @@ const MAIN = "caps h-10 rounded-pill bg-ribbon px-5 text-on-ribbon transition-co
 
 /**
  * A skill of the learner: the command, what it is bound to and the instruction. The text can be changed and the skill
- * deleted (the same calls as in the settings; nothing creates a skill here).
+ * deleted (the same calls as in the settings; nothing creates a skill here). It is the read view of the settings tab too
+ * (there is no workspace pane there): `onGone` is called when the skill is deleted.
  */
-export function SkillDoc({ doc }: { doc: Extract<WorkspaceDoc, { kind: "skill" }> }) {
+export function SkillDoc({ doc, onGone }: { doc: { id: string }; onGone?: () => void }) {
   const tx = useT();
   const s = tx.workspace.skill;
-  const ws = useWorkspace();
+  const ws = useWorkspaceOptional();
   const { skills, loaded, save, remove } = useSkills();
   const skill = skills.find((x) => x.id === doc.id);
   const [mode, setMode] = useState<"view" | "edit" | "delete">("view");
@@ -64,7 +65,8 @@ export function SkillDoc({ doc }: { doc: Extract<WorkspaceDoc, { kind: "skill" }
     const err = await remove(skill.id, tx.live.serverError);
     setBusy(false);
     if (err) return setError(err);
-    ws.close(`skill:${skill.id}`);
+    ws?.close(`skill:${skill.id}`);
+    onGone?.();
   };
 
   return (
