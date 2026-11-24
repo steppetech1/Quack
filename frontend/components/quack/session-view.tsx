@@ -84,6 +84,8 @@ function RadiusSession({ data }: { data: SessionData }) {
   const scroller = useRef<HTMLDivElement>(null);
   const header = useRef<HTMLElement>(null);
   const [headerGone, setHeaderGone] = useState(false);
+  /** The whole chat area takes files dragged from the OS (the input box attaches them) */
+  const [chatEl, setChatEl] = useState<HTMLDivElement | null>(null);
 
   // Название сессии переезжает в колонтитул, когда шапка уходит из кадра
   useEffect(() => {
@@ -126,7 +128,7 @@ function RadiusSession({ data }: { data: SessionData }) {
   const planProps = { plan, progress, onJump: jump };
 
   return (
-    <div className="@container relative flex min-h-0 flex-1 flex-col">
+    <div ref={setChatEl} className="@container relative flex min-h-0 flex-1 flex-col">
       {/* Колонтитул: название сессии и фоновые агенты, не прокручивается */}
       <div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-seam-soft px-4 md:px-7">
         <p
@@ -253,6 +255,7 @@ function RadiusSession({ data }: { data: SessionData }) {
           compact={questionOpen}
           onSend={send}
           creator
+          dropZone={chatEl}
         />
       </div>
     </div>

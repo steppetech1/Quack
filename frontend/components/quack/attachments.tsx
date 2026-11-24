@@ -28,8 +28,15 @@ export type FileRef = { id: string; name: string };
 export function useAttachments(domainId: string, sessionId?: string) {
   const { send } = useMaterialUpload(domainId, sessionId, { quiet: true });
   const [items, setItems] = useState<Attachment[]>([]);
+  /** The same list, always current: two `add` calls in a row (two drops) must both see the chips the first one already made */
+  const list = useRef<Attachment[]>([]);
   const alive = useRef(true);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const commit = useCallback((next: Attachment[]) => {
+    list.current = next;
+    if (alive.current) setItems(next);
+  }, []);
 
   useEffect(() => {
     alive.current = true;
@@ -41,9 +48,10 @@ export function useAttachments(domainId: string, sessionId?: string) {
     };
   }, []);
 
-  const patch = useCallback((key: string, change: Partial<Attachment>) => {
-    if (alive.current) setItems((all) => all.map((a) => (a.key === key ? { ...a, ...change } : a)));
-  }, []);
+  const patch = useCallback(
+    (key: string, change: Partial<Attachment>) => commit(list.current.map((a) => (a.key === key ? { ...a, ...change } : a))),
+    [commit],
+  );
 
   // the poll calls itself through a ref: a callback cannot name itself while it is being defined
   const again = useRef<(key: string, materialId: string, tries: number) => void>(() => {});
@@ -67,38 +75,46 @@ export function useAttachments(domainId: string, sessionId?: string) {
 
   const add = useCallback(
     async (files: File[]) => {
-      const room = Math.max(0, MAX_ATTACHED - items.length);
-      for (const file of files.slice(0, room)) {
-        const key = `a-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        setItems((all) => [...all, { key, name: file.name, materialId: null, state: "uploading" }]);
+      // the places are taken at once, so a second call made while these are still going up cannot go over the limit
+      const room = Math.max(0, MAX_ATTACHED - list.current.length);
+      const batch = files.slice(0, room).map((file) => ({ file, key: `a-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }));
+      commit([...list.current, ...batch.map((b): Attachment => ({ key: b.key, name: b.file.name, materialId: null, state: "uploading" }))]);
+      for (const { file, key } of batch) {
+        if (!list.current.some((a) => a.key === key)) continue; // taken out while it waited
         const made = await send(file);
         if (!made) {
-          if (alive.current) setItems((all) => all.filter((a) => a.key !== key)); // the toast said why; no dead chip stays
+          if (alive.current) commit(list.current.filter((a) => a.key !== key)); // the toast said why; no dead chip stays
           continue;
         }
+        if (!list.current.some((a) => a.key === key)) continue; // taken out (or the message went) while it was going up
         patch(key, { materialId: made.material_id, state: "reading" });
         watch(key, made.material_id);
       }
     },
-    [items.length, send, patch, watch],
+    [commit, send, patch, watch],
   );
 
-  const remove = useCallback((key: string) => {
-    const timer = timers.current.get(key);
-    if (timer) clearTimeout(timer);
-    timers.current.delete(key);
-    setItems((all) => all.filter((a) => a.key !== key));
-  }, []);
+  const remove = useCallback(
+    (key: string) => {
+      const timer = timers.current.get(key);
+      if (timer) clearTimeout(timer);
+      timers.current.delete(key);
+      commit(list.current.filter((a) => a.key !== key));
+    },
+    [commit],
+  );
 
   const clear = useCallback(() => {
     timers.current.forEach(clearTimeout);
     timers.current.clear();
-    setItems([]);
-  }, []);
+    commit([]);
+  }, [commit]);
 
+  /** Places left in the message right now (not what the last render saw) */
+  const room = useCallback(() => Math.max(0, MAX_ATTACHED - list.current.length), []);
   const busy = items.some((a) => a.state === "uploading" || a.state === "reading");
   const ready = items.filter((a): a is Attachment & { materialId: string } => a.state === "ready" && a.materialId !== null);
-  return { items, add, remove, clear, busy, ready, full: items.length >= MAX_ATTACHED };
+  return { items, add, remove, clear, room, busy, ready, full: items.length >= MAX_ATTACHED };
 }
 
 const CHIP =

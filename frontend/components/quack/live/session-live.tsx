@@ -342,6 +342,8 @@ export function SessionLive({ id }: { id: string }) {
   const [lastFailedAction, setLastFailedAction] = useState<FailedAction | null>(null);
   const [artifactTick, setArtifactTick] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
+  /** The whole chat area takes files dragged from the OS (the input box attaches them) */
+  const [chatEl, setChatEl] = useState<HTMLDivElement | null>(null);
   const sentFirst = useRef(false);
   /** The session was closed by the idle timer when it was read: the first accepted action or heartbeat reopens it, then `detail` is read again */
   const closed = useRef(false);
@@ -845,7 +847,7 @@ export function SessionLive({ id }: { id: string }) {
         : null;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div ref={setChatEl} className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
         <header className={cn("min-w-0", MEASURE)}>
           <h1 className="line-clamp-2 display-caps text-display text-paper">{title}</h1>
@@ -1010,6 +1012,7 @@ export function SessionLive({ id }: { id: string }) {
           voice={{ onClip: sendVoice, disabled: busy }}
           duck
           creator
+          dropZone={chatEl}
         />
       </div>
     </div>

@@ -4,7 +4,23 @@ import type { S } from "./client";
 export const MATERIAL_ACCEPT =
   "application/pdf,image/*,.pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
-export type MaterialState = "processing" | "ready" | "failed";
+/**
+ * The same filter as `MATERIAL_ACCEPT`, for files that did not come from the picker (a drop does not go through the `accept` of
+ * the dialog): a PDF, an image or a PowerPoint presentation. A folder arrives as a file without a type and does not pass.
+ */
+export function isMaterialFile(file: File): boolean {
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  return (
+    type === "application/pdf" ||
+    type.startsWith("image/") ||
+    type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    (type === "" && name.endsWith(".pdf")) ||
+    name.endsWith(".pptx")
+  );
+}
+
+export type MaterialState ="processing" | "ready" | "failed";
 
 /**
  * `MaterialView.status` is a free string. The backend writes `uploaded` on upload and `parsed` when the parser is done;

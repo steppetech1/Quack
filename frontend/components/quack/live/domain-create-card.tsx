@@ -6,7 +6,9 @@ import { useId, useRef, useState } from "react";
 import { MAX_CONTEXT_FILES } from "@/lib/api/domain-uploads";
 import { MATERIAL_ACCEPT } from "@/lib/api/materials";
 import { useT } from "@/lib/i18n/provider";
+import { useFileDrop } from "@/lib/use-file-drop";
 import { cn } from "@/lib/utils";
+import { DropOverlay, useDropNote } from "../drop-overlay";
 import { PRIMARY_BTN, SECONDARY_BTN } from "../stubs/stub-parts";
 
 /** What the learner may write about a subject (`CreateDomainRequest.about`) */
@@ -72,6 +74,10 @@ export function DomainCreateCard({
   const [about, setAbout] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [tooMany, setTooMany] = useState(false);
+  /** Part of what was dropped is not a PDF, an image or a presentation (the picker filters those out by itself) */
+  const [rejected, setRejected] = useState(false);
+  const [card, setCard] = useState<HTMLDivElement | null>(null);
+  const tc = useT().composer;
 
   const dirty = name !== "" || about !== "" || files.length > 0;
   const twin = name.trim() ? existing.find((d) => same(d.title) === same(name)) : undefined;
@@ -82,13 +88,27 @@ export function DomainCreateCard({
     const room = Math.max(0, MAX_CONTEXT_FILES - files.length);
     setTooMany(fresh.length > room);
     if (room > 0 && fresh.length) setFiles((all) => [...all, ...fresh.slice(0, room)]);
+    return Math.min(fresh.length, room);
   };
+
+  // files dragged in from the OS file manager go the same road as the «+» button: the same list, the same 15, the same line for the rest
+  const { say, region } = useDropNote();
+  const { dragging } = useFileDrop({
+    zone: card,
+    onFiles: (dropped, rejected) => {
+      setOpen(true);
+      setRejected(rejected > 0);
+      const added = addFiles(dropped);
+      if (added) say(tc.dropDone(added));
+    },
+  });
 
   const reset = () => {
     setName("");
     setAbout("");
     setFiles([]);
     setTooMany(false);
+    setRejected(false);
     setOpen(false);
     onClearError();
     if (picker.current) picker.current.value = "";
@@ -103,7 +123,12 @@ export function DomainCreateCard({
       }}
       className="relative z-10 w-full max-w-[520px] text-left"
     >
-      <div className={cn("rounded-[6px] border bg-cloth transition-colors duration-(--dur-s) ease-out", open ? "border-rule" : "border-seam hover:border-rule", "focus-within:border-ribbon")}>
+      <div
+        ref={setCard}
+        className={cn("relative rounded-[6px] border bg-cloth transition-colors duration-(--dur-s) ease-out", open ? "border-rule" : "border-seam hover:border-rule", "focus-within:border-ribbon")}
+      >
+        {region}
+        <DropOverlay active={dragging} className="rounded-[6px]" />
         <div className="px-4 pt-3 pb-3">
           <div className="flex items-center">
             <label htmlFor={`${id}-name`} className="caps text-paper">
@@ -174,6 +199,7 @@ export function DomainCreateCard({
                     aria-hidden
                     className="sr-only"
                     onChange={(e) => {
+                      setRejected(false);
                       addFiles([...(e.target.files ?? [])]);
                       e.target.value = "";
                     }}
@@ -192,6 +218,11 @@ export function DomainCreateCard({
                     {t.domainFilesMax(MAX_CONTEXT_FILES)}
                   </p>
                 )}
+                {rejected && (
+                  <p role="status" className="mt-1.5 text-small text-st-confused">
+                    {t.materialRejected}
+                  </p>
+                )}
                 {files.length > 0 && (
                   <ul aria-label={t.domainFilesLabel} className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
                     {files.map((f, i) => (
@@ -204,6 +235,7 @@ export function DomainCreateCard({
                           onClick={() => {
                             setFiles((all) => all.filter((_, j) => j !== i));
                             setTooMany(false);
+                            setRejected(false);
                           }}
                           className="-my-2.5 inline-flex size-10 shrink-0 items-center justify-center rounded-pill hover:bg-cloth-hover hover:text-paper focus-visible:outline-2 focus-visible:outline-ribbon"
                         >

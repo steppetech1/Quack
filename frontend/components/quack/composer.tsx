@@ -7,12 +7,14 @@ import { SKILL_CREATOR } from "@/lib/skills";
 import { API_MODE } from "@/lib/api/client";
 import { MATERIAL_ACCEPT } from "@/lib/api/materials";
 import { useT } from "@/lib/i18n/provider";
+import { useFileDrop } from "@/lib/use-file-drop";
 import { cn } from "@/lib/utils";
 import { useShell } from "./app-shell";
+import { DropOverlay, useDropNote } from "./drop-overlay";
 import { IconButton } from "./icon-button";
 import { PixelDuck } from "./pixel-duck";
-import { AttachmentChips, useAttachments, type FileRef } from "./attachments";
-import { useSoon } from "./soon";
+import { AttachmentChips, MAX_ATTACHED, useAttachments, type FileRef } from "./attachments";
+import { useNotice, useSoon } from "./soon";
 import { useSkills } from "./use-skills";
 import { useVoiceInput, type VoiceProps } from "./use-voice-input";
 
@@ -40,6 +42,8 @@ type Props = {
   duck?: boolean;
   /** The chat of a session: the menu `/` always offers the built-in `/skill-creator` (it is not a learner skill) */
   creator?: boolean;
+  /** Files dropped from the OS are taken anywhere in this element (the chat area of a session, kept in state: `ref={setEl}`); by default only on the box itself. It must be `position: relative` */
+  dropZone?: HTMLElement | null;
 };
 
 export function Composer({
@@ -54,16 +58,38 @@ export function Composer({
   voice,
   duck = false,
   creator = false,
+  dropZone,
 }: Props) {
   const t = useT();
   placeholder ??= t.composer.placeholder;
   submitText ??= t.composer.submit;
   const soon = useSoon();
+  const notice = useNotice();
   const { domain } = useShell();
   // with the backend, the clip attaches a lecture, a presentation or a photo to the message (it goes into the current
   // subject and is read in the background); on mocks it stays a "soon"
   const files = useAttachments(domain.id, sessionId);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [form, setForm] = useState<HTMLFormElement | null>(null);
+  const zone = dropZone ?? form;
+  const canAttach = API_MODE && !!domain.id;
+  const { say, region } = useDropNote();
+  // a file dragged in from the OS: the same road as the paperclip (`files.add`, the same limit of a message). While the clip is off
+  // (the message already carries the most it can) a drop only says so; on mocks it is a "soon", like the clip
+  const { dragging } = useFileDrop({
+    zone,
+    enabled: canAttach && !files.full,
+    onBlocked: () => (canAttach ? notice(t.composer.attachMax(MAX_ATTACHED)) : soon(t.composer.soonAttach)),
+    onFiles: (dropped, rejected) => {
+      if (!dropped.length) return notice(t.live.materialRejected);
+      const room = files.room();
+      if (!room) return notice(t.composer.attachMax(MAX_ATTACHED));
+      void files.add(dropped);
+      if (dropped.length > room) notice(t.composer.attachMax(MAX_ATTACHED));
+      else if (rejected) notice(t.live.materialRejected);
+      say(t.composer.dropDone(Math.min(dropped.length, room)));
+    },
+  });
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
@@ -140,9 +166,12 @@ export function Composer({
 
   return (
     <form
+      ref={setForm}
       onSubmit={submit}
       className="relative rounded-[2px] border border-seam bg-cloth-deep p-2 transition-colors duration-[var(--dur-s)] ease-out has-[textarea:focus-visible]:border-ribbon/70 has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-ribbon"
     >
+      {region}
+      <DropOverlay active={dragging} container={dropZone} className="rounded-[2px]" />
       {open && (
         <ul
           id={listId}
