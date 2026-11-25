@@ -452,6 +452,7 @@ class TaskCreated(EventPayload):
     source: Literal["seminar", "generated", "material", "teacher"]
     markup: TaskMarkupRecord
     verification: Literal["unchecked", "checked", "disputed"]
+    topic_id: UUID | None = None
 
 
 class _TaskCheckResult(EventPayload):

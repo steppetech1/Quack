@@ -74,3 +74,48 @@ async def test_seminar_verification_by_the_table(pg_db: Db) -> None:
         {"l": learner_id},
     )
     assert count is not None and count["n"] == 2
+
+
+def test_seminar_task_topic_skills_and_topic_id(monkeypatch: object) -> None:
+    """`create_seminar_task` includes all topic skills in `LabelMap` and passes `topic_id` to
+    `create_task`."""
+    import asyncio
+    from typing import Any
+
+    from quack.practice import seminar_tasks
+
+    sibling = uuid4()
+    topic_id = uuid4()
+    task = SeminarTask(
+        key="s:topic_skills",
+        statement="Compute 10 - 3",
+        skill_id=SKILL,
+        skill_name="Adding numbers",
+        topic_name="Arithmetic",
+        answer="7",
+        kind="number",
+        topic_id=topic_id,
+        topic_skill_ids=[sibling],
+        topic_skill_names={sibling: "Subtracting numbers"},
+    )
+    captured: list[dict[str, Any]] = []
+
+    async def fake_create_task(db: Db, **kw: Any) -> int:
+        captured.append(kw)
+        return 1
+
+    monkeypatch.setattr(seminar_tasks, "create_task", fake_create_task)  # type: ignore[attr-defined]
+    roles = _Roles([_draft("7", skill="S2")], {"task_checker:s:topic_skills": "7"})
+    result = asyncio.run(
+        create_seminar_task(
+            cast(Db, object()),
+            cast(LLMGateway, roles),
+            SETTINGS,
+            task,
+            learner_id=uuid4(),
+        )
+    )
+    assert result == seminar_task_id("s:topic_skills")
+    assert "S2: Subtracting numbers" in roles.calls[0]["variables"]["topic_skills"]
+    assert captured[0]["topic_id"] == topic_id
+    assert captured[0]["markup"].tests[0].skill_id == sibling

@@ -45,6 +45,7 @@ from quack.ops.orphan_objects import orphan_objects
 from quack.ops.restore_check import restore_check
 from quack.ops.seed import SeedRefusedError, seed_learners, write_learners
 from quack.ops.status import collect_status
+from quack.ops.structure_report import build_structure_report, format_structure_report
 from quack.prompts.registry import PromptNotFoundError
 from quack.runtime import (
     JobHandlersMismatchError,
@@ -194,6 +195,18 @@ def build_parser() -> argparse.ArgumentParser:
     replay_s.add_argument("--renderer", type=int, help="renderer version N (renderer@N)")
     replay_s.add_argument(
         "--out", help="report path (default: replay-session-<session id>.json in the cwd)"
+    )
+    struct_rep = ops_sub.add_parser(
+        "structure-report",
+        help="report subject structure, skill outcomes, edges, hubs, and LLM cost",
+    )
+    struct_rep.add_argument("--learner", type=UUID, required=True, help="learner id")
+    struct_rep.add_argument("--domain", type=UUID, required=True, help="domain id")
+    struct_rep.add_argument(
+        "--days", type=_positive_int, default=14, help="window in days (default: 14)"
+    )
+    struct_rep.add_argument(
+        "--json", action="store_true", dest="as_json", help="print JSON instead of text"
     )
     return parser
 
@@ -586,6 +599,28 @@ def _roles_then_migrator(settings: Settings) -> Settings:
     return settings.model_copy(update={"postgres_dsn": dsn})
 
 
+async def _structure_report(settings: Settings, args: argparse.Namespace) -> int:
+    db = await open_db(settings)
+    driver = create_driver(settings)
+    try:
+        report = await build_structure_report(
+            db,
+            driver,
+            settings,
+            learner_id=args.learner,
+            domain_id=args.domain,
+            days=args.days,
+        )
+    finally:
+        await driver.close()
+        await db.close()
+    if args.as_json:
+        print(json.dumps(report, sort_keys=True, default=str))
+    else:
+        print(format_structure_report(report))
+    return 0
+
+
 async def _ops(settings: Settings, args: argparse.Namespace) -> int:
     if args.op == "verify-schema":
         driver = create_driver(settings)
@@ -640,6 +675,8 @@ async def _ops(settings: Settings, args: argparse.Namespace) -> int:
         return 0 if result["can_rollback"] else 1
     if args.op == "seed-learners":
         return await _seed_learners(settings, args)
+    if args.op == "structure-report":
+        return await _structure_report(settings, args)
     raise ValueError(f"unknown ops command {args.op!r}")
 
 

@@ -35,8 +35,10 @@ def test_practice_models_are_the_core_objects(module: object, name: str) -> None
 
 
 def test_new_skill_model_omits_topic_hint_while_record_keeps_optional_legacy_hint() -> None:
-    assert set(markup.NewSkill.model_fields) == {"name"}
-    assert set(values.NewSkill.model_fields) == {"name", "topic_hint"}
+    assert set(markup.NewSkill.model_fields) == {"name", "reason"}
+    assert set(values.NewSkill.model_fields) == {"name", "topic_hint", "reason"}
+    assert markup.NewSkill(name="x").reason is None
+    assert markup.NewSkill(name="x", reason="why").reason == "why"
     assert values.NewSkill(name="x").topic_hint is None
     assert values.NewSkill(name="x", topic_hint="legacy").topic_hint == "legacy"
 

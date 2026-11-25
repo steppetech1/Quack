@@ -69,6 +69,7 @@ def task_created_event(
     domain_id: UUID | None = None,
     session_id: UUID | None = None,
     causation_seq: int | None = None,
+    topic_id: UUID | None = None,
 ) -> NewEvent:
     """`task.created` (ТЗ Ф4 §6.3) of one task."""
     return NewEvent(
@@ -79,6 +80,7 @@ def task_created_event(
             source=source,
             markup=markup,
             verification=verification,
+            topic_id=topic_id,
         ),
         actor=actor,
         idempotency_key=idempotency_key,
@@ -139,6 +141,7 @@ async def create_task(
     causation_seq: int | None = None,
     solution_space: SolutionSpace | None = None,
     solution_space_version: str | None = None,
+    topic_id: UUID | None = None,
 ) -> int:
     """Т-§5.1: `task.created` and the document in one transaction; a failure writes neither.
     Returns the seq of `task.created`. A repeat with the same key and payload writes nothing
@@ -154,6 +157,7 @@ async def create_task(
         domain_id=domain_id,
         session_id=session_id,
         causation_seq=causation_seq,
+        topic_id=topic_id,
     )
     async with db.transaction():
         [stored] = await append_events(db, learner_id, [event])

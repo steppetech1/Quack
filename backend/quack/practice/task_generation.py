@@ -12,7 +12,7 @@ Ids come from the call key, so a retry writes the same tasks (law 5).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -57,11 +57,23 @@ class GenerationRequest:
     source: TaskDocument | None = None
     domain_id: UUID | None = None
     session_id: UUID | None = None
+    topic_id: UUID | None = None
+    topic_skill_ids: Sequence[UUID] = ()
+    topic_skill_names: Mapping[UUID, str] = field(default_factory=dict)
 
 
 def generator_variables(request: GenerationRequest, labels: LabelMap) -> dict[str, str]:
-    """The nine input blocks of `task_generator@1`, with labels of the call."""
+    """The input blocks of `task_generator`, with labels of the call."""
     skill = labels.label("skill", request.skill_id)
+    topic_skills = [
+        f"{label}: {name}"
+        if (
+            name := request.topic_skill_names.get(sid)
+            or (request.skill_name if sid == request.skill_id else None)
+        )
+        else label
+        for label, sid in labels.labels("skill").items()
+    ]
     known = [
         f"{label}: {statement}"
         for misconception_id, statement in (request.misconceptions or {}).items()
@@ -77,6 +89,7 @@ def generator_variables(request: GenerationRequest, labels: LabelMap) -> dict[st
     return {
         "topic_name": request.topic_name,
         "target_skill": f"{skill}: {request.skill_name}",
+        "topic_skills": "\n".join(topic_skills) or f"{skill}: {request.skill_name}",
         "target_level": str(request.level),
         "kind": request.kind,
         "purpose": request.purpose,
@@ -141,7 +154,7 @@ async def generate_tasks(
         raise ValueError(f"role {GENERATOR_ROLE!r} has no prompt")
     labels = LabelMap.build(
         settings,
-        skills=[request.skill_id],
+        skills=list(dict.fromkeys([request.skill_id, *request.topic_skill_ids])),
         misconceptions=list(request.misconceptions or {}),
         tasks=[request.source.task_id] if request.source else [],
     )
@@ -157,7 +170,7 @@ async def generate_tasks(
         check=lambda output: markup_errors(output, labels),
         hard=request.kind == "proof" or request.level == HARD_LEVEL,
     )
-    names = {request.skill_id: request.skill_name}
+    names = {**request.topic_skill_names, request.skill_id: request.skill_name}
     inherited = (
         await source_family(db, learner_id=learner_id, source=request.source)
         if request.source
@@ -199,6 +212,7 @@ async def generate_tasks(
             idempotency_key=f"task:{request.key}:{index}",
             domain_id=request.domain_id,
             session_id=request.session_id,
+            topic_id=request.topic_id,
         )
         stored.append(task_id)
     return stored

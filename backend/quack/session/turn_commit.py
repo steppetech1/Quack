@@ -14,7 +14,7 @@ writes none of them; a repeat of the same batch writes nothing new.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -39,7 +39,7 @@ from quack.events.event_types import (
     TaskClosed,
     TurnCommitted,
 )
-from quack.events.log import NewEvent, append_events
+from quack.events.log import NewEvent, StoredEvent, append_events
 from quack.events.service_turns import ServiceMode
 from quack.events.values import AnswerSpec
 from quack.graph.ids import QUACK_UUID_NS
@@ -58,8 +58,10 @@ from quack.session.teacher_output import (
     LandmarkEdits,
     PlanUpdate,
     Step,
+    TeacherOutputV2,
     TurnHead,
     TurnMarkup,
+    TurnTask,
 )
 from quack.session.turn_graph import GuardSample, TurnToCommit
 
@@ -203,6 +205,101 @@ class TurnBatch:
     close: tuple[UUID, Literal["solved", "skipped", "solution_shown"]] | None = None
 
 
+def _parse_uuid(value: object) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return UUID(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _turn_payload_skill_ids(payload: Mapping[str, Any]) -> list[UUID]:
+    """Existing skill ids marked in one committed turn (targetSkills, exposures, tasks)."""
+    if payload.get("service") is not None:
+        return []
+    skills: list[UUID] = []
+    head = payload.get("head") or {}
+    for raw in head.get("target_skill_ids") or ():
+        if (sid := _parse_uuid(raw)) is not None:
+            skills.append(sid)
+    markup = payload.get("markup") or {}
+    for exposure in markup.get("exposures") or ():
+        if (sid := _parse_uuid(exposure.get("skill_id"))) is not None:
+            skills.append(sid)
+    for task in markup.get("tasks") or ():
+        for test in task.get("tests") or ():
+            if (sid := _parse_uuid(test.get("skill_id"))) is not None:
+                skills.append(sid)
+        for part in task.get("parts") or ():
+            for test in part.get("tests") or ():
+                if (sid := _parse_uuid(test.get("skill_id"))) is not None:
+                    skills.append(sid)
+    return skills
+
+
+def focus_inputs_from_events(
+    events: Sequence[StoredEvent],
+) -> tuple[UUID | None, UUID | None, list[UUID]]:
+    """Extract `(message_topic_id, session_topic_id, turn_skill_ids)` from session events."""
+    message_topic_id: UUID | None = None
+    session_topic_id: UUID | None = None
+    turn_skill_ids: list[UUID] = []
+    for event in sorted(events, key=lambda e: e.seq):
+        if event.type == "session.started":
+            session_topic_id = _parse_uuid(event.payload.get("topic_id"))
+        elif event.type == "message.sent":
+            if (tid := _parse_uuid(event.payload.get("topic_id"))) is not None:
+                message_topic_id = tid
+        elif event.type == "turn.committed":
+            turn_skill_ids.extend(_turn_payload_skill_ids(event.payload))
+    return message_topic_id, session_topic_id, turn_skill_ids
+
+
+def resolve_focus_topic_id(
+    *,
+    message_topic_id: UUID | None = None,
+    session_topic_id: UUID | None = None,
+    turn_skill_ids: Sequence[UUID] = (),
+    skill_topics: Mapping[UUID, UUID] | None = None,
+) -> UUID | None:
+    """Compute `focus_topic_id` deterministically in code (never by model or projector):
+    1) `topic_id` of the latest `message.sent` in this session (if non-null);
+    2) else `topic_id` from `session.started` (if non-null);
+    3) else topic of the latest existing skill marked in turns of this session;
+    4) else `None`.
+    """
+    if message_topic_id is not None:
+        return message_topic_id
+    if session_topic_id is not None:
+        return session_topic_id
+    if skill_topics:
+        for skill_id in reversed(turn_skill_ids):
+            topic_id = skill_topics.get(skill_id)
+            if topic_id is not None:
+                return topic_id
+    return None
+
+
+def _current_turn_skill_ids(output: TeacherOutputV2, labels: LabelMap) -> list[UUID]:
+    skills: list[UUID] = [labels.resolve("skill", s) for s in output.p1_head.target_skills]
+    skills.extend(labels.resolve("skill", e.skill) for e in output.p3_markup.exposures)
+    for task in output.p3_markup.tasks:
+        skills.extend(_task_skill_ids(task, labels))
+    return skills
+
+
+def _task_skill_ids(task: TurnTask, labels: LabelMap) -> list[UUID]:
+    ids = [labels.resolve("skill", t.skill) for t in task.tests if t.skill is not None]
+    for part in task.parts or ():
+        ids.extend(
+            labels.resolve("skill", t.skill) for t in part.tests or () if t.skill is not None
+        )
+    return ids
+
+
 def turn_batch(
     turn: TurnToCommit,
     labels: LabelMap,
@@ -215,6 +312,11 @@ def turn_batch(
     learner_texts: Sequence[LearnerText] = (),
     learner_timezone: str | None = None,
     service: ServiceMode | None = None,
+    focus_topic_id: UUID | None = None,
+    message_topic_id: UUID | None = None,
+    session_topic_id: UUID | None = None,
+    prior_turn_skill_ids: Sequence[UUID] = (),
+    skill_topics: Mapping[UUID, UUID] | None = None,
 ) -> TurnBatch:
     """The events of the turn with ids instead of labels (WP2.2, WP13.3).
 
@@ -226,6 +328,17 @@ def turn_batch(
         output = settle_service_output(output, settings)
         answered = None
         learner_texts = ()
+        resolved_focus: UUID | None = None
+    elif focus_topic_id is not None:
+        resolved_focus = focus_topic_id
+    else:
+        current_skills = _current_turn_skill_ids(output, labels)
+        resolved_focus = resolve_focus_topic_id(
+            message_topic_id=message_topic_id,
+            session_topic_id=session_topic_id,
+            turn_skill_ids=[*prior_turn_skill_ids, *current_skills],
+            skill_topics=skill_topics,
+        )
     key = f"turn:{manifest.manifest_id}"
     common: dict[str, Any] = {
         "actor": manifest.prompt_version,
@@ -255,6 +368,7 @@ def turn_batch(
                 markup=markup,
                 verification="unchecked",
                 idempotency_key=task_key,
+                topic_id=resolved_focus,
                 **common,
             )
         )
@@ -305,6 +419,7 @@ def turn_batch(
         guard_events=list(turn.guard_events),
         timings=dict(turn.timings),
         service=service,
+        focus_topic_id=resolved_focus,
     )
     events = [
         *task_events,
@@ -764,6 +879,8 @@ __all__ = [
     "TurnBatch",
     "TurnManifestRow",
     "commit_turn",
+    "focus_inputs_from_events",
     "markup_record",
+    "resolve_focus_topic_id",
     "turn_batch",
 ]
