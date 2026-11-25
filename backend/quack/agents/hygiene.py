@@ -1378,6 +1378,16 @@ async def _run_structure(
         prov_has_topic = {sk.skill_id: sk.topic_id is not None for sk in p_entries}
         n_cands = len(c_batch)
 
+        def _check_batch(
+            out: StructureOutput,
+            *,
+            lbls: LabelMap = labels,
+            n_c: int = n_cands,
+            exp_provs: set[UUID] = expected_prov_ids,
+            has_topic: dict[UUID, bool] = prov_has_topic,
+        ) -> str | None:
+            return _structure_problem(out, lbls, n_c, exp_provs, has_topic)
+
         result = await ctx.llm.generate_structured(
             BUILDER_ROLE,
             int(prompt.rsplit("@", 1)[1]),
@@ -1387,13 +1397,7 @@ async def _run_structure(
             None,
             None,
             f"graph.structure:{domain_id}:{digest}",
-            check=lambda out,
-            lbls=labels,
-            n_c=n_cands,
-            exp_provs=expected_prov_ids,
-            has_topic=prov_has_topic: _structure_problem(
-                out, lbls, n_c, exp_provs, has_topic
-            ),
+            check=_check_batch,
         )
         totals.add(result.usage)
 

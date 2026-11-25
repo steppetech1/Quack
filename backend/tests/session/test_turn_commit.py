@@ -1053,20 +1053,26 @@ def test_focus_topic_id_priority_rules() -> None:
     ]
     msg_t, start_t, turn_skills = focus_inputs_from_events(events_r3)
     assert (msg_t, start_t, turn_skills) == (None, None, [s1, s2])
-    assert resolve_focus_topic_id(
-        message_topic_id=msg_t,
-        session_topic_id=start_t,
-        turn_skill_ids=turn_skills,
-        skill_topics=skill_topics,
-    ) == t_turn2
+    assert (
+        resolve_focus_topic_id(
+            message_topic_id=msg_t,
+            session_topic_id=start_t,
+            turn_skill_ids=turn_skills,
+            skill_topics=skill_topics,
+        )
+        == t_turn2
+    )
 
     # Rule 4: none available -> None
-    assert resolve_focus_topic_id(
-        message_topic_id=None,
-        session_topic_id=None,
-        turn_skill_ids=[uuid4()],
-        skill_topics=skill_topics,
-    ) is None
+    assert (
+        resolve_focus_topic_id(
+            message_topic_id=None,
+            session_topic_id=None,
+            turn_skill_ids=[uuid4()],
+            skill_topics=skill_topics,
+        )
+        is None
+    )
 
     # End-to-end through turn_batch: focus_topic_id lands on TurnCommitted AND TaskCreated
     labels = _labels()

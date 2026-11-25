@@ -193,8 +193,8 @@ def default_llm_roles() -> dict[str, RoleConfig]:
     Output limits of ten roles are set by the stand measurement with `effort` (D-B-134): the
     Т-§11.1 figure of 4096 came from a spike without a reasoning level."""
     return {
-        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@3", 45.0),
-        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@3", 30.0),
+        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@4", 45.0),
+        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@4", 30.0),
         "extractor": _role(SPARK, "high", 16384, "P2", "extractor@3"),
         "verdict_free": _role(SPARK, "high", 8192, "P1", "verdict_free@1"),
         "verdict_proof": _role(WONDER, "high", 8192, "P1", "verdict_proof@1"),
@@ -205,9 +205,9 @@ def default_llm_roles() -> dict[str, RoleConfig]:
         "voice": _role("muse-voice-transcribe-1.0", None, None, "P1", None),
         "analyst": _role(SPARK, "high", 16384, "P2", "analyst@1"),
         "analyst_deep": _role(WONDER, "high", 16384, "P2", "analyst@1"),
-        "builder": _role(SPARK, "high", 8192, "P2", "builder@1"),
-        "material_parser": _role(SPARK, "high", 4096, "P2", "material_parser@1"),
-        "task_generator": _role(SPARK, "high", 8192, "P2", "task_generator@1").model_copy(
+        "builder": _role(SPARK, "high", 8192, "P2", "builder@2"),
+        "material_parser": _role(SPARK, "high", 4096, "P2", "material_parser@2"),
+        "task_generator": _role(SPARK, "high", 8192, "P2", "task_generator@2").model_copy(
             update={"hard_model": WONDER}
         ),
         "task_checker": _role(SPARK, "high", 8192, "P1", "task_checker@1"),

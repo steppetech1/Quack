@@ -1600,9 +1600,7 @@ def test_tests_context_propagates_to_evidence_without_new_skill() -> None:
         "method_named": False,
         "answer": {"type": "number"},
     }
-    created = _event(
-        69, "task.created", _TASK_CREATED | {"markup": markup}, domain_id=UUID(DOMAIN)
-    )
+    created = _event(69, "task.created", _TASK_CREATED | {"markup": markup}, domain_id=UUID(DOMAIN))
     nodes, rels = _run(
         [created, _answer(), _verdict(outcome="correct")],
         [_DOMAIN, _TOPIC, _SKILL],

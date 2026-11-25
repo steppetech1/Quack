@@ -315,7 +315,7 @@ async def test_assemble_first_turn_freezes_slots(pg_db: Db) -> None:
     assert setup.manifest.frozen_slots is not None
     assert setup.manifest.frozen_slots["profile"].startswith("Preference answer_length: short")
     assert setup.manifest.renderer_version == "renderer@1"
-    assert setup.manifest.prompt_version == "teacher@3"
+    assert setup.manifest.prompt_version == "teacher@4"
     assert {
         "journal_ms",
         "reads_ms",

@@ -68,7 +68,7 @@ from quack.llm.responses_client import ResponsesClient
 from quack.llm.streaming import StreamEvent, StreamRequest
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.llm.tool_loop import run_tool_loop
-from quack.materials.parse import MaterialParserOutput
+from quack.materials.parse import MaterialParserV2Output
 from quack.practice import role_outputs
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.registry import PromptError, PromptRegistry, PromptTemplate
@@ -150,7 +150,7 @@ ROLE_SCHEMAS: dict[str, type[BaseModel]] = {
     "viz_planner": agents.VizPlannerOutput,
     "misconception_describer": agents.MisconceptionDescription,
     "artifact_writer": ArtifactWriterOutput,
-    "material_parser": MaterialParserOutput,
+    "material_parser": MaterialParserV2Output,
     "today_planner": agents.TodayPlannerOutput,
     "domain_classifier": agents.DomainClassifierOutput,
     "session_titler": role_outputs.SessionTitleOutput,
@@ -173,6 +173,7 @@ LEGACY_CALLS: tuple[tuple[str, int, type[BaseModel], str | None, dict[str, Any]]
 STREAM_ROW = "stream_tool"
 _ROLE_OVERRIDES: dict[str, dict[str, Any]] = {
     "builder": {"mode": "Reconcile"},
+    "material_parser": {"mode": "parse"},
     "recognizer": {"mode": "line"},
     "teacher": {"mode": "learn"},
 }

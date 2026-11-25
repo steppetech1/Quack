@@ -711,8 +711,7 @@ def _topic_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
     domain = str(old_props["domainId"])
     old_covers = [r.to_id for r in view.out_rels("Topic", old, "COVERS")]
     old_has_core = any(
-        (s := view.node("Skill", sid)) is not None and s.get("core") is True
-        for sid in old_covers
+        (s := view.node("Skill", sid)) is not None and s.get("core") is True for sid in old_covers
     )
     changes: list[Mutation] = []
     parts: set[str] = set()
@@ -1506,9 +1505,7 @@ def _turn_committed(event: StoredEvent, view: SliceView) -> list[Mutation]:
                     and skill not in linked
                     and not view.in_rels("Skill", skill, "COVERS")
                 ):
-                    changes.append(
-                        MergeRel("Topic", resolved_topic, "COVERS", "Skill", skill, {})
-                    )
+                    changes.append(MergeRel("Topic", resolved_topic, "COVERS", "Skill", skill, {}))
                     linked.add(skill)
     for n, exposure in enumerate(p.markup.exposures):
         skill = view.resolve("Skill", str(exposure.skill_id))

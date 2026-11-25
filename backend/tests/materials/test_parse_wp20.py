@@ -105,9 +105,7 @@ def _parser_answer(request: Any) -> dict[str, Any]:
                     "n": n,
                     "section": "Integration by parts",
                     "notation": ["int u dv"],
-                    "builds_on": [
-                        {"concept": "Product rule", "quote": "product rule backwards"}
-                    ],
+                    "builds_on": [{"concept": "Product rule", "quote": "product rule backwards"}],
                 }
             )
     return {"title": title, "chunks": chunks, "deadlines": [], "seminar_tasks": []}
@@ -138,8 +136,7 @@ def _toc_answer(request: Any) -> dict[str, Any]:
     task_matches = re.findall(r"^Task (\d+) \(chunk \[(\d+)\]\):", request.prompt, flags=re.M)
     by_chunk = {m["n"]: m["candidate_index"] for m in chunk_candidates}
     task_candidates = [
-        {"task_index": int(ti), "candidate_index": by_chunk.get(int(cn))}
-        for ti, cn in task_matches
+        {"task_index": int(ti), "candidate_index": by_chunk.get(int(cn))} for ti, cn in task_matches
     ]
     return {
         "candidates": candidates,

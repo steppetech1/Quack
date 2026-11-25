@@ -535,9 +535,7 @@ async def test_other_topic_skill_emits_merge_and_filtered_requires(
     )
     await run_hygiene(ctx, graph, learner_id=learner_id, domain_id=DOMAIN)
     merged = [
-        p
-        for e in written
-        if e.type == "skill.merged" and isinstance((p := e.payload), SkillMerged)
+        p for e in written if e.type == "skill.merged" and isinstance((p := e.payload), SkillMerged)
     ]
     edges = [e for e in written if e.type == "edge.added"]
     assert len(merged) == 1 and merged[0].from_id == p_skill and merged[0].into_id == s_other_sub

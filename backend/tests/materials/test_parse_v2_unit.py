@@ -247,9 +247,7 @@ async def test_parse_step_runs_parse_and_single_toc_call(
 async def test_toc_batches_and_merges_when_chunks_exceed_max(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    small = settings.model_copy(
-        update={"material_toc_max_chunks": 2, "material_parser_batch": 10}
-    )
+    small = settings.model_copy(update={"material_toc_max_chunks": 2, "material_parser_batch": 10})
     learner, domain, material = uuid4(), uuid4(), uuid4()
     pages = [(i, f"Chunk {i} text about topic {i}.") for i in range(1, 6)]
     db = _FakeDb(material_id=material, domain_id=domain, status="read", pages=pages)

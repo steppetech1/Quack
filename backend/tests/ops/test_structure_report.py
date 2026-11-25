@@ -108,9 +108,7 @@ def test_structure_report_computation_and_formatting() -> None:
             payload={
                 "task_id": task_moved,
                 "source": "seminar",
-                "markup": {
-                    "tests": [{"new_skill": {"name": "Integration by parts"}, "level": 3}]
-                },
+                "markup": {"tests": [{"new_skill": {"name": "Integration by parts"}, "level": 3}]},
             },
         ),
         # 4. empty birth from teacher, merged into core by hygiene:empty_birth

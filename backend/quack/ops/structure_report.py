@@ -221,9 +221,7 @@ def compute_structure_report(
     # 1. Topics & skills per topic
     skill_counts = sorted(len(t.skills) for t in graph.topics)
     empty_topics = sum(1 for t in graph.topics if len(t.skills) == 0)
-    missing_core_topics = sum(
-        1 for t in graph.topics if sum(1 for s in t.skills if s.core) == 0
-    )
+    missing_core_topics = sum(1 for t in graph.topics if sum(1 for s in t.skills if s.core) == 0)
     histogram = {str(k): v for k, v in sorted(Counter(skill_counts).items())}
     distribution: dict[str, Any] = {
         "min": skill_counts[0] if skill_counts else 0,
@@ -536,9 +534,7 @@ async def build_structure_report(
     ref_now = now or datetime.now(UTC)
     since = ref_now - timedelta(days=days)
     graph = await read_graph_snapshot(neo4j, learner_id=learner_id, domain_id=domain_id)
-    ev_rows = await db.fetch_all(
-        _EVENTS_QUERY, {"learner_id": learner_id, "domain_id": domain_id}
-    )
+    ev_rows = await db.fetch_all(_EVENTS_QUERY, {"learner_id": learner_id, "domain_id": domain_id})
     events = [
         StructureEventRow(
             seq=int(r["seq"]),

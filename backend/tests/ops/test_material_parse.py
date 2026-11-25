@@ -47,14 +47,25 @@ class _FakeResolvedStructureTopic:
 
 def test_node_text_prefers_definition_and_falls_back_to_summary() -> None:
     skill = uuid4()
-    assert glue.node_text(
-        "skill.created",
-        {"skill_id": str(skill), "name": "Chain rule", "definition": "f(g(x))'", "summary": "old"},
-    ).text == "Chain rule\nf(g(x))'"
-    assert glue.node_text(
-        "skill.created",
-        {"skill_id": str(skill), "name": "Chain rule", "summary": "old"},
-    ).text == "Chain rule\nold"
+    assert (
+        glue.node_text(
+            "skill.created",
+            {
+                "skill_id": str(skill),
+                "name": "Chain rule",
+                "definition": "f(g(x))'",
+                "summary": "old",
+            },
+        ).text
+        == "Chain rule\nf(g(x))'"
+    )
+    assert (
+        glue.node_text(
+            "skill.created",
+            {"skill_id": str(skill), "name": "Chain rule", "summary": "old"},
+        ).text
+        == "Chain rule\nold"
+    )
 
 
 async def test_resolve_structure_candidates_embeds_waits_and_adapts(

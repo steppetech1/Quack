@@ -23,7 +23,11 @@ from quack.canvas.recognition import RecognizerOutput, RecognizerSheetOutput
 from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOutput
 from quack.llm.labels import LABEL_PREFIX
 from quack.llm.strict_schema import to_strict_json_schema
-from quack.materials.parse import MaterialParserOutput
+from quack.materials.parse import (
+    MaterialParserOutput,
+    MaterialParserV2Output,
+    MaterialTocOutput,
+)
 from quack.practice import role_outputs
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.registry import PromptRegistry
@@ -52,11 +56,13 @@ PROMPT_SCHEMAS: dict[str, type[BaseModel]] = {
 PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     "teacher@2": (TeacherOutputLegacyV2,),
     "teacher@3": (TeacherOutputV2,),
+    "teacher@4": (TeacherOutputV2,),
     "extractor@3": (agents.ExtractorOutputV3,),
     "verdict_free@1": (role_outputs.ModelVerdictOutput,),
     "verdict_proof@1": (role_outputs.ModelVerdictOutput,),
     "second_opinion@1": (role_outputs.ModelVerdictOutput,),
     "task_generator@1": (role_outputs.TaskGeneratorOutput,),
+    "task_generator@2": (role_outputs.TaskGeneratorOutput,),
     "task_checker@1": (role_outputs.TaskCheckOutput,),
     "task_arbiter@1": (role_outputs.TaskCheckOutput,),
     "solution_space@1": (role_outputs.SolutionSpace,),
@@ -66,6 +72,13 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
         agents.HygieneOutput,
         agents.SplitOutput,
         agents.TopicsOutput,
+    ),
+    "builder@2": (
+        agents.BuilderOutput,
+        agents.HygieneOutput,
+        agents.SplitOutput,
+        agents.TopicsOutput,
+        agents.StructureOutput,
     ),
     "misconception_describer@1": (agents.MisconceptionDescription,),
     "today_planner@1": (agents.TodayPlannerOutput,),
@@ -80,6 +93,7 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     "artifact_writer@1": (ArtifactWriterOutput,),
     "canvas_diagnoser@1": (CanvasDiagnoserOutput,),
     "material_parser@1": (MaterialParserOutput,),
+    "material_parser@2": (MaterialParserV2Output, MaterialTocOutput),
 }
 
 # Every prompt with its schemas: what `T-M5` and `PROMPT_CONTRACTS.md` cover.
@@ -151,11 +165,40 @@ LABEL_FIELDS: dict[str, list[str]] = {
         "p3_markup.deadline.hub_label",
         "p3_markup.deadline.coverage",
     ],
+    "teacher@4": [
+        "p1_head.targetSkills",
+        "p1_head.topicLabel",
+        "p3_markup.tasks.tests.skill",
+        "p3_markup.tasks.variantOf",
+        "p3_markup.tasks.options.misconception",
+        "p3_markup.tasks.pairTaskId",
+        "p3_markup.exposures.skill",
+        "p3_markup.targetsMisconception",
+        "p3_markup.planUpdate.cancel_requests",
+        "p3_markup.planUpdate.current_step.landmark",
+        "p3_markup.planUpdate.next_steps.landmark",
+        "p3_markup.planUpdate.landmark_edits.add.label",
+        "p3_markup.planUpdate.landmark_edits.add.before",
+        "p3_markup.planUpdate.landmark_edits.remove",
+        "p3_markup.agentRequests.params.skill",
+        "p3_markup.agentRequests.params.topic",
+        "p3_markup.agentRequests.params.task",
+        "p3_markup.agentRequests.params.misconception",
+        "p3_markup.deadline.hub_label",
+        "p3_markup.deadline.coverage",
+    ],
     "extractor@3": ["elements.skill", "elements.misconception", "elements.root_cause.skill"],
     "verdict_free@1": ["misconception"],
     "verdict_proof@1": ["misconception"],
     "second_opinion@1": ["misconception"],
     "task_generator@1": [
+        "tasks.markup.tests.skill",
+        "tasks.markup.variantOf",
+        "tasks.markup.options.misconception",
+        "tasks.markup.pairTaskId",
+        "tasks.markup.parts.tests.skill",
+    ],
+    "task_generator@2": [
         "tasks.markup.tests.skill",
         "tasks.markup.variantOf",
         "tasks.markup.options.misconception",
@@ -187,6 +230,22 @@ LABEL_FIELDS: dict[str, list[str]] = {
         "merges.from_topic",
         "merges.into_topic",
     ],
+    "builder@2": [
+        "items.target",
+        "items.same_idea",
+        "pairs.first",
+        "pairs.second",
+        "parts.skills",
+        "placements.skill",
+        "placements.topic",
+        "merges.from_topic",
+        "merges.into_topic",
+        "topic_candidates.target_topic",
+        "topic_candidates.requires.target_core_skill_label",
+        "provisional_skills.skill",
+        "provisional_skills.target_skill",
+        "provisional_skills.target_topic",
+    ],
     "today_planner@1": ["items.tasks"],
     "canvas_diagnoser@1": ["misconception", "root_cause"],
 }
@@ -198,6 +257,7 @@ MARKERS: dict[str, list[str]] = {
     "teacher@1": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@2": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@3": [MEMORY_UNAVAILABLE_MARKER],
+    "teacher@4": [MEMORY_UNAVAILABLE_MARKER],
     "viz_builder@1": [VIZ_PARAMS_MARKER],
     "viz_builder@2": [VIZ_PARAMS_MARKER],
 }

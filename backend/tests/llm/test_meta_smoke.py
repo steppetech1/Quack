@@ -26,7 +26,16 @@ from tests.support.llm import ScriptedLLMProvider, ScriptedToolCall, ScriptedToo
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "meta_smoke.py"
 # Versions of Phase 3 replaced by the role table (D-B-203).
-SUPERSEDED = {"teacher@1", "teacher@2", "extractor@2", "viz_builder@1"}
+SUPERSEDED = {
+    "teacher@1",
+    "teacher@2",
+    "teacher@3",
+    "extractor@2",
+    "viz_builder@1",
+    "builder@1",
+    "material_parser@1",
+    "task_generator@1",
+}
 
 
 def _script() -> ModuleType:

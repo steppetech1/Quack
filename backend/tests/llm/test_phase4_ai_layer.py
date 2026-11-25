@@ -71,7 +71,7 @@ def test_role_table_matches_t111() -> None:
             klass,
         ), name
         assert (row.prompt is None) == (effort is None), name
-    assert roles["teacher_fallback"].prompt == roles["teacher"].prompt == "teacher@3"
+    assert roles["teacher_fallback"].prompt == roles["teacher"].prompt == "teacher@4"
     assert roles["analyst_deep"].prompt == roles["analyst"].prompt
     assert all(r.max_output_tokens is None or r.max_output_tokens <= 16384 for r in roles.values())
 

@@ -103,17 +103,10 @@ PAGE_ONE = (
     "It needs the derivative of a power first."
 )
 PAGE_TWO = "Integration by parts\n\nWe use the product rule backwards: int u dv = uv - int v du."
-TOPICS = ("Derivatives", "Integrals")
-SKILLS = {
-    "Chain rule": "Derivatives",
-    "Power rule": "Derivatives",
-    "Integration by parts": "Integrals",
-    "Product rule": "Derivatives",
-}
 
 
 def parser_answer(request: Any) -> dict[str, Any]:
-    """One mark per chunk of the input; the numbers are read from the prompt."""
+    """One mark per chunk of the input (`MaterialParserV2Output`)."""
     numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", request.prompt, flags=re.M)]
     chunks = []
     for n in numbers:
@@ -121,41 +114,79 @@ def parser_answer(request: Any) -> dict[str, Any]:
         chunks.append(
             {
                 "n": n,
-                "topic": "Derivatives" if first else "Integrals",
+                "section": "Derivatives" if first else "Integrals",
                 "notation": ["f'(g(x))"] if first else ["int u dv"],
-                "teaches": ["Chain rule"] if first else ["Integration by parts"],
-                "uses": ["Power rule"] if first else ["Product rule"],
+                "builds_on": [
+                    {
+                        "concept": "Power rule" if first else "Product rule",
+                        "quote": "derivative of a power" if first else "product rule backwards",
+                    }
+                ],
             }
         )
     return {"title": "Calculus lectures", "chunks": chunks, "deadlines": [], "seminar_tasks": []}
 
 
-def builder_answer(_request: Any) -> dict[str, Any]:
-    """The reconciliation creates every subject of the material (`BuilderOutput`)."""
-    items = [
-        {
-            "name": name,
-            "kind": "topic",
-            "decision": "create",
-            "target": None,
-            "topic_hint": None,
-            "same_idea": None,
-            "same_idea_confidence": None,
-        }
-        for name in TOPICS
-    ] + [
-        {
-            "name": name,
-            "kind": "skill",
-            "decision": "create",
-            "target": None,
-            "topic_hint": topic,
-            "same_idea": None,
-            "same_idea_confidence": None,
-        }
-        for name, topic in SKILLS.items()
-    ]
-    return {"items": items}
+def toc_answer(_request: Any) -> dict[str, Any]:
+    """Topic candidates and chunk mappings (`MaterialTocOutput`)."""
+    return {
+        "candidates": [
+            {
+                "name": "Derivatives",
+                "description": "Differentiation rules for composite functions.",
+                "core_skill_name": "apply the chain rule",
+                "builds_on": [{"concept": "Power rule", "quote": "derivative of a power"}],
+            },
+            {
+                "name": "Integrals",
+                "description": "Integration techniques from differentiation rules.",
+                "core_skill_name": "integrate by parts",
+                "builds_on": [{"concept": "Product rule", "quote": "product rule backwards"}],
+            },
+        ],
+        "chunk_candidates": [
+            {"n": 1, "candidate_index": 0},
+            {"n": 2, "candidate_index": 1},
+        ],
+        "task_candidates": [],
+    }
+
+
+def structure_answer(_request: Any) -> dict[str, Any]:
+    """Create both topics with their single core skill (`StructureOutput`)."""
+    return {
+        "topic_candidates": [
+            {
+                "candidate_index": 0,
+                "action": "create",
+                "target_topic": None,
+                "name": "Derivatives",
+                "description": "Differentiation rules for composite functions.",
+                "core_skill": {
+                    "name": "apply the chain rule",
+                    "definition": "Can differentiate composite functions using the chain rule.",
+                    "exemplar": "Differentiate f(g(x)) = sin(x^2).",
+                    "kind": "procedure",
+                },
+                "requires": [],
+            },
+            {
+                "candidate_index": 1,
+                "action": "create",
+                "target_topic": None,
+                "name": "Integrals",
+                "description": "Integration techniques from differentiation rules.",
+                "core_skill": {
+                    "name": "integrate by parts",
+                    "definition": "Can evaluate integrals using integration by parts.",
+                    "exemplar": "Compute integral of x * exp(x) dx.",
+                    "kind": "procedure",
+                },
+                "requires": [],
+            },
+        ],
+        "provisional_skills": [],
+    }
 
 
 async def parsed_material(system: System) -> tuple[Learner, UUID, UUID]:
@@ -165,8 +196,9 @@ async def parsed_material(system: System) -> tuple[Learner, UUID, UUID]:
         for i, t in enumerate((PAGE_ONE, PAGE_TWO), 1)
     ]
     system.compute.push_for(PAGES, PdfPagesResponse(pages=pages))
-    system.llm.respond("MaterialParserOutput", parser_answer)
-    system.llm.respond("BuilderOutput", builder_answer)
+    system.llm.respond("MaterialParserV2Output", parser_answer)
+    system.llm.respond("MaterialTocOutput", toc_answer)
+    system.llm.respond("StructureOutput", structure_answer)
 
     learner = await system.sign_in_by_link()
     domain_id, topic_id = await onboard(system, learner, "te7")

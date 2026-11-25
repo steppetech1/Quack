@@ -1217,9 +1217,7 @@ class MemoryTurnContextSource:
             teacher_fallback=role == "teacher_fallback",
             projector_lag=memory_slice.lag_degraded,
         )
-        skill_topics: dict[UUID, UUID] = {
-            s.skill_id: m.topic_id for m in memory for s in m.skills
-        }
+        skill_topics: dict[UUID, UUID] = {s.skill_id: m.topic_id for m in memory for s in m.skills}
         for s in memory_slice.skills:
             if s.topic_id is not None:
                 skill_topics[s.skill_id] = s.topic_id
