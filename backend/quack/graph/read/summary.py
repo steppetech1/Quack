@@ -209,7 +209,7 @@ async def session_summary(
     params = {"learner_id": learner_id, "session_id": session_id}
     events = await db.fetch_all(_SESSION_EVENTS, params, row=StoredEvent)
     started = next((e for e in events if e.type == "session.started"), None)
-    if started is None:
+    if started is None or any(e.type == "session.deleted" for e in events):
         raise SessionNotFoundError(f"no session {session_id}")
     before_seq = started.seq - 1
     ended = next((e for e in reversed(events) if e.type == "session.ended"), None)

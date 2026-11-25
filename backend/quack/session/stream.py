@@ -20,7 +20,9 @@ log = get_logger(__name__)
 
 _OWNED = (
     "SELECT 1 AS found FROM content.sessions "
-    "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s"
+    "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s AND NOT EXISTS ("
+    "SELECT 1 FROM core.events x WHERE x.learner_id = content.sessions.learner_id "
+    "AND x.session_id = content.sessions.session_id AND x.type = 'session.deleted')"
 )
 
 # How long one `get_message` waits before looping; bounds nothing but idle wake-ups.

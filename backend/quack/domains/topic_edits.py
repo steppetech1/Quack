@@ -186,6 +186,10 @@ _HUB = (
     "RETURN h.domainId AS domain, h.deadlineAtMs AS deadline, "
     "collect([t.id, i.requiredLevels]) AS topics"
 )
+_HUB_KIND = (
+    "MATCH (h:Hub {id: $id}) WHERE h.learnerId = $learner "
+    "RETURN h.domainId AS domain, h.kind AS kind"
+)
 _TOPICS_OF_DOMAIN = (
     "MATCH (t:Topic) WHERE t.learnerId = $learner AND t.domainId = $domain AND t.id IN $ids "
     "RETURN count(t) AS n"
@@ -257,3 +261,27 @@ async def edit_hub(
             lambda last: last.get("deadline_at_ms") == body.deadline_at_ms,
         )  # fmt: skip
     return seq
+
+
+async def delete_hub(
+    db: Db, neo4j: AsyncDriver, redis: Redis | None, learner_id: UUID, hub_id: UUID
+) -> int | None:
+    """`DELETE /v1/hubs/{id}`: `hub.deleted`, the chapter leaves the left panel and the graph, its
+    topics stay «without a chapter». None — not the learner's hub (or deleted already: the
+    projector removed the node), or the hub «весь домен» which belongs to the domain itself. The
+    key is the hub, so a repeat before the projector caught up returns the same event (law 5)."""
+    async with read_session(neo4j) as session:
+        result = await session.run(literal(_HUB_KIND), id=str(hub_id), learner=str(learner_id))
+        hub = await result.single()
+    if hub is None or hub["kind"] == "domain_all":
+        return None
+    payload = {"hub_id": str(hub_id)}
+    event = NewEvent(
+        type="hub.deleted",
+        payload=payload,
+        actor="learner",
+        idempotency_key=f"hub.deleted:{hub_id}",
+        domain_id=UUID(str(hub["domain"])),
+    )
+    [stored] = await append_events(db, learner_id, [event], redis=redis)
+    return stored.seq

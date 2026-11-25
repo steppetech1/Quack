@@ -43,7 +43,9 @@ _WAY_OUT = "audio must be a WAV: PCM, mono or stereo; convert WebM, Ogg or MP4 o
 
 _SESSION = (
     "SELECT 1 AS found FROM core.events WHERE learner_id = %(learner_id)s "
-    "AND type = 'session.started' AND payload ->> 'session_id' = %(session_id)s LIMIT 1"
+    "AND type = 'session.started' AND payload ->> 'session_id' = %(session_id)s "
+    "AND NOT EXISTS (SELECT 1 FROM core.events x WHERE x.learner_id = %(learner_id)s "
+    "AND x.type = 'session.deleted' AND x.payload ->> 'session_id' = %(session_id)s) LIMIT 1"
 )
 _RECORDED = (
     "SELECT seq, payload FROM core.events WHERE learner_id = %(learner_id)s "

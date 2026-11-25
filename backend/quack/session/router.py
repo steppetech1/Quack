@@ -130,6 +130,25 @@ async def get_session(
     return await lifecycle.get_session(resources, learner_id, session_id)
 
 
+class SessionDeletedResponse(BaseModel):
+    """The number of `session.deleted` in the journal."""
+
+    seq: int
+
+
+@router.delete("/sessions/{session_id}", status_code=200)
+async def delete_session(
+    session_id: UUID, learner_id: LearnerId, resources: Resources
+) -> SessionDeletedResponse:
+    """The session leaves the left panel and every read: its page, its stream and its actions
+    answer `404` from now on. Its events stay in the journal (the evidence and the model are not
+    touched); a turn in progress finishes. A session of another learner, none, or one deleted
+    already — `404`."""
+    return SessionDeletedResponse(
+        seq=await lifecycle.delete_session(resources, learner_id, session_id)
+    )
+
+
 @router.get("/sessions/{session_id}/jobs")
 async def session_jobs(
     session_id: UUID, learner_id: LearnerId, resources: Resources

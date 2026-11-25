@@ -209,6 +209,15 @@ STREAM = Stream(
             body_key="none",
             body=lambda ids, v: {},
         ),
+        # The chapter leaves the left panel (`hub.deleted`): keyed by the hub, a repeat before the
+        # projector returns the same event, after it «not found».
+        Route(
+            "DELETE",
+            "/v1/hubs/{hub_id}",
+            no_key="a deletion from the left panel: keyed by the hub; a repeat is «not found»",
+            body_key="none",
+            body=lambda ids, v: {},
+        ),
         Route(
             "DELETE",
             "/v1/topics/{topic_id}",

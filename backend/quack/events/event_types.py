@@ -408,6 +408,15 @@ class HubDeadlineSet(EventPayload):
     source: Literal["turn", "observation", "syllabus", "learner"]
 
 
+@register("hub.deleted", projector=True, dispatcher=False)
+class HubDeleted(EventPayload):
+    """The learner removed a chapter from the left panel: the projector deletes the hub and its
+    relationships, the topics stay and turn «without a chapter». The events about the hub stay
+    in the journal; every read of the hub skips it from this event on."""
+
+    hub_id: UUID
+
+
 class HubTopic(EventPayload):
     topic_id: UUID
     required_levels: list[Level]
@@ -557,6 +566,16 @@ class SessionStarted(_SessionRef):
 class SessionEnded(EventPayload):
     session_id: UUID
     reason: str
+
+
+@register("session.deleted", projector=False, dispatcher=False)
+class SessionDeleted(EventPayload):
+    """The learner removed the session from the left panel: every read of the session (the list,
+    the page, the stream, the actions) skips it from this event on, filtering by the event. The
+    row of `content.sessions` and the events of the session stay (the evidence and the model are
+    not touched): conversations are erased only with the domain or the account (Т-§19.5)."""
+
+    session_id: UUID
 
 
 @register("session.titled", projector=False, dispatcher=False)

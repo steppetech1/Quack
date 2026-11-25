@@ -25,6 +25,7 @@ from quack.events.event_types import (
     EmbeddingReady,
     HubCreated,
     HubDeadlineSet,
+    HubDeleted,
     HubTopicsChanged,
     KnownClaimed,
     MaterialParsed,
@@ -315,6 +316,22 @@ def _hub_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
         ),
         MergeRel("Domain", domain, "HAS_HUB", "Hub", hub, {}),
     ]
+
+
+def _hub_deleted_needs(event: StoredEvent) -> Need:
+    return Need(neighbourhoods=frozenset({("Hub", str(event.payload["hub_id"]))}))
+
+
+def _hub_deleted(event: StoredEvent, view: SliceView) -> list[Mutation]:
+    """The learner removed a chapter: the hub goes with `HAS_HUB` and `INCLUDES`, the topics stay
+    (they are «without a chapter» now). A hub «весь домен» is the domain's own and is never
+    deleted; a hub the graph does not know (deleted already, or deleted before it was created)
+    changes nothing, so a replay gives the same graph."""
+    hub = view.resolve("Hub", str(_payload(event, HubDeleted).hub_id))
+    node = None if hub is None else view.node("Hub", hub)
+    if hub is None or node is None or node.get("kind") == "domain_all":
+        return []
+    return [DeleteNode("Hub", hub)]
 
 
 def _hub_deadline_set(event: StoredEvent, view: SliceView) -> list[Mutation]:
@@ -1532,6 +1549,7 @@ HANDLERS: dict[str, Handler] = {
     "edge.removed": Handler(_edge_needs, _edge),
     "hub.created": Handler(_ref("Domain", "domain_id"), _hub_created),
     "hub.deadline_set": Handler(_ref("Hub", "hub_id"), _hub_deadline_set),
+    "hub.deleted": Handler(_hub_deleted_needs, _hub_deleted),
     "hub.topics_changed": Handler(_hub_topics_needs, _hub_topics_changed),
     "embedding.ready": Handler(_embedding_needs, _embedding_ready),
     "known.claimed": Handler(_ref("Topic", "topic_id"), _known_claimed),

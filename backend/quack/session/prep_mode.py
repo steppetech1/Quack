@@ -31,8 +31,17 @@ _KINDS = {
 }
 
 
+_HUB_DELETED = (
+    "SELECT 1 AS found FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND type = 'hub.deleted' AND payload->>'hub_id' = %(hub)s LIMIT 1"
+)
+
+
 async def prep_enabled(db: Db, *, learner_id: UUID, hub_id: UUID) -> bool:
-    row = await db.fetch_one(_LAST_PREP, {"learner_id": learner_id, "hub": str(hub_id)})
+    keys = {"learner_id": learner_id, "hub": str(hub_id)}
+    if await db.fetch_one(_HUB_DELETED, keys) is not None:
+        return False  # the learner deleted the chapter: no preparation mode for it
+    row = await db.fetch_one(_LAST_PREP, keys)
     return row is not None and row["type"] == "prep_mode.enabled"
 
 

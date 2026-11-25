@@ -213,6 +213,15 @@ async def edit_hub_endpoint(
     return _edited(await topic_edits.edit_hub(r.db, r.neo4j, r.redis, learner_id, hub_id, req))
 
 
+@_protected.delete("/hubs/{hub_id}", response_model=topic_edits.Edited, status_code=202)
+async def delete_hub_endpoint(
+    hub_id: UUID, request: Request, learner_id: CurrentLearnerId
+) -> topic_edits.Edited:
+    """The chapter leaves the left panel (`hub.deleted`); the topics stay without a chapter."""
+    r = get_resources(request)
+    return _edited(await topic_edits.delete_hub(r.db, r.neo4j, r.redis, learner_id, hub_id))
+
+
 # --- ТЗ Ф4 WP6.5: reads of topics and hubs (codes, not text; Т-§22.2) ---
 
 

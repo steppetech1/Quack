@@ -37,9 +37,10 @@ end
 # Open sessions without activity for `session_inactivity_timeout_min`, of every learner
 # (Т-§2.2): the sweep serves the whole system, like the job queue.
 _STALE = (
-    "SELECT learner_id, session_id FROM content.sessions WHERE status = 'active' "
-    "AND last_activity_at < now() - make_interval(mins => %(minutes)s) "
-    "ORDER BY learner_id, session_id"
+    "SELECT s.learner_id, s.session_id FROM content.sessions s WHERE s.status = 'active' "
+    f"AND {sessions.NOT_DELETED} "
+    "AND s.last_activity_at < now() - make_interval(mins => %(minutes)s) "
+    "ORDER BY s.learner_id, s.session_id"
 )
 
 
@@ -124,6 +125,18 @@ async def get_session(resources: AppResources, learner_id: UUID, session_id: UUI
         raise _not_found(exc) from exc
     feed = await sessions.session_feed(db, learner_id=learner_id, session_id=session_id)
     return SessionDetail(**view.model_dump(), events=feed)
+
+
+async def delete_session(resources: AppResources, learner_id: UUID, session_id: UUID) -> int:
+    """`DELETE /v1/sessions/{id}`: of another learner, none or deleted already — `404`."""
+    try:
+        seq = await sessions.delete_session(
+            resources.db, learner_id=learner_id, session_id=session_id
+        )
+    except LookupError as exc:
+        raise _not_found(exc) from exc
+    await _release_presence(resources.redis, learner_id, session_id)
+    return seq
 
 
 async def heartbeat(

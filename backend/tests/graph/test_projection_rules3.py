@@ -296,6 +296,37 @@ def test_hub_created_deadline_and_topics() -> None:
     assert nodes[("Hub", HUB)]["deadlineAtMs"] == 0  # law 8: removed deadline — 0 «не было»
 
 
+def test_hub_deleted_removes_the_hub_and_its_edges_but_keeps_the_topics() -> None:
+    includes = _rel(("Hub", HUB), "INCLUDES", ("Topic", TOPIC), requiredLevels=[3])
+    has_hub = _rel(("Domain", DOMAIN), "HAS_HUB", ("Hub", HUB))
+    nodes, rels = _run(
+        [_event(20, "hub.deleted", {"hub_id": HUB})],
+        [_DOMAIN, _TOPIC, _HUB],
+        [includes, has_hub],
+    )
+    assert ("Hub", HUB) not in nodes and ("Topic", TOPIC) in nodes
+    assert not [k for k in rels if "Hub" in (k[0], k[3])]
+    # a late event about the deleted hub is a no-op, and a second delete too
+    nodes, rels = _run(
+        [
+            _event(21, "hub.deleted", {"hub_id": HUB}),
+            _event(22, "hub.deadline_set", {"hub_id": HUB, "deadline_at_ms": 5, "source": "turn"}),
+            _event(23, "hub.topics_changed",
+                   {"hub_id": HUB, "topics": [{"topic_id": TOPIC, "required_levels": [3]}]}),
+        ],
+        [_DOMAIN, _TOPIC],
+    )  # fmt: skip
+    assert ("Hub", HUB) not in nodes and not [k for k in rels if k[2] == "INCLUDES"]
+
+
+def test_hub_deleted_never_removes_the_hub_of_the_whole_domain() -> None:
+    whole = _node("Hub", HUB, domainId=DOMAIN, name="Algebra", kind="domain_all",
+                  origin="learner", controlType="no_goal", deadlineAtMs=0,
+                  status="active")  # fmt: skip
+    nodes, _ = _run([_event(20, "hub.deleted", {"hub_id": HUB})], [_DOMAIN, whole])
+    assert ("Hub", HUB) in nodes
+
+
 # --- aliases and the empty application (T-P5) -----------------------------------------------
 
 

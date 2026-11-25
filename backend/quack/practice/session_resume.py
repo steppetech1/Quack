@@ -20,7 +20,9 @@ from quack.events.log import NewEvent, append_events
 
 _LOCKED = (
     "SELECT domain_id, intent, topic_id, hub_id, status FROM content.sessions "
-    "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s FOR UPDATE"
+    "WHERE learner_id = %(learner_id)s AND session_id = %(session_id)s AND NOT EXISTS ("
+    "SELECT 1 FROM core.events x WHERE x.learner_id = content.sessions.learner_id "
+    "AND x.session_id = content.sessions.session_id AND x.type = 'session.deleted') FOR UPDATE"
 )
 _LAST_ENDED = (
     "SELECT seq, payload FROM core.events WHERE learner_id = %(learner_id)s "

@@ -154,7 +154,11 @@ class NotASupplement(Exception):
 _OWNER_OF_LEARNER = (
     "SELECT COALESCE(domain_id::text, payload ->> 'domain_id') AS domain_id FROM core.events "
     "WHERE learner_id = %(learner_id)s AND type = ANY(%(types)s) "
-    "AND payload ->> %(field)s = %(owner_id)s ORDER BY seq LIMIT 1"
+    "AND payload ->> %(field)s = %(owner_id)s "
+    # a hub the learner deleted from the left panel is not an owner any more
+    "AND NOT EXISTS (SELECT 1 FROM core.events d WHERE d.learner_id = %(learner_id)s "
+    "AND d.type = 'hub.deleted' AND d.payload ->> 'hub_id' = %(owner_id)s) "
+    "ORDER BY seq LIMIT 1"
 )
 _DOMAIN_CREATED_EVENTS = (
     "SELECT seq, COALESCE(domain_id::text, payload ->> 'domain_id') AS domain_id "
