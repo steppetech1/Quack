@@ -1,0 +1,19 @@
+-- 08-llm-usage-by-role
+-- captured 2026-11-25T20:33:25Z from the local stand
+       role        | calls | avg_in | avg_cached | avg_out | avg_reasoning 
+-------------------+-------+--------+------------+---------+---------------
+ task_generator    |   473 |   1888 |       1612 |    3160 |          2159
+ task_checker      |   344 |    643 |        446 |    3315 |          3226
+ task_arbiter      |   172 |    989 |        379 |    1829 |          1703
+ builder           |   140 |   3054 |       1694 |    1778 |          1481
+ solution_space    |   125 |    687 |        354 |    3748 |          3085
+ material_parser   |    49 |   2146 |       1503 |    4458 |          3807
+ analyst           |     3 |    943 |          0 |    3174 |          2937
+ recognizer        |     3 |   1000 |        604 |     703 |           652
+ analyst_deep      |     3 |    943 |          0 |    2236 |          1885
+ teacher           |     1 |   7455 |          0 |     580 |           160
+ artifact_writer   |     1 |   1291 |          0 |    3698 |          2912
+ extractor         |     1 |   1995 |          0 |    1022 |          1008
+ domain_classifier |     1 |    358 |          0 |     598 |           568
+(13 rows)
+

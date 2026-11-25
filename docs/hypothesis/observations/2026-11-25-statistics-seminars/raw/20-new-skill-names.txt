@@ -1,0 +1,88 @@
+-- 20-new-skill-names
+-- captured 2026-11-25T20:48:55Z from the local stand
+              domain_id               | first_upload |      actor       |                                            new_skill_name                                            
+--------------------------------------+--------------+------------------+------------------------------------------------------------------------------------------------------
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | t            | task_generator@1 | Build a frequency, relative frequency and cumulative relative frequency table
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | t            | task_generator@1 | Read a percentage from a cumulative relative frequency table
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | t            | task_generator@1 | Read a percentage from a cumulative relative frequency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Build and interpret frequency, relative frequency and cumulative relative frequency tables
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Build and interpret frequency, relative frequency and cumulative relative frequency tables
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Build and interpret frequency, relative frequency and cumulative relative frequency tables
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Compute a conditional probability from a contingency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Compute a conditional probability from a contingency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Compute a joint probability from a contingency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Compute a marginal probability from a contingency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | compute and interpret the expected value of a discrete random variable
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | compute an upper-tail proportion for a normal variable
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | compute a sample mean
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | compute a sample proportion
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Compute sample variance and sample standard deviation using deviations from the mean
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Compute the arithmetic mean from raw data
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | compute the expected value of a linear function of a discrete random variable
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | compute the probability of an event in a finite equiprobable sample space
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | compute the standard deviation of a discrete random variable
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Distinguish sample variance from population variance through the divisor
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | estimate the mean from a grouped frequency table using class midpoints
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | explain why a mean calculated from grouped data is an estimate
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | identify a statistic and the population characteristic it estimates
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Identify the level of measurement: nominal, ordinal, interval, or ratio
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Identify the level of measurement: nominal, ordinal, interval, or ratio
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Identify the level of measurement: nominal, ordinal, interval, or ratio
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Identify the level of measurement: nominal, ordinal, interval, or ratio
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Identify the level of measurement: nominal, ordinal, interval, or ratio
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Identify the level of measurement: nominal, ordinal, interval, or ratio
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Interpreting percentiles in context
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Interpreting percentiles in context
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Interpreting percentiles in context
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | Interpreting percentiles in context
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | standardise normal variables and compare z-scores
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | t            | task_generator@1 | standardise normal variables and compare z-scores
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | assess plausibility using mean and standard deviation
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Build a frequency, relative frequency and cumulative relative frequency table from raw data
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing a measure of centre
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing a measure of centre
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing a measure of centre
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing a measure of centre
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing an appropriate graph: histogram, bar chart or time series
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing an appropriate graph: histogram, bar chart or time series
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing an appropriate graph: histogram, bar chart or time series
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | choosing an appropriate graph: histogram, bar chart or time series
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compare the sensitivity of the mean, median and mode to an extreme value
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute and interpret z-scores
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute and interpret z-scores
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute and interpret z-scores
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute and interpret z-scores
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute a percentage for values at most a given value from a frequency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute a percentage for values more than a given value from a frequency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | compute a sample mean
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | compute a sample proportion
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | compute binomial mean and standard deviation
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute the mean, median and mode of a small data set
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Compute the mean, median and mode of a small data set
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | compute the probability of an event in a finite equally likely sample space
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | distinguish a statistic from the population characteristic it estimates
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Evaluate the appropriateness of a normal model
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Evaluate the appropriateness of a normal model
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Identify the level of measurement (nominal, ordinal, interval, ratio) and justify the classification
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Identify the level of measurement (nominal, ordinal, interval, ratio) and justify the classification
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Identify the level of measurement (nominal, ordinal, interval, ratio) and justify the classification
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Identify the level of measurement (nominal, ordinal, interval, ratio) and justify the classification
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Identify the level of measurement (nominal, ordinal, interval, ratio) and justify the classification
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Identify the level of measurement (nominal, ordinal, interval, ratio) and justify the classification
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | judging whether a mean is a useful summary under trend and seasonality
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | list the outcomes in a described event
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | list the outcomes in a described event
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Marginal, joint and conditional probabilities from a two-way table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Marginal, joint and conditional probabilities from a two-way table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Marginal, joint and conditional probabilities from a two-way table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Marginal, joint and conditional probabilities from a two-way table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Normality assumption for the sampling distribution of the sample mean
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Normal probability for a sample mean and its interpretation
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | reading a time series graph: trend and seasonal pattern
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Standard error of the sample mean
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Standardising a sample mean using its standard error
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Writing normal-distribution probabilities in symbols and as Excel NORM.DIST formulas
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Writing normal-distribution probabilities in symbols and as Excel NORM.DIST formulas
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | f            | task_generator@1 | Writing normal-distribution probabilities in symbols and as Excel NORM.DIST formulas3
+(82 rows)
+

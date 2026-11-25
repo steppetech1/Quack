@@ -1,0 +1,22 @@
+-- 18-topics-final-counts
+-- captured 2026-11-25T20:48:39Z from the local stand
+                     topic                      | created_utc | material_skills | placed_skills |             merged              
+------------------------------------------------+-------------+-----------------+---------------+---------------------------------
+ Probability                                    | 11-24 20:20 |              13 |            11 | 
+ Sampling and Data                              | 11-24 20:21 |              12 |            14 | 
+ Graphs and Measures of Center                  | 11-24 20:53 |               1 |             0 | 
+ Frequency distributions and histograms         | 11-24 20:53 |               2 |             0 | 
+ Statistical graphs                             | 11-24 20:53 |               1 |             1 | 
+ Measures of center                             | 11-24 20:53 |               9 |            14 | 
+ Time series                                    | 11-24 20:53 |               2 |             3 | 
+ The Central Limit Theorem                      | 11-24 21:08 |               0 |             0 | 
+ sampling distribution of the sample mean       | 11-24 21:08 |               8 |             5 | 
+ sampling distribution of the sample proportion | 11-24 21:08 |               3 |             0 | 
+ Discrete Random Variables                      | 11-24 21:25 |              21 |             8 | 
+ The Normal Distribution                        | 11-24 21:26 |               0 |             0 | merged into Normal Distribution
+ Normal Distribution                            | 11-24 21:26 |              14 |             9 | 
+ Shape, Location and Dispersion                 | 11-24 21:35 |               0 |             0 | 
+ Measures of position and dispersion            | 11-25 03:18 |              14 |             9 | 
+ sampling distributions                         | 11-25 18:28 |               2 |             0 | 
+(16 rows)
+
