@@ -1,0 +1,52 @@
+-- 09-structure-jobs
+-- captured 2026-11-25T20:33:26Z from the local stand
+   step    |          kind          |  status   | attempts |                     last_error                      |          created_at           
+-----------+------------------------+-----------+----------+-----------------------------------------------------+-------------------------------
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:03:30.195476+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:03:31.207382+00
+           | material.parse         | succeeded |        2 |                                                     | 2026-11-24 20:03:33.224698+00
+ structure | material.parse         | succeeded |        4 |                                                     | 2026-11-24 20:04:15.542109+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:04:23.963637+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:05:39.152479+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:18:52.744732+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:18:53.754527+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:18:54.765127+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:18:58.286333+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:19:01.303507+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:19:03.818984+00
+           | material.parse         | succeeded |        2 |                                                     | 2026-11-24 20:19:05.831859+00
+ structure | material.parse         | succeeded |        2 |                                                     | 2026-11-24 20:19:09.401201+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:19:38.389104+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:19:44.789308+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:19:54.332247+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:20:25.332826+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:20:38.764513+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-24 20:21:48.109593+00
+           | material.seminar_tasks | succeeded |        1 |                                                     | 2026-11-25 03:15:58.7564+00
+           | material.seminar_tasks | succeeded |        2 |                                                     | 2026-11-25 03:16:28.624954+00
+           | material.seminar_tasks | cancelled |        1 |                                                     | 2026-11-25 03:17:24.196127+00
+           | material.seminar_tasks | succeeded |        2 |                                                     | 2026-11-25 03:17:47.527461+00
+           | material.seminar_tasks | succeeded |        2 |                                                     | 2026-11-25 03:18:36.249938+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:05:37.14203+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:05:37.143709+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:05:37.144926+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:05:37.147599+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:05:37.148665+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:05:37.14973+00
+           | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:05:37.150407+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:06:31.335742+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:06:33.188682+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:06:38.66811+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:06:55.029829+00
+ structure | material.parse         | succeeded |        3 |                                                     | 2026-11-25 18:07:26.029889+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:07:27.025315+00
+ structure | material.parse         | succeeded |        1 |                                                     | 2026-11-25 18:07:32.203685+00
+           | material.seminar_tasks | succeeded |        4 |                                                     | 2026-11-25 18:07:58.853908+00
+           | material.seminar_tasks | succeeded |        2 |                                                     | 2026-11-25 18:09:18.025753+00
+           | material.seminar_tasks | succeeded |        2 |                                                     | 2026-11-25 18:10:00.487586+00
+           | material.seminar_tasks | succeeded |        2 |                                                     | 2026-11-25 18:10:35.553404+00
+           | material.seminar_tasks | failed    |        5 | LLMUnavailableError: task_generator@1: circuit open | 2026-11-25 18:11:13.226319+00
+           | material.seminar_tasks | failed    |        5 | LLMUnavailableError: task_generator@1: circuit open | 2026-11-25 18:28:46.226783+00
+           | material.seminar_tasks | failed    |        5 | LLMUnavailableError: task_generator@1: circuit open | 2026-11-25 18:30:01.950906+00
+(46 rows)
+

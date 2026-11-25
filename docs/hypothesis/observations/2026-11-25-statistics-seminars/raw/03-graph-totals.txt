@@ -1,0 +1,7 @@
+-- 03-graph-totals
+-- captured 2026-11-25T20:33:24Z from the local stand
+ topics | skills_from_material | provisional_skills_placed | requires_edges | hubs 
+--------+----------------------+---------------------------+----------------+------
+     16 |                  102 |                        74 |              0 |   14
+(1 row)
+

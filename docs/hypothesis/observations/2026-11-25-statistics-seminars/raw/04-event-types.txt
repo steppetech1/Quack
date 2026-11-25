@@ -1,0 +1,30 @@
+-- 04-event-types
+-- captured 2026-11-25T20:33:24Z from the local stand
+         type          | count 
+-----------------------+-------
+ embedding.ready       |   232
+ skill.created         |   138
+ task.created          |   121
+ skill.placed          |    86
+ chunk.indexed         |    73
+ topic.created         |    21
+ hub.created           |    17
+ hub.topics_changed    |    17
+ material.parsed       |    17
+ material.uploaded     |    17
+ agent.completed       |    16
+ agent.requested       |     7
+ digest.written        |     6
+ episode.closed        |     4
+ session.started       |     3
+ session.ended         |     3
+ canvas.line_committed |     3
+ domain.created        |     2
+ message.sent          |     1
+ artifact.updated      |     1
+ observation.extracted |     1
+ turn.committed        |     1
+ consent.given         |     1
+ topic.merged          |     1
+(24 rows)
+

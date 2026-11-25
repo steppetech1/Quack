@@ -1,0 +1,29 @@
+-- 14-structure-events-by-hour
+-- captured 2026-11-25T20:38:50Z from the local stand
+        hour_utc        |       type        | count 
+------------------------+-------------------+-------
+ 2026-11-24 20:00:00+00 | hub.created       |     1
+ 2026-11-24 20:00:00+00 | material.uploaded |     7
+ 2026-11-24 20:00:00+00 | skill.created     |    37
+ 2026-11-24 20:00:00+00 | task.created      |    13
+ 2026-11-24 20:00:00+00 | topic.created     |     7
+ 2026-11-24 21:00:00+00 | hub.created       |     2
+ 2026-11-24 21:00:00+00 | skill.created     |    25
+ 2026-11-24 21:00:00+00 | skill.placed      |    18
+ 2026-11-24 21:00:00+00 | task.created      |    16
+ 2026-11-24 21:00:00+00 | topic.created     |     7
+ 2026-11-24 21:00:00+00 | topic.merged      |     1
+ 2026-11-25 03:00:00+00 | hub.created       |     4
+ 2026-11-25 03:00:00+00 | skill.created     |    28
+ 2026-11-25 03:00:00+00 | skill.placed      |    16
+ 2026-11-25 03:00:00+00 | task.created      |    19
+ 2026-11-25 03:00:00+00 | topic.created     |     1
+ 2026-11-25 18:00:00+00 | hub.created       |     7
+ 2026-11-25 18:00:00+00 | material.uploaded |     7
+ 2026-11-25 18:00:00+00 | skill.created     |    12
+ 2026-11-25 18:00:00+00 | task.created      |    44
+ 2026-11-25 18:00:00+00 | topic.created     |     1
+ 2026-11-25 19:00:00+00 | skill.placed      |    40
+ 2026-11-25 19:00:00+00 | task.created      |     9
+(23 rows)
+

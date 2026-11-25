@@ -1,0 +1,7 @@
+-- 16-baseline-first-upload
+-- captured 2026-11-25T20:48:39Z from the local stand
+ topics_created | topics_merged | topics_alive | skills_created | skill_placed_events | skills_placed_distinct | hubs | tasks | tasks_with_new_skill | requires_edges 
+----------------+---------------+--------------+----------------+---------------------+------------------------+------+-------+----------------------+----------------
+             15 |             1 |           14 |             90 |                  34 |                     34 |    7 |    48 |                   22 |              0
+(1 row)
+
