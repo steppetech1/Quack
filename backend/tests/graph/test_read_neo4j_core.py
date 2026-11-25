@@ -341,6 +341,14 @@ async def test_topic_requires_is_derived_from_skill_links(
         UUID(world.t2),
         2,  # s1 -> s2 and s4 -> s2; s1 -> s4 stays inside the topic
     )
+    assert link.confidence == pytest.approx(0.8)  # max(0.8, 0.7)
+    await _write(
+        neo4j_driver,
+        world.learner,
+        [_rel("Skill", s4, "REQUIRES", "Skill", world.s2, origin="material", confidence=0.85)],
+    )
+    [updated] = await reader.topic_requires(UUID(world.domain))
+    assert updated.confidence == pytest.approx(0.85)
     assert await reader.topic_requires(uuid4()) == []
 
 

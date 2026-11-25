@@ -854,11 +854,12 @@ class Neo4jGraphReader(ExtraReads):
 
         async def load() -> list[Row]:
             return await self._run(
-                "MATCH (ta:Topic)-[:COVERS]->(a:Skill)-[:REQUIRES]->(b:Skill), "
+                "MATCH (ta:Topic)-[:COVERS]->(a:Skill)-[r:REQUIRES]->(b:Skill), "
                 "(tb:Topic)-[:COVERS]->(b) "
                 "WHERE ta.learnerId = $l AND tb.learnerId = $l AND a.learnerId = $l "
                 "AND b.learnerId = $l AND ta.domainId = $d AND tb.domainId = $d AND ta <> tb "
-                "RETURN ta.id AS a, tb.id AS b, count(*) AS weight ORDER BY a, b",
+                "RETURN ta.id AS a, tb.id AS b, count(*) AS weight, "
+                "max(coalesce(r.confidence, 1.0)) AS confidence ORDER BY a, b",
                 l=str(learner),
                 d=live,
             )
@@ -866,7 +867,10 @@ class Neo4jGraphReader(ExtraReads):
         rows, _, _, _ = await self._stable(learner, load)
         return [
             TopicRequires(
-                from_topic_id=UUID(r["a"]), to_topic_id=UUID(r["b"]), weight=int(r["weight"])
+                from_topic_id=UUID(r["a"]),
+                to_topic_id=UUID(r["b"]),
+                weight=int(r["weight"]),
+                confidence=_f(r, "confidence", 1.0),
             )
             for r in rows
         ]
