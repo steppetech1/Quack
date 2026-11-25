@@ -9,12 +9,12 @@ compute, storage, the graph reconciliation and the task writer are test doubles.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 
-from quack.agents.reconcile import ReconcileResult, Resolution, Subject
 from quack.config import Settings
 from quack.db import Db
 from quack.jobs.runner import JobContext
@@ -22,7 +22,8 @@ from quack.jobs.types import ClaimedJob
 from quack.llm.errors import LLMUnavailableError
 from quack.materials.parse import (
     SEMINAR_TASKS_KIND,
-    MaterialParserOutput,
+    MaterialParserV2Output,
+    MaterialTocOutput,
     SeminarSpec,
     parse_step,
     seminar_tasks_step,
@@ -36,6 +37,7 @@ from tests.materials.test_parse_wp20 import (
     _parser_answer,
     _Resolver,
     _structure_job,
+    _toc_answer,
     _World,
 )
 
@@ -76,18 +78,21 @@ class _Writer:
 
 async def _parsed(world: _World) -> tuple[UUID, UUID, UUID]:
     learner, domain, material = await world.upload()
-    world.provider.respond("MaterialParserOutput", _answer_with_problems)
+    world.provider.respond("MaterialParserV2Output", _answer_with_problems)
+    world.provider.respond("MaterialTocOutput", _toc_answer)
     world.pdf_pages(PAGE_ONE, PAGE_TWO)
     await parse_step(world.ctx, _job(learner, material))
     return learner, domain, material
 
 
 def test_the_layer_two_of_the_parser_has_the_seminar_tasks() -> None:
-    schema = MaterialParserOutput.model_json_schema()
+    schema = MaterialParserV2Output.model_json_schema()
     assert schema["required"] == ["title", "chunks", "deadlines", "seminar_tasks"]
     item = schema["$defs"]["ParsedSeminarTask"]
     assert item["required"] == ["statement", "answer", "chunk", "page"]
     assert item["additionalProperties"] is False
+    toc_schema = MaterialTocOutput.model_json_schema()
+    assert toc_schema["required"] == ["candidates", "chunk_candidates", "task_candidates"]
 
 
 async def test_parse_step_carries_the_problems_of_the_chunks(world: _World) -> None:
@@ -174,14 +179,17 @@ async def test_structure_step_queues_the_job_of_the_seminar_tasks(world: _World)
     first, second, third = specs
     assert first.key == f"seminar:{material}:0" and second.key == f"seminar:{material}:1"
     assert third.key == f"seminar:{material}:2"
-    assert first.skill_id == resolver.ids[("skill", "Chain rule")]
-    assert (first.skill_name, first.topic_name) == ("Chain rule", "Derivatives")
+    assert first.skill_id == resolver.topics["Derivatives"].core_skill_id
+    assert first.topic_id == resolver.topics["Derivatives"].topic_id
+    assert first.topic_skill_ids == resolver.topics["Derivatives"].skill_ids
+    assert (first.skill_name, first.topic_name) == ("Apply the chain rule", "Derivatives")
     assert (first.statement, first.answer, first.domain_id) == (
         "Differentiate sin(x^2).",
         "2x cos(x^2)",
         domain,
     )
-    assert second.skill_id == resolver.ids[("skill", "Integration by parts")]
+    assert second.skill_id == resolver.topics["Integrals"].core_skill_id
+    assert second.topic_id == resolver.topics["Integrals"].topic_id
     assert (second.answer, second.topic_name) == (None, "Integrals")
     assert first.course_context == "Calculus lectures"
 
@@ -189,21 +197,25 @@ async def test_structure_step_queues_the_job_of_the_seminar_tasks(world: _World)
     assert len(await _seminar_jobs(world)) == 1
 
 
-async def test_a_problem_of_a_chunk_that_teaches_nothing_uses_what_the_chunk_uses(
+async def test_a_problem_without_a_mapped_candidate_is_skipped(
     world: _World,
 ) -> None:
-    """A page of a problem set teaches nothing, it takes skills as known: the problem goes
-    to the first of them; a chunk with no skill at all gives no task, and the material is
-    parsed all the same."""
+    """A seminar task whose TOC `task_candidates` mapping is null is skipped; mapped tasks get
+    their topic's `topic_id`, `core_skill_id`, and `topic_skill_ids`."""
     learner, _, material = await world.upload()
 
-    def parser(request: Any) -> dict[str, Any]:
-        base = _parser_answer(request)
-        base["chunks"][0] |= {"teaches": [], "uses": ["Power rule", "Chain rule"]}
-        base["chunks"][1] |= {"teaches": [], "uses": []}
-        return base | {"seminar_tasks": PROBLEMS[:2]}
+    def toc_partial(request: Any) -> dict[str, Any]:
+        base = _toc_answer(request)
+        base["task_candidates"] = [
+            {"task_index": 0, "candidate_index": 0},
+            {"task_index": 1, "candidate_index": None},
+        ]
+        return base
 
-    world.provider.respond("MaterialParserOutput", parser)
+    world.provider.respond(
+        "MaterialParserV2Output", lambda r: _parser_answer(r) | {"seminar_tasks": PROBLEMS[:2]}
+    )
+    world.provider.respond("MaterialTocOutput", toc_partial)
     world.pdf_pages(PAGE_ONE, PAGE_TWO)
     await parse_step(world.ctx, _job(learner, material))
     resolver, writer = _Resolver(), _Writer()
@@ -213,7 +225,8 @@ async def test_a_problem_of_a_chunk_that_teaches_nothing_uses_what_the_chunk_use
 
     [(_, [only])] = writer.calls
     assert only.statement == "Differentiate sin(x^2)."
-    assert only.skill_id == resolver.ids[("skill", "Power rule")]
+    assert only.skill_id == resolver.topics["Derivatives"].core_skill_id
+    assert only.topic_id == resolver.topics["Derivatives"].topic_id
     assert len(await world.types(learner, "material.parsed")) == 1
 
 
@@ -286,37 +299,77 @@ class _FakeCreate:
         return task_id
 
 
+@dataclass(frozen=True)
+class _FakeResolvedStructureTopic:
+    topic_id: UUID
+    core_skill_id: UUID
+    skill_ids: tuple[UUID, ...] = ()
+
+
+@dataclass(frozen=True)
+class _FakeMaterialBuildsOn:
+    concept: str
+    quote: str
+
+
+@dataclass(frozen=True)
+class _FakeMaterialTopicCandidate:
+    name: str
+    description: str
+    core_skill_name: str
+    builds_on: tuple[_FakeMaterialBuildsOn, ...] = ()
+
+
 async def _structured(
     world: _World, monkeypatch: pytest.MonkeyPatch
-) -> tuple[UUID, UUID, UUID, dict[tuple[str, str], UUID]]:
-    """The structure step through the handler of the glue, `reconcile_domain` being a double."""
+) -> tuple[UUID, UUID, UUID, dict[str, _FakeResolvedStructureTopic]]:
+    """The structure step through the handler of the glue, `resolve_material_structure`
+    being a double."""
+    from quack.agents import hygiene
     from quack.ops import material_parse as glue
 
     learner, domain, material = await _parsed(world)
     job = await _structure_job(world, learner, material)
-    nodes: dict[tuple[str, str], UUID] = {}
-    reconciled: list[tuple[str, list[str]]] = []
+    nodes: dict[str, _FakeResolvedStructureTopic] = {}
+    resolved_calls: list[list[str]] = []
 
-    async def fake_reconcile(
-        ctx: Any, *, learner_id: UUID, domain_id: UUID, subjects: Sequence[Subject], origin: str
-    ) -> ReconcileResult:
+    async def fake_resolve(
+        ctx: Any,
+        *,
+        learner_id: UUID,
+        domain_id: UUID,
+        candidates: Sequence[Any],
+        source_refs: Sequence[dict[str, Any]] = (),
+    ) -> list[_FakeResolvedStructureTopic]:
         assert (learner_id, domain_id) == (learner, domain)
-        reconciled.append((origin, [s.name for s in subjects]))
-        return ReconcileResult(
-            [Resolution(s, "link", nodes.setdefault((s.kind, s.name), uuid4())) for s in subjects]
-        )
+        resolved_calls.append([c.name for c in candidates])
+        out: list[_FakeResolvedStructureTopic] = []
+        for c in candidates:
+            if c.name not in nodes:
+                core = uuid4()
+                extra = uuid4()
+                nodes[c.name] = _FakeResolvedStructureTopic(
+                    topic_id=uuid4(),
+                    core_skill_id=core,
+                    skill_ids=(core, extra),
+                )
+            out.append(nodes[c.name])
+        return out
 
     async def never(*a: Any, **kw: Any) -> UUID | None:
         raise AssertionError("the structure step asks no model for a task")
 
-    monkeypatch.setattr(glue, "reconcile_domain", fake_reconcile)
+    monkeypatch.setattr(hygiene, "MaterialBuildsOn", _FakeMaterialBuildsOn, raising=False)
+    monkeypatch.setattr(
+        hygiene, "MaterialTopicCandidate", _FakeMaterialTopicCandidate, raising=False
+    )
+    monkeypatch.setattr(hygiene, "resolve_material_structure", fake_resolve, raising=False)
     monkeypatch.setattr(glue, "create_seminar_task", never)
 
     await glue.handle_material_parse(job, world.ctx)
 
-    assert {origin for origin, _ in reconciled} == {"material"}
-    names = [n for _, group in reconciled for n in group]
-    assert names.index("Derivatives") < names.index("Chain rule")
+    assert len(resolved_calls) == 1
+    assert {"Derivatives", "Integrals"} <= set(resolved_calls[0])
     assert len(await world.types(learner, "material.parsed")) == 1
     return learner, domain, material, nodes
 
@@ -324,10 +377,9 @@ async def _structured(
 async def test_the_handler_reconciles_the_skills_and_the_other_job_makes_the_tasks(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`quack.ops.material_parse`: the structure step calls `reconcile_domain` (origin
-    `material`, topics before skills) and asks no model for a task; the job it queued calls
-    `create_seminar_task` for every problem with the id of the node `reconcile_domain` gave to
-    the skill; a task the function throws away (`None`) is not an error."""
+    """`quack.ops.material_parse`: the structure step calls `resolve_material_structure` and asks
+    no model for a task; the job it queued calls `create_seminar_task` for every problem with the
+    topic's core skill, `topic_id`, and `topic_skill_ids`."""
     from quack.ops import material_parse as glue
 
     learner, domain, material, nodes = await _structured(world, monkeypatch)
@@ -339,7 +391,7 @@ async def test_the_handler_reconciles_the_skills_and_the_other_job_makes_the_tas
     tasks = {t.statement: t for t, _ in create.calls}
     assert len(create.calls) == 3 and {who for _, who in create.calls} == {learner}
     chain = tasks["Differentiate sin(x^2)."]
-    assert chain.skill_id == nodes[("skill", "Chain rule")]
+    assert chain.skill_id == nodes["Derivatives"].core_skill_id
     assert (chain.key, chain.answer, chain.domain_id) == (
         f"seminar:{material}:0",
         "2x cos(x^2)",
@@ -385,15 +437,23 @@ async def test_a_failing_task_does_not_throw_away_the_others_and_the_retry_goes_
 async def test_the_step_that_reconciles_nothing_queues_no_task_job(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If the reconciliation skipped every skill, there is no skill to hang a task on."""
+    """If TOC produced no topic candidates, there is no skill to hang a task on."""
+    from quack.agents import hygiene
     from quack.ops import material_parse as glue
 
-    learner, _, material = await _parsed(world)
+    learner, _, material = await world.upload()
+    world.provider.respond("MaterialParserV2Output", _answer_with_problems)
+    world.provider.respond(
+        "MaterialTocOutput",
+        lambda _r: {"candidates": [], "chunk_candidates": [], "task_candidates": []},
+    )
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    await parse_step(world.ctx, _job(learner, material))
 
-    async def nothing(ctx: Any, **kw: Any) -> ReconcileResult:
-        return ReconcileResult([])
+    async def never_resolve(*a: Any, **kw: Any) -> list[Any]:
+        raise AssertionError("empty candidates need not call resolve_material_structure")
 
-    monkeypatch.setattr(glue, "reconcile_domain", nothing)
+    monkeypatch.setattr(hygiene, "resolve_material_structure", never_resolve, raising=False)
     await glue.handle_material_parse(await _structure_job(world, learner, material), world.ctx)
     assert len(await world.types(learner, "material.parsed")) == 1
     assert await _seminar_jobs(world) == []
