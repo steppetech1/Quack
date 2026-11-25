@@ -5442,8 +5442,15 @@
       },
       "TopicRequires": {
         "additionalProperties": false,
-        "description": "A derived link between topics (Т-§4.6); weight — the number of skill links.",
+        "description": "A derived link between topics (Т-§4.6); weight — the number of skill links,\nconfidence — max confidence across those links.",
         "properties": {
+          "confidence": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
           "from_topic_id": {
             "format": "uuid",
             "title": "From Topic Id",

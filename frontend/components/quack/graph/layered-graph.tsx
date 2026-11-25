@@ -31,6 +31,13 @@ const FIT_K_MAX = 1.2;
 const FIT_MARGIN = 56;
 /** How much of its brightness a node loses while a hub is in focus */
 const FOCUS_DIM = 0.86;
+/** Topic-to-topic `REQUIRES` opacity and width by confidence tier (TZ §4.4 / T-§4.6) */
+const EDGE_CONFIDENCE_STYLE = [
+  { max: 0.5, alpha: 0.35, width: 1.0 },
+  { max: 0.85, alpha: 0.8, width: 1.4 },
+  { max: 1.0, alpha: 1.0, width: 1.8 },
+] as const;
+const edgeStyle = (confidence = 1.0) => EDGE_CONFIDENCE_STYLE.find((t) => confidence <= t.max) ?? EDGE_CONFIDENCE_STYLE[EDGE_CONFIDENCE_STYLE.length - 1];
 const TWEEN_MS = 450;
 /** A topic leaving the column for its place on the graph travels slower: the learner should see where it went */
 const MOVE_MS = 900;
@@ -308,53 +315,59 @@ export const LayeredGraph = forwardRef<GraphHandle, { model: GraphModel; domain:
 
     // Topic to topic: straight and solid, from the prerequisite up to the topic that needs it
     const edges = links.edges;
-    const line = (keep: (a: string, b: string) => boolean) => {
-      // a link to a node that is still popping in fades in with it, so it is drawn on its own
-      const young: { ax: number; ay: number; bx: number; by: number; v: number }[] = [];
-      ctx.beginPath();
+    const line = (keep: (e: GraphModel["requires"][number]) => boolean, alphaScale: number, stroke: string, alphaOverride?: number) => {
+      ctx.strokeStyle = stroke;
+      // Group non-popping edges by confidence tier; popping (`born`) edges fade in individually
+      const buckets = EDGE_CONFIDENCE_STYLE.map(() => [] as { ax: number; ay: number; bx: number; by: number }[]);
+      const young: { ax: number; ay: number; bx: number; by: number; alpha: number; width: number }[] = [];
       for (const e of edges) {
-        if (!keep(e.topicId, e.requiresId)) continue;
+        if (!keep(e)) continue;
         const a = pos(e.requiresId);
         const b = pos(e.topicId);
         if (!a || !b) continue;
         const ax = sx(a.x), ay = sy(a.y), bx = sx(b.x), by = sy(b.y);
         if ((ax < 0 && bx < 0) || (ax > w && bx > w) || (ay < 0 && by < 0) || (ay > h && by > h)) continue;
+        const style = edgeStyle(e.confidence);
+        const idx = EDGE_CONFIDENCE_STYLE.indexOf(style);
+        const edgeAlpha = alphaOverride ?? style.alpha * alphaScale;
         const v = born.current.size ? Math.min(1, popOf(e.topicId), popOf(e.requiresId)) : 1;
         if (v < 1) {
-          young.push({ ax, ay, bx, by, v });
+          young.push({ ax, ay, bx, by, alpha: edgeAlpha * v, width: style.width });
           continue;
         }
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(bx, by);
+        buckets[idx].push({ ax, ay, bx, by });
       }
-      ctx.stroke();
-      if (!young.length) return;
-      const base = ctx.globalAlpha;
+      for (let i = 0; i < EDGE_CONFIDENCE_STYLE.length; i++) {
+        const list = buckets[i];
+        if (!list.length) continue;
+        const style = EDGE_CONFIDENCE_STYLE[i];
+        ctx.globalAlpha = alphaOverride ?? style.alpha * alphaScale;
+        ctx.lineWidth = style.width;
+        ctx.beginPath();
+        for (const seg of list) {
+          ctx.moveTo(seg.ax, seg.ay);
+          ctx.lineTo(seg.bx, seg.by);
+        }
+        ctx.stroke();
+      }
       for (const y of young) {
-        ctx.globalAlpha = base * y.v;
+        ctx.globalAlpha = y.alpha;
+        ctx.lineWidth = y.width;
         ctx.beginPath();
         ctx.moveTo(y.ax, y.ay);
         ctx.lineTo(y.bx, y.by);
         ctx.stroke();
       }
-      ctx.globalAlpha = base;
     };
-    ctx.strokeStyle = col.dim;
-    ctx.lineWidth = 1.4;
     if (focusSet) {
       // Links between the topics of the focused hub stay; every other link sinks
-      ctx.globalAlpha = 0.6 * (1 - FOCUS_DIM * focus);
-      line((a, b) => !(focusSet.has(a) && focusSet.has(b)));
-      ctx.globalAlpha = 0.6;
-      line((a, b) => focusSet.has(a) && focusSet.has(b));
+      line((e) => !(focusSet.has(e.topicId) && focusSet.has(e.requiresId)), 1 - FOCUS_DIM * focus, col.dim);
+      line((e) => focusSet.has(e.topicId) && focusSet.has(e.requiresId), 1, col.dim);
     } else {
-      ctx.globalAlpha = 0.6;
-      line(() => true);
+      line(() => true, 1, col.dim);
     }
     if (hovered && !hovered.startsWith("h:")) {
-      ctx.strokeStyle = col.paper;
-      ctx.globalAlpha = 0.95;
-      line((a, b) => a === hovered || b === hovered);
+      line((e) => e.topicId === hovered || e.requiresId === hovered, 1, col.paper, 0.95);
     }
     ctx.globalAlpha = 1;
 

@@ -3594,9 +3594,15 @@ export interface components {
         };
         /**
          * TopicRequires
-         * @description A derived link between topics (Т-§4.6); weight — the number of skill links.
+         * @description A derived link between topics (Т-§4.6); weight — the number of skill links,
+         *     confidence — max confidence across those links.
          */
         TopicRequires: {
+            /**
+             * Confidence
+             * @default 1
+             */
+            confidence?: number;
             /**
              * From Topic Id
              * Format: uuid
