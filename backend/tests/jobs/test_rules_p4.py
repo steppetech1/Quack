@@ -57,8 +57,9 @@ def _answer(kind: str, **extra: Any) -> StoredEvent:
 def test_every_kind_of_the_spec_is_listed_once_and_removed_ones_are_gone() -> None:
     # 24 kinds of the list of ТЗ §6.5 + `agent.topic_split` (WP8.2, D-A-226) + `session.title`
     # (the name of a session, owner decision 2026-11-19) + `viz.plan` (demos ahead, owner decision
-    # 2026-11-20) + 5 periodic
-    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 1 + 5
+    # 2026-11-20) + `material.seminar_tasks` (seminar tasks out of the structure step, decision of
+    # 2026-11-25) + 5 periodic
+    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 1 + 1 + 5
     assert not set(r.REMOVED_JOB_KINDS) & set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)
 
 
@@ -70,7 +71,8 @@ def test_rule_table() -> None:
 
 def test_every_non_periodic_kind_has_a_row() -> None:
     covered = {k for row in r.RULES for k in row.job_kinds}
-    assert covered >= set(r.JOB_KINDS)
+    assert covered | r.QUEUED_BY_JOBS >= set(r.JOB_KINDS)
+    assert not covered & r.QUEUED_BY_JOBS  # a kind of a job is not also put by an event
 
 
 def test_rows_with_events_exist_in_the_catalog() -> None:
@@ -474,8 +476,14 @@ def test_graph_hygiene_after_a_session_with_temporary_entities_and_every_n_topic
     ]
 
     created = _event("topic.created", seq=41)
-    assert r.plan_with_facts(created, SETTINGS, r.RuleFacts()) == []
-    (counted,) = r.plan_with_facts(created, SETTINGS, r.RuleFacts(hygiene_due=True))
+    assert [
+        p for p in r.plan_with_facts(created, SETTINGS, r.RuleFacts()) if p.kind == "graph.hygiene"
+    ] == []
+    (counted,) = [
+        p
+        for p in r.plan_with_facts(created, SETTINGS, r.RuleFacts(hygiene_due=True))
+        if p.kind == "graph.hygiene"
+    ]
     assert counted.kind == "graph.hygiene" and counted.coalesce_key == f"hygiene:{domain}"
     assert counted.payload["reason"] == "new_topics"
 
@@ -495,7 +503,7 @@ def test_embedding_rows_carry_the_text_and_read_no_graph() -> None:
             "text": "limit equals the value",
         }
     ]
-    # Topic, skill and evidence stay open: the text property is [ПРОВЕРИТЬ], evidence has no id.
+    # Evidence stays open: its id is given by the projector, not the event.
     (open_row,) = [row for row in r.ROWS_NEED_FACTS if row.job_kinds == ("embedding.compute",)]
     assert open_row.event_type == "*"
 
@@ -579,10 +587,9 @@ def test_dispatcher_column_of_the_catalog_is_covered_by_rows_or_episodes() -> No
     rows = {row.event_type for row in r.RULES}
     marked = {key[0] for key, spec in SPECS.items() if spec.dispatcher}
     unhandled = marked - rows - EPISODE_TYPES
-    # skill.created, topic.proposed — the open embedding row (the embedded property is
-    # [ПРОВЕРИТЬ]); skill.merged, material.parsed — a mark without a row in Т-§13.3 / WP7.1
-    # (D-A-162, question to the owner).
-    assert unhandled == {"skill.created", "topic.proposed", "skill.merged", "material.parsed"}
+    # skill.merged, material.parsed — a mark without a row in Т-§13.3 / WP7.1 (D-A-162, question
+    # to the owner). skill.created and topic.proposed have their embedding rows (2026-11-24).
+    assert unhandled == {"skill.merged", "material.parsed"}
 
 
 def test_cheatsheet_consent_is_the_job_of_its_hub() -> None:
@@ -609,3 +616,23 @@ def test_cheatsheet_consent_is_the_job_of_its_hub() -> None:
     assert r.plan_jobs(_event("agent.requested", payload=no_hub), SETTINGS) == []
     notes = {"kind": "artifact", "params": {"artifact": "notes"}, "needed_in_session": False}
     assert _one(_event("agent.requested", payload=notes)).kind == "agent.artifact"
+
+
+def test_new_topics_and_skills_are_embedded() -> None:
+    """2026-11-24: the reconciliation finds candidates only by vector, so every new topic and
+    skill gets `embedding.compute` with the text it is searched by (a topic — its name, a skill —
+    its name and summary); without it the builder created twins of existing nodes."""
+    topic = _event("topic.created", payload={"name": "Доверительные интервалы"})
+    jobs = [p for p in r.plan_jobs(topic, SETTINGS) if p.kind == "embedding.compute"]
+    (job,) = jobs
+    (node,) = job.payload["nodes"]
+    assert node["node_kind"] == "topic" and node["text"] == "Доверительные интервалы"
+    assert node["node_id"] == str(topic.payload["topic_id"])
+
+    skill = _event("skill.created", payload={"name": "строить интервал", "summary": "x̄ ± z·SE"})
+    (job,) = [p for p in r.plan_jobs(skill, SETTINGS) if p.kind == "embedding.compute"]
+    (node,) = job.payload["nodes"]
+    assert node["node_kind"] == "skill" and node["text"] == "строить интервал\nx̄ ± z·SE"
+
+    proposed = _event("topic.proposed", payload={"name": "ЦПТ"})
+    assert "embedding.compute" in _kinds(proposed)

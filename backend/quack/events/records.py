@@ -254,6 +254,13 @@ class CodeTaskElementRecord(_Element):
     task_id: UUID
 
 
+class SkillProposalElementRecord(_Element):
+    kind: Literal["skill_proposal"]
+    name: str
+    text: str
+    artifact_type: Literal["notes", "cards", "cheatsheet"] | None
+
+
 type ElementRecord = Annotated[
     ChoiceElementRecord
     | WhyChoiceElementRecord
@@ -268,7 +275,8 @@ type ElementRecord = Annotated[
     | VisualizationElementRecord
     | MaterialLinkElementRecord
     | ReferenceCardElementRecord
-    | CodeTaskElementRecord,
+    | CodeTaskElementRecord
+    | SkillProposalElementRecord,
     Field(discriminator="kind"),
 ]
 

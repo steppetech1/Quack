@@ -16,6 +16,7 @@ import { useSendQueue } from "@/lib/use-send-queue";
 import { cn } from "@/lib/utils";
 import { useShell } from "../app-shell";
 import { Composer } from "../composer";
+import { SkillProposalCard, type Proposal } from "../skill-proposal";
 import { RichText } from "../rich-text";
 import { PRIMARY_BTN, AREA } from "../stubs/stub-parts";
 import { SentFiles, type FileRef } from "../attachments";
@@ -23,11 +24,12 @@ import { decodeFirstTurn, encodeFirstTurn, firstTurnKey } from "./domain-setup-l
 import { ChatTurnActions, type NoteHubTarget, type NoteTopicTarget, type ResolvedNoteTargets } from "./chat-actions";
 import { useErrorText } from "./error-text";
 import { jobRows } from "./jobs-plaque";
-import { DemoPanel, type OpenDemo } from "./demo-panel";
 import { CodePanel, type OpenCode } from "./code-panel";
 import { elementCodeTask, type CodeTask } from "@/lib/api/code";
 import { PlotCard, type PlotSpec } from "./plot-card";
 import { SessionCorner, useSessionPlan } from "./plan-graph-live";
+import { StudentText } from "../workspace/student-text";
+import { useWorkspaceOptional } from "../workspace/workspace-context";
 
 const MEASURE = "mx-auto w-full max-w-[34rem]";
 const HEARTBEAT_MS = 30_000;
@@ -342,6 +344,8 @@ export function SessionLive({ id }: { id: string }) {
   const [lastFailedAction, setLastFailedAction] = useState<FailedAction | null>(null);
   const [artifactTick, setArtifactTick] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
+  /** The whole chat area takes files dragged from the OS (the input box attaches them) */
+  const [chatEl, setChatEl] = useState<HTMLDivElement | null>(null);
   const sentFirst = useRef(false);
   /** The session was closed by the idle timer when it was read: the first accepted action or heartbeat reopens it, then `detail` is read again */
   const closed = useRef(false);
@@ -411,9 +415,10 @@ export function SessionLive({ id }: { id: string }) {
     },
   });
   const refreshJobs = bg.refresh;
-  const [demo, setDemo] = useState<OpenDemo | null>(null);
-  /** The code editor of a task element (Т-§6.10), opened on the right as the demo panel */
+  /** The code editor of a task element (Т-§6.10), opened on the right */
   const [code, setCode] = useState<(OpenCode & { blockId: string }) | null>(null);
+  // a demo of the plan opens as a tab of the workspace pane (the pane is there for every session but a new one)
+  const workspace = useWorkspaceOptional();
   // a demo goes into the queue a moment after the turn: the plan shows it as being made once the builder starts
   const building = bg.jobs.some((j) => j.kind === "agent.viz");
   useEffect(() => {
@@ -846,7 +851,7 @@ export function SessionLive({ id }: { id: string }) {
         : null;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div ref={setChatEl} className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
         <header className={cn("min-w-0", MEASURE)}>
           <h1 className="line-clamp-2 display-caps text-display text-paper">{title}</h1>
@@ -981,8 +986,7 @@ export function SessionLive({ id }: { id: string }) {
         </div>
       </div>
 
-      <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={setDemo} />
-      {demo && <DemoPanel demo={demo} onClose={() => setDemo(null)} />}
+      <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={(d) => workspace?.open({ kind: "demo", id: d.requestId, title: d.title })} />
       {code && (
         <CodePanel
           key={code.task.task_id}
@@ -1034,6 +1038,8 @@ export function SessionLive({ id }: { id: string }) {
           sessionId={id}
           voice={{ onClip: sendVoice, disabled: busy }}
           duck
+          creator
+          dropZone={chatEl}
         />
       </div>
     </div>
@@ -1077,6 +1083,8 @@ function ElementCard({
   }, [e.kind, turnSeq, sessionId, elementId]);
   const answerable = ANSWERABLE.has(e.kind) && !codeTask;
   const viz = e.kind === "visualization" ? e : null;
+  // the teacher's draft of a skill (the built-in `/skill-creator`): the learner edits and saves it right here
+  if (e.kind === "skill_proposal") return <SkillProposalCard turnSeq={el.turnSeq} proposal={el.element as unknown as Proposal} />;
   return (
     <section aria-label={tx.live.taskFromTeacher} aria-busy={inactive || undefined} className="rounded-[2px] border border-seam p-4">
       <p className="caps text-paper-dim">
@@ -1177,7 +1185,7 @@ function StudentLine({
         aria-label={tx.session.you}
         className="max-w-[85%] min-w-0 rounded-[1rem] border border-seam bg-cloth-hover px-4 py-2.5 whitespace-pre-wrap text-paper [overflow-wrap:anywhere]"
       >
-        {text}
+        <StudentText text={text} />
       </p>
       {files?.length ? <SentFiles files={files} /> : null}
       {onRetry && retryLabel && (

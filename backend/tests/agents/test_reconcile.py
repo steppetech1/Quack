@@ -19,6 +19,7 @@ from quack.agents.reconcile import (
     Subject,
     build_labels,
     find_candidates,
+    node_id,
     read_requires,
     reconcile_with_candidates,
 )
@@ -164,6 +165,88 @@ async def test_reconciliation_events_no_counter_edge_and_repeat(pg_db: Db) -> No
         "SELECT seq FROM core.events WHERE learner_id = %(l)s", {"l": learner_id}
     )
     assert len(again) == len(rows)
+
+
+async def test_a_retry_with_another_answer_keeps_what_is_written(pg_db: Db) -> None:
+    """Bug of 2026-11-25: a retry of the step of the job asks the builder again, the answer is
+    worded differently (the topic of a skill, the case of a name) and the same node met its
+    key with another payload: `IdempotencyConflictError`. A key that is written wins; the rest
+    of the batch is written; the nodes of the answer are the same ones (their ids come from
+    the names), so the names map to the nodes the first attempt made."""
+    learner_id = await create_learner(pg_db)
+    here = fx.DOMAIN
+    subjects = [
+        Subject("Fractions", "topic"),
+        Subject("Add fractions", "skill", "adding", topic="Fractions"),
+    ]
+
+    def first(_: dict[str, Any]) -> BuilderOutput:
+        return BuilderOutput(
+            items=[
+                _item("Fractions", "topic", "create"),
+                _item("Add fractions", "skill", "create", topic_hint="Fractions"),
+            ]
+        )
+
+    def again(_: dict[str, Any]) -> BuilderOutput:
+        return BuilderOutput(
+            items=[
+                _item("Fractions", "topic", "create"),
+                _item("Add fractions", "skill", "create", topic_hint="Arithmetic of parts"),
+                _item("Reduce fractions", "skill", "create", topic_hint="Fractions"),
+            ]
+        )
+
+    async def run(answer: Callable[[dict[str, Any]], BuilderOutput], names: list[Subject]) -> Any:
+        ctx = cast(
+            JobContext,
+            SimpleNamespace(
+                db=pg_db, llm=_Gateway(answer), settings=SETTINGS, neo4j=None, embeddings=None
+            ),
+        )
+        return await reconcile_with_candidates(
+            ctx,
+            learner_id=learner_id,
+            domain_id=here,
+            subjects=names,
+            candidates=[[] for _ in names],
+            existing_requires=frozenset(),
+        )
+
+    async def rows() -> list[dict[str, Any]]:
+        return await pg_db.fetch_all(
+            "SELECT type, idempotency_key AS key, payload FROM core.events "
+            "WHERE learner_id = %(l)s AND type IN ('topic.created', 'skill.created') ORDER BY seq",
+            {"l": learner_id},
+        )
+
+    made = await run(first, subjects)
+    before = await rows()
+    assert made.events == ["topic.created", "skill.created"]
+
+    # the retry: the same subjects and one more, worded differently
+    retry = await run(again, [*subjects, Subject("Reduce fractions", "skill", topic="Fractions")])
+
+    after = await rows()
+    assert after[: len(before)] == before  # what is written stays as it was
+    keys = [r["key"] for r in after]
+    assert len(keys) == len(set(keys))
+    added = after[len(before) :]
+    # the new skill, and the topic its hint named for the skill that is written already
+    assert sorted((r["type"], r["payload"]["name"]) for r in added) == [
+        ("skill.created", "Reduce fractions"),
+        ("topic.created", "Arithmetic of parts"),
+    ]
+    assert retry.events == ["topic.created", "skill.created"]
+    ids = {(r.subject.kind, r.subject.name): r.node_id for r in retry.resolutions}
+    assert ids[("topic", "Fractions")] == node_id(learner_id, here, "topic", "Fractions")
+    assert ids[("skill", "Add fractions")] == node_id(learner_id, here, "skill", "Add fractions")
+    skill_event = next(r for r in before if r["type"] == "skill.created")
+    assert skill_event["payload"]["skill_id"] == str(ids[("skill", "Add fractions")])
+    assert skill_event["payload"]["topic_id"] == str(ids[("topic", "Fractions")])
+
+    repeat = await run(again, [*subjects, Subject("Reduce fractions", "skill", topic="Fractions")])
+    assert repeat.events == [] and len(await rows()) == len(after)  # a third time: nothing
 
 
 async def test_counter_edge_to_the_stored_one_is_dropped(pg_db: Db) -> None:

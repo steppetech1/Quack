@@ -1372,6 +1372,18 @@
       },
       "CreateDomainRequest": {
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "idempotency_key": {
             "maxLength": 200,
             "minLength": 1,
@@ -1394,6 +1406,17 @@
       },
       "CreateDomainResponse": {
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "domain_id": {
             "format": "uuid",
             "title": "Domain Id",
@@ -1726,6 +1749,17 @@
       "DomainSummary": {
         "description": "A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1).",
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1814,6 +1848,7 @@
             "reference_card": "#/components/schemas/ReferenceCardElement",
             "scaffold": "#/components/schemas/ScaffoldElement",
             "short_answer": "#/components/schemas/ShortAnswerElement",
+            "skill_proposal": "#/components/schemas/SkillProposalElement",
             "task": "#/components/schemas/TaskElement",
             "timed_quiz": "#/components/schemas/TimedQuizElement",
             "visualization": "#/components/schemas/VisualizationElement",
@@ -1863,6 +1898,9 @@
           },
           {
             "$ref": "#/components/schemas/CodeTaskElement"
+          },
+          {
+            "$ref": "#/components/schemas/SkillProposalElement"
           }
         ]
       },
@@ -4603,6 +4641,20 @@
         "title": "SearchHits",
         "type": "object"
       },
+      "SessionDeletedResponse": {
+        "description": "The number of `session.deleted` in the journal.",
+        "properties": {
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "SessionDeletedResponse",
+        "type": "object"
+      },
       "SessionDetail": {
         "description": "`GET /v1/sessions/{id}`: the session and its feed of events by `seq` (D-B-210).",
         "properties": {
@@ -5252,6 +5304,14 @@
         "title": "SignedOut",
         "type": "object"
       },
+      "SkillArtifactType": {
+        "enum": [
+          "notes",
+          "cards",
+          "cheatsheet"
+        ],
+        "type": "string"
+      },
       "SkillChange": {
         "additionalProperties": false,
         "description": "`before` is `None` for a skill that did not exist before the session; `after` is `None`\nwhen the skill is no longer read under this id (merged away).",
@@ -5336,6 +5396,48 @@
           "levels"
         ],
         "title": "SkillCodes",
+        "type": "object"
+      },
+      "SkillProposalElement": {
+        "additionalProperties": false,
+        "description": "Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision\n2026-11-24): a draft of a learner skill the learner may edit and save from the browser\n(`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the\nname and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it\nis bound to, or null.",
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillArtifactType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "skill_proposal",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "name",
+          "text",
+          "artifact_type"
+        ],
+        "title": "SkillProposalElement",
         "type": "object"
       },
       "SkillView": {
@@ -9028,6 +9130,98 @@
       }
     },
     "/v1/hubs/{hub_id}": {
+      "delete": {
+        "description": "The chapter leaves the left panel (`hub.deleted`); the topics stay without a chapter.",
+        "operationId": "delete_hub_endpoint_v1_hubs__hub_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hub_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Hub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Edited"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Delete Hub Endpoint",
+        "tags": [
+          "domains"
+        ]
+      },
       "get": {
         "operationId": "hub_view_endpoint_v1_hubs__hub_id__get",
         "parameters": [
@@ -10877,6 +11071,95 @@
       }
     },
     "/v1/sessions/{session_id}": {
+      "delete": {
+        "description": "The session leaves the left panel and every read: its page, its stream and its actions\nanswer `404` from now on. Its events stay in the journal (the evidence and the model are not\ntouched); a turn in progress finishes. A session of another learner, none, or one deleted\nalready — `404`.",
+        "operationId": "delete_session_v1_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Delete Session"
+      },
       "get": {
         "operationId": "get_session_v1_sessions__session_id__get",
         "parameters": [

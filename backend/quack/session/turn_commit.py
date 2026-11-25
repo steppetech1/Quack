@@ -40,6 +40,7 @@ from quack.events.event_types import (
     TurnCommitted,
 )
 from quack.events.log import NewEvent, append_events
+from quack.events.service_turns import ServiceMode
 from quack.events.values import AnswerSpec
 from quack.graph.ids import QUACK_UUID_NS
 from quack.llm.labels import LabelMap, UnknownLabelError
@@ -50,6 +51,7 @@ from quack.practice.session_plan import merge_plan
 from quack.practice.task_store import get_task, insert_task_document, task_created_event
 from quack.session.elements import Element
 from quack.session.guards import landmark_kind
+from quack.session.service_turns import settle_service_output
 from quack.session.teacher_output import (
     AgentRequest,
     DeadlineFromTalk,
@@ -212,9 +214,18 @@ def turn_batch(
     answered: AnsweredAction | None = None,
     learner_texts: Sequence[LearnerText] = (),
     learner_timezone: str | None = None,
+    service: ServiceMode | None = None,
 ) -> TurnBatch:
-    """The events of the turn with ids instead of labels (WP2.2, WP13.3)."""
+    """The events of the turn with ids instead of labels (WP2.2, WP13.3).
+
+    A `service` turn (the built-in `/skill-creator`, `events.service_turns`) is settled here again,
+    whatever the guard did: no task, exposure, plan update, agent request, deadline or skill label,
+    and no write to the session plan; it only says its text and may carry a skill proposal."""
     output = turn.output
+    if service is not None:
+        output = settle_service_output(output, settings)
+        answered = None
+        learner_texts = ()
     key = f"turn:{manifest.manifest_id}"
     common: dict[str, Any] = {
         "actor": manifest.prompt_version,
@@ -293,6 +304,7 @@ def turn_batch(
         manifest_id=manifest.manifest_id,
         guard_events=list(turn.guard_events),
         timings=dict(turn.timings),
+        service=service,
     )
     events = [
         *task_events,
@@ -335,7 +347,7 @@ def turn_batch(
         manifest=manifest,
         domain_id=domain_id,
         common=common,
-        plan=markup.plan_update,
+        plan=None if service is not None else markup.plan_update,
         hint_task_id=hint_task_id,
         close=close,
     )

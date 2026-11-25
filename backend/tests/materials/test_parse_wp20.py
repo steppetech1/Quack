@@ -15,6 +15,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import BaseModel
 
+from quack.agents.reconcile import Subject, reconcile_with_candidates
+from quack.agents.reconcile import node_id as reconcile_node_id
+from quack.agents.schemas import BuilderOutput, ReconciledItem
 from quack.compute_client.contracts import (
     AlignResponse,
     PdfPage,
@@ -27,7 +30,8 @@ from quack.db import Db
 from quack.events.log import NewEvent, append_events
 from quack.jobs.kinds import JOB_KINDS, KIND_LLM_ROLES
 from quack.jobs.runner import JOB_HANDLERS, JobContext
-from quack.jobs.types import ClaimedJob, JobFailedPermanently
+from quack.jobs.types import ClaimedJob, JobDeferred, JobFailedPermanently
+from quack.llm.errors import LLMUnavailableError
 from quack.llm.gateway import LLMGateway
 from quack.materials.library import upload_material
 from quack.materials.parse import (
@@ -42,6 +46,7 @@ from quack.materials.parse import (
 from quack.prompts.registry import PromptRegistry
 from quack.runtime import HANDLER_MODULES
 from quack.storage.objects import StorageUnavailable
+from tests.agents.test_reconcile import _Gateway as _BuilderGateway
 from tests.db.fixtures import create_learner
 from tests.support.compute import ComputeScenario, scripted_compute
 from tests.support.llm import ScriptedLLMProvider
@@ -807,3 +812,200 @@ async def test_a_presentation_compute_refuses_fails_the_job_for_good(world: _Wor
         "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
     )
     assert row is not None and row["status"] == "failed"
+
+
+class _PlacingResolver(_Resolver):
+    """Like the builder: a new skill goes into a topic of its own choosing (written as
+    `skill.created`), not into the topic the chunk was marked with."""
+
+    def __init__(self, placed: dict[str, str]) -> None:
+        super().__init__()
+        self.placed = placed  # skill name -> topic name
+        self.topic_ids: dict[str, UUID] = {}
+
+    async def __call__(
+        self, ctx: JobContext, *, learner_id: UUID, domain_id: UUID, subjects: Sequence[SubjectSpec]
+    ) -> dict[tuple[str, str], UUID]:
+        found = await super().__call__(
+            ctx, learner_id=learner_id, domain_id=domain_id, subjects=subjects
+        )
+        events = []
+        for s in subjects:
+            if s.kind != "skill" or s.name not in self.placed:
+                continue
+            topic = self.topic_ids.setdefault(self.placed[s.name], uuid4())
+            events.append(
+                NewEvent(
+                    type="skill.created",
+                    payload={
+                        "skill_id": str(found[("skill", s.name)]),
+                        "topic_id": str(topic),
+                        "domain_id": str(domain_id),
+                        "name": s.name,
+                        "summary": s.text[:50],
+                        "status": "active",
+                        "origin": "material",
+                    },
+                    actor="builder@1",
+                    idempotency_key=f"test-skill:{s.name}",
+                    domain_id=domain_id,
+                )
+            )
+        if events:
+            await append_events(ctx.db, learner_id, events)
+        return found
+
+
+async def test_the_hub_of_a_material_holds_the_topics_its_skills_landed_in(world: _World) -> None:
+    """2026-11-24: the builder put the skills of a lecture into topics of its own, and the hub of
+    the material held only the chunk topic — empty. The hub is for repeating this material, so it
+    holds the topics the skills it teaches live in."""
+    learner, _domain, material = await world.upload()
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    await parse_step(world.ctx, _job(learner, material))
+    job = await _structure_job(world, learner, material)
+    resolver = _PlacingResolver(
+        {"Chain rule": "Differentiation rules", "Integration by parts": "Integration techniques"}
+    )
+    await structure_step(world.ctx, job, resolver)
+
+    (topics,) = await world.types(learner, "hub.topics_changed")
+    assert [t["topic_id"] for t in topics["payload"]["topics"]] == [
+        str(resolver.topic_ids["Differentiation rules"]),
+        str(resolver.topic_ids["Integration techniques"]),
+    ]
+
+
+async def test_a_later_material_of_the_domain_waits_for_an_older_one(world: _World) -> None:
+    """2026-11-24: a course uploaded at once goes into the graph in the order of upload, so a
+    later lecture finds the skills of the earlier ones; an old stuck one does not hold it."""
+    learner, domain, older = await world.upload()
+    later = (
+        await upload_material(
+            world.db, world.storage, world.settings, learner_id=learner, domain_id=domain, data=PDF
+        )
+    ).material_id
+    world.pdf_pages(PAGE_ONE)
+    await parse_step(world.ctx, _job(learner, later))
+    job = await _structure_job(world, learner, later)
+
+    with pytest.raises(JobDeferred):
+        await structure_step(world.ctx, job, _Resolver())
+    assert await world.types(learner, "material.parsed") == []
+
+    # the older one was uploaded long ago and is still not read: it is not waited for
+    await world.db.execute(
+        "UPDATE content.materials SET created_at = now() - interval '2 hours' "
+        "WHERE material_id = %(m)s",
+        {"m": older},
+    )
+    await structure_step(world.ctx, job, _Resolver())
+    assert len(await world.types(learner, "material.parsed")) == 1
+
+
+# --- the retry of the structure step (2026-11-25) ------------------------------------------------
+
+
+class _BuilderResolver:
+    """The reconciliation of B (`reconcile_with_candidates`, no Neo4j: no candidates) behind the
+    seam, with a builder that answers by the attempt: the first one works out `fail_on` calls
+    and then the model is unreachable, the next ones word the answer differently."""
+
+    def __init__(self, db: Db, settings: Settings, *, fail_on: int) -> None:
+        self.db, self.settings, self.fail_on = db, settings, fail_on
+        self.calls = 0
+        self.attempt = 1
+
+    def _answer(self, variables: dict[str, Any]) -> BuilderOutput:
+        items = []
+        for line in variables["subjects"].splitlines():
+            found = re.match(r"- (.+?) \((topic|skill)\)", line)
+            assert found is not None
+            name, kind = found.groups()
+            hint = None
+            if self.attempt > 1 and name == "Chain rule":
+                hint = "Differential calculus"  # another topic than the first time
+            items.append(
+                ReconciledItem.model_validate(
+                    {
+                        "name": name,
+                        "kind": kind,
+                        "decision": "create",
+                        "target": None,
+                        "topic_hint": hint,
+                        "same_idea": None,
+                        "same_idea_confidence": None,
+                    }
+                )
+            )
+        return BuilderOutput(items=items)
+
+    async def __call__(
+        self, ctx: JobContext, *, learner_id: UUID, domain_id: UUID, subjects: Sequence[SubjectSpec]
+    ) -> dict[tuple[str, str], UUID]:
+        self.calls += 1
+        if self.attempt == 1 and self.calls > self.fail_on:
+            raise LLMUnavailableError("builder@1: provider timeout", reason="timeout")
+        gateway = _BuilderGateway(self._answer)
+        reconcile_ctx = cast(
+            JobContext,
+            SimpleNamespace(
+                db=self.db, llm=gateway, settings=self.settings, neo4j=None, embeddings=None
+            ),
+        )
+        result = await reconcile_with_candidates(
+            reconcile_ctx,
+            learner_id=learner_id,
+            domain_id=domain_id,
+            subjects=[Subject(s.name, s.kind, s.text, s.topic, s.requires) for s in subjects],
+            candidates=[[] for _ in subjects],
+            existing_requires=frozenset(),
+        )
+        return {
+            (r.subject.kind, r.subject.name): r.node_id
+            for r in result.resolutions
+            if r.node_id is not None
+        }
+
+
+async def test_a_retry_of_the_structure_step_keeps_what_the_first_attempt_wrote(
+    world: _World,
+) -> None:
+    """Bug of 2026-11-25: the first attempt reconciled some batches (each commits its events) and
+    failed; the retry starts the step over, the builder words an answer differently, and the
+    same node met its key with another payload (`IdempotencyConflictError`), until the attempts
+    were gone. Now what is written wins: no error, no second event under a key, the names map to
+    the nodes the first attempt made, and the step ends."""
+    world.settings = world.settings.model_copy(update={"candidate_k": 1})  # a call per subject
+    cast(Any, world.ctx).settings = world.settings
+    learner, _, material = await world.upload()
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    await parse_step(world.ctx, _job(learner, material))
+    job = await _structure_job(world, learner, material)
+    resolver = _BuilderResolver(world.db, world.settings, fail_on=4)
+
+    with pytest.raises(LLMUnavailableError):
+        await structure_step(world.ctx, job, resolver)
+    assert await world.types(learner, "material.parsed") == []
+    first = {
+        e["idempotency_key"]: e["payload"]
+        for e in await world.types(learner, "topic.created", "skill.created")
+    }
+    assert len(first) >= 4  # some batches did commit
+
+    resolver.attempt = 2
+    await structure_step(world.ctx, job, resolver)
+
+    assert len(await world.types(learner, "material.parsed")) == 1
+    rows = await world.types(learner, "topic.created", "skill.created", "edge.added")
+    keys = [e["idempotency_key"] for e in rows]
+    assert len(keys) == len(set(keys))  # no key twice
+    for key, payload in first.items():  # what the first attempt wrote stays as it was
+        (now,) = [e["payload"] for e in rows if e["idempotency_key"] == key]
+        assert now == payload
+    skills = {e["payload"]["name"]: e["payload"] for e in rows if e["type"] == "skill.created"}
+    assert set(skills) == {"Chain rule", "Power rule", "Integration by parts", "Product rule"}
+    domain = next(e["domain_id"] for e in rows)
+    assert skills["Chain rule"]["skill_id"] == str(
+        reconcile_node_id(learner, domain, "skill", "Chain rule")
+    )

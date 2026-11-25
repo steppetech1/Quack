@@ -56,6 +56,7 @@ from quack.events.event_types import (
 from quack.events.keys import observation_key
 from quack.events.log import NewEvent, StoredEvent, append_events
 from quack.events.records import TaskMarkupRecord
+from quack.events.service_turns import without_service
 from quack.events.values import CheckFailed, Verdict
 from quack.graph.evidence_validation import (
     CheckedElements,
@@ -106,7 +107,7 @@ def extraction_window(
     """The episode and the `episode_context_turns` turns before it (Т-§7.5). A turn ends with
     its `turn.committed`; the events of its own append (`causation_seq` = its `action_seq`,
     WP2.2) stay with it."""
-    ordered = sorted(session_events, key=lambda e: e.seq)
+    ordered = sorted(without_service(session_events), key=lambda e: e.seq)
     episode = [e for e in ordered if from_seq <= e.seq <= to_seq]
     earlier = [e for e in ordered if e.seq < from_seq]
     commits = [e for e in earlier if e.type == "turn.committed"]

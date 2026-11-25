@@ -1,13 +1,17 @@
 "use client";
 
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, EyeOff, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
-import type { Domain } from "@/lib/mock/types";
+import { allTopicsHubId } from "@/lib/api/adapters";
+import type { Domain, Hub, Topic } from "@/lib/mock/types";
 import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { useShell } from "./app-shell";
+import { DOMAIN_PATH, useShell } from "./app-shell";
+import { COPIES_DAYS, RowMenu, type RowAction } from "./row-menu";
+import { useSidebarDelete } from "./use-sidebar-delete";
+import { SessionsBlock } from "./sessions-block";
 import { StateDot } from "./topic-card";
 import { useT } from "@/lib/i18n/provider";
 
@@ -34,9 +38,13 @@ export function DomainTree({
   openTopicId?: string | null;
 }) {
   const t = useT();
-  const { graphMode, openGraph } = useShell();
+  const dl = t.shell.del;
+  const remove = useSidebarDelete(activeId);
+  const { graphMode, openGraph, sessions, closeDrawer } = useShell();
   const pathname = usePathname();
-  const onGraph = pathname === "/";
+  const onGraph = pathname === DOMAIN_PATH;
+  // Настройки прячут сессии, как раньше пряталась правая панель
+  const showSessions = !pathname.startsWith("/settings");
   // Какой хаб сейчас развёрнут (видны его темы); один за раз
   const [openHub, setOpenHub] = useState<string | null>(null);
   // Какой домен сейчас развёрнут (видны его хабы); не привязано к activeId — повторный клик по
@@ -84,6 +92,33 @@ export function DomainTree({
   const subOn = (on: boolean) => (on ? "bg-cloth-raised text-paper" : "text-paper-dim");
   const topicRow = "pl-14 text-small hover:text-paper";
 
+  const hubAction = (h: Hub): RowAction => ({
+    id: "delete",
+    label: dl.deleteChapter,
+    icon: Trash2,
+    destructive: true,
+    confirm: { text: dl.chapterConfirm(h.title), yes: dl.yesDelete },
+    run: () => remove.hub(h.id),
+  });
+
+  const topicActions = (top: Topic): RowAction[] => [
+    {
+      id: "hide",
+      label: dl.hideTopic,
+      icon: EyeOff,
+      confirm: { text: dl.hideConfirm(top.title), yes: dl.yesHide },
+      run: () => remove.topic(top.id, "hide"),
+    },
+    {
+      id: "erase",
+      label: dl.deleteTopic,
+      icon: Trash2,
+      destructive: true,
+      confirm: { text: dl.topicConfirm(top.title, COPIES_DAYS), yes: dl.yesDelete },
+      run: () => remove.topic(top.id, "erase"),
+    },
+  ];
+
   return (
     <ul className="flex flex-col gap-0.5">
       {domains.map((d) => {
@@ -91,19 +126,33 @@ export function DomainTree({
         const open = d.id === expandedDomain;
         return (
           <li key={d.id}>
-            <button
-              type="button"
-              aria-current={active ? "page" : undefined}
-              aria-expanded={open}
-              onClick={() => toggleDomain(d.id)}
-              className={cn(row, active ? "bg-cloth-raised font-medium text-paper" : "text-paper-dim")}
+            <RowMenu
+              label={d.title}
+              actions={[
+                {
+                  id: "delete",
+                  label: dl.deleteSubject,
+                  icon: Trash2,
+                  destructive: true,
+                  confirm: { text: dl.subjectConfirm(d.title, COPIES_DAYS), yes: dl.yesDelete },
+                  run: () => remove.domain(d.id),
+                },
+              ]}
             >
-              <ChevronRight
-                aria-hidden
-                className={cn("size-3.5 shrink-0 transition-transform duration-200", open && "rotate-90")}
-              />
-              <span className="truncate">{d.title}</span>
-            </button>
+              <button
+                type="button"
+                aria-current={active ? "page" : undefined}
+                aria-expanded={open}
+                onClick={() => toggleDomain(d.id)}
+                className={cn(row, active ? "bg-cloth-raised font-medium text-paper" : "text-paper-dim")}
+              >
+                <ChevronRight
+                  aria-hidden
+                  className={cn("size-3.5 shrink-0 transition-transform duration-200", open && "rotate-90")}
+                />
+                <span className="truncate">{d.title}</span>
+              </button>
+            </RowMenu>
             {open && (
               <ul className="mt-0.5 mb-2 flex flex-col">
                 {d.hubs.map((h) => {
@@ -111,32 +160,36 @@ export function DomainTree({
                   const topics = d.topics.filter((top) => top.hubId === h.id);
                   return (
                     <li key={h.id}>
-                      <button
-                        type="button"
-                        onClick={() => goHub(h.id)}
-                        aria-current={hubOn(h.id) ? "true" : undefined}
-                        aria-expanded={expanded}
-                        className={cn(row, sub, subOn(hubOn(h.id)))}
-                      >
-                        <ChevronRight
-                          aria-hidden
-                          className={cn("size-3 shrink-0 transition-transform duration-200", expanded && "rotate-90")}
-                        />
-                        <span className="num w-10 shrink-0 whitespace-nowrap">§ {h.num}</span>
-                        <span className={cn("truncate", h.suggested && "italic")}>{h.title}</span>
-                        {h.suggested && <span className="sr-only">{t.shell.suggestedSr}</span>}
-                      </button>
+                      <RowMenu label={h.title} actions={h.id === allTopicsHubId(d.id) ? [] : [hubAction(h)]}>
+                        <button
+                          type="button"
+                          onClick={() => goHub(h.id)}
+                          aria-current={hubOn(h.id) ? "true" : undefined}
+                          aria-expanded={expanded}
+                          className={cn(row, sub, subOn(hubOn(h.id)))}
+                        >
+                          <ChevronRight
+                            aria-hidden
+                            className={cn("size-3 shrink-0 transition-transform duration-200", expanded && "rotate-90")}
+                          />
+                          <span className="num w-10 shrink-0 whitespace-nowrap">§ {h.num}</span>
+                          <span className={cn("truncate", h.suggested && "italic")}>{h.title}</span>
+                          {h.suggested && <span className="sr-only">{t.shell.suggestedSr}</span>}
+                        </button>
+                      </RowMenu>
                       {expanded && topics.length > 0 && (
                         <ul className="flex flex-col">
                           {topics.map((top) => (
                             <li key={top.id} id={`topic-${top.id}`} className="scroll-mt-4">
-                              <Link
-                                href={`/topic/${top.id}`}
-                                className={cn(row, topicRow, top.id === openTopicId ? "bg-cloth-raised text-paper" : "text-paper-dim")}
-                              >
-                                <StateDot state={top.state} />
-                                <span className="truncate">{top.title}</span>
-                              </Link>
+                              <RowMenu label={top.title} actions={topicActions(top)}>
+                                <Link
+                                  href={`/topic/${top.id}`}
+                                  className={cn(row, topicRow, top.id === openTopicId ? "bg-cloth-raised text-paper" : "text-paper-dim")}
+                                >
+                                  <StateDot state={top.state} />
+                                  <span className="truncate">{top.title}</span>
+                                </Link>
+                              </RowMenu>
                             </li>
                           ))}
                         </ul>
@@ -154,14 +207,24 @@ export function DomainTree({
                         .filter((top) => !top.hubId)
                         .map((top) => (
                           <li key={top.id}>
-                            <Link href={`/topic/${top.id}`} className={cn(row, topicRow, "text-paper-dim")}>
-                              <StateDot state={top.state} />
-                              <span className="truncate">{top.title}</span>
-                            </Link>
+                            <RowMenu label={top.title} actions={topicActions(top)}>
+                              <Link href={`/topic/${top.id}`} className={cn(row, topicRow, "text-paper-dim")}>
+                                <StateDot state={top.state} />
+                                <span className="truncate">{top.title}</span>
+                              </Link>
+                            </RowMenu>
                           </li>
                         ))}
                     </ul>
                   </li>
+                )}
+                {showSessions && (
+                  <SessionsBlock
+                    domainId={d.id}
+                    sessions={active ? sessions : d.sessions}
+                    activeHref={pathname}
+                    onNavigate={closeDrawer}
+                  />
                 )}
               </ul>
             )}

@@ -135,7 +135,7 @@ const matan: Domain = {
   ],
   sessions: [
     { id: "s1", href: "/session/radius", date: "2026-10-29", title: "Radius of convergence", topics: ["Power series", "Radius of convergence"] },
-    { id: "s2", date: "2026-10-28", title: "Where the ratio test breaks", topics: ["Ratio test"] },
+    { id: "s2", date: "2026-10-28", title: "Where the ratio test breaks", topics: ["Ratio test"], unanswered: true },
     { id: "s3", date: "2026-10-26", title: "L'Hôpital without the magic", topics: ["L'Hôpital's rule", "Indeterminate forms"] },
     { id: "s4", date: "2026-10-24", title: "Taylor up to o(x³)", topics: ["Taylor's formula"] },
     { id: "s5", date: "2026-10-21", title: "Discontinuities of the second kind", topics: ["Discontinuities"] },

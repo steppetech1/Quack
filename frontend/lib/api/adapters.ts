@@ -114,6 +114,7 @@ export function sessionFromApi(s: S["SessionView"], topics: Topic[], labels: Ses
     date: localIso(Date.parse(s.started_at) || Date.now()),
     title: named ? (s.title as string) : topic ? `${mode}: ${topic}` : mode,
     topics: s.status === "active" ? [labels.activeSession, ...sub] : sub,
+    unanswered: s.unanswered_seq != null,
   };
 }
 

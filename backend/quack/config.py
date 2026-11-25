@@ -779,8 +779,9 @@ class Settings(BaseSettings):
     # Files the learner attached to messages of the session (`message.sent.material_ids`): the
     # teacher gets the text of the last `material_attached_files` of them straight from the stored
     # pages, no matter whether the graph work on the material is done; at most
-    # `material_attached_chars` characters in all (the rest of a long file is found by the search).
-    material_attached_files: int = Field(default=3, ge=1)
+    # `material_attached_chars` characters in all, shared fairly between the files (a short file
+    # leaves its unused share to the others; the rest of a long file is found by the search).
+    material_attached_files: int = Field(default=15, ge=1)
     material_attached_chars: int = Field(default=12000, ge=500)
     # WP20.2 (Т-§3.4.5 «около 1–2 КБ», Т-§4.3 «параллельно для больших материалов»;
     # Phase 4 decision D-C-201): chunk size in characters, chunks per `material_parser` call,
@@ -798,6 +799,15 @@ class Settings(BaseSettings):
     material_seminar_tasks_max: int = Field(default=30, ge=1)
     material_scan_min_chars: int = Field(default=20, ge=0)
     material_scan_max_pages: int = Field(default=50, ge=1)
+    # A course uploaded at once is put into the graph in the order of upload (decision of
+    # 2026-11-24): the structure step of a material waits while an older material of the domain
+    # is still being read, for at most `material_order_wait_minutes` after that one was uploaded;
+    # it asks again in `material_order_retry_s`.
+    material_order_wait_minutes: int = Field(default=30, ge=0)
+    material_order_retry_s: int = Field(default=5, ge=1)
+    # The reconciliation finds its candidates in Neo4j: before each call the structure step waits
+    # up to this long for the projector to apply the nodes and vectors written before it.
+    material_projection_wait_s: float = Field(default=20.0, ge=0)
     # Т-§3.4.6, Т-§10.5: the reserve taken inside SEARCH before post-filters and the final k.
     vector_search_reserve: int = 30
     embedding_dim: int = 768
@@ -833,6 +843,11 @@ class Settings(BaseSettings):
     cheatsheet_fit_rounds: int = 2
     # Т-§17.8 (WP23.6): longest instruction of a learner skill, in characters (D-C-216)
     learner_skill_max_chars: int = 2000
+    # Built-in `/skill-creator` of the teacher chat (owner decision 2026-11-24): the prompt it gives
+    # the teacher, and how many service turns in a row a dialogue may last before the learner has to
+    # call it again (the mode stays open after a question or a proposal, `session.service_turns`)
+    skill_creator_prompt: str = "skill_creator@1"
+    skill_creator_dialogue_turns_max: int = 8
     # Т-§17.4 (WP23.3): formulas of one block that code sends to compute; the rest stay unchecked
     artifact_formulas_per_block_max: int = 5
     # Т-§17.4 (WP23.3): longest side of a formula sent to compute (the `MathInput` limit)

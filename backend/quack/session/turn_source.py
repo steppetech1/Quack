@@ -41,6 +41,12 @@ from quack.events.event_types import (
     TaskCreated,
 )
 from quack.events.log import StoredEvent
+from quack.events.service_turns import (
+    SERVICE_SKILL_CREATOR,
+    ServiceMode,
+    is_service_event,
+    without_service,
+)
 from quack.events.values import AnswerSpec, Level, Verdict
 from quack.graph.overlay import SessionOverlay
 from quack.graph.overlay_build import build_session_overlay, empty_overlay
@@ -93,6 +99,7 @@ from quack.session.plan_view import (
 from quack.session.prep_mode import prep_for_turn, render_prep
 from quack.session.review_turn import bank_for_review, review_for_turn
 from quack.session.schemas import PlanLandmark
+from quack.session.service_turns import SKILL_ARTIFACT_TYPES, SKILL_NAME_MAX
 from quack.session.spoiler_guard import answer_in_text, remove_answer_sentences, spoiler_hits
 from quack.session.teacher_context import (
     LearnerState,
@@ -296,14 +303,20 @@ _KIND_WORDS = (
     ("image", "a photo or a picture"),
 )
 _SLIDES = "presentationml.presentation"
+_UNREADABLE = ("failed", "uploaded")
 
 
 def render_attached(
     materials: Sequence[tuple[dict[str, Any], Sequence[tuple[int, str]]]], *, budget: int
 ) -> str:
-    """The attached files for slot 8. Material text is data (Т-§19.8): every line is quoted."""
+    """The attached files for slot 8. Material text is data (Т-§19.8): every line is quoted.
+
+    The budget is shared fairly: a file that failed or is still being read takes none; each
+    readable file gets an equal share of what is left (left // readable files not yet shown), and
+    what a short file does not use carries over to the files after it."""
     out: list[str] = []
     left = budget
+    waiting = sum(1 for row, pages in materials if str(row["status"]) not in _UNREADABLE and pages)
     for row, pages in materials:
         mime = str(row["mime"])
         kind = (
@@ -325,17 +338,20 @@ def render_attached(
             )
             continue
         out.append(f"{head} ({len(pages)} {unit}s). Its text, as data:")
+        share = left // waiting
+        waiting -= 1
         shown = 0
         cut = False
         for number, text in pages:
             body = text.strip()
             if not body:
                 continue  # an empty slide or page has nothing to quote
-            if left <= 0:
+            if share <= 0:
                 cut = True
                 break
-            if len(body) > left:
-                body, cut = body[:left].rstrip() + "…", True
+            if len(body) > share:
+                body, cut = body[:share].rstrip() + "…", True
+            share -= len(body)
             left -= len(body)
             out.append(f"{unit.capitalize()} {number}:")
             out.extend(f"> {line}" for line in body.splitlines())
@@ -903,6 +919,24 @@ class MemoryTurnContextSource:
             return None
         return result
 
+    def _service_instruction(self) -> dict[str, Any]:
+        """The instruction of the built-in command, a developer message of the first step: it comes
+        from our own prompt file (`Settings.skill_creator_prompt`), not from the learner."""
+        name, version = self._settings.skill_creator_prompt.rsplit("@", 1)
+        template = self._gateway.prompts.load(name, int(version))
+        text = template.render(
+            {
+                "name_max": SKILL_NAME_MAX,
+                "text_max": self._settings.learner_skill_max_chars,
+                "artifact_types": ", ".join(SKILL_ARTIFACT_TYPES),
+            }
+        )
+        return {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": text}],
+        }
+
     async def assemble(self, request: TurnRequest) -> TurnSetup:
         settings, db = self._settings, self._db
         learner_id, session_id = request.learner_id, request.session_id
@@ -914,6 +948,16 @@ class MemoryTurnContextSource:
         events = await session_events_of_action(
             db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
         )
+        # The built-in `/skill-creator` (owner decision 2026-11-24): a turn that answers a message
+        # of that dialogue is a service turn; every other turn does not see the dialogue at all.
+        action_event = next((e for e in events if e.seq == request.action_seq), None)
+        service: ServiceMode | None = (
+            SERVICE_SKILL_CREATOR
+            if action_event is not None
+            and is_service_event(action_event.type, action_event.payload)
+            else None
+        )
+        events = _scoped(events, service)
         journal = read_journal(events, request.action_seq)
         put_since(parts, "journal_ms", started)
         started = now_ns()
@@ -922,7 +966,7 @@ class MemoryTurnContextSource:
             learner_timezone(db, learner_id=learner_id),
             load_snapshot(db, learner_id=learner_id, session_id=session_id),
             load_learner_skill(db, learner_id=learner_id, name=journal.skill_invocation)
-            if journal.skill_invocation
+            if journal.skill_invocation and service is None
             else _none(),
             has_topic_notes(db, learner_id=learner_id, topic_id=journal.goal.topic_id),
         )
@@ -1033,8 +1077,14 @@ class MemoryTurnContextSource:
                 method=inline.method,
                 verification=inline.verification,
             )
-            events = await session_events_of_action(
-                db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
+            events = _scoped(
+                await session_events_of_action(
+                    db,
+                    learner_id=learner_id,
+                    session_id=session_id,
+                    action_seq=request.action_seq,
+                ),
+                service,
             )
             journal = read_journal(events, request.action_seq)
         answers = await self._answers(learner_id, journal)
@@ -1128,26 +1178,34 @@ class MemoryTurnContextSource:
                 points = apply_edits(points, plan, resolved)
             visited = visited_landmarks([e.payload for e in events if e.type == "turn.committed"])
             landmarks = view_of(points, current_ref, visited=visited)
+        if service is not None:
+            # a service turn works from the dialogue alone: no plan, memory, materials or labels
+            session_plan_text, picture, materials_text, labels_text = "", "", "", ""
+        else:
+            session_plan_text = _session_plan(
+                journal.goal,
+                plan,
+                labels,
+                prep,
+                names,
+                settings,
+                landmarks,
+                has_topic_notes=topic_has_notes,
+            )
+            materials_text = "\n".join(
+                part for part in (render_materials(chunks, labels), attached) if part
+            )
+            labels_text = render_labels(labels, {**names, **card_names})
         variables = teacher_variables(
             TeacherSlots(
                 frozen=frozen,
                 conversation=render_conversation(events, labels, settings),
-                session_plan=_session_plan(
-                    journal.goal,
-                    plan,
-                    labels,
-                    prep,
-                    names,
-                    settings,
-                    landmarks,
-                    has_topic_notes=topic_has_notes,
-                ),
+                session_plan=session_plan_text,
                 memory_picture=picture,
-                materials="\n".join(
-                    part for part in (render_materials(chunks, labels), attached) if part
-                ),
-                labels=render_labels(labels, {**names, **card_names}),
+                materials=materials_text,
+                labels=labels_text,
                 skill=skill,
+                service=service,
             )
         )
         role = request.role
@@ -1155,7 +1213,7 @@ class MemoryTurnContextSource:
         prompt_name, version = prompt_version.rsplit("@", 1)
         template = self._gateway.prompts.load(prompt_name, int(version))
         variables = fit_budget(template.render, variables, settings.teacher_context_max_tokens)
-        effort = turn_effort(role, journal)
+        effort = "low" if service is not None and role == "teacher" else turn_effort(role, journal)
         output_schema, parse_output = teacher_schema_for_prompt(prompt_name, int(version))
         stream, prompt = self._gateway.stream_request(
             role,
@@ -1164,8 +1222,10 @@ class MemoryTurnContextSource:
             variables,
             prompt_role=prompt_name,
             reasoning_effort=effort,
-            tools=[tool_definition(tool) for tool in TOOLS],
+            tools=[] if service is not None else [tool_definition(tool) for tool in TOOLS],
         )
+        if service is not None:
+            stream = replace(stream, input_items=(self._service_instruction(),))
         tools = ToolContext(
             learner_id=learner_id,
             labels=labels,
@@ -1223,6 +1283,7 @@ class MemoryTurnContextSource:
                 degraded_mode=degraded,
                 verdict=verdict_frame,
                 parse_output=parse_output,
+                service=service,
             ),
             provider=streaming,
             labels=labels,
@@ -1263,6 +1324,12 @@ class MemoryTurnContextSource:
 
 async def _none() -> None:
     return None
+
+
+def _scoped(events: list[StoredEvent], service: ServiceMode | None) -> list[StoredEvent]:
+    """The events a turn sees: a service turn the whole journal, any other turn without the
+    `/skill-creator` dialogue (it is not learning content, `events.service_turns`)."""
+    return events if service is not None else without_service(events)
 
 
 async def _ignore_text(_text: str) -> None:

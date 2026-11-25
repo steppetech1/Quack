@@ -63,6 +63,7 @@ from langgraph.graph.state import CompiledStateGraph
 from quack.config import Settings
 from quack.events.event_types import DegradedMode
 from quack.events.records import GuardEventRecord
+from quack.events.service_turns import ServiceMode
 from quack.llm.errors import ProviderIncompleteError
 from quack.llm.labels import LabelMap
 from quack.llm.streaming import (
@@ -110,6 +111,7 @@ from quack.session.guards import (
     unresolved_element_labels,
 )
 from quack.session.holdback import HoldbackBuffer, SpoilerDetected
+from quack.session.service_turns import drop_proposals, settle_service_output
 from quack.session.spoiler_guard import SpoilerHit
 from quack.session.teacher_output import TeacherOutputV2, TurnHead, TurnTask
 from quack.session.turn_timings import TurnTimer, now_ns
@@ -160,6 +162,8 @@ class AssembledTurn:
     degraded_mode: DegradedMode | None
     verdict: VerdictFrame | None = None
     parse_output: Callable[[str], TeacherOutputV2] = TeacherOutputV2.model_validate_json
+    # The built-in command the turn answers (`events.service_turns`): its markup is settled by code.
+    service: ServiceMode | None = None
 
 
 @dataclass(frozen=True)
@@ -605,6 +609,10 @@ async def _guard(state: _State, config: RunnableConfig) -> _Update:
     output = run.assembled.parse_output(attempt.output_text())
     assert attempt.head is not None
     output = output.model_copy(update={"p1_head": attempt.head})
+    service = run.assembled.service
+    output = (
+        drop_proposals(output) if service is None else settle_service_output(output, run.settings)
+    )
     output = _settled_markup(run, output)
     text = attempt.body
     if run.settings.spoiler_guard_mode == "shadow" and run.guard.has_spoiler(text):

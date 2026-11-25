@@ -75,6 +75,15 @@ STREAM = Stream(
             body_key="none",
             body=lambda ids, v: {},
         ),
+        # The session leaves the left panel (`session.deleted`): keyed by the session; a repeat is
+        # «not found».
+        Route(
+            "DELETE",
+            "/v1/sessions/{session_id}",
+            no_key="a deletion from the left panel: keyed by the session; a repeat is «not found»",
+            body_key="none",
+            body=lambda ids, v: {},
+        ),
         # ТЗ Ф4 WP16.4: the body is `{text | material_id}` only; a direct model call, nothing is
         # written (D-B-173).
         Route(

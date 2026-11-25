@@ -210,7 +210,12 @@ class TurnCommitted(EventPayload):
     `timings` (owner decision 2026-11-19): the stage timings of the turn, milliseconds and counts
     by name (`admit_ms`, `assemble_total_ms`, `first_status_ms`, `ttft_ms`, `total_ms`, parts of
     the assembly, `model_attempts`, `guard_retries`, `tool_steps`), numbers only. Optional with an
-    empty default, no new `schema_version`: the events written before it read as `{}`."""
+    empty default, no new `schema_version`: the events written before it read as `{}`.
+
+    `service` (owner decision 2026-11-24): the built-in command the turn answered
+    (`/skill-creator`); a service turn changes no plan, makes no task and gives no exposure, and the
+    readers of the journal skip it (`quack.events.service_turns`). Optional with a `null` default,
+    no new `schema_version`: the events written before it read as `null`."""
 
     action_seq: int
     text: str
@@ -225,6 +230,7 @@ class TurnCommitted(EventPayload):
     manifest_id: UUID
     guard_events: list[GuardEventRecord] = Field(default_factory=list)
     timings: dict[str, int] = Field(default_factory=dict)
+    service: Literal["skill_creator"] | None = None
 
 
 # --- verdicts ----------------------------------------------------------------------------
@@ -269,8 +275,12 @@ class ObservationSecondOpinion(EventPayload):
 
 @register("domain.created", projector=True, dispatcher=False)
 class DomainCreated(EventPayload):
+    """`about` - the learner's own words about the subject from the create card; stored only,
+    no handler or model reads it. Older events have none."""
+
     domain_id: UUID
     name: str
+    about: str | None = None
 
 
 class _TopicNew(EventPayload):
@@ -397,6 +407,15 @@ class HubDeadlineSet(EventPayload):
     hub_id: UUID
     deadline_at_ms: int | None
     source: Literal["turn", "observation", "syllabus", "learner"]
+
+
+@register("hub.deleted", projector=True, dispatcher=False)
+class HubDeleted(EventPayload):
+    """The learner removed a chapter from the left panel: the projector deletes the hub and its
+    relationships, the topics stay and turn «without a chapter». The events about the hub stay
+    in the journal; every read of the hub skips it from this event on."""
+
+    hub_id: UUID
 
 
 class HubTopic(EventPayload):
@@ -548,6 +567,16 @@ class SessionStarted(_SessionRef):
 class SessionEnded(EventPayload):
     session_id: UUID
     reason: str
+
+
+@register("session.deleted", projector=False, dispatcher=False)
+class SessionDeleted(EventPayload):
+    """The learner removed the session from the left panel: every read of the session (the list,
+    the page, the stream, the actions) skips it from this event on, filtering by the event. The
+    row of `content.sessions` and the events of the session stay (the evidence and the model are
+    not touched): conversations are erased only with the domain or the account (Т-§19.5)."""
+
+    session_id: UUID
 
 
 @register("session.titled", projector=False, dispatcher=False)

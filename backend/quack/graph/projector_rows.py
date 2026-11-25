@@ -86,6 +86,9 @@ ROWS: tuple[ProjectorRow, ...] = (
          "Hub.deadlineAtMs (null -> 0, «не было»)", "Т-§4.8"),
     _row("hub.topics_changed", "ABC", ("hub_id", "topics"),
          "INCLUDES {requiredLevels} (default from controlType, WP6.3)", "Т-§4.8"),
+    _row("hub.deleted", "A", ("hub_id",),
+         "Hub deleted with HAS_HUB and INCLUDES; its topics stay (without a chapter); "
+         "a hub «весь домен» is not deleted", "Т-§19.5"),
     # --- tasks and verdicts (Т-§5, Т-§6, Т-§7) ---
     _row("task.created", "BC",
          ("task_id", "family_id", "source", "verification", *_MARKUP_TESTS,

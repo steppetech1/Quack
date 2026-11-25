@@ -173,6 +173,23 @@ class CodeTaskElement(_Element):
     task: str
 
 
+# The artifact types a learner skill may be bound to (`artifacts.documents.ArtifactKind`).
+type SkillArtifactType = Literal["notes", "cards", "cheatsheet"]
+
+
+class SkillProposalElement(_Element):
+    """Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision
+    2026-11-24): a draft of a learner skill the learner may edit and save from the browser
+    (`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the
+    name and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it
+    is bound to, or null."""
+
+    kind: Literal["skill_proposal"]
+    name: str
+    text: str
+    artifact_type: SkillArtifactType | None
+
+
 type Element = Annotated[
     ChoiceElement
     | WhyChoiceElement
@@ -187,6 +204,7 @@ type Element = Annotated[
     | VisualizationElement
     | MaterialLinkElement
     | ReferenceCardElement
-    | CodeTaskElement,
+    | CodeTaskElement
+    | SkillProposalElement,
     Field(discriminator="kind"),
 ]

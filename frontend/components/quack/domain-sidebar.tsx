@@ -1,12 +1,12 @@
 "use client";
 
-import { ChevronRight, LayoutGrid } from "lucide-react";
+import { LayoutGrid } from "lucide-react";
 import Link from "next/link";
 import type { Domain } from "@/lib/mock/types";
-import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
-import { DOMAIN_PATH, useShell } from "./app-shell";
+import { useShell } from "./app-shell";
+import { DomainTree } from "./domain-tree";
 import { ProfileMenu } from "./profile-menu";
 import { useT } from "@/lib/i18n/provider";
 
@@ -23,21 +23,9 @@ export function DomainSidebar({
   onSelect: (id: string) => void;
 }) {
   const t = useT();
-  const { graphMode, openGraph, closeDrawer } = useShell();
+  const { closeDrawer } = useShell();
   const pathname = usePathname();
-  const onGraph = pathname === DOMAIN_PATH;
   const onOverview = pathname === "/";
-
-  // На телефоне вместо графа список: прокручиваем к главе
-  const goHub = (hubId: string) => {
-    openGraph({ kind: "hub", hubId });
-    if (window.matchMedia("(max-width: 767px)").matches) {
-      setTimeout(() => scrollToId(`hub-${hubId}`, 16), onGraph ? 320 : 700);
-    }
-  };
-  const hubOn = (id: string) => onGraph && graphMode.kind === "hub" && graphMode.hubId === id;
-  const sub = "pl-8 text-small hover:text-paper";
-  const subOn = (on: boolean) => (on ? "bg-cloth-raised text-paper" : "text-paper-dim");
 
   return (
     <nav aria-label={t.shell.subjects} className="flex h-full flex-col bg-cloth-deep px-3 pt-4 pb-3">
@@ -61,46 +49,10 @@ export function DomainSidebar({
         <span className="num">{domains.length}</span>
       </p>
 
-      <ul className="flex flex-col gap-0.5 overflow-y-auto">
-        {domains.map((d) => {
-          const on = d.id === activeId && !onOverview;
-          return (
-            <li key={d.id}>
-              <button
-                type="button"
-                aria-current={on ? "page" : undefined}
-                aria-expanded={on}
-                onClick={() => onSelect(d.id)}
-                className={cn(row, on ? "bg-cloth-raised font-medium text-paper" : "text-paper-dim")}
-              >
-                <ChevronRight
-                  aria-hidden
-                  className={cn("size-3.5 shrink-0 transition-transform duration-200", on && "rotate-90")}
-                />
-                <span className="truncate">{d.title}</span>
-              </button>
-              {on && (
-                <ul className="mt-0.5 mb-2 flex flex-col">
-                  {d.hubs.map((h) => (
-                    <li key={h.id}>
-                      <button
-                        type="button"
-                        onClick={() => goHub(h.id)}
-                        aria-current={hubOn(h.id) ? "true" : undefined}
-                        className={cn(row, sub, subOn(hubOn(h.id)))}
-                      >
-                        <span className="num w-12 shrink-0 whitespace-nowrap">§ {h.num}</span>
-                        <span className={cn("truncate", h.suggested && "italic")}>{h.title}</span>
-                        {h.suggested && <span className="sr-only">{t.shell.suggestedSr}</span>}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      {/* предметы → главы → темы и сессии предмета; на «Всех графах» ни один предмет не выбран */}
+      <div className="min-h-0 overflow-y-auto">
+        <DomainTree domains={domains} activeId={onOverview ? "" : activeId} onSelect={onSelect} />
+      </div>
 
       <ProfileMenu active={pathname.startsWith("/settings")} />
     </nav>

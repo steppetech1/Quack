@@ -1215,6 +1215,10 @@ Output fields:
 
 Input blocks: `chunks`
 
+## Instructions given to a role
+
+- `skill_creator@1`: a developer message of the teacher turns of a built-in command, output `TeacherOutputV2`; input variables: `artifact_types`, `name_max`, `text_max`
+
 ## Edit points after G1
 
 - teacher tool names, if tools appear (R9);

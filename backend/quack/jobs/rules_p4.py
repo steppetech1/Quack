@@ -20,6 +20,7 @@ from quack.config import Settings
 from quack.events import registry
 from quack.events.event_types import TurnCommitted
 from quack.events.log import StoredEvent
+from quack.events.service_turns import is_service_event
 
 type PriorityClass = Literal["P1", "P2", "P3"]
 
@@ -59,6 +60,7 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
     _k("canvas.rediagnose", "P1", roles=("canvas_diagnoser",)),
     _k("photo.pipeline", "P1", visible=True, roles=("recognizer", "segmenter")),
     _k("material.parse", "P1", visible=True, roles=("material_parser",)),
+    _k("material.seminar_tasks", "P2", roles=("task_generator", "task_checker", "task_arbiter")),
     _k("agent.viz", "P2", visible=True, roles=("viz_builder", "viz_checker")),
     _k("agent.illustration", "P2", visible=True, roles=("illustrator",)),
     _k("agent.task_generation", "P2", visible=True, roles=("task_generator", "task_arbiter")),
@@ -83,6 +85,10 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
 )
 
 JOB_KINDS: tuple[str, ...] = tuple(s.kind for s in JOB_KIND_SPECS if not s.periodic)
+# Kinds no event of the table puts: another job queues them in its own transaction
+# (`material.parse` structure step → `material.seminar_tasks`, decision of 2026-11-25), so they
+# have no row in `RULES`.
+QUEUED_BY_JOBS: frozenset[str] = frozenset({"material.seminar_tasks"})
 PERIODIC_JOB_KINDS: tuple[str, ...] = tuple(s.kind for s in JOB_KIND_SPECS if s.periodic)
 # §6.5: dropped with WP1.3 together with the Phase 3 handlers.
 REMOVED_JOB_KINDS: tuple[str, ...] = (
@@ -300,8 +306,8 @@ def _turn_committed(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
 def _turn_titled(event: StoredEvent, _s: Settings, _p: Any) -> list[JobPlan]:
     """The name of the session: one job per session (its key ends with the session), planned by
     the first committed turn; the later turns hit the same key and add nothing."""
-    if event.session_id is None:
-        return []
+    if event.session_id is None or is_service_event(event.type, event.payload):
+        return []  # a `/skill-creator` turn names nothing; the first learning turn does
     return [_plan(event, "session.title", key_tail=str(event.session_id))]
 
 
@@ -587,6 +593,18 @@ def _misconception_described(event: StoredEvent, _s: Settings, p: Any) -> list[J
     return _embedding(event, "misconception", p.misconception_id, p.statement)
 
 
+def _topic_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+    """A topic is embedded by its name (decision of 2026-11-24 on the `[ПРОВЕРИТЬ]` of
+    Т-§3.4.2): without a vector the reconciliation does not see it and creates its twin."""
+    return _embedding(event, "topic", p.topic_id, p.name)
+
+
+def _skill_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+    """A skill is embedded by its name and summary (the same text as the structure step of a
+    material uses, `quack.ops.material_parse.node_text`)."""
+    return _embedding(event, "skill", p.skill_id, "\n".join((p.name, p.summary)).strip())
+
+
 RULES: tuple[RuleRow, ...] = (
     RuleRow("episode.closed", ("extract.episode",), "has_content", _episode_closed),
     RuleRow("task.closed", ("analyst.run",), "always", _task_closed),
@@ -696,12 +714,22 @@ RULES: tuple[RuleRow, ...] = (
         _misconception_described,
     ),
     RuleRow(
+        "topic.created", ("embedding.compute",), "always: the name of the topic", _topic_embedding
+    ),
+    RuleRow(
+        "topic.proposed", ("embedding.compute",), "always: the name of the topic", _topic_embedding
+    ),
+    RuleRow(
+        "skill.created",
+        ("embedding.compute",),
+        "always: the name and the summary of the skill",
+        _skill_embedding,
+    ),
+    RuleRow(
         "*",
         ("embedding.compute",),
-        "new topic, skill or evidence with text",
-        needs="topic and skill: which property is embedded (`name`, for a skill `summary` too) "
-        "is [ПРОВЕРИТЬ] in Т-§3.4.2 (D-A-117); evidence: its id is given by the projector, not "
-        "the event",
+        "new evidence with text",
+        needs="evidence: its id is given by the projector, not the event",
     ),
     RuleRow(
         "session.ended",

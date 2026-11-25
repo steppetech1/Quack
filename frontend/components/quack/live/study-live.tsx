@@ -92,7 +92,7 @@ export function LibraryLive() {
 
   return (
     <PageShell>
-      <BackLink href="/">{domain.title || tx.shell.subjects}</BackLink>
+      <BackLink href="/domain">{domain.title || tx.shell.subjects}</BackLink>
       <StubHeader title={t.title} body={domain.title} />
 
       <form

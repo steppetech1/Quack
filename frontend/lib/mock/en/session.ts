@@ -19,11 +19,17 @@ export const radiusSession: SessionData = {
     {
       kind: "student",
       id: "t1",
-      text: "Shall we keep going with power series? I stopped at the radius of convergence.",
+      text: "/proofs-step-by-step Shall we keep going with power series? I stopped at the radius of convergence.",
+      files: [
+        { id: "mat-lecture7", name: "Lecture 7 - Power series.pdf" },
+        { id: "mat-slides", name: "Series cheat slides.pptx" },
+      ],
     },
     {
       kind: "teacher",
       id: "t2",
+      demo: { id: "demo-geometric", title: "Partial sums of the geometric series" },
+      note: { id: "note-radius", title: "Radius of convergence", preview: "A power series converges on an interval around its centre, and its half-length is the radius R." },
       memory: { session: "Where the ratio test breaks", date: "2026-10-28" },
       thinking:
         "They use the ratio test confidently, but yesterday twice assumed the series diverges when q = 1. The radius comes from a similar limit, and the endpoints of the interval are exactly where the test goes silent. First I'll check whether they keep the radius apart from 1/R: I'll predict the trap, which is mixing them up.",

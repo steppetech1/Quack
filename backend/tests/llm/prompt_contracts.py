@@ -92,6 +92,13 @@ ALL_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     **PHASE4_PROMPT_SCHEMAS,
 }
 
+# Instructions the code gives to a role in some turns, as a developer message: they are not roles
+# of the table (no own call, no own schema); the output is the role's. `skill_creator@1` is given
+# to the teacher in the service turns of the built-in `/skill-creator` (owner decision 2026-11-24).
+INSTRUCTION_PROMPTS: dict[str, tuple[type[BaseModel], ...]] = {
+    "skill_creator@1": (TeacherOutputV2,),
+}
+
 # Prompts that run on a stub until the owner's doctrine arrives (ТЗ Ф4 §0.4.3, §7.6 п.5):
 # reference → BLOCKED number of `PHASE4_NOTES.md` §«Заблокировано». Empty since the owner's
 # decision of 2026-11-02: the stand drafts of the eight stub roles closed BLOCKED-B-101…108.
@@ -292,7 +299,8 @@ def undeclared_names(ref: str, text: str) -> list[str]:
     block = output_contract_block(text)
     if block is None:
         return []
-    allowed = set().union(*(field_names(model) for model in ALL_PROMPT_SCHEMAS[ref]))
+    models = {**ALL_PROMPT_SCHEMAS, **INSTRUCTION_PROMPTS}[ref]
+    allowed = set().union(*(field_names(model) for model in models))
     return sorted(
         {n for n in _BACKTICKED.findall(block) if n not in allowed and not LABEL_RE.match(n)}
     )
@@ -332,6 +340,17 @@ def render_contracts(registry: PromptRegistry | None = None) -> str:
         if ref in DOCTRINE_PENDING:
             lines.append(f"Layer 1: stub, owner's doctrine pending ({DOCTRINE_PENDING[ref]})")
         lines.append("")
+    lines += ["## Instructions given to a role", ""]
+    for ref, models in INSTRUCTION_PROMPTS.items():
+        role, version = ref.split("@")
+        template = registry.load(role, int(version))
+        inputs = list(dict.fromkeys(_PLACEHOLDER.findall(template.text)))
+        names = ", ".join(f"`{model.__name__}`" for model in models)
+        lines += [
+            f"- `{ref}`: a developer message of the teacher turns of a built-in command, output "
+            f"{names}; input variables: " + (", ".join(f"`{i}`" for i in inputs) or "none"),
+        ]
+    lines.append("")
     lines += ["## Edit points after G1", ""]
     lines += [f"- {point}" for point in EDIT_POINTS]
     return "\n".join(lines) + "\n"

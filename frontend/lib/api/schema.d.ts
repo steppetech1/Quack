@@ -564,7 +564,11 @@ export interface paths {
         get: operations["hub_view_endpoint_v1_hubs__hub_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Hub Endpoint
+         * @description The chapter leaves the left panel (`hub.deleted`); the topics stay without a chapter.
+         */
+        delete: operations["delete_hub_endpoint_v1_hubs__hub_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -919,7 +923,14 @@ export interface paths {
         get: operations["get_session_v1_sessions__session_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Session
+         * @description The session leaves the left panel and every read: its page, its stream and its actions
+         *     answer `404` from now on. Its events stay in the journal (the evidence and the model are not
+         *     touched); a turn in progress finishes. A session of another learner, none, or one deleted
+         *     already — `404`.
+         */
+        delete: operations["delete_session_v1_sessions__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1885,6 +1896,8 @@ export interface components {
         };
         /** CreateDomainRequest */
         CreateDomainRequest: {
+            /** About */
+            about?: string | null;
             /** Idempotency Key */
             idempotency_key: string;
             /** Name */
@@ -1892,6 +1905,8 @@ export interface components {
         };
         /** CreateDomainResponse */
         CreateDomainResponse: {
+            /** About */
+            about?: string | null;
             /**
              * Domain Id
              * Format: uuid
@@ -2036,6 +2051,8 @@ export interface components {
          * @description A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1).
          */
         DomainSummary: {
+            /** About */
+            about?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -2070,7 +2087,7 @@ export interface components {
             /** Seq */
             seq: number;
         };
-        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"] | components["schemas"]["CodeTaskElement"];
+        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"] | components["schemas"]["CodeTaskElement"] | components["schemas"]["SkillProposalElement"];
         /**
          * ElementFrame
          * @description `element {block_id, element}`: after its markup passed the code check.
@@ -3277,6 +3294,14 @@ export interface components {
             hits: components["schemas"]["SearchHitView"][];
         };
         /**
+         * SessionDeletedResponse
+         * @description The number of `session.deleted` in the journal.
+         */
+        SessionDeletedResponse: {
+            /** Seq */
+            seq: number;
+        };
+        /**
          * SessionDetail
          * @description `GET /v1/sessions/{id}`: the session and its feed of events by `seq` (D-B-210).
          */
@@ -3507,6 +3532,8 @@ export interface components {
              */
             status?: "signed_out";
         };
+        /** @enum {string} */
+        SkillArtifactType: "notes" | "cards" | "cheatsheet";
         /**
          * SkillChange
          * @description `before` is `None` for a skill that did not exist before the session; `after` is `None`
@@ -3538,6 +3565,28 @@ export interface components {
             gap_type?: components["schemas"]["GapType"] | null;
             /** Levels */
             levels: components["schemas"]["LevelCode"][];
+        };
+        /**
+         * SkillProposalElement
+         * @description Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision
+         *     2026-11-24): a draft of a learner skill the learner may edit and save from the browser
+         *     (`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the
+         *     name and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it
+         *     is bound to, or null.
+         */
+        SkillProposalElement: {
+            artifact_type: components["schemas"]["SkillArtifactType"] | null;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "skill_proposal";
+            /** Name */
+            name: string;
+            /** Text */
+            text: string;
         };
         /** SkillView */
         SkillView: {
@@ -6196,6 +6245,82 @@ export interface operations {
             };
         };
     };
+    delete_hub_endpoint_v1_hubs__hub_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Edited"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     edit_hub_endpoint_v1_hubs__hub_id__patch: {
         parameters: {
             query?: never;
@@ -7658,6 +7783,82 @@ export interface operations {
             };
             /** @description VALIDATION_ERROR */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_session_v1_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDeletedResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

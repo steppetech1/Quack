@@ -45,9 +45,20 @@ const K_READ = 0.6;
 const CARD_W = 320;
 /** How long a changed node pulses */
 const FLASH_MS = 1800;
+/** A node that grows in live (files being read): it scales up from a point this fast. Several at once start a little apart */
+const POP_MS = 300;
+const POP_STEP_MS = 35;
+const POP_MAX_DELAY_MS = 420;
+/** The rest of the graph glides to the new layout a bit slower while something grows, so the eye can follow it */
+const GROW_TWEEN_MS = 700;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 4);
+/** Fast ease-out with a small overshoot: a pop, not a fade */
+const easePop = (t: number) => {
+  const u = t - 1;
+  return 1 + 2.2 * u * u * u + 1.2 * u * u;
+};
 const smooth = (a: number, b: number, v: number) => {
   const t = clamp((v - a) / (b - a), 0, 1);
   return t * t * (3 - 2 * t);
@@ -120,8 +131,10 @@ export const LayeredGraph = forwardRef<
     /** Put the whole graph in the middle of the area (a click on the subject name); `onCentered` says it is done */
     center?: boolean;
     onCentered?: () => void;
+    /** The graph appears for the first time (files being read): its first nodes pop in too */
+    popFirst?: boolean;
   }
->(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus, center = false, onCentered }, ref) {
+>(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus, center = false, onCentered, popFirst = false }, ref) {
   const tx = useT();
   const router = useRouter();
   const wrap = useRef<HTMLDivElement>(null);
@@ -142,6 +155,12 @@ export const LayeredGraph = forwardRef<
   const textW = useRef(new Map<string, number>());
   const lastDraw = useRef(0);
   const flash = useRef(new Map<string, number>());
+  // Nodes that grow in: key -> when the pop starts. With `popFirst` (an empty subject whose graph is just being built) even the first nodes pop in
+  const born = useRef(new Map<string, number>());
+  const popFirstRef = useRef(popFirst);
+  useEffect(() => {
+    popFirstRef.current = popFirst;
+  }, [popFirst]);
   const lit = useRef<string[]>([]);
   // Indicators: which indicators light which node, how bright each halo is now, where the camera stood before the first click
   const marks = useRef(new Map<string, IndicatorId[]>());
@@ -225,6 +244,14 @@ export const LayeredGraph = forwardRef<
     ctx.clearRect(0, 0, w, h);
     const { k, tx: vx, ty: vy } = view.current;
     const pos = (key: string) => shown.current.get(key);
+    // 0..1 size of a node that is popping in; 1 for every other node
+    const popNow = performance.now();
+    const popOf = (key: string) => {
+      const start = born.current.get(key);
+      if (start === undefined) return 1;
+      const age = popNow - start;
+      return age <= 0 ? 0 : age >= POP_MS ? 1 : Math.max(0, easePop(age / POP_MS));
+    };
     const sx = (x: number) => x * k + vx;
     const sy = (y: number) => y * k + vy;
     const near = (x: number, y: number, pad: number) => x > -pad && x < w + pad && y > -pad && y < h + pad;
@@ -293,7 +320,7 @@ export const LayeredGraph = forwardRef<
         let alpha = 0.06 + 0.24 * close;
         if (lit) alpha = 0.5 + 0.3 * close;
         else if (hoverTopic === topicId) alpha = 0.85;
-        alpha *= mute * indFor(topicId);
+        alpha *= mute * indFor(topicId) * Math.min(1, popOf(topicId), popOf(`h:${hubId}`));
         const mid = (ay + syp) / 2;
         const g = ctx.createLinearGradient(0, ay, 0, syp);
         g.addColorStop(0, `rgba(${col.ribbonRgb},${(alpha * 0.3).toFixed(3)})`);
@@ -320,6 +347,8 @@ export const LayeredGraph = forwardRef<
     // Topic to topic: straight and solid, from the prerequisite up to the topic that needs it
     const edges = links.edges;
     const line = (keep: (a: string, b: string) => boolean) => {
+      // a link to a node that is still popping in fades in with it, so it is drawn on its own
+      const young: { ax: number; ay: number; bx: number; by: number; v: number }[] = [];
       ctx.beginPath();
       for (const e of edges) {
         if (!keep(e.topicId, e.requiresId)) continue;
@@ -328,10 +357,25 @@ export const LayeredGraph = forwardRef<
         if (!a || !b) continue;
         const ax = sx(a.x), ay = sy(a.y), bx = sx(b.x), by = sy(b.y);
         if ((ax < 0 && bx < 0) || (ax > w && bx > w) || (ay < 0 && by < 0) || (ay > h && by > h)) continue;
+        const v = born.current.size ? Math.min(1, popOf(e.topicId), popOf(e.requiresId)) : 1;
+        if (v < 1) {
+          young.push({ ax, ay, bx, by, v });
+          continue;
+        }
         ctx.moveTo(ax, ay);
         ctx.lineTo(bx, by);
       }
       ctx.stroke();
+      if (!young.length) return;
+      const base = ctx.globalAlpha;
+      for (const y of young) {
+        ctx.globalAlpha = base * y.v;
+        ctx.beginPath();
+        ctx.moveTo(y.ax, y.ay);
+        ctx.lineTo(y.bx, y.by);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = base;
     };
     ctx.strokeStyle = col.dim;
     ctx.lineWidth = 1.4;
@@ -359,11 +403,13 @@ export const LayeredGraph = forwardRef<
       if (!p || !t) continue;
       const x = sx(p.x), y = sy(p.y);
       if (!near(x, y, 20)) continue;
+      const pop = popOf(n.key);
+      if (pop <= 0) continue;
       const st = stateOf(t, m.nowMs);
       const hollow = st === "new";
       ctx.globalAlpha = (t.status === "proposed" ? 0.6 : 1) * bright(n.key);
       ctx.beginPath();
-      ctx.arc(x, y, n.key === hovered ? rT + 2 : rT, 0, Math.PI * 2);
+      ctx.arc(x, y, (n.key === hovered ? rT + 2 : rT) * pop, 0, Math.PI * 2);
       if (hollow) {
         ctx.fillStyle = col.cloth;
         ctx.fill();
@@ -384,7 +430,9 @@ export const LayeredGraph = forwardRef<
       if (!p) continue;
       const x = sx(p.x), y = sy(p.y);
       if (!near(x, y, 40)) continue;
-      const r = n.key === hovered || n.id === hubSel || litHubs.has(n.id) ? rH + 2 : rH;
+      const pop = popOf(n.key);
+      if (pop <= 0) continue;
+      const r = (n.key === hovered || n.id === hubSel || litHubs.has(n.id) ? rH + 2 : rH) * pop;
       ctx.globalAlpha = bright(n.key);
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -628,7 +676,7 @@ export const LayeredGraph = forwardRef<
       const vis = Math.abs(target - was) < 0.01 ? target : was + (target - was) * ease;
       if (vis !== target) settling = true;
       labelVis.current.set(lb.key, vis);
-      const alpha = lb.fade * vis * bright(lb.key);
+      const alpha = lb.fade * vis * bright(lb.key) * Math.min(1, popOf(lb.key));
       if (alpha < 0.02) continue;
       ctx.font = lb.font;
       ctx.globalAlpha = alpha;
@@ -640,13 +688,14 @@ export const LayeredGraph = forwardRef<
       ctx.fillText(lb.text, lb.x, lb.y);
     }
     ctx.globalAlpha = 1;
-    return settling || haloSettling || flash.current.size > 0 || focus !== fTarget || indNow !== iTarget;
+    return settling || haloSettling || flash.current.size > 0 || born.current.size > 0 || focus !== fTarget || indNow !== iTarget;
   }, []);
 
   const frame = useCallback(
     (now: number) => {
       raf.current = 0;
       let again = false;
+      for (const [key, start] of born.current) if (now - start >= POP_MS) born.current.delete(key);
       if (posTween.current !== null) {
         const t = clamp((now - posTween.current) / posMs.current, 0, 1);
         const e = easeOut(t);
@@ -817,8 +866,20 @@ export const LayeredGraph = forwardRef<
         fromColumn = true;
       } else from.current.set(key, to);
     }
-    posMs.current = fromColumn ? MOVE_MS : TWEEN_MS;
-    if (first || reducedMotion()) {
+    // New nodes pop in (only when motion is welcome). On the first layout they pop only while the graph grows live
+    const reduced = reducedMotion();
+    if (!reduced && (!first || popFirstRef.current)) {
+      const t0 = performance.now();
+      let n = 0;
+      for (const key of target.current.keys()) {
+        if (first ? born.current.has(key) : shown.current.has(key) || born.current.has(key)) continue;
+        if (!first && was.includes(key)) continue;
+        born.current.set(key, t0 + Math.min(n * POP_STEP_MS, POP_MAX_DELAY_MS));
+        n += 1;
+      }
+    }
+    posMs.current = fromColumn ? MOVE_MS : born.current.size ? GROW_TWEEN_MS : TWEEN_MS;
+    if (first || reduced) {
       shown.current = new Map(target.current);
       posTween.current = null;
     } else posTween.current = performance.now();
