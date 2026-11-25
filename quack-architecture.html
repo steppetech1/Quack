@@ -1,0 +1,827 @@
+<title>Карта архитектуры Quack</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: одна колонка-документ, широкие схемы в собственных горизонтальных скроллерах */
+:root{
+  --bg:#f3f5f7; --panel:#ffffff; --fg:#14202b; --muted:#5a6776; --line:#d2d9e0; --line-strong:#8795a3;
+  --accent:#0f766e;
+  --c-client:#2457c5; --t-client:#e7eefc;
+  --c-proc:#0f766e;   --t-proc:#e2f2ef;
+  --c-store:#a85a07;  --t-store:#fbefdf;
+  --c-ext:#6d3fd6;    --t-ext:#efe9fc;
+  --c-write:#c2410c;
+  --vps:#eef1f4;
+  --f-display:"Manrope",system-ui,sans-serif;
+  --f-body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1318; --panel:#151c23; --fg:#e4ebf1; --muted:#95a3b1; --line:#2a3540; --line-strong:#6d7c8b;
+  --accent:#2cc4b0;
+  --c-client:#6ea0ff; --t-client:#16233b;
+  --c-proc:#2cc4b0;   --t-proc:#0f2a27;
+  --c-store:#f0a33a;  --t-store:#2c210f;
+  --c-ext:#a98bff;    --t-ext:#221a39;
+  --c-write:#ff7a45;
+  --vps:#121920;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0e1318; --panel:#151c23; --fg:#e4ebf1; --muted:#95a3b1; --line:#2a3540; --line-strong:#6d7c8b;
+  --accent:#2cc4b0;
+  --c-client:#6ea0ff; --t-client:#16233b;
+  --c-proc:#2cc4b0;   --t-proc:#0f2a27;
+  --c-store:#f0a33a;  --t-store:#2c210f;
+  --c-ext:#a98bff;    --t-ext:#221a39;
+  --c-write:#ff7a45;
+  --vps:#121920;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.55}
+.wrap{max-width:1240px;margin:0 auto;padding-block:40px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:clamp(28px,4vw,40px);font-weight:800;letter-spacing:-.01em}
+h2{font-size:24px;font-weight:700}
+h3{font-size:17px;font-weight:700}
+p{margin:0;max-width:72ch}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.lead{color:var(--muted);font-size:16.5px}
+header{display:flex;flex-direction:column;gap:14px}
+.src{display:flex;flex-wrap:wrap;gap:8px}
+.src span{font-family:var(--f-mono);font-size:12px;border:1px solid var(--line);border-radius:6px;padding:3px 8px;color:var(--muted);background:var(--panel)}
+nav.toc{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:14px}
+nav.toc a{color:var(--fg);text-decoration:none;border-bottom:1px solid var(--line)}
+nav.toc a:hover,nav.toc a:focus-visible{border-color:var(--accent);color:var(--accent);outline:none}
+section{display:flex;flex-direction:column;gap:18px;scroll-margin-top:20px}
+.sec-head{display:flex;flex-direction:column;gap:6px}
+.figure{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow-x:auto}
+.figure svg{display:block;min-width:960px;width:100%;height:auto}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:13px;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:6px;border:1.5px solid}
+.legend .ln{display:inline-block;width:26px;height:0;vertical-align:4px;margin-right:6px;border-top:2px solid var(--line-strong)}
+.lg-client{background:var(--t-client);border-color:var(--c-client)}
+.lg-proc{background:var(--t-proc);border-color:var(--c-proc)}
+.lg-store{background:var(--t-store);border-color:var(--c-store)}
+.lg-ext{background:var(--t-ext);border-color:var(--c-ext)}
+.ln.write{border-top-color:var(--accent)}
+.ln.read{border-top-style:dashed}
+.ln.neo{border-top:3px solid var(--c-write)}
+
+/* SVG */
+svg text{font-family:var(--f-body);fill:var(--fg);font-size:13px}
+svg .t-title{font-family:var(--f-display);font-weight:700;font-size:15px}
+svg .t-sm{font-size:12px;fill:var(--muted)}
+svg .t-mono{font-family:var(--f-mono);font-size:11.5px;fill:var(--muted)}
+svg .t-lbl{font-size:11.5px;fill:var(--muted);font-family:var(--f-mono)}
+svg .t-lbl-w{font-size:11.5px;fill:var(--c-write);font-family:var(--f-mono);font-weight:500}
+svg .b-client{fill:var(--t-client);stroke:var(--c-client);stroke-width:1.5}
+svg .b-proc{fill:var(--t-proc);stroke:var(--c-proc);stroke-width:1.5}
+svg .b-store{fill:var(--t-store);stroke:var(--c-store);stroke-width:1.5}
+svg .b-ext{fill:var(--t-ext);stroke:var(--c-ext);stroke-width:1.5}
+svg .b-plain{fill:var(--panel);stroke:var(--line-strong);stroke-width:1.2}
+svg .b-vps{fill:var(--vps);stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:6 5}
+svg .b-dom{fill:none;stroke:var(--c-client);stroke-width:1.5;stroke-dasharray:7 5}
+svg .a{fill:none;stroke:var(--line-strong);stroke-width:1.6}
+svg .a-w{fill:none;stroke:var(--accent);stroke-width:1.8}
+svg .a-r{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:5 4}
+svg .a-neo{fill:none;stroke:var(--c-write);stroke-width:3}
+svg .bus{fill:none;stroke:var(--c-ext);stroke-width:1.6}
+svg .mk{fill:var(--line-strong)}
+svg .mk-w{fill:var(--accent)}
+svg .mk-neo{fill:var(--c-write)}
+svg .mk-ext{fill:var(--c-ext)}
+svg .node{stroke-width:1.6}
+svg .n-learner{fill:var(--t-client);stroke:var(--c-client)}
+svg .n-subj{fill:var(--t-proc);stroke:var(--c-proc)}
+svg .n-state{fill:var(--t-store);stroke:var(--c-store)}
+svg .n-other{fill:var(--panel);stroke:var(--line-strong)}
+
+/* Turn path */
+.steps{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:6px;min-width:0;position:relative}
+.step b{font-family:var(--f-mono);font-size:12.5px;color:var(--accent);font-weight:500}
+.step h3{font-size:15px}
+.step p{font-size:13.5px;color:var(--muted)}
+.step.async{border-style:dashed;background:transparent}
+.step.async b{color:var(--c-store)}
+@media (max-width:980px){.steps{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.steps{grid-template-columns:1fr}}
+
+/* Laws */
+.laws{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;border-top:1px solid var(--line)}
+.law{display:grid;grid-template-columns:34px 1fr;gap:10px;padding:12px 16px 12px 0;border-bottom:1px solid var(--line);min-width:0}
+.law .n{font-family:var(--f-mono);color:var(--accent);font-size:14px;padding-top:1px}
+.law h3{font-size:15px;margin-bottom:3px}
+.law p{font-size:13.5px;color:var(--muted)}
+@media (max-width:760px){.laws{grid-template-columns:1fr}}
+
+/* Tables */
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--bg)}
+tr:last-child td{border-bottom:none}
+td code,p code,li code{font-family:var(--f-mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap;font-family:var(--f-mono);font-size:13px}
+.pill{display:inline-block;font-family:var(--f-mono);font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid;white-space:nowrap}
+.p-proc{color:var(--c-proc);border-color:var(--c-proc)}
+.p-store{color:var(--c-store);border-color:var(--c-store)}
+.p-ext{color:var(--c-ext);border-color:var(--c-ext)}
+.p-client{color:var(--c-client);border-color:var(--c-client)}
+
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.two > *{min-width:0}
+@media (max-width:860px){.two{grid-template-columns:1fr}}
+.note{border-left:3px solid var(--c-store);padding:10px 16px;background:var(--panel);border-radius:0 8px 8px 0;font-size:14px}
+.note h3{font-size:15px;margin-bottom:6px}
+ul.clean{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px;font-size:14px}
+ul.clean li::marker{color:var(--accent)}
+.kv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.kv div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.kv b{display:block;font-family:var(--f-display);font-size:22px;font-variant-numeric:tabular-nums}
+.kv span{font-size:13px;color:var(--muted)}
+@media (max-width:760px){.kv{grid-template-columns:repeat(2,minmax(0,1fr))}}
+footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Quack · платформа обучения с AI-учителем</div>
+  <h1>Карта архитектуры</h1>
+  <p class="lead">Журнальная система: Postgres хранит всё, что произошло, Neo4j — всё, что из этого следует. Ход учителя исполняется в процессе API и никогда не ждёт фоновой обработки. Ниже — топология, путь одного хода, ядро событий, граф памяти, продуктовый слой и эксплуатация, сведённые из трёх документов.</p>
+  <div class="src"><span>Технический документ: AI и архитектура памяти (Т)</span><span>Продуктовая логика (П)</span><span>DevOps: развёртывание и эксплуатация (D)</span></div>
+  <nav class="toc" aria-label="Разделы">
+    <a href="#topology">Топология</a><a href="#turn">Путь хода</a><a href="#core">Ядро событий</a><a href="#graph">Граф памяти</a><a href="#product">Продуктовый слой</a><a href="#laws">Законы ядра</a><a href="#components">Компоненты</a><a href="#ai">Модели и агенты</a><a href="#channels">Каналы</a><a href="#ops">Эксплуатация</a><a href="#hackathon">Срез хакатона</a>
+  </nav>
+</header>
+
+<!-- ============ 1. TOPOLOGY ============ -->
+<section id="topology">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§1.2 · Т-§20 · D-§3</div>
+    <h2>Топология: процессы, хранилища, внешние сервисы</h2>
+    <p class="lead">Наружу открыт только Caddy. Восемь постоянных контейнеров живут в сети Docker <code>backend</code>; в интернет через сеть <code>egress</code> ходят только caddy, api, workers, backup и alerts.</p>
+  </div>
+  <div class="figure">
+  <svg viewBox="0 0 1200 770" role="img" aria-label="Схема топологии: клиенты, Caddy, процессы на VPS, хранилища, внешние сервисы">
+    <defs>
+      <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="mw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-w" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="mn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="mk-neo" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="me" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ext" d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>
+
+    <!-- clients -->
+    <rect class="b-client" x="60" y="28" width="300" height="84" rx="10"/>
+    <text class="t-title" x="76" y="54">Браузер ученика</text>
+    <text x="76" y="75">Next.js App Router · TypeScript · Vercel</text>
+    <text class="t-mono" x="76" y="96">app.qvack.online</text>
+
+    <rect class="b-client" x="400" y="28" width="250" height="84" rx="10"/>
+    <text class="t-title" x="416" y="54">Телефон-компаньон</text>
+    <text x="416" y="75">камера, рукопись, голос</text>
+    <text class="t-mono" x="416" y="96">getUserMedia · только HTTPS</text>
+
+    <!-- VPS -->
+    <rect class="b-vps" x="30" y="148" width="835" height="604" rx="14"/>
+    <text class="t-mono" x="850" y="172" text-anchor="end">VPS · Contabo Cloud VPS 6 · 6 vCPU · 12 ГБ · 100 ГБ NVMe · Docker Compose</text>
+
+    <rect class="b-plain" x="60" y="185" width="280" height="52" rx="8"/>
+    <text class="t-title" x="76" y="208">caddy · TLS :80/:443</text>
+    <text class="t-mono" x="76" y="227">api.qvack.online · SSE без буфера · WS</text>
+
+    <path class="a" d="M200,112 V183" marker-end="url(#m)"/>
+    <text class="t-lbl" x="208" y="138">HTTPS · SSE · WS</text>
+    <path class="a" d="M500,112 L342,206" marker-end="url(#m)"/>
+    <text class="t-lbl" x="440" y="150">WS канваса</text>
+
+    <!-- row A -->
+    <rect class="b-proc" x="60" y="275" width="300" height="125" rx="10"/>
+    <text class="t-title" x="76" y="300">api</text>
+    <text class="t-mono" x="112" y="300">FastAPI · Uvicorn × 2</text>
+    <text x="76" y="322">приём действий, запись событий</text>
+    <text x="76" y="341">ход учителя (LangGraph в процессе)</text>
+    <text x="76" y="360">мгновенная проверка ответов</text>
+    <text x="76" y="379">SSE хода и изменений, WS канваса</text>
+
+    <path class="a" d="M200,237 V273" marker-end="url(#m)"/>
+
+    <rect class="b-proc" x="390" y="275" width="170" height="125" rx="10"/>
+    <text class="t-title" x="406" y="300">compute</text>
+    <text x="406" y="322">pebble · 4 процесса</text>
+    <text x="406" y="341">SymPy · PyMuPDF</text>
+    <text x="406" y="360">OpenCV · Chromium</text>
+    <text class="t-sm" x="406" y="380">без интернета</text>
+
+    <rect class="b-proc" x="590" y="275" width="250" height="125" rx="10"/>
+    <text class="t-title" x="606" y="300">workers</text>
+    <text class="t-mono" x="680" y="300">2 процесса × 8 задач</text>
+    <text x="606" y="322">исполнители очереди jobs</text>
+    <text x="606" y="341">извлекатель, аналитик границы</text>
+    <text x="606" y="360">агенты LangGraph, разбор файлов</text>
+    <text class="t-sm" x="606" y="380">результат — только события</text>
+
+    <path class="a" d="M360,337 H388" marker-end="url(#m)"/>
+    <path class="a" d="M590,337 H562" marker-end="url(#m)"/>
+    <text class="t-lbl" x="475" y="268" text-anchor="middle">HTTP + таймаут</text>
+
+    <!-- row B: stores -->
+    <rect class="b-store" x="60" y="450" width="300" height="112" rx="10"/>
+    <text class="t-title" x="76" y="475">PostgreSQL 16</text>
+    <text class="t-mono" x="200" y="475">источник правды</text>
+    <text x="76" y="496">журнал events (seq ученика)</text>
+    <text x="76" y="514">сессии, материалы, канвас, артефакты</text>
+    <text x="76" y="532">очередь jobs, покрытие, отметки</text>
+    <text class="t-sm" x="76" y="551">единственное, что бэкапится</text>
+
+    <rect class="b-store" x="390" y="450" width="170" height="112" rx="10"/>
+    <text class="t-title" x="406" y="475">Redis 8</text>
+    <text class="t-sm" x="406" y="494">без диска · 128 МБ</text>
+    <text x="406" y="513">pub/sub learner:, canvas:</text>
+    <text x="406" y="531">лимиты Meta (Lua)</text>
+    <text x="406" y="549">блокировки SET NX</text>
+
+    <rect class="b-store" x="590" y="450" width="250" height="112" rx="10"/>
+    <text class="t-title" x="606" y="475">Neo4j 2026 Community</text>
+    <text x="606" y="496">граф предмета, модель ученика</text>
+    <text x="606" y="514">свидетельства, заблуждения</text>
+    <text x="606" y="532">векторные индексы по ученику</text>
+    <text class="t-sm" x="606" y="551">производная: пересобирается</text>
+
+    <!-- api/workers to stores -->
+    <path class="a-w" d="M200,400 V448" marker-end="url(#mw)"/>
+    <text class="t-lbl" x="208" y="428">события</text>
+    <path class="a-w" d="M612,400 L352,450" marker-end="url(#mw)"/>
+    <path class="a-r" d="M342,400 L600,450" marker-end="url(#m)"/>
+    <path class="a-r" d="M745,400 V448" marker-end="url(#m)"/>
+    <text class="t-lbl" x="753" y="428">чтение</text>
+    <text class="t-lbl" x="475" y="442" text-anchor="middle">события, jobs · чтение графа</text>
+
+    <!-- projector -->
+    <rect class="b-proc" x="200" y="620" width="560" height="92" rx="10"/>
+    <text class="t-title" x="216" y="645">projector</text>
+    <text class="t-mono" x="300" y="645">проектор + диспетчер в одном процессе (срез хакатона)</text>
+    <text x="216" y="667">проектор: события → Neo4j строго по seq, единственный писатель графа</text>
+    <text x="216" y="687">диспетчер: события → jobs с детерминированными ключами</text>
+    <text class="t-sm" x="216" y="705">будится сигналом Redis, страховка — опрос раз в 500 мс</text>
+
+    <path class="a" d="M250,562 V618" marker-end="url(#m)"/>
+    <text class="t-lbl" x="140" y="594">читает журнал</text>
+    <path class="a-w" d="M330,618 V564" marker-end="url(#mw)"/>
+    <text class="t-lbl" x="338" y="594">ставит jobs</text>
+    <path class="a-neo" d="M700,618 V566" marker-end="url(#mn)"/>
+    <text class="t-lbl-w" x="590" y="594">единственная запись</text>
+
+    <!-- short-lived -->
+    <rect class="b-plain" x="60" y="720" width="430" height="24" rx="6"/>
+    <text class="t-mono" x="72" y="737">backup · migrate · alerts — короткоживущие, по таймеру</text>
+    <path class="a" d="M490,732 H1040 V714" marker-end="url(#m)"/>
+    <text class="t-lbl" x="560" y="726">дампы Postgres, шифрование age · RPO ≤ 6 ч</text>
+
+    <!-- egress bus -->
+    <path class="bus" d="M340,275 V255 H880"/>
+    <path class="bus" d="M840,320 H880"/>
+    <path class="bus" d="M880,196 V546"/>
+    <text class="t-lbl" x="872" y="250" text-anchor="end">egress: api, workers</text>
+
+    <path class="bus" d="M880,196 H898" marker-end="url(#me)"/>
+    <path class="bus" d="M880,302 H898" marker-end="url(#me)"/>
+    <path class="bus" d="M880,396 H898" marker-end="url(#me)"/>
+    <path class="bus" d="M880,471 H898" marker-end="url(#me)"/>
+    <path class="bus" d="M880,546 H898" marker-end="url(#me)"/>
+
+    <!-- externals -->
+    <rect class="b-ext" x="900" y="165" width="275" height="62" rx="10"/>
+    <text class="t-title" x="916" y="190">Вход и почта</text>
+    <text x="916" y="211">Google OIDC · Resend (ссылки)</text>
+
+    <rect class="b-ext" x="900" y="245" width="275" height="114" rx="10"/>
+    <text class="t-title" x="916" y="270">Meta Model API</text>
+    <text class="t-mono" x="1040" y="270">Responses</text>
+    <text x="916" y="291">Muse Wonder — учитель</text>
+    <text x="916" y="309">Muse Spark — извлечение, агенты</text>
+    <text x="916" y="327">SAM 3.1 · Voice · Image</text>
+    <text class="t-sm" x="916" y="347">3000 RPM · 4 млн TPM на команду</text>
+
+    <rect class="b-ext" x="900" y="372" width="275" height="50" rx="10"/>
+    <text class="t-title" x="916" y="393">Modal</text>
+    <text class="t-sm" x="970" y="393">Qwen3-Embedding-0.6B</text>
+    <text class="t-mono" x="916" y="412">→ событие embedding.ready</text>
+
+    <rect class="b-ext" x="900" y="440" width="275" height="62" rx="10"/>
+    <text class="t-title" x="916" y="465">Contabo Object Storage</text>
+    <text x="916" y="486">S3: файлы, штрихи, куски фото</text>
+
+    <rect class="b-ext" x="900" y="520" width="275" height="52" rx="10"/>
+    <text class="t-title" x="916" y="543">LangSmith</text>
+    <text class="t-sm" x="916" y="562">трассы вызовов моделей, наборы оценки</text>
+
+    <rect class="b-ext" x="900" y="650" width="275" height="62" rx="10"/>
+    <text class="t-title" x="916" y="675">Cloudflare R2</text>
+    <text x="916" y="696">бэкапы Postgres, журнал удалений</text>
+  </svg>
+  </div>
+  <div class="legend">
+    <span><i class="lg-client"></i>клиенты</span>
+    <span><i class="lg-proc"></i>наши процессы (один Python-код)</span>
+    <span><i class="lg-store"></i>хранилища на VPS</span>
+    <span><i class="lg-ext"></i>внешние сервисы</span>
+    <span><span class="ln write"></span>пишет события / jobs</span>
+    <span><span class="ln read"></span>читает</span>
+    <span><span class="ln neo"></span>запись в Neo4j (только проектор)</span>
+  </div>
+</section>
+
+<!-- ============ 2. TURN ============ -->
+<section id="turn">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§1.4 · Т-§12.1</div>
+    <h2>Путь одного хода учителя</h2>
+    <p class="lead">Граф LangGraph без точек сохранения внутри процесса API. Токены идут клиенту прямо в SSE-ответ на POST действия. Всё, что ниже пунктира, асинхронно и ход не задерживает.</p>
+  </div>
+  <div class="steps">
+    <div class="step"><b>POST /actions</b><h3>Действие</h3><p>Одна транзакция: номер ученика <code>seq</code> через <code>UPDATE … RETURNING</code>, событие действия, мгновенный вердикт. Затем сигнал в Redis.</p></div>
+    <div class="step"><b>admit</b><h3>Допуск</h3><p>Блокировка «один активный ход на сессию» (SET NX) и допуск к модели по общим лимитам.</p></div>
+    <div class="step"><b>assemble</b><h3>Сборка контекста</h3><p>Параллельно: срез проекции с контролем отметки, разговор сессии, наложение неприменённых событий, материалы, быстрый вердикт.</p></div>
+    <div class="step"><b>model ⇄ tools</b><h3>Модель и инструменты</h3><p>Роль teacher на Muse Wonder со стримингом. Инструменты читают память и поручают задачи агентам.</p></div>
+    <div class="step"><b>guard</b><h3>Защитные правила</h3><p>Код проверяет ход по проекции. Нарушение — возврат модели с причиной, до 2 повторов, затем код вырезает спойлер.</p></div>
+    <div class="step"><b>commit</b><h3>Запись</h3><p><code>turn.committed</code> с разметкой и побочными событиями, манифест контекста, обновление плана сессии.</p></div>
+    <div class="step async"><b>проектор</b><h3>Применение в Neo4j</h3><p>События ученика пачками по 100, одной транзакцией вместе с отметкой.</p></div>
+    <div class="step async"><b>диспетчер</b><h3>Фоновые задачи</h3><p>Закрытый эпизод → извлечение; закрытая задача → аналитик; поручение → агент.</p></div>
+    <div class="step async"><b>workers</b><h3>Толкование</h3><p>Извлекатель превращает эпизод в наблюдения, код назначает вес свидетельства.</p></div>
+    <div class="step async"><b>канал изменений</b><h3>Интерфейс</h3><p>SSE «что изменилось и где», клиент дочитывает данные обычными GET.</p></div>
+    <div class="step async"><b>symbolic / model</b><h3>Поздний вердикт</h3><p>SymPy и проверка моделью пишут вердикт отдельным событием позже.</p></div>
+    <div class="step async"><b>agents</b><h3>Агенты</h3><p>Визуализации, разбор материалов, артефакты, «Сегодня». Результат — события.</p></div>
+  </div>
+</section>
+
+<!-- ============ 3. CORE ============ -->
+<section id="core">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§2 · Т-§13</div>
+    <h2>Ядро памяти: журнал, проекции, очередь</h2>
+    <p class="lead">Журнал событий служит сразу источником правды и «исходящим ящиком». Два потребителя читают его по порядку номеров ученика: проектор строит граф, диспетчер ставит задачи. Результаты задач снова становятся событиями, так что петля замыкается через журнал.</p>
+  </div>
+  <div class="figure">
+  <svg viewBox="0 0 1000 440" role="img" aria-label="Петля событий: API пишет в журнал, проектор строит Neo4j, диспетчер ставит задачи, исполнители пишут новые события">
+    <defs>
+      <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="mw2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-w" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="mn2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="mk-neo" d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>
+    <path class="a-r" d="M915,60 V30 H130 V168" marker-end="url(#m2)"/>
+    <text class="t-lbl" x="520" y="22" text-anchor="middle">чтение: срез проекции + неприменённые события текущей сессии поверх</text>
+
+    <rect class="b-proc" x="20" y="170" width="230" height="100" rx="10"/>
+    <text class="t-title" x="36" y="196">API · ход учителя</text>
+    <text x="36" y="218">действие, вердикт,</text>
+    <text x="36" y="236">turn.committed,</text>
+    <text x="36" y="254">поручения агентам</text>
+
+    <path class="a-w" d="M250,220 H328" marker-end="url(#mw2)"/>
+    <text class="t-lbl" x="289" y="210" text-anchor="middle">пишет</text>
+
+    <rect class="b-store" x="330" y="170" width="260" height="100" rx="10"/>
+    <text class="t-title" x="346" y="196">Журнал events · Postgres</text>
+    <text x="346" y="218">только дописывается</text>
+    <text x="346" y="236">seq ученика без пропусков</text>
+    <text class="t-mono" x="346" y="256">идемпотентные ключи</text>
+
+    <path class="a" d="M590,195 L658,100" marker-end="url(#m2)"/>
+    <path class="a" d="M590,245 L658,318" marker-end="url(#m2)"/>
+
+    <rect class="b-proc" x="660" y="60" width="150" height="80" rx="10"/>
+    <text class="t-title" x="676" y="86">Проектор</text>
+    <text x="676" y="106">обработчики —</text>
+    <text x="676" y="124">чистые функции</text>
+
+    <path class="a-neo" d="M810,100 H836" marker-end="url(#mn2)"/>
+
+    <rect class="b-store" x="840" y="60" width="150" height="80" rx="10"/>
+    <text class="t-title" x="856" y="86">Neo4j</text>
+    <text x="856" y="106">производный граф</text>
+    <text class="t-sm" x="856" y="124">projectedSeq</text>
+
+    <rect class="b-proc" x="660" y="290" width="150" height="80" rx="10"/>
+    <text class="t-title" x="676" y="316">Диспетчер</text>
+    <text x="676" y="336">правила → jobs</text>
+    <text class="t-mono" x="676" y="355">ON CONFLICT</text>
+
+    <path class="a-w" d="M810,330 H836" marker-end="url(#mw2)"/>
+
+    <rect class="b-proc" x="840" y="290" width="150" height="90" rx="10"/>
+    <text class="t-title" x="856" y="316">Исполнители</text>
+    <text x="856" y="336">SKIP LOCKED,</text>
+    <text x="856" y="354">допуск по лимиту</text>
+    <text class="t-sm" x="856" y="372">пульс 15 с</text>
+
+    <path class="a-r" d="M915,288 V142" marker-end="url(#m2)"/>
+    <text class="t-lbl" x="923" y="220">читают</text>
+
+    <path class="a-w" d="M915,380 V410 H460 V272" marker-end="url(#mw2)"/>
+    <text class="t-lbl" x="690" y="402" text-anchor="middle">observation.extracted · verdict.recorded · digest.written · artifact.updated</text>
+
+    <text class="t-lbl" x="625" y="140" text-anchor="middle">по seq</text>
+    <text class="t-lbl" x="625" y="300" text-anchor="middle">по seq</text>
+  </svg>
+  </div>
+  <div class="two">
+    <div class="tbl"><table>
+      <thead><tr><th>Событие</th><th>Задача диспетчера</th></tr></thead>
+      <tbody>
+        <tr><td><code>episode.closed</code></td><td>извлечение наблюдений</td></tr>
+        <tr><td><code>task.closed</code>, <code>session.ended</code></td><td>аналитик границы</td></tr>
+        <tr><td><code>agent.requested</code></td><td>агент по поручению учителя</td></tr>
+        <tr><td><code>material.uploaded</code></td><td>разбор материала</td></tr>
+        <tr><td>новый кусок, тема, навык, заблуждение</td><td>эмбеддинг на Modal</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note">
+      <h3>Почему так</h3>
+      <ul class="clean">
+        <li>Пересборка Neo4j из журнала не вызывает моделей и даёт тот же результат: оспаривание, смена правил, удаление и проигрывание — одна операция.</li>
+        <li>Без NOTIFY: глобальная блокировка при фиксации сериализовала бы записи. Пробуждение — Redis, страховка — опрос.</li>
+        <li>Своя очередь на Postgres (~300–400 строк) нужна ради допуска по лимитам модели: фоновая задача берётся, только если хватает лимита и остаётся место ходам учителя.</li>
+        <li>Одни обработчики во всех режимах: применение, полная пересборка, наложение сессии, состояние на момент N.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Цепочка понимания</th><th>Кто делает</th><th>Где лежит</th></tr></thead>
+    <tbody>
+      <tr><td>Действие ученика в сессии, канвасе, задаче</td><td>API</td><td>событие в журнале</td></tr>
+      <tr><td>Эпизод закрыт (по событиям и таймеру простоя)</td><td>диспетчер</td><td>задача извлечения</td></tr>
+      <tr><td>Наблюдение: толкование действия</td><td>извлекатель (Muse Spark), второе мнение (Wonder)</td><td><code>observation.extracted</code></td></tr>
+      <tr><td>Свидетельство: ярус, ворота, вес по виду источника</td><td>детерминированный код</td><td>узел Evidence → Skill</td></tr>
+      <tr><td>Свёртка: понимание, удержание, знакомство</td><td>проектор</td><td>свойства на узле Skill</td></tr>
+      <tr><td>Граница понимания, сводка для учителя</td><td>аналитик границы</td><td><code>digest.written</code> → узел Digest</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 4. GRAPH ============ -->
+<section id="graph">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§3.4 · Т-§4</div>
+    <h2>Граф памяти в Neo4j</h2>
+    <p class="lead">У каждого ученика свой граф предмета; каждый узел несёт <code>id</code> (UUIDv5) и <code>learnerId</code>. Навык — единица измерения, к нему крепятся свидетельства. Текста сессий, штрихов, артефактов и очереди в графе нет.</p>
+  </div>
+  <div class="figure">
+  <svg viewBox="0 0 1000 360" role="img" aria-label="Схема узлов и связей Neo4j">
+    <defs>
+      <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>
+    <path class="a" d="M150,200 H208" marker-end="url(#m3)"/>
+    <text class="t-lbl" x="179" y="190" text-anchor="middle">OWNS</text>
+    <path class="a" d="M320,180 L418,132" marker-end="url(#m3)"/>
+    <text class="t-lbl" x="335" y="140">HAS_TOPIC</text>
+    <path class="a" d="M320,220 L418,272" marker-end="url(#m3)"/>
+    <text class="t-lbl" x="335" y="272">HAS_HUB</text>
+    <path class="a" d="M480,250 V146" marker-end="url(#m3)"/>
+    <text class="t-lbl" x="488" y="196">INCLUDES</text>
+    <text class="t-sm" x="488" y="212">requiredLevels</text>
+    <path class="a" d="M542,120 H648" marker-end="url(#m3)"/>
+    <text class="t-lbl" x="595" y="110" text-anchor="middle">COVERS</text>
+    <path class="a" d="M712,250 V148" marker-end="url(#m3)"/>
+    <text class="t-lbl" x="720" y="204">ON</text>
+
+    <path class="a" d="M690,94 C660,30 740,30 718,92" marker-end="url(#m3)"/>
+    <text class="t-lbl" x="640" y="36">REQUIRES</text>
+    <text class="t-sm" x="640" y="52">«нужно до»</text>
+    <path class="a-r" d="M745,104 C810,60 820,140 764,128"/>
+    <text class="t-lbl" x="790" y="80">SAME_IDEA</text>
+    <text class="t-sm" x="790" y="96">между доменами</text>
+
+    <rect class="node n-learner" x="30" y="174" width="120" height="52" rx="26"/>
+    <text class="t-title" x="90" y="205" text-anchor="middle">Learner</text>
+    <rect class="node n-subj" x="210" y="174" width="110" height="52" rx="26"/>
+    <text class="t-title" x="265" y="205" text-anchor="middle">Domain</text>
+    <rect class="node n-subj" x="420" y="94" width="122" height="52" rx="26"/>
+    <text class="t-title" x="481" y="125" text-anchor="middle">Topic</text>
+    <rect class="node n-subj" x="420" y="250" width="122" height="52" rx="26"/>
+    <text class="t-title" x="481" y="275" text-anchor="middle">Hub</text>
+    <text class="t-sm" x="481" y="292" text-anchor="middle">deadlineAtMs</text>
+    <rect class="node n-state" x="650" y="94" width="124" height="52" rx="26"/>
+    <text class="t-title" x="712" y="125" text-anchor="middle">Skill</text>
+    <rect class="node n-state" x="650" y="250" width="124" height="52" rx="26"/>
+    <text class="t-title" x="712" y="275" text-anchor="middle">Evidence</text>
+    <text class="t-sm" x="712" y="292" text-anchor="middle">tier · weight</text>
+
+    <text class="t-sm" x="481" y="166" text-anchor="middle">proposed · active · off_domain</text>
+    <text class="t-sm" x="712" y="166" text-anchor="middle">понимание · удержание · знакомство</text>
+
+    <text class="t-lbl" x="850" y="30">другие узлы</text>
+    <g>
+      <rect class="node n-other" x="850" y="40" width="130" height="30" rx="15"/><text x="915" y="60" text-anchor="middle">Misconception</text>
+      <rect class="node n-other" x="850" y="78" width="130" height="30" rx="15"/><text x="915" y="98" text-anchor="middle">Exposure</text>
+      <rect class="node n-other" x="850" y="116" width="130" height="30" rx="15"/><text x="915" y="136" text-anchor="middle">Task · Option</text>
+      <rect class="node n-other" x="850" y="154" width="130" height="30" rx="15"/><text x="915" y="174" text-anchor="middle">Material · Chunk</text>
+      <rect class="node n-other" x="850" y="192" width="130" height="30" rx="15"/><text x="915" y="212" text-anchor="middle">Digest</text>
+      <rect class="node n-other" x="850" y="230" width="130" height="30" rx="15"/><text x="915" y="250" text-anchor="middle">Profile</text>
+      <rect class="node n-other" x="850" y="268" width="130" height="30" rx="15"/><text x="915" y="288" text-anchor="middle">Alias</text>
+    </g>
+    <text class="t-sm" x="30" y="340">Связь Topic→Topic «нужно до» не хранится: она считается при чтении из связей навыков. Графовые алгоритмы — networkx, без плагина GDS.</text>
+  </svg>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Что помним</th><th>Как лежит в графе</th></tr></thead>
+    <tbody>
+      <tr><td>Как устроен предмет ученика</td><td>Domain, Topic, Skill, Hub; связи REQUIRES и SAME_IDEA</td></tr>
+      <tr><td>Что он умеет</td><td>Состояние навыка по трём осям свойствами на Skill</td></tr>
+      <tr><td>Почему мы так считаем</td><td>Evidence с исходом, ярусом, классом проверки, цитатой и ссылкой на источник</td></tr>
+      <tr><td>Что ему показывали</td><td>Exposure</td></tr>
+      <tr><td>Как он ошибается</td><td>Misconception: формулировка, статус, условия проявления, с чем путает</td></tr>
+      <tr><td>На чём он учится</td><td>Material, Chunk с эмбеддингом, Task с разметкой</td></tr>
+      <tr><td>Какой он ученик и что сейчас важно</td><td>Profile (явное и выученное), Digest — последняя сводка аналитика</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 5. PRODUCT ============ -->
+<section id="product">
+  <div class="sec-head">
+    <div class="eyebrow">П-§2 · П-§4 · П-§12</div>
+    <h2>Продуктовый слой</h2>
+    <p class="lead">Всё начинается с сессии. Темы возникают из сессий, хабы объединяют темы, дедлайн привязывает хаб ко времени. Модель ученика лежит под всеми доменами сразу.</p>
+  </div>
+  <div class="figure">
+  <svg viewBox="0 0 1000 350" role="img" aria-label="Связи продуктовых сущностей: домен, сессия, тема, хаб, дедлайн, модель ученика">
+    <defs>
+      <marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>
+    <rect class="b-dom" x="20" y="16" width="960" height="236" rx="14"/>
+    <text class="t-title" x="40" y="42">Домен</text>
+    <text class="t-sm" x="100" y="42">предмет ученика, аналог проекта: «Матанализ», «Линейная алгебра»</text>
+
+    <rect class="b-proc" x="40" y="60" width="200" height="76" rx="10"/>
+    <text class="t-title" x="56" y="84">Сессия</text>
+    <text x="56" y="104">сообщения, файлы,</text>
+    <text x="56" y="122">канвас, решения задач</text>
+
+    <rect class="b-proc" x="300" y="60" width="200" height="76" rx="10"/>
+    <text class="t-title" x="316" y="84">Тема</text>
+    <text x="316" y="104">пройденная, предложенная,</text>
+    <text x="316" y="122">вне домена</text>
+
+    <rect class="b-proc" x="560" y="60" width="180" height="76" rx="10"/>
+    <text class="t-title" x="576" y="84">Хаб</text>
+    <text x="576" y="104">группа тем: из материала,</text>
+    <text x="576" y="122">по запросу, весь домен</text>
+
+    <rect class="b-proc" x="790" y="60" width="170" height="76" rx="10"/>
+    <text class="t-title" x="806" y="84">Дедлайн</text>
+    <text x="806" y="104">хаб с датой,</text>
+    <text x="806" y="122">режим подготовки</text>
+
+    <path class="a" d="M240,98 H298" marker-end="url(#m4)"/>
+    <text class="t-lbl" x="269" y="90" text-anchor="middle">порождает</text>
+    <path class="a" d="M560,98 H502" marker-end="url(#m4)"/>
+    <text class="t-lbl" x="531" y="90" text-anchor="middle">группирует</text>
+    <path class="a-r" d="M790,98 H742" marker-end="url(#m4)"/>
+    <text class="t-lbl" x="766" y="90" text-anchor="middle">+ дата</text>
+
+    <rect class="b-plain" x="40" y="160" width="200" height="74" rx="10"/>
+    <text class="t-title" x="56" y="184">Материалы</text>
+    <text x="56" y="204">лекции, пробники,</text>
+    <text x="56" y="222">силлабус, фото</text>
+
+    <rect class="b-plain" x="300" y="160" width="200" height="74" rx="10"/>
+    <text class="t-title" x="316" y="184">Канвас</text>
+    <text x="316" y="204">перо, рукопись с телефона,</text>
+    <text x="316" y="222">формулы; проверка шагов</text>
+
+    <rect class="b-plain" x="560" y="160" width="180" height="74" rx="10"/>
+    <text class="t-title" x="576" y="184">Артефакты</text>
+    <text x="576" y="204">конспект, карточки,</text>
+    <text x="576" y="222">cheat sheet</text>
+
+    <rect class="b-plain" x="790" y="160" width="170" height="74" rx="10"/>
+    <text class="t-title" x="806" y="184">Задачи</text>
+    <text x="806" y="204">разметка, пространство</text>
+    <text x="806" y="222">решения, подсказки</text>
+
+    <path class="a" d="M200,252 V284" marker-end="url(#m4)"/>
+    <text class="t-lbl" x="208" y="272">каждое действие → свидетельства</text>
+    <path class="a" d="M720,284 V254" marker-end="url(#m4)"/>
+    <text class="t-lbl" x="728" y="272">состояние → темы словами</text>
+
+    <rect class="b-store" x="20" y="286" width="960" height="52" rx="10"/>
+    <text class="t-title" x="40" y="317">Модель ученика</text>
+    <text x="175" y="317">общая для всех доменов: уровни понимания, удержание, граница, заблуждения, профиль</text>
+  </svg>
+  </div>
+  <div class="two">
+    <div class="note" style="border-left-color:var(--accent)">
+      <h3>Учитель действует из памяти (П-§4)</h3>
+      <ul class="clean">
+        <li>Новая сессия получает контекст из памяти, а не сырую историю прошлых сессий.</li>
+        <li>Ход выбирается по плану сессии и графу действий; ответвления ученика разрешены, ученика ничем не ограничиваем.</li>
+        <li>Защитные правила: не спойлерить, показывать только размеченные и проверенные задания.</li>
+        <li>Кнопки — шорткаты к намерениям, а не отдельная логика.</li>
+      </ul>
+    </div>
+    <div class="note" style="border-left-color:var(--c-ext)">
+      <h3>Вокруг учителя</h3>
+      <ul class="clean">
+        <li><b>Фоновые агенты</b> не ведут ученика и не собирают контекст учителя; их результаты доходят как события.</li>
+        <li><b>Повторение</b> встраивается в сессии, без завалов; «Сегодня» готовит рекомендации.</li>
+        <li><b>Компаньон</b>: телефон снимает рукопись, SAM выделяет строки, строки летят в канвас по WS.</li>
+        <li><b>Контроль ученика</b>: «не согласен» и «почему ты так считаешь» раскрываются до сырья через провенанс.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6. LAWS ============ -->
+<section id="laws">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§1.1 · принято</div>
+    <h2>Десять законов ядра</h2>
+    <p class="lead">Если решение в любом разделе противоречит закону, неверно решение.</p>
+  </div>
+  <div class="laws">
+    <div class="law"><span class="n">1</span><div><h3>Источник правды — журнал</h3><p>Всё, что влияет на модель ученика, сначала пишется событием. Neo4j можно удалить и собрать заново.</p></div></div>
+    <div class="law"><span class="n">2</span><div><h3>Модель толкует, код считает</h3><p>Уровни, удержание и статусы считает детерминированный код. Пересборка бесплатна и воспроизводима.</p></div></div>
+    <div class="law"><span class="n">3</span><div><h3>Один писатель на хранилище</h3><p>В Neo4j пишет только проектор. Учитель, агенты и API пишут события.</p></div></div>
+    <div class="law"><span class="n">4</span><div><h3>Силу свидетельства назначает код</h3><p>По виду источника и классу проверки. Одно суждение модели не ухудшает состояние ученика.</p></div></div>
+    <div class="law"><span class="n">5</span><div><h3>Идемпотентность</h3><p>Детерминированные ключи: номер события, источник + версия извлекателя, id задачи. Повтор заменяет запись.</p></div></div>
+    <div class="law"><span class="n">6</span><div><h3>Провенанс</h3><p>Любое свидетельство раскрывается до места в сырье: сообщения, строки канваса, попытки задачи.</p></div></div>
+    <div class="law"><span class="n">7</span><div><h3>Сбой фона ничего не фиксирует</h3><p>Фоновая работа применяется целиком или никак и не трогает ход учителя.</p></div></div>
+    <div class="law"><span class="n">8</span><div><h3>Отсутствие не равно нулю</h3><p>«Не проверено» — явное значение <code>'unknown'</code>, а не null и не провал.</p></div></div>
+    <div class="law"><span class="n">9</span><div><h3>Горячий путь не ждёт фон</h3><p>Учитель отвечает по разговору и последней проекции с наложением событий текущей сессии.</p></div></div>
+    <div class="law"><span class="n">10</span><div><h3>Никакого накопления выводов</h3><p>Сводка для учителя каждый раз собирается заново из структуры, без прошлой сводки на входе.</p></div></div>
+  </div>
+</section>
+
+<!-- ============ 7. COMPONENTS ============ -->
+<section id="components">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§1.2 · D-§4.1</div>
+    <h2>Компоненты, технологии, ресурсы</h2>
+    <p class="lead">Сумма лимитов постоянных сервисов около 10,6 ГБ из 12. Ограничение — память, а не процессор.</p>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Компонент</th><th>Технология</th><th>Роль</th><th>Память</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill p-client">frontend</span></td><td>Next.js App Router, TS, типы из OpenAPI</td><td>Интерфейс, подписан на канал изменений; на Vercel, вне VPS</td><td class="num">—</td></tr>
+      <tr><td><span class="pill p-proc">api</span></td><td>Python 3.12, FastAPI, Uvicorn + uvloop, Pydantic v2, orjson</td><td>Действия, события, мгновенные вердикты, ход учителя, SSE, WS, вход</td><td class="num">1 ГБ</td></tr>
+      <tr><td><span class="pill p-proc">workers</span></td><td>Тот же код, LangGraph</td><td>Задачи из jobs с допуском по лимитам: извлечение, аналитик, агенты</td><td class="num">1 ГБ</td></tr>
+      <tr><td><span class="pill p-proc">projector</span></td><td>asyncio, advisory-блокировка по ученику</td><td>События → Neo4j; диспетчер — задача в том же процессе</td><td class="num">512 МБ</td></tr>
+      <tr><td><span class="pill p-proc">compute</span></td><td>FastAPI + pebble.ProcessPool</td><td>SymPy, PyMuPDF, OpenCV, Playwright/Chromium по требованию; жёсткие таймауты</td><td class="num">2 ГБ</td></tr>
+      <tr><td><span class="pill p-store">postgres</span></td><td>PostgreSQL 16, psycopg 3 async, чистый SQL, dbmate, squawk</td><td>Журнал, сессии, документы, очередь, покрытие</td><td class="num">1,75 ГБ</td></tr>
+      <tr><td><span class="pill p-store">neo4j</span></td><td>2026.x Community, чистый Cypher, без GDS</td><td>Граф предмета, модель ученика, векторы с фильтром</td><td class="num">4 ГБ</td></tr>
+      <tr><td><span class="pill p-store">redis</span></td><td>Redis 8, без диска, maxmemory 128mb</td><td>Пробуждение, pub/sub, ведро токенов Meta, блокировки</td><td class="num">192 МБ</td></tr>
+      <tr><td><span class="pill p-proc">caddy</span></td><td>Caddy, Let's Encrypt</td><td>TLS, прокси на api, SSE без буфера, WS</td><td class="num">128 МБ</td></tr>
+      <tr><td><span class="pill p-ext">object storage</span></td><td>S3 через aioboto3</td><td>Contabo — файлы учеников; R2 — бэкапы и журнал удалений</td><td class="num">—</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">
+    <h3>Отвергнуто и почему</h3>
+    <ul class="clean">
+      <li><b>Kafka / Redpanda</b> — второй журнал с двойной записью и тяжёлый сервис на 12 ГБ.</li>
+      <li><b>Celery, RabbitMQ, очереди на Redis</b> — задача и породившее её событие оказались бы в разных системах.</li>
+      <li><b>Только Postgres</b> — почти каждый запрос памяти это обход графа плюс вектор с фильтром по ученику. <b>Только Neo4j</b> — журнал и очередь не графовые данные.</li>
+      <li><b>ORM, Alembic</b> — ключевые запросы держатся на SKIP LOCKED, ON CONFLICT, частичных индексах. <b>Chat Completions</b> — не переносит рассуждение между шагами с инструментами.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 8. AI ============ -->
+<section id="ai">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§1.3 · Т-§11 · Т-§13.4</div>
+    <h2>Модели и агенты</h2>
+    <p class="lead">Все текстовые вызовы идут через Responses API и свой шлюз модели. Только <code>tool_choice: auto</code>, структурированный вывод через JSON Schema, кэш считается бонусом. Узкое место при нагрузке — лимиты моделей: на одном Wonder без перегрузки около 65 учеников одновременно.</p>
+  </div>
+  <div class="kv">
+    <div><b>3000</b><span>запросов в минуту на команду</span></div>
+    <div><b>4 млн</b><span>токенов в минуту, считаем общим</span></div>
+    <div><b>~30 тыс.</b><span>токенов контекста в ходе учителя</span></div>
+    <div><b>~65</b><span>учеников одновременно на Wonder</span></div>
+  </div>
+  <div class="two">
+    <div class="tbl"><table>
+      <thead><tr><th>Модель</th><th>Назначение</th></tr></thead>
+      <tbody>
+        <tr><td>Muse Wonder</td><td>Учитель, глубокий пересмотр границы, второе мнение, доказательства, сложные агенты</td></tr>
+        <tr><td>Muse Spark 1.3</td><td>Извлекатель, быстрый диагноз, рукопись, аналитик, большинство агентов</td></tr>
+        <tr><td>SAM 3.1</td><td>Лист, строки и рисунки на фото</td></tr>
+        <tr><td>Voice Transcribe</td><td>Голос в задачах и на канвасе, realtime по WS</td></tr>
+        <tr><td>Muse Image</td><td>Только концептуальные иллюстрации, не математика</td></tr>
+        <tr><td>Qwen3-Embedding</td><td>Эмбеддинги на Modal</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tbl"><table>
+      <thead><tr><th>Агент</th><th>Модель</th><th>Выход</th></tr></thead>
+      <tbody>
+        <tr><td>Извлекатель</td><td>Spark</td><td><code>observation.extracted</code></td></tr>
+        <tr><td>Проверка ответа</td><td>Spark / Wonder</td><td><code>verdict.recorded</code></td></tr>
+        <tr><td>Аналитик границы</td><td>Spark, глубокий — Wonder</td><td><code>digest.written</code></td></tr>
+        <tr><td>Разбор материала</td><td>Spark</td><td><code>material.parsed</code>, <code>chunk.indexed</code></td></tr>
+        <tr><td>Сверка графа</td><td>Spark</td><td><code>hub.suggested</code>, слияния навыков</td></tr>
+        <tr><td>Пространство решения, генерация задач</td><td>Spark, арбитраж — Wonder</td><td><code>task.created</code>, <code>task.verified</code></td></tr>
+        <tr><td>Строитель визуализаций</td><td>Wonder</td><td>артефакт визуализации</td></tr>
+        <tr><td>Заблуждения, артефакты, «Сегодня»</td><td>Spark</td><td><code>misconception.described</code>, <code>artifact.updated</code></td></tr>
+        <tr><td>Определение домена</td><td>Spark, напрямую из API</td><td>предложение домена</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ============ 9. CHANNELS ============ -->
+<section id="channels">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§1.5 · Т-§1.6</div>
+    <h2>Каналы связи и синхронность</h2>
+  </div>
+  <div class="two">
+    <div class="tbl"><table>
+      <thead><tr><th>Канал</th><th>Протокол</th></tr></thead>
+      <tbody>
+        <tr><td>Стрим хода учителя</td><td>SSE в ответ на POST действия</td></tr>
+        <tr><td>Канал изменений</td><td>Один SSE на окно, только «что и где изменилось»; данные — GET. Между процессами — Redis pub/sub</td></tr>
+        <tr><td>Канвас и компаньон</td><td>WebSocket; телефон и ноутбук могут быть на разных процессах api, связь через Redis</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tbl"><table>
+      <thead><tr><th>Горячий путь — ученик ждёт</th><th>Асинхронно</th></tr></thead>
+      <tbody>
+        <tr><td>Запись действия и вердикт закрытого ответа</td><td>Применение событий в Neo4j</td></tr>
+        <tr><td>Ход учителя целиком, с проверкой правил</td><td>Толкование эпизодов извлекателем</td></tr>
+        <tr><td>Быстрая пометка на канвасе</td><td>Аналитик границы, второе мнение</td></tr>
+        <tr><td></td><td>Визуализации, разбор материалов, артефакты, «Сегодня»</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ============ 10. OPS ============ -->
+<section id="ops">
+  <div class="sec-head">
+    <div class="eyebrow">D-§5–§12</div>
+    <h2>Эксплуатация</h2>
+    <p class="lead">CI собирает два образа (<code>quack-backend</code>, <code>quack-compute</code>) под linux/amd64; сервер ничего не собирает, только скачивает готовое.</p>
+  </div>
+  <div class="two">
+    <div class="note" style="border-left-color:var(--accent)">
+      <h3>Сборка, выкатка, конфиг</h3>
+      <ul class="clean">
+        <li>Проверки CI: тесты, миграции, изоляция учеников; интеграционные тесты репозиториев на настоящем Postgres (testcontainers).</li>
+        <li>Миграции dbmate отдельным контейнером <code>migrate</code> при выкатке; squawk ловит блокирующие ALTER.</li>
+        <li>Окружения: local (тот же compose + override), CI (GitHub Actions), prod (VPS + app.qvack.online), preview.qvack.online против prod API, PR-превью на *.vercel.app без входа.</li>
+        <li>Домен qvack.online: DNS в Cloudflare без проксирования, TTL api ≤ 300 с.</li>
+      </ul>
+    </div>
+    <div class="note" style="border-left-color:var(--c-store)">
+      <h3>Данные и восстановление</h3>
+      <ul class="clean">
+        <li>Бэкапится только Postgres: дампы в R2, шифрование age, две локальные копии. RPO ≤ 6 ч.</li>
+        <li>Neo4j восстанавливается пересборкой из журнала, в Redis долговечного нет.</li>
+        <li>Удаление: журнал удалений в R2 и ежедневная сверка.</li>
+        <li>Наблюдаемость: бюджеты <code>teacher_ttft_p95_ms</code>, <code>verdict_p95_ms</code>, <code>projector_lag_p95_ms</code>; тревоги по диску 75% и 90%.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Отказ</th><th>Что происходит</th></tr></thead>
+    <tbody>
+      <tr><td>Redis</td><td>Потребители переходят на опрос Postgres, клиенты переподключаются к SSE, ограничитель — на консервативный локальный лимит</td></tr>
+      <tr><td>Neo4j</td><td>Пересборка из журнала событий; проектор продолжает со своей отметки</td></tr>
+      <tr><td>Исполнитель задач</td><td>Чистильщик возвращает задачи без пульса в очередь; повтор с растущей паузой</td></tr>
+      <tr><td>Зависшее выражение SymPy</td><td>pebble убивает процесс по таймауту, api не страдает</td></tr>
+      <tr><td>Обрыв стрима хода до commit</td><td>Хода в журнале нет, клиент запрашивает его заново</td></tr>
+      <tr><td>Потеря сервера</td><td>Новый VPS, восстановление из дампов в R2, перенос DNS api</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 11. HACKATHON ============ -->
+<section id="hackathon">
+  <div class="sec-head">
+    <div class="eyebrow">Т-§22 · D-§13</div>
+    <h2>Срез для хакатона</h2>
+    <p class="lead">Законы ядра и контракты не меняются; упрощается только исполнение. Целевой профиль возвращается по Т-§22.12.</p>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Упрощение</th><th>Что это значит</th></tr></thead>
+    <tbody>
+      <tr><td>English-first</td><td>Промпты, доктрина и контекст учителя на английском; учитель отвечает на языке ученика из профиля. Русский работает, но хуже</td></tr>
+      <tr><td>Диспетчер в процессе проектора</td><td>Одна задача asyncio в контейнере projector вместо отдельного сервиса</td></tr>
+      <tr><td>Агенты без точек сохранения</td><td><code>checkpointer=None</code>; упавшую задачу чистильщик возвращает в очередь, и она начинается с первого шага. Дублей нет благодаря ключам событий</td></tr>
+      <tr><td>Реактивные лимиты</td><td>Вместо резерва токенов — флаг давления <code>llm:pressure:{model}</code> по ответу 429 и семафоры моделей на процесс</td></tr>
+      <tr><td>Компаньон — тонкий клиент</td><td>Телефон шлёт снимок целиком (WebP) после проверки неподвижности на Canvas, без OpenCV.js; строки дедуплицируются по тексту</td></tr>
+      <tr><td>Математика: два поля</td><td>Каждое выражение несёт <code>latex</code> для показа (KaTeX) и <code>sympy</code> для проверки; каскад проверки</td></tr>
+      <tr><td>Голос отрезками</td><td>Браузер записывает реплику и шлёт отрезок в API; обычный запрос к Voice Transcribe вместо realtime-WS</td></tr>
+      <tr><td>Домен при первом входе</td><td>«Что изучаешь?» с подсказкой классификатора вместо автоматического появления домена</td></tr>
+      <tr><td>Профиль нагрузки</td><td>~100 учеников на одном VPS 12 ГБ</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer>Сведено из трёх документов проекта: технического (AI и архитектура памяти), продуктового и DevOps. Ссылки вида Т-§, П-§, D-§ указывают на разделы этих документов.</footer>
+</div>
