@@ -3,7 +3,8 @@
 Glue of the assembly layer: `quack.materials` (a product package) may not import
 `quack.agents` (§4.1), so the structure step of the parse gets the reconciliation of stream B as
 a function from here, and so do the seminar tasks of stream B (`quack.practice`, #271,
-D-C-217). The steps themselves are `quack.materials.parse`.
+D-C-217): they are made by their own job `material.seminar_tasks`, queued by the structure step,
+outside the lock of the domain. The steps themselves are `quack.materials.parse`.
 """
 
 from __future__ import annotations
@@ -25,15 +26,17 @@ from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob, JobDeferred, JobFailedPermanently
 from quack.llm.errors import LLMBudgetExceededError
 from quack.materials.parse import (
+    SEMINAR_TASKS_KIND,
     STEP_STRUCTURE,
     SeminarSpec,
     SubjectSpec,
     mark_failed,
     mark_material_failed,
     parse_step,
+    seminar_tasks_step,
     structure_step,
 )
-from quack.practice.seminar_tasks import SeminarTask, create_seminar_task
+from quack.practice.seminar_tasks import SeminarTask, create_seminar_task, seminar_task_id
 
 # What the reconciliation reads from Neo4j: the nodes of the domain, their vectors and edges.
 _GRAPH_TYPES = (
@@ -53,6 +56,9 @@ _DOMAIN_NODES = (
     "SELECT type, payload FROM core.events WHERE learner_id = %(learner_id)s "
     "AND type IN ('topic.created', 'skill.created') AND payload->>'domain_id' = %(domain_id)s "
     "ORDER BY seq"
+)
+_MADE_TASKS = (
+    "SELECT task_id FROM content.tasks WHERE learner_id = %(learner_id)s AND task_id = ANY(%(ids)s)"
 )
 _POLL_S = 0.25
 
@@ -133,9 +139,16 @@ async def create_seminar_tasks(
     ctx: JobContext, *, learner_id: UUID, tasks: Sequence[SeminarSpec]
 ) -> None:
     """`create_seminar_task` of stream B for every problem of the material, at most
-    `material_parser_concurrency` at a time. A task it throws away (`None`) is not an error; an
-    error of the model goes up and the job is retried (the keys make the retry write nothing
-    twice)."""
+    `material_parser_concurrency` at a time. A task already made is skipped before any model call
+    (its id comes from its key; a repeat of the call could word it differently and meet its own
+    key with another payload); a task it throws away (`None`) is not an error. A task that fails
+    does not take the others with it: every one is tried, the made ones stay (each is its own
+    transaction), and the first error goes up afterwards, so the job is retried and goes on with
+    what is left (law 7, law 5)."""
+    ids = {seminar_task_id(spec.key): spec for spec in tasks}
+    rows = await ctx.db.fetch_all(_MADE_TASKS, {"learner_id": learner_id, "ids": list(ids)})
+    made = {row["task_id"] for row in rows}
+    todo = [spec for task_id, spec in ids.items() if task_id not in made]
     gate = asyncio.Semaphore(ctx.settings.material_parser_concurrency)
 
     async def create(spec: SeminarSpec) -> None:
@@ -158,7 +171,10 @@ async def create_seminar_tasks(
                 compute=ctx.compute,
             )
 
-    await asyncio.gather(*(create(spec) for spec in tasks))
+    outcomes = await asyncio.gather(*(create(spec) for spec in todo), return_exceptions=True)
+    failed = [o for o in outcomes if isinstance(o, BaseException)]
+    if failed:
+        raise failed[0]
 
 
 def _is_final(error: Exception, job: ClaimedJob) -> bool:
@@ -175,7 +191,7 @@ def _is_final(error: Exception, job: ClaimedJob) -> bool:
 async def handle_material_parse(job: ClaimedJob, ctx: JobContext) -> None:
     try:
         if job.payload.get("step") == STEP_STRUCTURE:
-            await structure_step(ctx, job, reconcile_subjects, create_seminar_tasks)
+            await structure_step(ctx, job, reconcile_subjects)
         else:
             await parse_step(ctx, job)
     except Exception as error:
@@ -189,3 +205,11 @@ async def mark_material_parse_failed(db: Db, job: QueuedJob) -> None:
     """The queue gave up on the job for good, also without the handler seeing it (a heartbeat
     timeout on the last attempt): the material is `failed`, a parsed one is left alone."""
     await mark_material_failed(db, job.learner_id, job.payload)
+
+
+@register_job_handler(SEMINAR_TASKS_KIND)
+async def handle_material_seminar_tasks(job: ClaimedJob, ctx: JobContext) -> None:
+    """Seminar tasks of a parsed material. An error goes up and the job is retried with a growing
+    pause; the material is not marked (it is `parsed`, its graph stands), and there is no
+    failure hook."""
+    await seminar_tasks_step(ctx, job, create_seminar_tasks)

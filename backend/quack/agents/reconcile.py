@@ -14,6 +14,11 @@ topics and skills with their words. Code prepares the candidates, the model only
   `skill.merge_suggested`. Ids of created nodes are `uuid5` of the normalized name, so a repeat
   writes the same events under the same keys and nothing twice (Т-§4.4: one name — one node).
   Never both `A → B` and `B → A` (Т-§4.6): the graph and the batch are checked.
+- A retry after a partial first attempt (the step of the job failed after some batches had
+  committed) asks the builder again and gets a slightly different answer, so an event can meet
+  its own key with another payload. What is in the journal wins: events whose key is written are
+  not written again (the key holds the id of the node, so the result of the retry points to the
+  same node), the rest of the batch is written in one `append_events` (law 5, law 7; Т-§22.3).
 
 The lock `domain:{id}` is the `lock_key` of the job that calls `reconcile_domain`; the function
 is called only in the step «сверка и запись», after the heavy part of the parse (Т-§4.3). The
@@ -34,6 +39,7 @@ from neo4j import AsyncDriver
 
 from quack.agents.schemas import BuilderOutput, ReconciledItem
 from quack.config import Settings
+from quack.db import Db
 from quack.db.neo4j import cypher, read_session
 from quack.events.event_types import (
     EdgeAdded,
@@ -47,6 +53,9 @@ from quack.graph.ids import QUACK_UUID_NS
 from quack.graph.topic_names import canonical_topic_name
 from quack.jobs.runner import JobContext
 from quack.llm.labels import LabelKind, LabelMap, UnknownLabelError
+from quack.logging import get_logger
+
+log = get_logger(__name__)
 
 BUILDER_ROLE = "builder"
 RECONCILE_MODE = "Reconcile"
@@ -536,6 +545,40 @@ def _events(
     return events
 
 
+_LOCK_LEARNER = "SELECT seq FROM core.learners WHERE learner_id = %(learner_id)s FOR UPDATE"
+_WRITTEN = (
+    "SELECT idempotency_key FROM core.events "
+    "WHERE learner_id = %(learner_id)s AND idempotency_key = ANY(%(keys)s)"
+)
+
+
+async def append_unwritten(db: Db, learner_id: UUID, events: Sequence[NewEvent]) -> list[NewEvent]:
+    """Write the events whose idempotency key is not in the journal yet; the events returned are
+    the ones written. A key that is written wins whatever its payload: a retry of the step builds
+    the same node under the same key, but the builder may word it differently, and
+    `append_events` would refuse that as a conflict (Т-§2.3, law 5). One transaction under the
+    lock of the learner `append_events` takes, so the check and the write do not race and the
+    batch is written whole or not at all (law 7)."""
+    if not events:
+        return []
+    async with db.transaction():
+        await db.fetch_one(_LOCK_LEARNER, {"learner_id": learner_id})
+        rows = await db.fetch_all(
+            _WRITTEN, {"learner_id": learner_id, "keys": [e.idempotency_key for e in events]}
+        )
+        written = {r["idempotency_key"] for r in rows}
+        fresh = [e for e in events if e.idempotency_key not in written]
+        if len(fresh) < len(events):
+            log.info(
+                "reconcile_events_already_written",
+                learner_id=str(learner_id),
+                kept=len(events) - len(fresh),
+                new=len(fresh),
+            )
+        await append_events(db, learner_id, fresh)
+    return fresh
+
+
 async def reconcile_with_candidates(
     ctx: JobContext,
     *,
@@ -592,9 +635,8 @@ async def reconcile_with_candidates(
         requires=accepted_requires(plan.requires, existing_requires),
         source_refs=list(source_refs),
     )
-    if events:
-        await append_events(ctx.db, learner_id, events)
-    result.events = [e.type for e in events]
+    written = await append_unwritten(ctx.db, learner_id, events)
+    result.events = [e.type for e in written]
     return result
 
 

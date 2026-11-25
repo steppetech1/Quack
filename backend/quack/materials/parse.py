@@ -1,7 +1,8 @@
 """Parse of a material — the job `material.parse` (ТЗ Ф4 WP20.2; Т-§4.3, Т-§3.4.5, Т-§16.5,
 Т-§13.4; D-C-200..D-C-203).
 
-One job kind, two steps; the second is queued by the first.
+One job kind, two steps; the second is queued by the first. A third job, `material.seminar_tasks`,
+is queued by the second (below).
 
 1. **parse** (no lock — the heavy part, Т-§4.3). The file comes from the object store and goes to
    compute in the body of the request (`Д-§3.2`): a PDF to `/v1/pdf/pages`, a photo of notes to
@@ -15,10 +16,15 @@ One job kind, two steps; the second is queued by the first.
    skills in batches of `candidate_k`; `uses` of the chunk that teaches a skill become its
    `REQUIRES` (origin `material`). Then, in one transaction: `chunk.indexed` for every chunk with
    the ids of the skills, the hub «from the material» with its topics, `material.parsed` and the
-   status of the row. The problems the parser found (`seminar_tasks`) go to the writer of
-   seminar tasks (stream B, behind the `SeminarWriter` seam) once their skills are linked and
-   before the material is `parsed`: a task per problem, on the skill its chunk teaches
-   (D-C-217).
+   status of the row. The problems the parser found (`seminar_tasks`) do not wait here: once
+   their skills are linked, the step queues the job `material.seminar_tasks` in the same
+   transaction (a task per problem, on the skill its chunk teaches, D-C-217). Model calls of the
+   tasks must not hold the lock of the domain, nor fail the step and the structure it has built
+   (decision of 2026-11-25).
+3. **seminar tasks** (`lock_key = material:{id}:seminar_tasks`, no lock of the domain). The
+   writer of seminar tasks (stream B, behind the `SeminarWriter` seam) makes a task per problem;
+   the tasks already made are skipped, so a retry goes on from where the last attempt stopped.
+   A failure of this job never touches the status of the material.
 
 The text of a material is data (Т-§19.8): the prompt says so, and nothing in the output of the
 parser is executed or trusted as a rule.
@@ -76,6 +82,7 @@ STATUS_PARSED = "parsed"
 STATUS_READ = "read"
 STATUS_FAILED = "failed"
 STEP_STRUCTURE = "structure"
+SEMINAR_TASKS_KIND = "material.seminar_tasks"
 HUB_CONTROL_TYPE = "no_goal"
 HUB_NAME_FALLBACK = "Untitled material"
 ACTOR = "material_parser@1"
@@ -772,9 +779,9 @@ class SeminarSpec:
 
 class SeminarWriter(Protocol):
     """The seam to `quack.practice.seminar_tasks.create_seminar_task` (stream B, D-B-218): a
-    task per spec, markup and check included; a task it throws away is not an error. Called
-    before the material is `parsed`, so a failure retries the step; the keys make the retry
-    write nothing twice."""
+    task per spec, markup and check included; a task it throws away is not an error; a task
+    already made is skipped. It raises once every spec has been tried, if one of them failed:
+    the job `material.seminar_tasks` is retried and goes on with the rest."""
 
     async def __call__(
         self, ctx: JobContext, *, learner_id: UUID, tasks: Sequence[SeminarSpec]
@@ -973,16 +980,42 @@ def _seminar_specs(
     return specs
 
 
-async def structure_step(
-    ctx: JobContext,
-    job: ClaimedJob,
-    resolve: StructureResolver,
-    seminar: SeminarWriter | None = None,
-) -> None:
+def _seminar_plan(material: _Material, job: ClaimedJob, specs: Sequence[SeminarSpec]) -> JobPlan:
+    """The job `material.seminar_tasks` with the specs it needs: the ids of the skills exist only
+    here, in the step that linked them. No lock of the domain (it writes no structure); a lock of
+    the material keeps two runs of one material from making the same tasks at once."""
+    trigger = job.payload.get("trigger_seq")
+    return JobPlan(
+        kind=SEMINAR_TASKS_KIND,
+        job_key=f"{SEMINAR_TASKS_KIND}:{job.learner_id}:{material.material_id}",
+        priority_class="P2",
+        learner_id=job.learner_id,
+        lock_key=f"material:{material.material_id}:seminar_tasks",
+        session_id=material.session_id,
+        payload={
+            "material_id": str(material.material_id),
+            "trigger_seq": trigger if isinstance(trigger, int) else None,
+            "tasks": [
+                {
+                    "key": s.key,
+                    "statement": s.statement,
+                    "answer": s.answer,
+                    "skill_id": str(s.skill_id),
+                    "skill_name": s.skill_name,
+                    "topic_name": s.topic_name,
+                    "domain_id": str(s.domain_id),
+                    "course_context": s.course_context,
+                }
+                for s in specs
+            ],
+        },
+    )
+
+
+async def structure_step(ctx: JobContext, job: ClaimedJob, resolve: StructureResolver) -> None:
     """Step 2 (WP20.2 п.4–5), under `domain:{id}`. Nothing is written while the reconciliation
-    fails (law 7); the events of the material are one transaction with the status. The seminar
-    tasks come first: they are idempotent by key, and the material is `parsed` only once they
-    are written."""
+    fails (law 7); the events of the material are one transaction with the status and with the
+    job of the seminar tasks, which are made after the step and outside its lock."""
     learner_id = _learner(job)
     material = await _load(ctx.db, learner_id, UUID(str(job.payload["material_id"])))
     if material.status == STATUS_PARSED:
@@ -1015,12 +1048,9 @@ async def structure_step(
         resolved = (found.get(("skill", canonical.get(n.casefold(), n))) for n in names)
         return list(dict.fromkeys(i for i in resolved if i is not None))
 
-    if seminar is not None:
-        specs = _seminar_specs(
-            material, title, list(job.payload.get("seminar_tasks", [])), marks, canonical, found
-        )
-        if specs:
-            await seminar(ctx, learner_id=learner_id, tasks=specs)
+    specs = _seminar_specs(
+        material, title, list(job.payload.get("seminar_tasks", [])), marks, canonical, found
+    )
 
     trigger = job.payload.get("trigger_seq")
     refs = [{"seq": trigger}] if isinstance(trigger, int) else []
@@ -1113,4 +1143,33 @@ async def structure_step(
     async with ctx.db.transaction():
         await append_events(ctx.db, learner_id, events, redis=ctx.redis)
         await _set_parsed(ctx.db, learner_id, material.material_id, len(pages))
+        if specs:
+            await queue_p4.enqueue(ctx.db, _seminar_plan(material, job, specs), redis=ctx.redis)
     log.info("material_parsed", material_id=str(material.material_id), chunks=len(chunks))
+
+
+# --- step 3: the seminar tasks, outside the lock of the domain --------------------------------
+
+
+def _spec_of(item: dict[str, Any]) -> SeminarSpec:
+    answer = item.get("answer")
+    return SeminarSpec(
+        key=str(item["key"]),
+        statement=str(item["statement"]),
+        answer=str(answer) if answer else None,
+        skill_id=UUID(str(item["skill_id"])),
+        skill_name=str(item["skill_name"]),
+        topic_name=str(item["topic_name"]),
+        domain_id=UUID(str(item["domain_id"])),
+        course_context=str(item["course_context"]),
+    )
+
+
+async def seminar_tasks_step(ctx: JobContext, job: ClaimedJob, write: SeminarWriter) -> None:
+    """The job `material.seminar_tasks`: a task per problem the structure step linked to a skill.
+    The material is `parsed` already and stays so whatever happens here: an error of a model goes
+    up and the job is retried (the writer skips the tasks made), it never marks the material."""
+    learner_id = _learner(job)
+    specs = [_spec_of(item) for item in job.payload.get("tasks", [])]
+    if specs:
+        await write(ctx, learner_id=learner_id, tasks=specs)

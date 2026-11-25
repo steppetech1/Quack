@@ -60,6 +60,7 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
     _k("canvas.rediagnose", "P1", roles=("canvas_diagnoser",)),
     _k("photo.pipeline", "P1", visible=True, roles=("recognizer", "segmenter")),
     _k("material.parse", "P1", visible=True, roles=("material_parser",)),
+    _k("material.seminar_tasks", "P2", roles=("task_generator", "task_checker", "task_arbiter")),
     _k("agent.viz", "P2", visible=True, roles=("viz_builder", "viz_checker")),
     _k("agent.illustration", "P2", visible=True, roles=("illustrator",)),
     _k("agent.task_generation", "P2", visible=True, roles=("task_generator", "task_arbiter")),
@@ -84,6 +85,10 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
 )
 
 JOB_KINDS: tuple[str, ...] = tuple(s.kind for s in JOB_KIND_SPECS if not s.periodic)
+# Kinds no event of the table puts: another job queues them in its own transaction
+# (`material.parse` structure step → `material.seminar_tasks`, decision of 2026-11-25), so they
+# have no row in `RULES`.
+QUEUED_BY_JOBS: frozenset[str] = frozenset({"material.seminar_tasks"})
 PERIODIC_JOB_KINDS: tuple[str, ...] = tuple(s.kind for s in JOB_KIND_SPECS if s.periodic)
 # §6.5: dropped with WP1.3 together with the Phase 3 handlers.
 REMOVED_JOB_KINDS: tuple[str, ...] = (

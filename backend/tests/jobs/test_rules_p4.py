@@ -57,8 +57,9 @@ def _answer(kind: str, **extra: Any) -> StoredEvent:
 def test_every_kind_of_the_spec_is_listed_once_and_removed_ones_are_gone() -> None:
     # 24 kinds of the list of ТЗ §6.5 + `agent.topic_split` (WP8.2, D-A-226) + `session.title`
     # (the name of a session, owner decision 2026-11-19) + `viz.plan` (demos ahead, owner decision
-    # 2026-11-20) + 5 periodic
-    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 1 + 5
+    # 2026-11-20) + `material.seminar_tasks` (seminar tasks out of the structure step, decision of
+    # 2026-11-25) + 5 periodic
+    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 1 + 1 + 5
     assert not set(r.REMOVED_JOB_KINDS) & set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)
 
 
@@ -70,7 +71,8 @@ def test_rule_table() -> None:
 
 def test_every_non_periodic_kind_has_a_row() -> None:
     covered = {k for row in r.RULES for k in row.job_kinds}
-    assert covered >= set(r.JOB_KINDS)
+    assert covered | r.QUEUED_BY_JOBS >= set(r.JOB_KINDS)
+    assert not covered & r.QUEUED_BY_JOBS  # a kind of a job is not also put by an event
 
 
 def test_rows_with_events_exist_in_the_catalog() -> None:
