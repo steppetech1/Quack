@@ -30,10 +30,11 @@ class _Strict(BaseModel):
 
 
 class NewSkill(_Strict):
-    """Description of a new skill (Т-§4.4) in model outputs: name only; topic placement is
-    performed by the background builder."""
+    """Description of a new skill (Т-§4.4) in model outputs: name and optional reason; topic
+    placement is performed by the background builder."""
 
     name: str
+    reason: str | None = None
 
 
 class TestedLevel(_Strict):
@@ -43,6 +44,7 @@ class TestedLevel(_Strict):
     skill: str | None = None
     new_skill: NewSkill | None = None
     level: Level
+    context: str | None = None
 
 
 class OptionTrap(_Strict):
@@ -232,8 +234,11 @@ def markup_record(markup: TaskMarkup, labels: LabelMap) -> records.TaskMarkupRec
 def _tested(tested: TestedLevel, labels: LabelMap) -> records.TestedLevelRecord:
     return records.TestedLevelRecord(
         skill_id=_resolved(labels, "skill", tested.skill),
-        new_skill=None if tested.new_skill is None else values.NewSkill(name=tested.new_skill.name),
+        new_skill=None
+        if tested.new_skill is None
+        else values.NewSkill(name=tested.new_skill.name, reason=tested.new_skill.reason),
         level=tested.level,
+        context=tested.context,
     )
 
 

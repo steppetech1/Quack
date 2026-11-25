@@ -172,3 +172,4 @@ class NewSkill(_Value):
 
     name: str
     topic_hint: str | None = None
+    reason: str | None = None

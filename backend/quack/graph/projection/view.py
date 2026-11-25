@@ -384,24 +384,32 @@ class _View:
         near = set(need.neighbourhoods) | refs
         near |= {(n.label, n.id) for m in need.matches for n in batch._matching(*m)}
         for label, node_id in list(near):
-            live = batch._resolve(label, node_id) if label == "Task" else None
-            if live is not None:
+            live = batch._resolve(label, node_id) if label in ("Task", "Topic") else None
+            if live is None:
+                continue
+            if label == "Topic":
                 near |= {
                     (r.to_label, r.to_id)
-                    for r in batch._rels_of("Task", live, out=True)
-                    if r.rel_type == "HAS_OPTION"
+                    for r in batch._rels_of("Topic", live, out=True)
+                    if r.rel_type == "COVERS"
                 }
-                near |= {
-                    (r.from_label, r.from_id)
-                    for r in batch._rels_of("Task", live, out=False)
-                    if r.rel_type == "ON_TASK"
-                }
-                # ... and the skills of its markup with their relations (WP4.6, D-A-185).
-                near |= {
-                    (r.to_label, r.to_id)
-                    for r in batch._rels_of("Task", live, out=True)
-                    if r.rel_type == "TESTS"
-                }
+                continue
+            near |= {
+                (r.to_label, r.to_id)
+                for r in batch._rels_of("Task", live, out=True)
+                if r.rel_type == "HAS_OPTION"
+            }
+            near |= {
+                (r.from_label, r.from_id)
+                for r in batch._rels_of("Task", live, out=False)
+                if r.rel_type == "ON_TASK"
+            }
+            # ... and the skills of its markup with their REQUIRES / SAME_IDEA (WP4.6, D-A-185).
+            near |= {
+                (r.to_label, r.to_id)
+                for r in batch._rels_of("Task", live, out=True)
+                if r.rel_type == "TESTS"
+            }
         self._near: frozenset[NodeRef] = frozenset(near)
 
     def _check_node(self, label: str, node_id: str) -> None:

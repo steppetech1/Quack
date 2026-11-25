@@ -36,7 +36,12 @@ def _row(
     return ProjectorRow(event_type, tuple(_STREAMS[w] for w in writers), reads, changes, source)
 
 
-_MARKUP_TESTS = ("markup.tests.skill_id", "markup.tests.new_skill", "markup.tests.level")
+_MARKUP_TESTS = (
+    "markup.tests.skill_id",
+    "markup.tests.new_skill",
+    "markup.tests.level",
+    "markup.tests.context",
+)
 _EXTRACTED = tuple(
     f"elements.{name}"
     for name in (
@@ -55,10 +60,10 @@ ROWS: tuple[ProjectorRow, ...] = (
     # --- structure (Т-§4) ---
     _row("domain.created", "BA", ("domain_id", "name"),
          "Domain, OWNS; hub kind = domain_all (composition not stored)", "Т-§4.8"),
-    _row("topic.proposed", "BC", ("topic_id", "domain_id", "name", "origin"),
-         "Topic (origin, status = proposed), HAS_TOPIC", "Т-§4.3, Т-§4.7"),
-    _row("topic.created", "BC", ("topic_id", "domain_id", "name", "origin"),
-         "Topic (origin, status = active), HAS_TOPIC", "Т-§4.3, Т-§4.7"),
+    _row("topic.proposed", "BC", ("topic_id", "domain_id", "name", "origin", "description"),
+         "Topic (origin, description, status = proposed), HAS_TOPIC", "Т-§4.3, Т-§4.7"),
+    _row("topic.created", "BC", ("topic_id", "domain_id", "name", "origin", "description"),
+         "Topic (origin, description, status = active), HAS_TOPIC", "Т-§4.3, Т-§4.7"),
     _row("topic.renamed", "AB", ("topic_id", "name"), "Topic.name", "Т-§4.11"),
     _row("topic.hidden", "AB", ("topic_id",), "Topic.status = hidden", "Т-§4.11"),
     _row("topic.merged", "AB", ("from_id", "into_id"),
@@ -66,8 +71,12 @@ ROWS: tuple[ProjectorRow, ...] = (
     _row("topic.split", "AB", ("topic_id", "into"),
          "skills distributed between the topics by the event", "Т-§2.8"),
     _row("skill.created", "B",
-         ("skill_id", "topic_id", "domain_id", "name", "summary", "status", "origin"),
-         "Skill (status provisional | active), COVERS from the home topic", "Т-§4.1, Т-§4.4"),
+         ("skill_id", "topic_id", "domain_id", "name", "summary", "status", "origin",
+          "core", "definition", "exemplar", "kind"),
+         "Skill (status provisional | active, core, definition, exemplar, kind), COVERS from the "
+         "home topic", "Т-§4.1, Т-§4.4"),
+    _row("skill.deleted", "B", ("skill_id",),
+         "Skill deleted (unless core = true)", "Т-§2.8"),
     _row("skill.placed", "B",
          ("skill_id", "topic_id", "domain_id"),
          "COVERS from the home topic (replaces any prior COVERS)", "Т-§4.4"),
@@ -76,7 +85,7 @@ ROWS: tuple[ProjectorRow, ...] = (
     _row("skill.split", "B", ("skill_id", "into"),
          "new skills; old evidence stays on the old skill", "Т-§2.8"),
     _row("edge.added", "B", ("kind", "from_id", "to_id", "origin", "confidence"),
-         "REQUIRES {origin, confidence} or SAME_IDEA {confidence}", "Т-§4.6, Т-§4.2"),
+         "REQUIRES {origin, origins, confidence} or SAME_IDEA {confidence}", "Т-§4.6, Т-§4.2"),
     _row("edge.removed", "B", ("kind", "from_id", "to_id"),
          "relation removed; evidence derived over it -> superseded (WP4.6)", "Т-§4.6, Т-§4.2"),
     _row("hub.created", "ABC",
@@ -94,8 +103,8 @@ ROWS: tuple[ProjectorRow, ...] = (
          ("task_id", "family_id", "source", "verification", *_MARKUP_TESTS,
           "markup.options.option_id", "markup.options.misconception_id",
           "markup.options.hypothesis"),
-         "Task, Option, TESTS {level}, HAS_OPTION, TRAPS; skill descriptions -> temporary "
-         "skills and topics (Т-§4.4)", "Т-§5.1, Т-§5.2"),
+         "Task, Option, TESTS {level, part, context}, HAS_OPTION, TRAPS; skill descriptions -> "
+         "temporary skills and topics (Т-§4.4)", "Т-§5.1, Т-§5.2"),
     _row("task.verified", "B", ("task_id", "corrected_markup"), "Task.verification",
          "Т-§5.6"),
     _row("task.key_disputed", "B", ("task_id", "corrected_markup"),
@@ -136,8 +145,9 @@ ROWS: tuple[ProjectorRow, ...] = (
          "(D-A-125 п.3)", "Т-§7.7, Т-§15.4, WP5.1"),
     # --- teacher turn and session (Т-§7.8, Т-§9.1) ---
     _row("turn.committed", "B",
-         ("markup.exposures.skill_id", "markup.exposures.kind", "markup.exposures.approach",
-          "markup.targets_misconception_id", "markup.tasks.tests.new_skill"),
+         ("focus_topic_id", "markup.exposures.skill_id", "markup.exposures.kind",
+          "markup.exposures.approach", "markup.targets_misconception_id",
+          "markup.tasks.tests.new_skill"),
          "Exposure per markup.exposures (Т-§7.8 п.6); Misconception.targetedInSessionId "
          "= session of the event; temporary skills from the markup (merged by normalized "
          "name with task.created of the same append)", "Т-§7.8, Т-§9.1"),

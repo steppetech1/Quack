@@ -65,10 +65,12 @@ _POLL_S = 0.25
 
 def node_text(event_type: str, payload: dict[str, Any]) -> EmbeddingNode:
     """What is embedded (decision of 2026-11-24 on the `[ПРОВЕРИТЬ]` of Т-§3.4.2): a topic by its
-    name, a skill by its name and summary — the words its candidates are searched with."""
+    name, a skill by its name and definition (or summary for legacy events) — the words its
+    candidates are searched with."""
     if event_type == "topic.created":
         return EmbeddingNode("topic", UUID(str(payload["topic_id"])), str(payload["name"]))
-    text = "\n".join((str(payload["name"]), str(payload.get("summary") or ""))).strip()
+    body = payload.get("definition") or payload.get("summary") or ""
+    text = "\n".join((str(payload["name"]), str(body))).strip()
     return EmbeddingNode("skill", UUID(str(payload["skill_id"])), text)
 
 

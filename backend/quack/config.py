@@ -598,8 +598,11 @@ class Settings(BaseSettings):
         default_factory=lambda: {"low": 0.4, "medium": 0.75, "high": 0.9}
     )
     reconcile_requires_confidence: dict[str, float] = Field(
-        default_factory=lambda: {"material": 0.85, "model": 0.65}
+        default_factory=lambda: {"material": 0.85, "model": 0.5}
     )
+    structure_full_list_max_topics: int = 80
+    structure_requires_min_score: float = 0.3
+    structure_batch_size: int = 15
     # WP16.3 (Т-§4.10; D-B-185): a duplicate candidate scores cosine + weight × shared neighbours.
     hygiene_min_score: float = 0.9
     hygiene_neighbour_weight: float = 0.1
@@ -763,6 +766,7 @@ class Settings(BaseSettings):
     material_seminar_tasks_max: int = Field(default=30, ge=1)
     material_scan_min_chars: int = Field(default=20, ge=0)
     material_scan_max_pages: int = Field(default=50, ge=1)
+    material_toc_max_chunks: int = 40
     # A course uploaded at once is put into the graph in the order of upload (decision of
     # 2026-11-24): the structure step of a material waits while an older material of the domain
     # is still being read, for at most `material_order_wait_minutes` after that one was uploaded;
