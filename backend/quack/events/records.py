@@ -37,6 +37,7 @@ class TestedLevelRecord(_Record):
     skill_id: UUID | None = None
     new_skill: NewSkill | None = None
     level: Level
+    context: str | None = None
 
 
 class OptionTrapRecord(_Record):

@@ -181,6 +181,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "status": "provisional",
         "origin": "session",
     },
+    "skill.deleted": {"skill_id": uid("skill")},
     "skill.merged": {"from_id": uid("skill2"), "into_id": uid("skill")},
     "skill.split": {
         "skill_id": uid("skill"),

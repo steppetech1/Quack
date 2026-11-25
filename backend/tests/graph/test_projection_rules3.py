@@ -82,13 +82,15 @@ def _run(
 
 _DOMAIN = _node("Domain", DOMAIN, name="Algebra", status="active")
 _TOPIC = _node("Topic", TOPIC, domainId=DOMAIN, name="Fractions", origin="session",
-               status="active", knownClaimedAtMs=0)  # fmt: skip
+               status="active", knownClaimedAtMs=0, description="")  # fmt: skip
 _TOPIC_B = _node("Topic", TOPIC_B, domainId=DOMAIN, name="Ratios", origin="session",
-                 status="active", knownClaimedAtMs=0)  # fmt: skip
+                 status="active", knownClaimedAtMs=0, description="")  # fmt: skip
 _SKILL = _node("Skill", SKILL, domainId=DOMAIN, name="add fractions", summary="s",
-               status="active", origin="session")  # fmt: skip
+               status="active", origin="session", core=False, definition="", exemplar="",
+               kind="")  # fmt: skip
 _SKILL_B = _node("Skill", SKILL_B, domainId=DOMAIN, name="common denominator", summary="s",
-                 status="active", origin="session")  # fmt: skip
+                 status="active", origin="session", core=False, definition="", exemplar="",
+                 kind="")  # fmt: skip
 _HUB = _node("Hub", HUB, domainId=DOMAIN, name="Exam", kind="request", origin="learner",
              controlType="tasks", deadlineAtMs=0, status="active")  # fmt: skip
 _ALIAS = NodeRecord("Alias", SKILL_OLD, {"learnerId": L})
@@ -219,6 +221,7 @@ def test_edges_added_and_removed() -> None:
     )
     assert rels[("Skill", SKILL, "REQUIRES", "Skill", SKILL_B)] == {
         "origin": "model",
+        "origins": ["model"],
         "confidence": 0.7,
     }
     assert rels[("Skill", SKILL, "SAME_IDEA", "Skill", SKILL_B)] == {"confidence": 0.8}
@@ -723,7 +726,8 @@ def test_skill_split_creates_the_parts_and_keeps_the_old_skill() -> None:
     )
     assert nodes[("Skill", SKILL)] == _SKILL.props
     part = {"learnerId": L, "domainId": DOMAIN, "summary": "", "status": "active",
-            "origin": "session"}  # fmt: skip
+            "origin": "session", "core": False, "definition": "", "exemplar": "",
+            "kind": ""}  # fmt: skip
     assert nodes[("Skill", SKILL_P1)] == part | {"name": "same denominators"}
     assert nodes[("Skill", SKILL_P2)] == part | {"name": "unlike denominators"}
     assert ("Topic", TOPIC, "COVERS", "Skill", SKILL_P1) in rels
@@ -826,7 +830,8 @@ def test_task_created_with_markup_options_and_new_skills() -> None:
         "methodNamed": False,
     }
     provisional = {"learnerId": L, "domainId": DOMAIN, "summary": "", "status": "provisional",
-                   "origin": "session"}  # fmt: skip
+                   "origin": "session", "core": False, "definition": "", "exemplar": "",
+                   "kind": ""}  # fmt: skip
     assert nodes[("Skill", cross)] == provisional | {"name": "Cross multiply"}
     assert nodes[("Skill", lowest)] == provisional | {"name": "Lowest terms"}
     assert nodes[("Topic", simplification)] == {
@@ -836,11 +841,16 @@ def test_task_created_with_markup_options_and_new_skills() -> None:
         "origin": "session",
         "status": "proposed",
         "knownClaimedAtMs": 0,
+        "description": "",
     }
     tests = {(k[4], k[5], k[6]) for k in rels if k[2] == "TESTS"}
     assert tests == {(SKILL, 3, "main"), (SKILL, 4, "main"), (cross, 2, "main"),
                      (cross, 3, "main"), (lowest, 1, "main"), (SKILL_B, 2, "b")}  # fmt: skip
-    assert rels[("Task", TASK, "TESTS", "Skill", SKILL, 4, "main")] == {"level": 4, "part": "main"}
+    assert rels[("Task", TASK, "TESTS", "Skill", SKILL, 4, "main")] == {
+        "level": 4,
+        "part": "main",
+        "context": "",
+    }
     assert ("Topic", TOPIC, "COVERS", "Skill", cross) in rels
     assert ("Topic", simplification, "COVERS", "Skill", lowest) in rels
     assert ("Domain", DOMAIN, "HAS_TOPIC", "Topic", simplification) in rels
@@ -1033,7 +1043,7 @@ def _evidence_props(**changes: Any) -> Props:
         "learnerId": L, "domainId": DOMAIN, "atMs": AT_MS, "level": 3, "outcome": "incorrect",
         "assistance": "none", "hintStep": 0, "novelty": 0.0, "confidence": 0, "tier": 1,
         "weight": 0.0, "verification": "code", "delayed": False, "solveTimeMs": 0,
-        "gapType": "unknown", "quote": "", "sourceSessionId": str(SESSION),
+        "gapType": "unknown", "quote": "", "context": "", "sourceSessionId": str(SESSION),
         "sessionDomainId": DOMAIN, "sourceSeq": ANSWER_SEQ, "derivedKind": "direct",
         "status": "active", "observationSeq": 0, "extractor": "", "episodeSeq": 0,
         "searchable": False,
@@ -1430,3 +1440,280 @@ def test_derived_evidence() -> None:
         if k[2] == "DERIVED_FROM"
     }
     assert status == {"indirect": "superseded", "transfer": "active"}  # [РЕШЕНИЕ Ф4] WP4.6
+
+
+def test_topic_description_and_core_skill_properties() -> None:
+    """`topic.created` / `topic.proposed` persist `description`, and `skill.created` persists
+    `core`, `definition`, `exemplar`, `kind` (using `definition` as `summary` when non-empty)."""
+    nodes, rels = _run(
+        [
+            _event(
+                1,
+                "topic.proposed",
+                {
+                    "topic_id": TOPIC,
+                    "domain_id": DOMAIN,
+                    "name": "Limits",
+                    "origin": "material",
+                    "description": "Introduction to limits",
+                },
+            ),
+            _event(
+                2,
+                "topic.created",
+                {
+                    "topic_id": TOPIC,
+                    "domain_id": DOMAIN,
+                    "name": "Limits",
+                    "origin": "material",
+                    "description": "Epsilon-delta and limit laws",
+                },
+            ),
+            _event(
+                3,
+                "skill.created",
+                {
+                    "skill_id": SKILL,
+                    "topic_id": TOPIC,
+                    "domain_id": DOMAIN,
+                    "name": "Limits",
+                    "summary": "legacy summary",
+                    "status": "active",
+                    "origin": "material",
+                    "core": True,
+                    "definition": "Evaluate limits using limit laws",
+                    "exemplar": "lim_{x->2} (x^2 - 4)/(x - 2)",
+                    "kind": "procedure",
+                },
+            ),
+        ],
+        [_DOMAIN],
+    )
+    assert nodes[("Topic", TOPIC)]["description"] == "Epsilon-delta and limit laws"
+    assert nodes[("Skill", SKILL)] == {
+        "learnerId": L,
+        "domainId": DOMAIN,
+        "name": "Limits",
+        "summary": "Evaluate limits using limit laws",
+        "status": "active",
+        "origin": "material",
+        "core": True,
+        "definition": "Evaluate limits using limit laws",
+        "exemplar": "lim_{x->2} (x^2 - 4)/(x - 2)",
+        "kind": "procedure",
+    }
+    assert ("Topic", TOPIC, "COVERS", "Skill", SKILL) in rels
+
+
+def test_skill_deleted_blocks_core_skills_and_deletes_non_core() -> None:
+    core_skill = _node("Skill", SKILL, **(_SKILL.props | {"core": True}))
+    nodes, rels = _run(
+        [
+            _event(10, "skill.deleted", {"skill_id": SKILL, "reason": "cleanup"}),
+            _event(11, "skill.deleted", {"skill_id": SKILL_B, "reason": "duplicate"}),
+            _event(12, "skill.deleted", {"skill_id": str(UUID(int=0x599))}),
+        ],
+        [_DOMAIN, _TOPIC, core_skill, _SKILL_B],
+        [
+            _rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL)),
+            _rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL_B)),
+        ],
+    )
+    assert ("Skill", SKILL) in nodes
+    assert ("Skill", SKILL_B) not in nodes
+    assert ("Topic", TOPIC, "COVERS", "Skill", SKILL_B) not in rels
+
+
+def test_edge_added_from_multiple_origins_is_order_independent() -> None:
+    model_edge = {
+        "kind": "requires",
+        "from_id": SKILL,
+        "to_id": SKILL_B,
+        "origin": "model",
+        "confidence": 0.5,
+    }
+    material_edge = {
+        "kind": "requires",
+        "from_id": SKILL,
+        "to_id": SKILL_B,
+        "origin": "material",
+        "confidence": 0.85,
+    }
+    _, rels_a = _run(
+        [_event(1, "edge.added", model_edge), _event(2, "edge.added", material_edge)],
+        [_SKILL, _SKILL_B],
+    )
+    _, rels_b = _run(
+        [_event(1, "edge.added", material_edge), _event(2, "edge.added", model_edge)],
+        [_SKILL, _SKILL_B],
+    )
+    expected = {"confidence": 0.85, "origins": ["material", "model"], "origin": "material"}
+    assert rels_a[("Skill", SKILL, "REQUIRES", "Skill", SKILL_B)] == expected
+    assert rels_b[("Skill", SKILL, "REQUIRES", "Skill", SKILL_B)] == expected
+
+
+def test_turn_committed_focus_topic_links_unassigned_new_skill() -> None:
+    markup_with_new = {
+        "tests": [{"new_skill": {"name": "L'Hopital rule", "reason": "needed"}, "level": 3}],
+        "method_named": False,
+        "answer": {"type": "number"},
+    }
+    created = _event(
+        60,
+        "task.created",
+        _TASK_CREATED | {"markup": markup_with_new},
+        domain_id=UUID(DOMAIN),
+        session_id=SESSION,
+    )
+    turn_body = sample_payload("turn.committed")
+    turn_body["focus_topic_id"] = TOPIC
+    turn_body["markup"]["tasks"] = [{**markup_with_new, "element_id": "e1", "task_id": TASK}]
+    turn = _event(
+        61,
+        "turn.committed",
+        turn_body,
+        domain_id=UUID(DOMAIN),
+        session_id=SESSION,
+    )
+    skill_id = deterministic_id(LEARNER, 60, "skill:l'hopital rule")
+    nodes, rels = _run([created, turn], *_task_graph())
+    assert ("Skill", skill_id) in nodes
+    assert ("Topic", TOPIC, "COVERS", "Skill", skill_id) in rels
+
+    # Without focus_topic_id, the provisional skill remains unassigned.
+    turn_no_focus = sample_payload("turn.committed")
+    turn_no_focus["markup"]["tasks"] = [{**markup_with_new, "element_id": "e1", "task_id": TASK}]
+    nodes_un, rels_un = _run(
+        [
+            created,
+            _event(61, "turn.committed", turn_no_focus, domain_id=UUID(DOMAIN), session_id=SESSION),
+        ],
+        *_task_graph(),
+    )
+    assert ("Skill", skill_id) in nodes_un
+    assert not any(k[2] == "COVERS" and k[4] == skill_id for k in rels_un)
+
+
+def test_tests_context_propagates_to_evidence_without_new_skill() -> None:
+    markup = {
+        "tests": [{"skill_id": SKILL, "level": 3, "context": "Excel"}],
+        "method_named": False,
+        "answer": {"type": "number"},
+    }
+    created = _event(
+        69, "task.created", _TASK_CREATED | {"markup": markup}, domain_id=UUID(DOMAIN)
+    )
+    nodes, rels = _run(
+        [created, _answer(), _verdict(outcome="correct")],
+        [_DOMAIN, _TOPIC, _SKILL],
+        [_rel(("Domain", DOMAIN), "HAS_TOPIC", ("Topic", TOPIC))],
+    )
+    assert rels[("Task", TASK, "TESTS", "Skill", SKILL, 3, "main")]["context"] == "Excel"
+    assert nodes[("Evidence", _ev(0))]["context"] == "Excel"
+    assert [k for k in nodes if k[0] == "Skill"] == [("Skill", SKILL)]
+
+
+def test_topic_merged_keeps_only_one_core_skill_and_aliases_the_old_core() -> None:
+    core_target = _node("Skill", SKILL, **(_SKILL.props | {"core": True}))
+    core_old = _node("Skill", SKILL_OLD, **(_SKILL_OLD.props | {"core": True}))
+    nodes, rels = _run(
+        [_event(53, "topic.merged", {"from_id": TOPIC_B, "into_id": TOPIC})],
+        [_DOMAIN, _TOPIC, _TOPIC_B, core_target, core_old, _SKILL_B, _EVIDENCE],
+        [
+            _rel(("Domain", DOMAIN), "HAS_TOPIC", ("Topic", TOPIC)),
+            _rel(("Domain", DOMAIN), "HAS_TOPIC", ("Topic", TOPIC_B)),
+            _rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL)),
+            _rel(("Topic", TOPIC_B), "COVERS", ("Skill", SKILL_OLD)),
+            _rel(("Topic", TOPIC_B), "COVERS", ("Skill", SKILL_B)),
+            _rel(("Evidence", EVIDENCE), "ON", ("Skill", SKILL_OLD)),
+        ],
+    )
+    assert ("Topic", TOPIC_B) not in nodes
+    assert ("Skill", SKILL_OLD) not in nodes
+    assert ("Alias", SKILL_OLD, "ALIAS_OF", "Skill", SKILL) in rels
+    assert ("Evidence", EVIDENCE, "ON", "Skill", SKILL) in rels
+    assert ("Topic", TOPIC, "COVERS", "Skill", SKILL) in rels
+    assert ("Topic", TOPIC, "COVERS", "Skill", SKILL_B) in rels
+    covered_cores = [
+        k[4]
+        for k in rels
+        if k[0] == "Topic"
+        and k[1] == TOPIC
+        and k[2] == "COVERS"
+        and nodes[("Skill", str(k[4]))]["core"]
+    ]
+    assert covered_cores == [SKILL]
+
+
+def test_topic_split_ensures_every_part_has_a_core_skill() -> None:
+    core_skill = _node("Skill", SKILL, **(_SKILL.props | {"core": True}))
+    split = {
+        "topic_id": TOPIC,
+        "into": [
+            {"topic_id": TOPIC, "name": "Fraction sums", "skill_ids": [SKILL]},
+            {"topic_id": TOPIC_NEW, "name": "Common denominators", "skill_ids": [SKILL_B]},
+        ],
+    }
+    nodes, rels = _run(
+        [_event(55, "topic.split", split)],
+        [_DOMAIN, _TOPIC, core_skill, _SKILL_B],
+        [
+            _rel(("Domain", DOMAIN), "HAS_TOPIC", ("Topic", TOPIC)),
+            _rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL)),
+            _rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL_B)),
+        ],
+    )
+    new_core = deterministic_id(LEARNER, 55, f"core:{TOPIC_NEW}")
+    assert nodes[("Skill", SKILL)]["core"] is True
+    assert nodes[("Skill", new_core)]["core"] is True
+    assert nodes[("Skill", new_core)]["name"] == "Common denominators"
+    assert ("Topic", TOPIC_NEW, "COVERS", "Skill", new_core) in rels
+    assert ("Topic", TOPIC_NEW, "COVERS", "Skill", SKILL_B) in rels
+
+
+def test_one_skill_core_topic_split_gives_both_parts_core_skills() -> None:
+    core_skill = _node("Skill", SKILL, **(_SKILL.props | {"core": True}))
+    topic_split = {
+        "topic_id": TOPIC,
+        "into": [
+            {"topic_id": TOPIC, "name": "Same denominators", "skill_ids": [SKILL]},
+            {"topic_id": TOPIC_NEW, "name": "Unlike denominators", "skill_ids": []},
+        ],
+    }
+    skill_split = {
+        "skill_id": SKILL,
+        "into": [
+            {"skill_id": SKILL_P1, "name": "same", "topic_id": TOPIC},
+            {"skill_id": SKILL_P2, "name": "unlike", "topic_id": TOPIC_NEW},
+        ],
+    }
+    nodes, rels = _run(
+        [_event(60, "topic.split", topic_split), _event(61, "skill.split", skill_split)],
+        [_DOMAIN, _TOPIC, core_skill],
+        [_rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL))],
+    )
+    assert nodes[("Skill", SKILL)]["core"] is False
+    assert nodes[("Skill", SKILL_P1)]["core"] is True
+    assert nodes[("Skill", SKILL_P2)]["core"] is True
+    assert ("Topic", TOPIC, "COVERS", "Skill", SKILL_P1) in rels
+    assert ("Topic", TOPIC_NEW, "COVERS", "Skill", SKILL_P2) in rels
+
+
+def test_node_text_and_config_defaults() -> None:
+    from quack.config import Settings
+    from quack.ops.material_parse import node_text
+
+    legacy = node_text("skill.created", {"skill_id": SKILL, "name": "Limits", "summary": "old"})
+    modern = node_text(
+        "skill.created",
+        {"skill_id": SKILL, "name": "Limits", "summary": "old", "definition": "new def"},
+    )
+    assert legacy.text == "Limits\nold"
+    assert modern.text == "Limits\nnew def"
+
+    settings = Settings()
+    assert settings.reconcile_requires_confidence == {"material": 0.85, "model": 0.5}
+    assert settings.structure_full_list_max_topics == 80
+    assert settings.structure_requires_min_score == 0.3
+    assert settings.structure_batch_size == 15
+    assert settings.material_toc_max_chunks == 40

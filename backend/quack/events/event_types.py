@@ -230,6 +230,7 @@ class TurnCommitted(EventPayload):
     guard_events: list[GuardEventRecord] = Field(default_factory=list)
     timings: dict[str, int] = Field(default_factory=dict)
     service: Literal["skill_creator"] | None = None
+    focus_topic_id: UUID | None = None
 
 
 # --- verdicts ----------------------------------------------------------------------------
@@ -287,6 +288,7 @@ class _TopicNew(EventPayload):
     domain_id: UUID
     name: str
     origin: Origin
+    description: str | None = None
 
 
 @register("topic.proposed", projector=True, dispatcher=True)
@@ -337,6 +339,18 @@ class SkillCreated(EventPayload):
     summary: str
     status: Literal["provisional", "active"]
     origin: Origin
+    core: bool = False
+    definition: str = ""
+    exemplar: str = ""
+    kind: Literal["fact", "concept", "procedure", "principle"] | None = None
+
+
+@register("skill.deleted", projector=True, dispatcher=False)
+class SkillDeleted(EventPayload):
+    """Deletes a non-core skill from the graph."""
+
+    skill_id: UUID
+    reason: str | None = None
 
 
 @register("skill.placed", projector=True, dispatcher=False)

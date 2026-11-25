@@ -600,9 +600,10 @@ def _topic_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
 
 
 def _skill_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
-    """A skill is embedded by its name and summary (the same text as the structure step of a
-    material uses, `quack.ops.material_parse.node_text`)."""
-    return _embedding(event, "skill", p.skill_id, "\n".join((p.name, p.summary)).strip())
+    """A skill is embedded by its name and definition (or summary for legacy events; the same text
+    as the structure step of a material uses, `quack.ops.material_parse.node_text`)."""
+    body = getattr(p, "definition", "") or p.summary
+    return _embedding(event, "skill", p.skill_id, "\n".join((p.name, body)).strip())
 
 
 RULES: tuple[RuleRow, ...] = (
