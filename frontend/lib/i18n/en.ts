@@ -60,6 +60,27 @@ export const en = {
     subjectsCount: (n: number) => `Subjects · ${n}`,
     noSessions: "No sessions yet. The first one starts from the input box.",
     useShellOutside: "useShell outside AppShell",
+    del: {
+      menuFor: (name: string) => `Actions: ${name}`,
+      deleteSubject: "Delete subject",
+      deleteChapter: "Delete chapter",
+      deleteSession: "Delete session",
+      hideTopic: "Remove from graph",
+      deleteTopic: "Delete for good",
+      subjectConfirm: (name: string, days: number) =>
+        `Delete the subject “${name}”? All its sessions, materials and canvases get erased. No undo. Backups keep the data for up to ${days} more days.`,
+      chapterConfirm: (name: string) => `Delete the chapter “${name}”? Its topics stay on the graph, just without a chapter. No undo.`,
+      hideConfirm: (name: string) => `Remove the topic “${name}” from the graph? Its data and history stay, nothing is lost in your model.`,
+      topicConfirm: (name: string, days: number) =>
+        `Delete the topic “${name}” for good? The topic and its data get erased. Messages stay in their sessions. Backups keep the data for up to ${days} more days.`,
+      sessionConfirm: (title: string) => `Delete the session “${title}”? It leaves the list. What you learned in it stays in your model.`,
+      confirmLabel: "Confirmation",
+      yesDelete: "Delete",
+      yesHide: "Remove",
+      cancel: "Cancel",
+      working: "One moment…",
+      unavailable: "Deleting is not available right now, try again later",
+    },
   },
   profile: {
     name: "Anya Kotova",

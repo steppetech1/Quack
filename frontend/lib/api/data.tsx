@@ -7,7 +7,8 @@ import type { Domain } from "@/lib/mock/types";
 import { TermsGate } from "@/components/quack/live/terms-gate";
 import type { GraphModel } from "@/lib/graph/types";
 import { type ApiHub, domainFromApi, graphModelFromApi } from "./adapters";
-import { API_MODE, ApiError, get, idem, patch, post, sse, type S } from "./client";
+import { API_MODE, ApiError, del, get, idem, patch, post, sse, type S } from "./client";
+import { applyRemoved, applyRemovedModel, type Removed } from "./removed";
 
 /** Projection updates come in bursts (one turn → several events): re-read once they settle */
 const LIVE_SETTLE_MS = 600;
@@ -15,6 +16,9 @@ const LIVE_SETTLE_MS = 600;
 const LIVE_RETRY_MS = [1_000, 3_000, 10_000, 30_000];
 /** How often a graph answered with `lag_degraded` is re-read */
 const LAG_RETRY_MS = 5_000;
+
+/** What the left panel can delete. A topic is either taken off the graph (`hide`, reversible) or erased (`erase`) */
+export type RemoveKind = "domain" | "hub" | "topic-hide" | "topic-erase" | "session";
 
 type Data = {
   /** false until the first load (API mode only) */
@@ -45,6 +49,10 @@ type Data = {
   /** Merge keys into the learner's preferences on the backend (no-op on mocks) */
   savePreferences: (prefs: Record<string, unknown>) => Promise<void>;
   logout: () => void;
+  /** Delete from the left panel: resolves when the backend took it, rejects with the request's error. The item is gone from `domains` at once */
+  removeItem: (kind: RemoveKind, id: string) => Promise<void>;
+  /** Ids deleted from the left panel in this visit (the mock graph is cut by them) */
+  removed: Removed;
 };
 
 const DataContext = createContext<Data | null>(null);
@@ -57,7 +65,13 @@ export function useData(): Data {
 
 /** Mocks: everything is there at once */
 function MockData({ children }: { children: React.ReactNode }) {
-  const { domains } = useMocks();
+  const { domains: all } = useMocks();
+  // no backend: a deletion lasts for the visit
+  const [removed, setRemoved] = useState<Removed>(new Set());
+  const domains = useMemo(() => applyRemoved(all, removed), [all, removed]);
+  const removeItem = useCallback(async (_kind: RemoveKind, id: string) => {
+    setRemoved((r) => new Set(r).add(id));
+  }, []);
   const value = useMemo<Data>(
     () => ({
       ready: true,
@@ -74,8 +88,10 @@ function MockData({ children }: { children: React.ReactNode }) {
       setActive: () => {},
       savePreferences: async () => {},
       logout: () => {},
+      removeItem,
+      removed,
     }),
-    [domains],
+    [domains, removeItem, removed],
   );
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
@@ -97,6 +113,7 @@ function ApiData({ children }: { children: React.ReactNode }) {
   const [active, setActiveState] = useState<S["SessionView"] | null>(null);
   const [history, setHistory] = useState<S["SessionView"][]>([]);
   const [appliedSeq, setAppliedSeq] = useState(0);
+  const [removed, setRemoved] = useState<Removed>(new Set());
   /** Graphs already on screen: the live stream refreshes these */
   const loaded = useRef(new Set<string>());
   /** Listeners of the background-jobs plaque (`jobs_changed` of the learner stream) */
@@ -274,13 +291,18 @@ function ApiData({ children }: { children: React.ReactNode }) {
     }),
     [t],
   );
-  const domains = useMemo(() => summaries.map((s) => domainFromApi(s, graphs[s.domain_id], labels, history, hubs[s.domain_id])), [summaries, graphs, hubs, labels, history]);
+  const domains = useMemo(
+    () => applyRemoved(summaries.map((s) => domainFromApi(s, graphs[s.domain_id], labels, history, hubs[s.domain_id])), removed),
+    [summaries, graphs, hubs, labels, history, removed],
+  );
 
   const models = useMemo(() => {
     const out: Record<string, GraphModel> = {};
-    for (const s of summaries) if (graphs[s.domain_id]) out[s.domain_id] = graphModelFromApi(s, graphs[s.domain_id], hubs[s.domain_id] ?? [], history, todays[s.domain_id], labels);
+    for (const s of summaries) {
+      if (graphs[s.domain_id] && !removed.has(s.domain_id)) out[s.domain_id] = applyRemovedModel(graphModelFromApi(s, graphs[s.domain_id], hubs[s.domain_id] ?? [], history, todays[s.domain_id], labels), removed);
+    }
     return out;
-  }, [summaries, graphs, hubs, history, todays, labels]);
+  }, [summaries, graphs, hubs, history, todays, labels, removed]);
 
   const savePreferences = useCallback(async (prefs: Record<string, unknown>) => {
     // one key per request: `preference.set {key, value}`; only plain values go through
@@ -297,6 +319,28 @@ function ApiData({ children }: { children: React.ReactNode }) {
       .catch(() => {})
       .finally(() => router.replace("/login"));
   }, [router]);
+
+  const removeItem = useCallback(
+    async (kind: RemoveKind, id: string) => {
+      try {
+        if (kind === "domain") await del(`/v1/domains/${id}`);
+        else if (kind === "hub") await del(`/v1/hubs/${id}`);
+        else if (kind === "topic-erase") await del(`/v1/topics/${id}`);
+        else if (kind === "topic-hide") await post(`/v1/topics/${id}/hide`);
+        else await del(`/v1/sessions/${id}`);
+      } catch (e) {
+        // already gone (deleted in another tab, or a repeat): the learner wanted it gone, so it is
+        if (!(e instanceof ApiError && e.status === 404)) throw e;
+      }
+      // the projection is asynchronous: cut the item out at once, then read what the backend says
+      setRemoved((r) => new Set(r).add(id));
+      if (kind === "session") setActiveState((a) => (a?.session_id === id ? null : a));
+      if (kind === "domain") void reload();
+      else void loadHistory().catch(() => {});
+      if (kind !== "session") for (const d of loaded.current) if (d !== id) void loadGraph(d).catch(() => {});
+    },
+    [reload, loadGraph, loadHistory],
+  );
 
   // Without the current terms accepted a session would start with CONSENT_REQUIRED: ask once, here
   const termsVersion = me?.terms_version ?? null;
@@ -315,8 +359,8 @@ function ApiData({ children }: { children: React.ReactNode }) {
   }, [termsVersion, t.live.serverDown, t.live.serverError]);
 
   const value = useMemo<Data>(
-    () => ({ ready, error, domains, models, me, graphSettled, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout }),
-    [ready, error, domains, models, me, graphSettled, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout],
+    () => ({ ready, error, domains, models, me, graphSettled, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout, removeItem, removed }),
+    [ready, error, domains, models, me, graphSettled, active, appliedSeq, subscribeJobs, reload, loadGraph, setActive, savePreferences, logout, removeItem, removed],
   );
   // the gate lies over the app (the app stays mounted: the router needs its segments, and the data loads behind it)
   return (

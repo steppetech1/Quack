@@ -61,6 +61,27 @@ export const ru: Dict = {
     subjectsCount: (n: number) => `Предметы · ${n}`,
     noSessions: "Сессий пока нет. Первая начнётся с поля ввода.",
     useShellOutside: "useShell вне AppShell",
+    del: {
+      menuFor: (name: string) => `Действия: ${name}`,
+      deleteSubject: "Удалить предмет",
+      deleteChapter: "Удалить главу",
+      deleteSession: "Удалить сессию",
+      hideTopic: "Убрать с графа",
+      deleteTopic: "Удалить навсегда",
+      subjectConfirm: (name: string, days: number) =>
+        `Удалить предмет «${name}»? Сотрутся все его сессии, материалы и канвасы. Отменить нельзя. В резервных копиях данные хранятся ещё до ${days} дней.`,
+      chapterConfirm: (name: string) => `Удалить главу «${name}»? Её темы останутся на графе, только без главы. Отменить нельзя.`,
+      hideConfirm: (name: string) => `Убрать тему «${name}» с графа? Её данные и история останутся, в модели ничего не потеряется.`,
+      topicConfirm: (name: string, days: number) =>
+        `Удалить тему «${name}» навсегда? Сотрутся сама тема и её данные. Сообщения останутся в своих сессиях. В резервных копиях данные хранятся ещё до ${days} дней.`,
+      sessionConfirm: (title: string) => `Удалить сессию «${title}»? Она пропадёт из списка. Что ты в ней выучил, останется в твоей модели.`,
+      confirmLabel: "Подтверждение",
+      yesDelete: "Удалить",
+      yesHide: "Убрать",
+      cancel: "Отмена",
+      working: "Подожди…",
+      unavailable: "Удаление сейчас недоступно, попробуй позже",
+    },
   },
   profile: {
     name: "Аня Котова",

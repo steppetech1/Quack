@@ -1,12 +1,14 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { useFmt, useT } from "@/lib/i18n/provider";
 import type { Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
+import { RowMenu } from "./row-menu";
 import { useSoon } from "./soon";
+import { useSidebarDelete } from "./use-sidebar-delete";
 
 /** How many of the latest sessions show before «show all» */
 const LATEST = 5;
@@ -63,6 +65,7 @@ export function SessionsBlock({
   const t = useT();
   const { dayLabel } = useFmt();
   const soon = useSoon();
+  const remove = useSidebarDelete(domainId);
   const uid = useId();
   const [showAll, setShowAll] = useState(false);
   const open = useSyncExternalStore(
@@ -131,15 +134,34 @@ export function SessionsBlock({
                 );
                 return (
                   <li key={s.id}>
-                    {s.href ? (
-                      <Link href={s.href} aria-current={active ? "page" : undefined} onClick={onNavigate} className={cls}>
-                        {body}
-                      </Link>
-                    ) : (
-                      <button type="button" onClick={() => soon(t.soon.sessionHistory(s.title))} className={cls}>
-                        {body}
-                      </button>
-                    )}
+                    <RowMenu
+                      label={s.title}
+                      actions={
+                        // a session that is only being started has nothing to delete yet
+                        s.id === "new"
+                          ? []
+                          : [
+                              {
+                                id: "delete",
+                                label: t.shell.del.deleteSession,
+                                icon: Trash2,
+                                destructive: true,
+                                confirm: { text: t.shell.del.sessionConfirm(s.title), yes: t.shell.del.yesDelete },
+                                run: () => remove.session(s.id),
+                              },
+                            ]
+                      }
+                    >
+                      {s.href ? (
+                        <Link href={s.href} aria-current={active ? "page" : undefined} onClick={onNavigate} className={cls}>
+                          {body}
+                        </Link>
+                      ) : (
+                        <button type="button" onClick={() => soon(t.soon.sessionHistory(s.title))} className={cls}>
+                          {body}
+                        </button>
+                      )}
+                    </RowMenu>
                   </li>
                 );
               })}
