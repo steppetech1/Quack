@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from quack.agents.reconcile import Subject, reconcile_domain
+from quack.agents import hygiene
 from quack.db import Db
 from quack.embeddings.client import EmbeddingsUnavailable
 from quack.embeddings.compute import EmbeddingNode, compute_embeddings
@@ -28,8 +28,9 @@ from quack.llm.errors import LLMBudgetExceededError
 from quack.materials.parse import (
     SEMINAR_TASKS_KIND,
     STEP_STRUCTURE,
+    ResolvedTopic,
     SeminarSpec,
-    SubjectSpec,
+    TopicCandidateSpec,
     mark_failed,
     mark_material_failed,
     parse_step,
@@ -114,27 +115,45 @@ async def wait_projected(ctx: JobContext, *, learner_id: UUID) -> None:
         await asyncio.sleep(_POLL_S)
 
 
-async def reconcile_subjects(
-    ctx: JobContext, *, learner_id: UUID, domain_id: UUID, subjects: Sequence[SubjectSpec]
-) -> dict[tuple[str, str], UUID]:
-    """`reconcile_domain` for the subjects of the material: the id of the node of each one it
-    linked or created, by `(kind, name)`; the origin of the edges is `material`. Before the call
-    every node of the domain has its vector and Neo4j holds it, so the builder sees the topics
-    and skills of the earlier lectures and of the previous batch as candidates."""
+async def resolve_structure_candidates(
+    ctx: JobContext,
+    *,
+    learner_id: UUID,
+    domain_id: UUID,
+    candidates: Sequence[TopicCandidateSpec],
+    source_refs: Sequence[dict[str, Any]] = (),
+) -> list[ResolvedTopic]:
+    """Resolve TOC topic candidates via `quack.agents.hygiene.resolve_material_structure`.
+    Before the call every node of the domain has its vector and Neo4j holds it, so the
+    structure writer sees the topics and skills of the domain as candidates."""
     await embed_domain_nodes(ctx, learner_id=learner_id, domain_id=domain_id)
     await wait_projected(ctx, learner_id=learner_id)
-    result = await reconcile_domain(
+    material_candidates = [
+        hygiene.MaterialTopicCandidate(
+            name=c.name,
+            description=c.description,
+            core_skill_name=c.core_skill_name,
+            builds_on=tuple(
+                hygiene.MaterialBuildsOn(concept=b.concept, quote=b.quote) for b in c.builds_on
+            ),
+        )
+        for c in candidates
+    ]
+    resolved = await hygiene.resolve_material_structure(
         ctx,
         learner_id=learner_id,
         domain_id=domain_id,
-        subjects=[Subject(s.name, s.kind, s.text, s.topic, s.requires) for s in subjects],
-        origin="material",
+        candidates=material_candidates,
+        source_refs=source_refs,
     )
-    return {
-        (r.subject.kind, r.subject.name): r.node_id
-        for r in result.resolutions
-        if r.node_id is not None
-    }
+    return [
+        ResolvedTopic(
+            topic_id=r.topic_id,
+            core_skill_id=r.core_skill_id,
+            skill_ids=tuple(r.skill_ids),
+        )
+        for r in resolved
+    ]
 
 
 async def create_seminar_tasks(
@@ -168,6 +187,8 @@ async def create_seminar_tasks(
                     answer=spec.answer,
                     course_context=spec.course_context,
                     domain_id=spec.domain_id,
+                    topic_id=spec.topic_id,  # type: ignore[call-arg]
+                    topic_skill_ids=spec.topic_skill_ids,  # type: ignore[call-arg]
                 ),
                 learner_id=learner_id,
                 compute=ctx.compute,
@@ -193,7 +214,7 @@ def _is_final(error: Exception, job: ClaimedJob) -> bool:
 async def handle_material_parse(job: ClaimedJob, ctx: JobContext) -> None:
     try:
         if job.payload.get("step") == STEP_STRUCTURE:
-            await structure_step(ctx, job, reconcile_subjects)
+            await structure_step(ctx, job, resolve_structure_candidates)
         else:
             await parse_step(ctx, job)
     except Exception as error:
