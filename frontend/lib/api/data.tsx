@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMocks, useT } from "@/lib/i18n/provider";
 import type { Domain } from "@/lib/mock/types";
@@ -84,12 +84,14 @@ function MockData({ children }: { children: React.ReactNode }) {
 function ApiData({ children }: { children: React.ReactNode }) {
   const t = useT();
   const router = useRouter();
+  const pathname = usePathname();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<S["DomainSummary"][]>([]);
   const [consentBusy, setConsentBusy] = useState(false);
   const [graphs, setGraphs] = useState<Record<string, S["DomainGraphResponse"]>>({});
   const [hubs, setHubs] = useState<Record<string, ApiHub[]>>({});
+  const [todays, setTodays] = useState<Record<string, S["TodayView"]>>({});
   const [me, setMe] = useState<S["Me"] | null>(null);
   const [graphSettled, setGraphSettled] = useState<Record<string, boolean>>({});
   const [active, setActiveState] = useState<S["SessionView"] | null>(null);
@@ -256,6 +258,11 @@ function ApiData({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [graphs, loadGraph]);
 
+  // No subjects yet: the first screen is creating one
+  useEffect(() => {
+    if (ready && !error && summaries.length === 0 && pathname === "/") router.replace("/domains/new");
+  }, [ready, error, summaries.length, pathname, router]);
+
   const labels = useMemo(
     () => ({
       hub: t.live.allTopics,
@@ -271,9 +278,9 @@ function ApiData({ children }: { children: React.ReactNode }) {
 
   const models = useMemo(() => {
     const out: Record<string, GraphModel> = {};
-    for (const s of summaries) if (graphs[s.domain_id]) out[s.domain_id] = graphModelFromApi(s, graphs[s.domain_id], hubs[s.domain_id] ?? [], history);
+    for (const s of summaries) if (graphs[s.domain_id]) out[s.domain_id] = graphModelFromApi(s, graphs[s.domain_id], hubs[s.domain_id] ?? [], history, todays[s.domain_id], labels);
     return out;
-  }, [summaries, graphs, hubs, history]);
+  }, [summaries, graphs, hubs, history, todays, labels]);
 
   const savePreferences = useCallback(async (prefs: Record<string, unknown>) => {
     // one key per request: `preference.set {key, value}`; only plain values go through

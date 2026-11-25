@@ -845,6 +845,10 @@ async def _checked_task(
 def _task_problems(guard: GuardInputs, task: TurnTask | None) -> list[str]:
     if task is None:
         return ["no task markup"]
+    if task.answer.type == "code":
+        # Т-§6.10: a code task needs tests the teacher cannot write; it comes from a
+        # `task_generation` request with a language and is shown with a `code_task` element.
+        return ["code_task_written_by_teacher"]
     return [
         v.rule
         for v in validate_markup(

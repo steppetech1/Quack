@@ -1,29 +1,41 @@
 "use client";
 
 import { useRef } from "react";
-import { Backdrop } from "./backdrop";
-import { Compare } from "./compare";
+import { CompareSplit } from "./compare-split";
 import { Features } from "./features";
+import { FlowSection } from "./flow-section";
 import { LandingFooter } from "./footer";
 import { Hero } from "./hero";
+import { KineticBand } from "./kinetic-band";
 import { LandingNav } from "./nav";
-import { Pluses } from "./pluses";
+import { ProductSection } from "./product-section";
+import { LandingStageCanvas } from "./stage/landing-stage-canvas";
+import { LandingStageProvider } from "./stage/landing-context";
 
-/** Лендинг целиком: общий фон, панель, первый экран, сравнение, два блока плюсов и подвал. Страница прокручивается внутри этого контейнера, а не окном: у body overflow hidden */
+/**
+ * Quack! landing page: unified 3D WebGL stage (giant QUACK watermark, 3/4 stippled duck,
+ * radial tick field, liquid cursor wake, and 3D knowledge constellation)
+ * layered cleanly beneath ultra-simple visual sections.
+ */
 export function LandingPage() {
   const scrollRef = useRef<HTMLElement>(null);
+
   return (
-    <main
-      ref={scrollRef}
-      className="relative isolate h-full overflow-x-hidden overflow-y-auto bg-[#080504] text-[#f1e4d6] motion-safe:scroll-smooth"
-    >
-      <Backdrop scrollRef={scrollRef} />
-      <LandingNav scrollRef={scrollRef} />
-      <Hero scrollRef={scrollRef} />
-      <Compare scrollRef={scrollRef} />
-      <Pluses />
-      <Features />
-      <LandingFooter />
-    </main>
+    <LandingStageProvider scrollRef={scrollRef}>
+      <main
+        ref={scrollRef}
+        className="relative isolate h-full overflow-x-hidden overflow-y-auto bg-[#080504] text-[#f3eadc]"
+      >
+        <LandingStageCanvas />
+        <LandingNav />
+        <Hero />
+        <KineticBand />
+        <ProductSection />
+        <FlowSection />
+        <CompareSplit />
+        <Features />
+        <LandingFooter />
+      </main>
+    </LandingStageProvider>
   );
 }

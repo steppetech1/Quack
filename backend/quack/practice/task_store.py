@@ -10,7 +10,7 @@ transaction. Tasks belong to the learner (Т-§5.1): every query takes `learner_
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from psycopg.types.json import Jsonb
@@ -28,9 +28,10 @@ type Verification = Literal["unchecked", "checked", "disputed"]
 
 _INSERT_TASK = (
     "INSERT INTO content.tasks (task_id, learner_id, domain_id, source, version, condition, "
-    "answer_spec, solution_space, solution_space_version, created_seq) VALUES (%(task_id)s, "
-    "%(learner_id)s, %(domain_id)s, %(source)s, %(version)s, %(condition)s, %(answer_spec)s, "
-    "%(solution_space)s, %(solution_space_version)s, %(created_seq)s)"
+    "answer_spec, solution_space, solution_space_version, created_seq, code_tests) VALUES "
+    "(%(task_id)s, %(learner_id)s, %(domain_id)s, %(source)s, %(version)s, %(condition)s, "
+    "%(answer_spec)s, %(solution_space)s, %(solution_space_version)s, %(created_seq)s, "
+    "%(code_tests)s)"
 )
 
 _SELECT_TASK = (
@@ -101,8 +102,11 @@ async def insert_task_document(
     solution_space: SolutionSpace | None = None,
     solution_space_version: str | None = None,
     version: int = 1,
+    code_tests: dict[str, Any] | None = None,
 ) -> None:
-    """Store the document; call inside the transaction that wrote its `task.created`."""
+    """Store the document; call inside the transaction that wrote its `task.created`.
+    `code_tests` — the tests of a `code` task (`quack.practice.code_tests`, Т-§6.10): only in
+    the document, never in the event."""
     await db.execute(
         _INSERT_TASK,
         {
@@ -118,6 +122,7 @@ async def insert_task_document(
             ),
             "solution_space_version": solution_space_version,
             "created_seq": created_seq,
+            "code_tests": Jsonb(code_tests) if code_tests is not None else None,
         },
     )
 
@@ -139,6 +144,7 @@ async def create_task(
     causation_seq: int | None = None,
     solution_space: SolutionSpace | None = None,
     solution_space_version: str | None = None,
+    code_tests: dict[str, Any] | None = None,
 ) -> int:
     """Т-§5.1: `task.created` and the document in one transaction; a failure writes neither.
     Returns the seq of `task.created`. A repeat with the same key and payload writes nothing
@@ -169,6 +175,7 @@ async def create_task(
                 created_seq=stored.seq,
                 solution_space=solution_space,
                 solution_space_version=solution_space_version,
+                code_tests=code_tests,
             )
     return stored.seq
 

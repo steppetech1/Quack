@@ -29,6 +29,7 @@ from quack.embeddings.client import EmbeddingClient, create_embedding_client
 from quack.llm.gateway import LLMGateway
 from quack.llm.responses_client import ResponsesClient
 from quack.llm.tracing import create_tracer
+from quack.runner_client.client import RunnerClient, create_runner_client
 from quack.storage.deletions import DeletionJournal, create_deletion_journal
 from quack.storage.objects import ObjectStore, create_object_store
 
@@ -54,10 +55,14 @@ class AppResources:
     embeddings: EmbeddingClient
     email: EmailSender
     deletions: DeletionJournal
+    # Т-§6.10: the learner-code sandbox; `None` in processes and tests that do not run code.
+    runner: RunnerClient | None = None
 
     async def close(self) -> None:
         """Close in reverse creation order: deletions, email, embeddings, storage, compute, llm,
         redis, neo4j, db (§4.2)."""
+        if self.runner is not None:
+            await self.runner.aclose()
         await self.deletions.aclose()
         await self.email.aclose()
         await self.embeddings.aclose()
@@ -89,6 +94,7 @@ async def create_app_resources(settings: Settings) -> AppResources:
         embeddings=create_embedding_client(settings),
         email=create_email_sender(settings),
         deletions=create_deletion_journal(settings),
+        runner=create_runner_client(settings),
     )
 
 
@@ -114,6 +120,11 @@ def get_llm(request: Request) -> LLMGateway:
 def get_compute(request: Request) -> ComputeClient:
     """The process-wide `ComputeClient` (`resources.compute`)."""
     return get_resources(request).compute
+
+
+def get_runner(request: Request) -> RunnerClient | None:
+    """The process-wide `RunnerClient` (`resources.runner`); `None` when the process has none."""
+    return get_resources(request).runner
 
 
 def get_storage(request: Request) -> ObjectStore:

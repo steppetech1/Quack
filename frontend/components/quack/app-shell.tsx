@@ -9,12 +9,11 @@ import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useT } from "@/lib/i18n/provider";
-import { todayIso } from "@/lib/format";
+import { MOCK_TODAY } from "@/lib/mock";
 import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
-import { IndicatorPills } from "./graph/indicator-pills";
 import { SessionsPanel } from "./sessions-panel";
 import { BackLink } from "./page-parts";
 import { SoonProvider } from "./soon";
@@ -100,8 +99,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
   // null — решает ширина экрана: на узком десктопе панель свёрнута
   const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
-  // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
-  const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
   const [drawer, setDrawer] = useState<"domains" | "sessions" | null>(null);
   const [centerPending, setCenterPending] = useState(false);
@@ -179,7 +176,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sessions: Session[] =
     // С бэкендом новая сессия появляется в списке сама, как только создана
     pending && !API_MODE && domain.id === SESSION_DOMAIN
-      ? [{ id: "new", href: "/session/new", date: todayIso(), title: pending, topics: [] }, ...domain.sessions]
+      ? [{ id: "new", href: "/session/new", date: MOCK_TODAY, title: pending, topics: [] }, ...domain.sessions]
       : domain.sessions;
 
   const toggleSessions = () =>
@@ -219,15 +216,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
 
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
-            {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
-              {pathname !== "/" && (
-                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
-                  <PanelLeft />
-                </IconButton>
-              )}
-              <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
-              {!inSettings && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
+              <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
+                <PanelLeft />
+              </IconButton>
+              <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
+              {!noSessions && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
                 <History />
               </IconButton>}
             </div>}
@@ -263,7 +257,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               sessionsPref === null ? "w-14 xl:w-73" : sessionsPref ? "w-14" : "w-73",
             )}
           >
-            <IndicatorPills />
             {sessionsPref === null ? (
               <>
                 <div className="h-full xl:hidden">{panel(true, toggleSessions)}</div>

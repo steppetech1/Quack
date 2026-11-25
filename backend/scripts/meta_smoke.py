@@ -69,7 +69,7 @@ from quack.llm.streaming import StreamEvent, StreamRequest
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.llm.tool_loop import run_tool_loop
 from quack.materials.parse import MaterialParserOutput
-from quack.practice import role_outputs
+from quack.practice import code_role_outputs, role_outputs
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.registry import PromptError, PromptRegistry, PromptTemplate
 from quack.session.teacher_output import TeacherOutputV2
@@ -155,6 +155,8 @@ ROLE_SCHEMAS: dict[str, type[BaseModel]] = {
     "domain_classifier": agents.DomainClassifierOutput,
     "session_titler": role_outputs.SessionTitleOutput,
     "release_judge": agents.ReleaseJudgeOutput,
+    "code_task_generator": code_role_outputs.CodeTaskGeneratorOutput,
+    "code_task_checker": code_role_outputs.CodeTaskCheckOutput,
 }
 # The roles that are not text calls (D-B-187).
 MEDIA_ROLES = ("segmenter", "voice", "illustrator")

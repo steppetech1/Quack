@@ -24,6 +24,7 @@ from quack.events.values import (
 )
 
 __all__ = [
+    "CODE_TYPES",
     "FAST_TYPES",
     "INSTANT_TYPES",
     "SLOW_TYPES",
@@ -42,3 +43,5 @@ __all__ = [
 INSTANT_TYPES: frozenset[str] = frozenset({"choice", "number", "short_text", "set", "vector"})
 FAST_TYPES: frozenset[str] = frozenset({"expression", "quantity"})
 SLOW_TYPES: frozenset[str] = frozenset({"proof", "free_text", "drawing"})
+# Т-§6.10: checked by the task's tests in the runner, through `/code/submit` only.
+CODE_TYPES: frozenset[str] = frozenset({"code"})

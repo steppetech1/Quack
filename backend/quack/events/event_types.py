@@ -80,7 +80,8 @@ class AnswerSubmitted(EventPayload):
     text: str | None = None
     confidence: Confidence | None = None
     element_id: str | None = None
-    source: Literal["chat", "canvas", "photo", "card"]
+    # `editor` — a `code` answer from the code editor (Т-§6.10).
+    source: Literal["chat", "canvas", "photo", "card", "editor"]
     self_assessment: bool | None = None
     recognition_confidence: Unit | None = None
     solve_time_ms: int | None = None

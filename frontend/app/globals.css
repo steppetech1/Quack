@@ -402,4 +402,162 @@
     animation: none !important;
     box-shadow: 0 0 0 4px color-mix(in oklab, var(--ribbon) 75%, transparent);
   }
+  .landing-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    clip-path: none !important;
+  }
+  .landing-orbit-spin {
+    animation: none !important;
+  }
+}
+
+/* --- Landing motion & interactive surfaces --- */
+.landing-reveal {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
+  transition:
+    opacity 0.65s var(--ease-out),
+    transform 0.75s var(--ease-out),
+    clip-path 0.8s var(--ease-out);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: transform, opacity;
+}
+.landing-reveal[data-reveal="wipe"] {
+  opacity: 1;
+  clip-path: inset(0 0 100% 0);
+  transform: translate3d(0, 14px, 0);
+}
+.landing-reveal[data-revealed="true"] {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  clip-path: inset(0 0 0% 0);
+}
+
+@keyframes landing-stroke-draw {
+  0% {
+    stroke-dashoffset: var(--stroke-len, 320);
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes landing-scroll-drop {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(220%);
+    opacity: 0;
+  }
+}
+
+@keyframes landing-quack-pop {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.86) rotate(-4deg);
+  }
+  22% {
+    opacity: 1;
+    transform: translate3d(0, -4px, 0) scale(1.03) rotate(-2deg);
+  }
+  78% {
+    opacity: 1;
+    transform: translate3d(4px, -14px, 0) scale(1) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(10px, -24px, 0) scale(0.95) rotate(2deg);
+  }
+}
+
+.landing-stroke-anim {
+  stroke-dasharray: var(--stroke-len, 320);
+  stroke-dashoffset: var(--stroke-len, 320);
+  animation: landing-stroke-draw 1.25s var(--ease-out) var(--stroke-delay, 0ms) forwards;
+}
+
+.landing-scroll-runner {
+  animation: landing-scroll-drop 2.2s var(--ease-out) infinite;
+}
+
+.landing-quack-pop {
+  animation: landing-quack-pop 1.35s var(--ease-out) forwards;
+}
+
+.spotlight-panel {
+  position: relative;
+}
+@media (hover: hover) and (pointer: fine) {
+  .spotlight-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s var(--ease-out);
+    background: radial-gradient(
+      340px circle at var(--mx, 50%) var(--my, 50%),
+      rgba(237, 185, 102, 0.42),
+      rgba(237, 185, 102, 0.08) 45%,
+      transparent 75%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  .spotlight-panel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s var(--ease-out);
+    background: radial-gradient(
+      420px circle at var(--mx, 50%) var(--my, 50%),
+      rgba(237, 185, 102, 0.065),
+      transparent 65%
+    );
+  }
+  .spotlight-panel:hover::before,
+  .spotlight-panel:hover::after {
+    opacity: 1;
+  }
+}
+
+@keyframes landing-orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.landing-orbit-spin {
+  animation: landing-orbit-spin 64s linear infinite;
+  transform-origin: center;
+}
+
+.landing-dot-frame {
+  background-image: radial-gradient(rgba(241, 228, 214, 0.16) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.landing-outline-text {
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(243, 234, 220, 0.24);
 }

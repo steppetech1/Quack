@@ -80,12 +80,12 @@ async def revoke_session(db: Db, *, learner_id: UUID, token: str, now: datetime)
 
 
 def cookie_params(settings: Settings) -> dict[str, Any]:
-    """Arguments of `Response.set_cookie`: `HttpOnly`, `Secure`, `SameSite=Lax`,
+    """Arguments of `Response.set_cookie`: `HttpOnly`, configurable `Secure`, `SameSite=Lax`,
     `Domain = session_cookie_domain`, max age `auth_session_ttl_days` (Т-§19.1)."""
     return {
         "key": SESSION_COOKIE,
         "httponly": True,
-        "secure": True,
+        "secure": settings.env == "prod" or settings.session_cookie_secure,
         "samesite": "lax",
         "domain": settings.session_cookie_domain,
         "max_age": settings.auth_session_ttl_days * 24 * 3600,

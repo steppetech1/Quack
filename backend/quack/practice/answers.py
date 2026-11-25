@@ -23,7 +23,7 @@ from quack.db.db import Db
 from quack.events.event_types import AnswerSubmitted, TaskCreated
 from quack.events.keys import verdict_key
 from quack.events.log import NewEvent, append_events
-from quack.practice.answer_spec import INSTANT_TYPES, AnswerSpec, LearnerAnswer
+from quack.practice.answer_spec import CODE_TYPES, INSTANT_TYPES, AnswerSpec, LearnerAnswer
 from quack.practice.check import CheckResult, HelpUsed, Verdict, check
 from quack.practice.repo import task_events
 from quack.practice.task_store import TaskDocument
@@ -103,6 +103,9 @@ async def record_answer(
     """Т-§6.1: the answer and its instant verdict in one transaction (also inside the caller's
     transaction). A repeat with the same key returns the stored answer and verdict.
     `causation_seq` — the action that made the answer (the response to a task element)."""
+    if spec.type in CODE_TYPES:
+        # Т-§6.1, Т-§6.10: code is checked by its tests first, outside the transaction.
+        raise LookupError("a code answer goes through /code/submit, not a session action")
     part = payload.part or DEFAULT_PART
     async with db.transaction():
         help_used = await help_in_session(

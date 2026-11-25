@@ -247,6 +247,13 @@ class ReferenceCardElementRecord(_Element):
     items: list[ReferenceItemRecord]
 
 
+class CodeTaskElementRecord(_Element):
+    """Т-§6.10: a generated code task shown as it is (the editor opens on it)."""
+
+    kind: Literal["code_task"]
+    task_id: UUID
+
+
 type ElementRecord = Annotated[
     ChoiceElementRecord
     | WhyChoiceElementRecord
@@ -260,7 +267,8 @@ type ElementRecord = Annotated[
     | TimedQuizElementRecord
     | VisualizationElementRecord
     | MaterialLinkElementRecord
-    | ReferenceCardElementRecord,
+    | ReferenceCardElementRecord
+    | CodeTaskElementRecord,
     Field(discriminator="kind"),
 ]
 
@@ -368,6 +376,9 @@ class AgentParamsRecord(_Record):
     # belongs to and its name for the learner. Null for every other request.
     step_id: str | None = None
     title: str | None = None
+    # Т-§6.10: a `task_generation` request for a programming task in this language (the
+    # answer type `code`); null — the answer type follows the level as before.
+    language: Literal["python", "sql"] | None = None
 
 
 class AgentRequestRecord(_Record):

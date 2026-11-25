@@ -1,13 +1,12 @@
 "use client";
 
-import { ChevronRight, LayoutGrid, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ChevronRight, LayoutGrid } from "lucide-react";
 import Link from "next/link";
 import type { Domain } from "@/lib/mock/types";
 import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { DOMAIN_PATH, useShell } from "./app-shell";
-import { IconButton } from "./icon-button";
 import { ProfileMenu } from "./profile-menu";
 import { useT } from "@/lib/i18n/provider";
 
@@ -18,15 +17,10 @@ export function DomainSidebar({
   domains,
   activeId,
   onSelect,
-  collapsed,
-  onToggle,
 }: {
   domains: Domain[];
   activeId: string;
   onSelect: (id: string) => void;
-  /** Узкая полоса вместо панели (только десктопная колонка, на мобильной шторке не используется) */
-  collapsed?: boolean;
-  onToggle?: () => void;
 }) {
   const t = useT();
   const { graphMode, openGraph, closeDrawer } = useShell();
@@ -45,27 +39,10 @@ export function DomainSidebar({
   const sub = "pl-8 text-small hover:text-paper";
   const subOn = (on: boolean) => (on ? "bg-cloth-raised text-paper" : "text-paper-dim");
 
-  if (collapsed) {
-    return (
-      <div className="flex h-full flex-col items-center gap-3 bg-cloth-deep pt-3">
-        <IconButton label={t.shell.expandSubjects} onClick={onToggle}>
-          <PanelLeftOpen />
-        </IconButton>
-        <p className="caps text-paper-dim [writing-mode:vertical-rl]">{t.shell.subjectsCount(domains.length)}</p>
-      </div>
-    );
-  }
-
   return (
     <nav aria-label={t.shell.subjects} className="flex h-full flex-col bg-cloth-deep px-3 pt-4 pb-3">
-      {/* шапка: название антиквой капсом, справа — свернуть (десктоп) */}
-      <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1">
-        <p className="display-caps flex-1 text-[1.375rem] text-paper">Quack!</p>
-        {onToggle && (
-          <IconButton label={t.shell.collapseSubjects} onClick={onToggle}>
-            <PanelLeftClose />
-          </IconButton>
-        )}
+      <div className="flex min-h-10 items-center px-3 pb-1">
+        <p className="display-caps text-[1.375rem] text-paper">Qvack!</p>
       </div>
 
       {/* первый экран: графы всех предметов сразу */}

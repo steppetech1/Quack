@@ -24,7 +24,10 @@ SERVICES = {
     "backup",
     "alerts",
     "meta-mock",
+    # Т-§6.10: the learner-code sandbox; no network at all, a Unix socket in a volume.
+    "runner",
 }
+NO_NETWORK = {"runner"}
 # Д-§6.1 table.
 STOP_GRACE_S = {"api": 35, "workers": 25, "projector": 15, "compute": 10}
 BACKEND_ONLY = {"projector", "compute", "postgres", "neo4j", "redis", "migrate"}
@@ -59,6 +62,9 @@ def test_only_caddy_publishes_ports(compose: dict[str, Any]):
 def test_networks_follow_d_3_2(compose: dict[str, Any]):
     assert compose["networks"]["backend"] == {"internal": True}
     for name, service in compose["services"].items():
+        if name in NO_NETWORK:
+            assert service["network_mode"] == "none" and "networks" not in service, name
+            continue
         networks = set(service["networks"])
         assert "backend" in networks, name
         wants_internet = name in {"caddy", "api", "workers", "backup", "alerts"}

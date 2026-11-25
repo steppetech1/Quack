@@ -164,6 +164,15 @@ class ReferenceCardElement(_Element):
     items: list[ReferenceItem]
 
 
+class CodeTaskElement(_Element):
+    """Задача с кодом (Т-§6.10): a ready code task of the label table (`K…`, from a
+    `task_generation` request with a language), shown as it is; the learner solves it in the
+    code editor and its tests check it. The teacher writes no task markup for it."""
+
+    kind: Literal["code_task"]
+    task: str
+
+
 type Element = Annotated[
     ChoiceElement
     | WhyChoiceElement
@@ -177,6 +186,7 @@ type Element = Annotated[
     | TimedQuizElement
     | VisualizationElement
     | MaterialLinkElement
-    | ReferenceCardElement,
+    | ReferenceCardElement
+    | CodeTaskElement,
     Field(discriminator="kind"),
 ]

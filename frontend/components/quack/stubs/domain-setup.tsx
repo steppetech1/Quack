@@ -16,9 +16,7 @@ function NewDomainMock() {
   const router = useRouter();
   const id = useId();
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <NodeChains />
-      <PageShell width={960} className="relative z-10 flex flex-col [&>div]:flex [&>div]:flex-1 [&>div]:flex-col">
+    <PageShell>
       <BackLink href="/">{tx.shell.subjects}</BackLink>
       <StubHeader title={t.title} body={t.body} />
       <form
@@ -35,7 +33,6 @@ function NewDomainMock() {
         </button>
       </form>
     </PageShell>
-    </div>
   );
 }
 

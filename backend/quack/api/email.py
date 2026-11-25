@@ -83,8 +83,21 @@ class ResendEmailSender:
         await self._client.aclose()
 
 
+class LogEmailSender:
+    """Local dev only (`AUTH_EMAIL_LOG_ONLY`): writes the login link to the log, sends nothing."""
+
+    async def send_login_link(self, *, to: str, link: str) -> None:
+        log.warning("login_link_not_mailed", to=to, link=link)
+
+    async def aclose(self) -> None:
+        return None
+
+
 def create_email_sender(settings: Settings) -> EmailSender:
-    """`EmailSender` on Resend (Т-§19.1); only for `api`."""
+    """`EmailSender` on Resend (Т-§19.1); only for `api`. `auth_email_log_only` (never in prod):
+    the link is logged, not mailed."""
+    if settings.auth_email_log_only:
+        return LogEmailSender()
     return ResendEmailSender(
         api_key=settings.email_api_key.get_secret_value(),
         sender=settings.auth_email_from,

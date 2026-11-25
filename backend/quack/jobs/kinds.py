@@ -77,7 +77,12 @@ KIND_LLM_ROLES: dict[str, tuple[str, ...]] = {
     "exports.cleanup": (),
     "calibration.weekly": (),
     "task.solution_space": ("solution_space",),
-    "agent.task_generation": ("task_generator", "task_arbiter"),
+    "agent.task_generation": (
+        "task_generator",
+        "task_arbiter",
+        "code_task_generator",
+        "code_task_checker",
+    ),
     "agent.solution_space": ("solution_space",),
     "check.known_claim": ("task_generator",),
     "agent.illustration": ("illustrator",),

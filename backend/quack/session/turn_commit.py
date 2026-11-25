@@ -279,7 +279,7 @@ def turn_batch(
         blocks=[records.BodyBlockRecord(**b.model_dump()) for b in output.p2_body.blocks],
         head=records.TurnHeadRecord(
             intent=head.intent,
-            target_skill_ids=[labels.resolve("skill", s) for s in head.target_skills],
+            target_skill_ids=_known_skill_ids(labels, head.target_skills),
             verdict_stance=head.verdict_stance,
             branch_type=head.branch_type,
             approach=head.approach,
@@ -580,6 +580,19 @@ def _optional(labels: LabelMap, kind: Any, label: str | None) -> UUID | None:
     return None if label is None else labels.resolve(kind, label)
 
 
+def _known_skill_ids(labels: LabelMap, names: list[str]) -> list[UUID]:
+    """Ids of the skill labels of the table. A label that is not in it survived the guard only
+    because its retries ran out (Т-§12.4: the turn is shown and the case logged): it is dropped
+    here, so the shown turn is still committed — a subject without skills has no valid label."""
+    ids: list[UUID] = []
+    for name in names:
+        try:
+            ids.append(labels.resolve("skill", name))
+        except UnknownLabelError:
+            log.warning("turn_unknown_skill_label_dropped", label=name)
+    return ids
+
+
 def _requestable(request: AgentRequest) -> bool:
     """`known_check` is `check.known_claim` over the skills of a topic (WP8.2): without a topic
     label there is nothing to check (review B of #117). A `task_generation` without a skill or a
@@ -628,6 +641,7 @@ def _request_record(request: AgentRequest, labels: LabelMap) -> records.AgentReq
             task_id=_optional(labels, "task", params.task),
             misconception_id=_optional(labels, "misconception", params.misconception),
             description=params.description,
+            language=params.language,
         ),
         needed_in_session=request.needed_in_session,
     )
@@ -645,10 +659,9 @@ def _turn_markup(
         tasks=tasks,
         elements=[_element_record(e, labels) for e in markup.elements],
         exposures=[
-            records.ExposureRecord(
-                skill_id=labels.resolve("skill", e.skill), kind=e.kind, approach=e.approach
-            )
+            records.ExposureRecord(skill_id=skill_id, kind=e.kind, approach=e.approach)
             for e in markup.exposures
+            for skill_id in _known_skill_ids(labels, [e.skill])
         ],
         targets_misconception_id=_optional(labels, "misconception", markup.targets_misconception),
         plan_update=_plan_record(plan, labels),
@@ -711,6 +724,8 @@ def _element_record(element: Element, labels: LabelMap) -> records.ElementRecord
         data["request_id"] = _optional(labels, "request", data.pop("request"))
     elif element.kind == "material_link":
         data["chunk_id"] = labels.resolve("chunk", data.pop("chunk"))
+    elif element.kind == "code_task":
+        data["task_id"] = labels.resolve("task", data.pop("task"))
     return _ELEMENT_RECORD.validate_python(data)
 
 

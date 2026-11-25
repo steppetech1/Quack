@@ -340,6 +340,19 @@ async def test_unknown_label_writes_nothing(pg_db: Db) -> None:
     assert await _manifests(pg_db, learner_id) == []
 
 
+def test_skill_label_beyond_the_table_is_dropped_not_fatal() -> None:
+    """A subject without skills: the guard's retries ran out on a label the table lacks, the
+    shown turn is still committed, without that skill."""
+    output = _bare(exposures=[{"skill": "H1", "kind": "explained", "approach": "none"}])
+    head = output.p1_head.model_copy(update={"target_skills": ["H1", "S1"]})
+
+    batch = _batch(uuid4(), output.model_copy(update={"p1_head": head}))
+
+    committed = batch.events[0].payload
+    assert committed.head.target_skill_ids == [SKILL]
+    assert committed.markup.exposures == []
+
+
 def test_turn_without_side_effects_is_one_event() -> None:
     batch = _batch(uuid4(), _bare())
 

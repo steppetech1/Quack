@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
-import { AllGraphs } from "@/components/quack/all-graphs";
-import { getDict, getLocale } from "@/lib/i18n/server";
+import { Suspense } from "react";
+import { DomainView } from "@/components/quack/domain-view";
+import { API_MODE } from "@/lib/api/client";
+import { getDict, getLocale, getMocks } from "@/lib/i18n/server";
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getLocale();
@@ -9,5 +11,9 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default function Home() {
-  return <AllGraphs />;
+  return (
+    <Suspense fallback={null}>
+      <DomainView />
+    </Suspense>
+  );
 }

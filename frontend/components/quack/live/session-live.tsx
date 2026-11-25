@@ -24,6 +24,8 @@ import { ChatTurnActions, type NoteHubTarget, type NoteTopicTarget, type Resolve
 import { useErrorText } from "./error-text";
 import { jobRows } from "./jobs-plaque";
 import { DemoPanel, type OpenDemo } from "./demo-panel";
+import { CodePanel, type OpenCode } from "./code-panel";
+import { elementCodeTask, type CodeTask } from "@/lib/api/code";
 import { PlotCard, type PlotSpec } from "./plot-card";
 import { SessionCorner, useSessionPlan } from "./plan-graph-live";
 
@@ -410,6 +412,8 @@ export function SessionLive({ id }: { id: string }) {
   });
   const refreshJobs = bg.refresh;
   const [demo, setDemo] = useState<OpenDemo | null>(null);
+  /** The code editor of a task element (Т-§6.10), opened on the right as the demo panel */
+  const [code, setCode] = useState<(OpenCode & { blockId: string }) | null>(null);
   // a demo goes into the queue a moment after the turn: the plan shows it as being made once the builder starts
   const building = bg.jobs.some((j) => j.kind === "agent.viz");
   useEffect(() => {
@@ -905,7 +909,18 @@ export function SessionLive({ id }: { id: string }) {
                 // the forms of a turn stay right after its text, in the order of the session, answered or not
                 ...(l.seq === undefined
                   ? []
-                  : elems.filter((x) => x.turnSeq === l.seq).map((el) => <ElementCard key={el.blockId} el={el} disabled={busy} onRespond={(r) => void respond(el, r)} />)),
+                  : elems
+                      .filter((x) => x.turnSeq === l.seq)
+                      .map((el) => (
+                        <ElementCard
+                          key={el.blockId}
+                          el={el}
+                          disabled={busy}
+                          sessionId={id}
+                          onRespond={(r) => void respond(el, r)}
+                          onOpenCode={(task) => setCode({ task, title: tx.code.taskLabel, blockId: el.blockId })}
+                        />
+                      ))),
               ];
             }),
             streaming !== null && (
@@ -968,6 +983,18 @@ export function SessionLive({ id }: { id: string }) {
 
       <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={setDemo} />
       {demo && <DemoPanel demo={demo} onClose={() => setDemo(null)} />}
+      {code && (
+        <CodePanel
+          key={code.task.task_id}
+          open={code}
+          sessionId={id}
+          onClose={() => setCode(null)}
+          onVerdict={(outcome) => {
+            const blockId = code.blockId;
+            setElems((all) => all.map((x) => (x.blockId === blockId ? { ...x, answered: true, verdict: outcome } : x)));
+          }}
+        />
+      )}
 
       <div className="px-4 pb-4 md:px-7 md:pb-5">
         {teacherStatusKey && (
@@ -1014,22 +1041,59 @@ export function SessionLive({ id }: { id: string }) {
 }
 
 /** A task or a question of the teacher: its prompt and a box for the answer. Other element kinds show only what they carry */
-function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean; onRespond: (text: string) => void }) {
+function ElementCard({
+  el,
+  disabled,
+  onRespond,
+  sessionId,
+  onOpenCode,
+}: {
+  el: Elem;
+  disabled: boolean;
+  onRespond: (text: string) => void;
+  sessionId?: string;
+  onOpenCode?: (task: CodeTask) => void;
+}) {
   const tx = useT();
   const [text, setText] = useState("");
   const e = el.element as { kind: string; prompt?: string; request?: string | null; request_id?: string | null; plot?: unknown };
-  const answerable = ANSWERABLE.has(e.kind);
   /** A live card (its turn is not committed yet): the same box as the committed one, so nothing moves at commit, but it cannot be answered */
   const inactive = el.turnSeq === null;
+  /** Т-§6.10: a task element may stand for a code task; elements carry no task id, so the backend is asked once */
+  const [codeTask, setCodeTask] = useState<CodeTask | null>(null);
+  const turnSeq = el.turnSeq;
+  const elementId = (el.element as { element_id?: string }).element_id;
+  useEffect(() => {
+    if ((e.kind !== "task" && e.kind !== "code_task") || turnSeq === null || !sessionId || !elementId || !onOpenCode) return;
+    let alive = true;
+    elementCodeTask(sessionId, turnSeq, elementId)
+      .then((found) => alive && setCodeTask(found))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // onOpenCode is a fresh closure every render; asking once per element is enough
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [e.kind, turnSeq, sessionId, elementId]);
+  const answerable = ANSWERABLE.has(e.kind) && !codeTask;
   const viz = e.kind === "visualization" ? e : null;
   return (
     <section aria-label={tx.live.taskFromTeacher} aria-busy={inactive || undefined} className="rounded-[2px] border border-seam p-4">
-      <p className="caps text-paper-dim">{e.kind === "task" ? tx.live.taskFromTeacher : e.kind.replace(/_/g, " ")}</p>
+      <p className="caps text-paper-dim">
+        {e.kind === "task" ? tx.live.taskFromTeacher : e.kind === "code_task" ? tx.code.taskLabel : e.kind.replace(/_/g, " ")}
+      </p>
       {e.prompt && (
         <div className="mt-2 text-paper">
           <RichText text={e.prompt} />
         </div>
       )}
+      {/* a code task element carries no text of its own: the statement comes with the task */}
+      {e.kind === "code_task" && codeTask?.condition && (
+        <div className="mt-2 text-paper">
+          <RichText text={codeTask.condition} />
+        </div>
+      )}
+      {e.kind === "code_task" && !codeTask && !inactive && <p className="mt-2 text-small text-paper-dim">{tx.code.loading}</p>}
       {viz &&
         // `request_id` is resolved only once the turn is committed (ТЗ §12.3): a live `element` frame still
         // carries the raw `request` label and has nothing fetchable yet (Д-B-178 serves by `request_id`)
@@ -1044,6 +1108,18 @@ function ElementCard({ el, disabled, onRespond }: { el: Elem; disabled: boolean;
           viz.plot ? null : <p className="mt-2 text-small text-paper-dim">{tx.live.vizPreparing}</p>
         ))}
       {viz?.plot ? <PlotCard plot={viz.plot as PlotSpec} /> : null}
+      {codeTask && (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="button" onClick={() => onOpenCode?.(codeTask)} className={PRIMARY_BTN}>
+            {tx.code.openEditor}
+          </button>
+          {(el.verdict === "correct" || el.verdict === "partial" || el.verdict === "incorrect") && (
+            <p role="status" className={cn("text-body", el.verdict === "correct" ? "text-st-solid" : "text-st-confused")}>
+              {tx.code.outcome[el.verdict]}
+            </p>
+          )}
+        </div>
+      )}
       {answerable && (
         <form
           className="mt-3"
