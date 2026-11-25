@@ -181,6 +181,63 @@ class TopicsOutput(_Strict):
     merges: list[TopicMergeDecision]
 
 
+# --- builder@2: Mode `Structure` (TZ §4.2, §5) ---
+
+
+type SkillKind = Literal["fact", "concept", "procedure", "principle"]
+
+
+class CoreSkillSpec(_Strict):
+    """Specification of a topic's single core skill."""
+
+    name: str
+    definition: str
+    exemplar: str
+    kind: SkillKind
+
+
+class RequiresClaim(_Strict):
+    """Prerequisite claim from a topic candidate's core skill to another core skill (`S…`)."""
+
+    target_core_skill_label: str
+    score: Annotated[float, Field(ge=-1.0, le=1.0)]
+    origin: Literal["material", "model"]
+
+
+class TopicCandidateDecision(_Strict):
+    """Resolution of one `MaterialTopicCandidate` at `candidate_index`."""
+
+    candidate_index: int
+    action: Literal["link", "create"]
+    target_topic: str | None
+    name: str | None
+    description: str | None
+    core_skill: CoreSkillSpec | None
+    requires: list[RequiresClaim]
+
+
+class ProvisionalSkillDecision(_Strict):
+    """Resolution of one provisional skill (`skill`, label `S…`)."""
+
+    skill: str
+    action: Literal["same", "keep", "move", "core_of_new_topic", "other_topic_skill"]
+    target_skill: str | None
+    target_topic: str | None
+    definition: str | None
+    exemplar: str | None
+    kind: SkillKind | None
+    topic_name: str | None
+    topic_description: str | None
+    core_skill: CoreSkillSpec | None
+
+
+class StructureOutput(_Strict):
+    """Output of `builder@2` in Mode `Structure`."""
+
+    topic_candidates: list[TopicCandidateDecision]
+    provisional_skills: list[ProvisionalSkillDecision]
+
+
 # --- misconception_describer@1 (Т-§9.3) ---
 
 

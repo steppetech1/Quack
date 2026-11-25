@@ -21,11 +21,11 @@ from quack.agents.hygiene import (
     run_hygiene,
 )
 from quack.agents.schemas import (
+    CoreSkillSpec,
     DuplicateVerdict,
     HygieneOutput,
-    TopicMergeDecision,
-    TopicPlacement,
-    TopicsOutput,
+    ProvisionalSkillDecision,
+    StructureOutput,
 )
 from quack.config import Settings
 from quack.db import Db
@@ -142,21 +142,44 @@ class _TopicsGateway:
         **kwargs: Any,
     ) -> LLMResult[Any]:
         self.calls.append({"role": role, "model": response_model.__name__, **variables})
-        assert response_model is TopicsOutput
-        # T1 is "Statistics: binomial distribution" [proposed]
-        # T2 is "binomial distribution" [active]
-        # T3 is "normal distribution" [active]
-        # S1 fits T2, S2 creates a new canonical topic (accidental domain prefix stripped)
-        out = TopicsOutput(
-            placements=[
-                TopicPlacement(skill="S1", topic="T1", new_topic=None),
-                TopicPlacement(
-                    skill="S2", topic=None, new_topic="Statistics: Poisson distribution"
+        assert response_model is StructureOutput
+        # Deterministic topic cleanup merged T1 ("Statistics: binomial distribution") into
+        # T2 ("binomial distribution") before Structure mode ran!
+        # Remaining topics: T1 = "binomial distribution" [active],
+        # T2 = "normal distribution" [active]
+        # S2 fits T1 (move), S3 creates a new canonical topic (accidental domain prefix stripped)
+        out = StructureOutput(
+            topic_candidates=[],
+            provisional_skills=[
+                ProvisionalSkillDecision(
+                    skill="S2",
+                    action="move",
+                    target_skill=None,
+                    target_topic="T1",
+                    definition="Mean of binomial is np",
+                    exemplar="Find E[X] for Bin(10, 0.3)",
+                    kind="fact",
+                    topic_name=None,
+                    topic_description=None,
+                    core_skill=None,
                 ),
-            ],
-            merges=[
-                # Propose active -> proposed to verify safety net swaps to active target
-                TopicMergeDecision(from_topic="T2", into_topic="T1"),
+                ProvisionalSkillDecision(
+                    skill="S3",
+                    action="core_of_new_topic",
+                    target_skill=None,
+                    target_topic=None,
+                    definition="Computes Poisson PMF",
+                    exemplar="Find P(X=2) for Poisson(3)",
+                    kind="procedure",
+                    topic_name="Statistics: Poisson distribution",
+                    topic_description="Discrete count distribution",
+                    core_skill=CoreSkillSpec(
+                        name="Poisson lambda",
+                        definition="Computes Poisson PMF",
+                        exemplar="Find P(X=2) for Poisson(3)",
+                        kind="procedure",
+                    ),
+                ),
             ],
         )
         return LLMResult(
@@ -173,13 +196,24 @@ async def test_hygiene_places_unassigned_skills_merges_topics_and_logs_tokens(
 ) -> None:
     learner_id = await create_learner(pg_db)
     t_prefixed, t_binom, t_norm = uuid4(), uuid4(), uuid4()
-    s1, s2 = uuid4(), uuid4()
+    s_core, s1, s2 = uuid4(), uuid4(), uuid4()
     graph = DomainGraph(
         domain_name="Statistics",
         topics=[
             TopicNode(t_prefixed, "Statistics: binomial distribution", "proposed"),
-            TopicNode(t_binom, "binomial distribution", "active", skill_names=("Binomial PMF",)),
+            TopicNode(
+                t_binom,
+                "binomial distribution",
+                "active",
+                skill_names=("Binomial PMF",),
+                core_skill_id=s_core,
+                core_skill_name="Binomial PMF",
+                skill_ids=(s_core,),
+            ),
             TopicNode(t_norm, "normal distribution", "active"),
+        ],
+        skills=[
+            SkillNode(s_core, "Binomial PMF", "active", [], core=True, topic_id=t_binom),
         ],
         unassigned_skills=[
             UnassignedSkillNode(s1, "Binomial mean np", "provisional"),
@@ -190,7 +224,14 @@ async def test_hygiene_places_unassigned_skills_merges_topics_and_logs_tokens(
     ctx = cast(JobContext, SimpleNamespace(db=pg_db, llm=gateway, settings=SETTINGS, neo4j=None))
 
     written = await run_hygiene(ctx, graph, learner_id=learner_id, domain_id=fx.DOMAIN)
-    assert written == ["topic.merged", "skill.placed", "topic.created", "skill.placed"]
+    assert written == [
+        "topic.merged",
+        "skill.placed",
+        "skill.created",
+        "topic.created",
+        "skill.placed",
+        "skill.created",
+    ]
 
     rows = await pg_db.fetch_all(
         "SELECT type, payload FROM core.events WHERE learner_id = %(l)s ORDER BY seq",
@@ -199,16 +240,16 @@ async def test_hygiene_places_unassigned_skills_merges_topics_and_logs_tokens(
     assert rows[0]["type"] == "topic.merged"
     assert rows[0]["payload"] == {"from_id": str(t_prefixed), "into_id": str(t_binom)}
     assert rows[1]["type"] == "skill.placed"
-    # S1 pointed to T1 (merged away), so it resolves through merge_map to t_binom!
     assert rows[1]["payload"]["topic_id"] == str(t_binom)
-    assert rows[2]["type"] == "topic.created"
+    assert rows[3]["type"] == "topic.created"
     # Safety net stripped "Statistics: " prefix
-    assert rows[2]["payload"]["name"] == "Poisson distribution"
-    assert rows[3]["type"] == "skill.placed"
-    assert rows[3]["payload"]["topic_id"] == rows[2]["payload"]["topic_id"]
+    assert rows[3]["payload"]["name"] == "Poisson distribution"
+    assert rows[4]["type"] == "skill.placed"
+    assert rows[4]["payload"]["topic_id"] == rows[3]["payload"]["topic_id"]
 
     captured = capsys.readouterr().out
     assert "builder_hygiene_completed" in captured
+    assert "structure_writer_completed" in captured
     assert '"calls": 1' in captured or "calls=1" in captured
     assert '"input_tokens": 120' in captured or "input_tokens=120" in captured
     assert '"output_tokens": 45' in captured or "output_tokens=45" in captured

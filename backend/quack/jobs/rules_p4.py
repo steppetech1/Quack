@@ -394,19 +394,52 @@ def _has_new_skill(markup: Any) -> bool:
     return any(t.new_skill is not None for t in tests)
 
 
-def _task_created(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+def _turn_hygiene(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
+    if event.domain_id is None or not any(_has_new_skill(t) for t in p.markup.tasks):
+        return []
+    return [
+        _hygiene(
+            event,
+            event.domain_id,
+            "new_skills",
+            run_at=event.occurred_at + timedelta(minutes=s.curation_defer_min),
+        )
+    ]
+
+
+def _task_created(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
     plans: list[JobPlan] = []
     if p.source in BANK_TASK_SOURCES:
         plans.append(_plan(event, "task.solution_space", payload={"task_id": str(p.task_id)}))
     if event.domain_id is not None and _has_new_skill(p.markup):
-        plans.append(_hygiene(event, event.domain_id, "new_skills"))
+        plans.append(
+            _hygiene(
+                event,
+                event.domain_id,
+                "new_skills",
+                run_at=event.occurred_at + timedelta(minutes=s.curation_defer_min),
+            )
+        )
     return plans
 
 
-def _observation_hygiene(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+def _observation_hygiene(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
     if event.domain_id is None or not any(el.new_skill is not None for el in p.elements):
         return []
-    return [_hygiene(event, event.domain_id, "new_skills")]
+    return [
+        _hygiene(
+            event,
+            event.domain_id,
+            "new_skills",
+            run_at=event.occurred_at + timedelta(minutes=s.curation_defer_min),
+        )
+    ]
+
+
+def _material_parsed_hygiene(event: StoredEvent, _s: Settings, _p: Any) -> list[JobPlan]:
+    if event.domain_id is None:
+        return []
+    return [_hygiene(event, event.domain_id, "material_parsed")]
 
 
 def _agent_requested(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
@@ -553,23 +586,35 @@ def _skill_split_reextract(event: StoredEvent, p: Any, facts: RuleFacts) -> list
     ]
 
 
-def _hygiene(event: StoredEvent, domain_id: UUID, reason: str) -> JobPlan:
+def _hygiene(
+    event: StoredEvent,
+    domain_id: UUID,
+    reason: str,
+    *,
+    run_at: datetime | None = None,
+    session_id: UUID | None = None,
+) -> JobPlan:
     """`Т-§4.10`: one waiting hygiene job per domain; `domain:{id}` is the lock of the writes to
     the structure of the domain (WP7.1)."""
+    payload: dict[str, Any] = {"domain_id": str(domain_id), "reason": reason}
+    if session_id is not None:
+        payload["session_id"] = str(session_id)
     return _plan(
         event,
         "graph.hygiene",
         lock_key=f"domain:{domain_id}",
         coalesce_key=f"hygiene:{domain_id}",
         graph=True,
-        payload={"domain_id": str(domain_id), "reason": reason},
+        run_at=run_at,
+        payload=payload,
     )
 
 
-def _session_hygiene(event: StoredEvent, _p: Any, facts: RuleFacts) -> list[JobPlan]:
+def _session_hygiene(event: StoredEvent, p: Any, facts: RuleFacts) -> list[JobPlan]:
     if not facts.temporary_entities or facts.domain_id is None:
         return []
-    return [_hygiene(event, facts.domain_id, "temporary_entities")]
+    sid = getattr(p, "session_id", None) or event.session_id
+    return [_hygiene(event, facts.domain_id, "temporary_entities", session_id=sid)]
 
 
 def _topics_hygiene(event: StoredEvent, p: Any, facts: RuleFacts) -> list[JobPlan]:
@@ -648,9 +693,21 @@ RULES: tuple[RuleRow, ...] = (
         "the turn set the current step or the next steps: the demos for them are decided ahead",
         _turn_viz_plan,
     ),
+    RuleRow(
+        "turn.committed",
+        ("graph.hygiene",),
+        "markup.tasks names a new skill",
+        _turn_hygiene,
+    ),
     RuleRow("photo.uploaded", ("photo.pipeline",), "always", _photo_uploaded),
     RuleRow(
         "material.uploaded", ("material.parse",), "P1 with session_id, else P2", _material_uploaded
+    ),
+    RuleRow(
+        "material.parsed",
+        ("graph.hygiene",),
+        "material parsed -> structure hygiene of the domain",
+        _material_parsed_hygiene,
     ),
     RuleRow(
         "task.created",
