@@ -126,7 +126,12 @@ from quack.session.tools import (
     run_tool,
     tool_definition,
 )
-from quack.session.turn_commit import AnsweredAction, LearnerText, TurnManifestRow
+from quack.session.turn_commit import (
+    AnsweredAction,
+    LearnerText,
+    TurnManifestRow,
+    focus_inputs_from_events,
+)
 from quack.session.turn_graph import AssembledTurn, Effort, GuardInputs, MarkupFix, Role
 from quack.session.turn_inputs import (
     cards_for_turn,
@@ -211,6 +216,9 @@ class SessionJournal:
     answered: AnsweredAction | None = None
     answered_verdict: Verdict | None = None
     answer_seq: int | None = None  # the `answer.submitted` the turn answers
+    message_topic_id: UUID | None = None
+    session_topic_id: UUID | None = None
+    turn_skill_ids: list[UUID] = field(default_factory=list)
 
 
 def _latest_verdicts(events: Sequence[StoredEvent]) -> dict[tuple[int, str], Verdict]:
@@ -440,6 +448,7 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
     }
     task_skills = list(dict.fromkeys(s for t in open_tasks for s in skills[t]))
     spoiler_tasks = [t for t in open_tasks if t not in solution_asked]
+    message_topic_id, session_topic_id, turn_skill_ids = focus_inputs_from_events(ordered)
     journal = SessionJournal(
         goal=goal,
         open_tasks=open_tasks,
@@ -455,6 +464,9 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
         revised=_revised(ordered),
         canvas_lines=_canvas(ordered)[0],
         voice=_canvas(ordered)[1],
+        message_topic_id=message_topic_id,
+        session_topic_id=session_topic_id,
+        turn_skill_ids=turn_skill_ids,
     )
     action = next((e for e in ordered if e.seq == action_seq), None)
     if action is None:
@@ -1205,6 +1217,32 @@ class MemoryTurnContextSource:
             teacher_fallback=role == "teacher_fallback",
             projector_lag=memory_slice.lag_degraded,
         )
+        skill_topics: dict[UUID, UUID] = {
+            s.skill_id: m.topic_id for m in memory for s in m.skills
+        }
+        for s in memory_slice.skills:
+            if s.topic_id is not None:
+                skill_topics[s.skill_id] = s.topic_id
+        if (
+            not unavailable
+            and journal.message_topic_id is None
+            and journal.session_topic_id is None
+        ):
+            missing_skills = [
+                sid for sid in dict.fromkeys(journal.turn_skill_ids) if sid not in skill_topics
+            ]
+            if missing_skills:
+                try:
+                    extra_slice = await reader.slice_for_turn(
+                        learner_id,
+                        session_id,
+                        SliceFocus(skill_ids=missing_skills, domain_id=request.domain_id),
+                    )
+                    for s in extra_slice.skills:
+                        if s.topic_id is not None:
+                            skill_topics[s.skill_id] = s.topic_id
+                except NEO4J_UNAVAILABLE:
+                    pass
         return TurnSetup(
             assembled=AssembledTurn(
                 request=stream,
@@ -1260,6 +1298,10 @@ class MemoryTurnContextSource:
             answered=journal.answered,
             timings=parts,
             fix_markup=fix_markup,
+            message_topic_id=journal.message_topic_id,
+            session_topic_id=journal.session_topic_id,
+            prior_turn_skill_ids=journal.turn_skill_ids,
+            skill_topics=skill_topics,
         )
 
 

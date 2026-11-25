@@ -100,7 +100,7 @@ ROWS: tuple[ProjectorRow, ...] = (
          "a hub «весь домен» is not deleted", "Т-§19.5"),
     # --- tasks and verdicts (Т-§5, Т-§6, Т-§7) ---
     _row("task.created", "BC",
-         ("task_id", "family_id", "source", "verification", *_MARKUP_TESTS,
+         ("task_id", "family_id", "source", "verification", "topic_id", *_MARKUP_TESTS,
           "markup.options.option_id", "markup.options.misconception_id",
           "markup.options.hypothesis"),
          "Task, Option, TESTS {level, part, context}, HAS_OPTION, TRAPS; skill descriptions -> "

@@ -877,7 +877,14 @@ def _markup_need(markup: TaskMarkupRecord, domain: UUID | None) -> Need:
 def _task_needs(event: StoredEvent) -> Need:
     if event.type == "task.created":
         p = _payload(event, TaskCreated)
-        return _markup_need(p.markup, event.domain_id)
+        need = _markup_need(p.markup, event.domain_id)
+        if p.topic_id is not None:
+            need = Need(
+                nodes=need.nodes | {("Topic", str(p.topic_id))},
+                neighbourhoods=need.neighbourhoods,
+                domain_labels=need.domain_labels,
+            )
+        return need
     check = _payload(event, _CHECK_MODELS[event.type])
     need = Need(neighbourhoods=frozenset({("Task", str(check.task_id))}))
     if check.corrected_markup is not None:
@@ -1074,7 +1081,10 @@ def _task_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
             },
         ),
     ]
-    return head + _Markup(event, view, task, domain).apply(p.markup, replace=False)
+    focus = str(p.topic_id) if p.topic_id is not None else None
+    return head + _Markup(event, view, task, domain, focus_topic_id=focus).apply(
+        p.markup, replace=False
+    )
 
 
 def _task_checked(event: StoredEvent, view: SliceView) -> list[Mutation]:

@@ -17,7 +17,8 @@ Ids come from the key of the task, so a retry writes nothing new (law 5).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from quack.compute_client.client import ComputeClient
@@ -61,6 +62,9 @@ class SeminarTask:
     kind: AnswerType = "expression"
     course_context: str = ""
     domain_id: UUID | None = None
+    topic_id: UUID | None = None
+    topic_skill_ids: Sequence[UUID] = ()
+    topic_skill_names: Mapping[UUID, str] = field(default_factory=dict)
 
 
 def seminar_task_id(key: str) -> UUID:
@@ -89,7 +93,9 @@ async def create_seminar_task(
     prompt = settings.llm_roles[GENERATOR_ROLE].prompt
     if prompt is None:
         raise ValueError(f"role {GENERATOR_ROLE!r} has no prompt")
-    labels = LabelMap.build(settings, skills=[task.skill_id])
+    labels = LabelMap.build(
+        settings, skills=list(dict.fromkeys([task.skill_id, *task.topic_skill_ids]))
+    )
     request = GenerationRequest(
         key=task.key,
         skill_id=task.skill_id,
@@ -98,6 +104,9 @@ async def create_seminar_task(
         level=task.level,
         kind=task.kind,
         course_context=task.course_context,
+        topic_id=task.topic_id,
+        topic_skill_ids=task.topic_skill_ids,
+        topic_skill_names=task.topic_skill_names,
     )
     variables = generator_variables(request, labels)
     variables["purpose"] = SEMINAR_PURPOSE
@@ -128,7 +137,7 @@ async def create_seminar_task(
         markup,
         learner_id=learner_id,
         key=task.key,
-        skill_names={task.skill_id: task.skill_name},
+        skill_names={**task.topic_skill_names, task.skill_id: task.skill_name},
         generator_solution=draft.solution,
         source=None,
         compute=compute,
@@ -151,5 +160,6 @@ async def create_seminar_task(
         actor=prompt,
         idempotency_key=f"task:seminar:{task.key}",
         domain_id=task.domain_id,
+        topic_id=task.topic_id,
     )
     return task_id
