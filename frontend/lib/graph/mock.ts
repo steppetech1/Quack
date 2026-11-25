@@ -27,6 +27,8 @@ function topicOf(id: string, name: string, kind: Kind): GraphTopic {
   return { id, name, status: "active", visibility: "shown", displayState: code, nearestDueAtMs: due };
 }
 
+const MOCK_EDGE_CONFIDENCES = [1.0, 0.85, 0.5] as const;
+
 /** Calculus, built from the existing presentation mock */
 function matanGraph(locale: Locale): GraphModel | undefined {
   const domain = getMocks(locale).domains.find((d) => d.id === "matan");
@@ -41,13 +43,14 @@ function matanGraph(locale: Locale): GraphModel | undefined {
   hubs.push({ id: "all", name: domain.title, kind: "domain_all" });
   // Asked about in calculus, but there is no subject for it: it stays here with status off_domain
   topics.push({ id: "wave", name: locale === "en" ? "Wave–particle duality" : "Корпускулярно-волновой дуализм", status: "off_domain", visibility: "shown" });
+  let edgeIdx = 0;
   return {
     domainId: domain.id,
     domainName: domain.title,
     topics,
     hubs,
     includes: domain.topics.filter((t) => t.hubId).map((t) => ({ hubId: t.hubId!, topicId: t.id })),
-    requires: domain.topics.flatMap((t) => t.requires.map((r) => ({ topicId: t.id, requiresId: r }))),
+    requires: domain.topics.flatMap((t) => t.requires.map((r) => ({ topicId: t.id, requiresId: r, confidence: MOCK_EDGE_CONFIDENCES[edgeIdx++ % MOCK_EDGE_CONFIDENCES.length] }))),
     otherDomain: domain.outside.map((o) => ({ topic: topicOf(o.id, o.title, "solid"), domainId: "linal", domainName: o.fromDomain })),
     recentSessions: domain.sessions.map((s) => ({
       id: s.id,
@@ -117,7 +120,7 @@ function linalGraph(locale: Locale): GraphModel {
     ],
     hubs,
     includes,
-    requires: ROWS.flatMap((r) => r.requires.map((q) => ({ topicId: r.id, requiresId: q }))),
+    requires: ROWS.flatMap((r, i) => r.requires.map((q, j) => ({ topicId: r.id, requiresId: q, confidence: MOCK_EDGE_CONFIDENCES[(i + j) % MOCK_EDGE_CONFIDENCES.length] }))),
     recentSessions: [
       { id: "l1", atMs: MOCK_NOW_MS - 1 * DAY, topicIds: ["det", "matmul"] },
       { id: "l2", atMs: MOCK_NOW_MS - 3 * DAY, topicIds: ["gauss", "inverse"] },

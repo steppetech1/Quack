@@ -226,7 +226,7 @@ export function graphModelFromApi(
       deadlineAtMs: h.deadline_at_ms ?? undefined,
     })),
     includes: hubs.flatMap((h) => (h.topics ?? []).map((t) => ({ hubId: h.hub_id, topicId: t.topic_id }))),
-    requires: graph.requires.map((e) => ({ topicId: e.to_topic_id, requiresId: e.from_topic_id })),
+    requires: graph.requires.map((e) => ({ topicId: e.to_topic_id, requiresId: e.from_topic_id, confidence: e.confidence })),
     otherDomain: [],
     recentSessions: history
       .filter((x) => x.domain_id === summary.domain_id && x.topic_id)

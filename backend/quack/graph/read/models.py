@@ -185,11 +185,13 @@ class WhyFacts(_Fact):
 
 
 class TopicRequires(_Fact):
-    """A derived link between topics (Т-§4.6); weight — the number of skill links."""
+    """A derived link between topics (Т-§4.6); weight — the number of skill links,
+    confidence — max confidence across those links."""
 
     from_topic_id: UUID
     to_topic_id: UUID
     weight: int = Field(ge=1)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class ReviewScope(_Fact):
