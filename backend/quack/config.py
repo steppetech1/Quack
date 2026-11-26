@@ -191,7 +191,8 @@ def default_llm_roles() -> dict[str, RoleConfig]:
     `llm_timeout_sec` (60 s). Classes of roles with two uses (`recognizer`, `builder`) and of
     `voice` — D-B-101.
     Output limits of ten roles are set by the stand measurement with `effort` (D-B-134): the
-    Т-§11.1 figure of 4096 came from a spike without a reasoning level."""
+    Т-§11.1 figure of 4096 came from a spike without a reasoning level. `material_parser`: a
+    TOC call of about 3.7k input tokens spent 7.7k at `high` and was cut at 8192 (2026-11-27)."""
     return {
         "teacher": _role(WONDER, "low", 8192, "P0", "teacher@4", 45.0),
         "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@4", 30.0),
@@ -206,7 +207,7 @@ def default_llm_roles() -> dict[str, RoleConfig]:
         "analyst": _role(SPARK, "high", 16384, "P2", "analyst@1"),
         "analyst_deep": _role(WONDER, "high", 16384, "P2", "analyst@1"),
         "builder": _role(SPARK, "high", 8192, "P2", "builder@2"),
-        "material_parser": _role(SPARK, "high", 4096, "P2", "material_parser@2"),
+        "material_parser": _role(SPARK, "high", 16384, "P2", "material_parser@2"),
         "task_generator": _role(SPARK, "high", 8192, "P2", "task_generator@2").model_copy(
             update={"hard_model": WONDER}
         ),

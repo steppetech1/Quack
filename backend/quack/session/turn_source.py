@@ -314,6 +314,21 @@ _SLIDES = "presentationml.presentation"
 _UNREADABLE = ("failed", "uploaded")
 
 
+def _graph_state(status: str) -> str:
+    """Where the topics of a readable file are: the topic graph is built from it by the
+    background step of the material (`material.parse`), never by the teacher. Without this a
+    teacher asked for «граф тем» by a file drew one in text and called it ready (2026-11-27)."""
+    if status == "parsed":
+        return "Its topics are already on the learner's topic graph. "
+    return (
+        "Its topics are still being placed on the learner's topic graph by a background step; "
+        "the graph shows them by itself when it is done. If the learner asks for a graph or map "
+        "of its topics, say that it is being built and will appear on the graph; you may list "
+        "the topics in words, but do not draw a graph in text and do not call it built or "
+        "ready. "
+    )
+
+
 def render_attached(
     materials: Sequence[tuple[dict[str, Any], Sequence[tuple[int, str]]]], *, budget: int
 ) -> str:
@@ -345,7 +360,7 @@ def render_attached(
                 "cannot see it yet; do not guess what is in it."
             )
             continue
-        out.append(f"{head} ({len(pages)} {unit}s). Its text, as data:")
+        out.append(f"{head} ({len(pages)} {unit}s). {_graph_state(status)}Its text, as data:")
         share = left // waiting
         waiting -= 1
         shown = 0

@@ -37,7 +37,7 @@ T111: dict[str, tuple[str, str | None, int | None, str]] = {
     "analyst": (SPARK, "high", 16384, "P2"),
     "analyst_deep": (WONDER, "high", 16384, "P2"),
     "builder": (SPARK, "high", 8192, "P2"),
-    "material_parser": (SPARK, "high", 4096, "P2"),
+    "material_parser": (SPARK, "high", 16384, "P2"),
     "task_generator": (SPARK, "high", 8192, "P2"),
     "task_checker": (SPARK, "high", 8192, "P1"),
     "task_arbiter": (WONDER, "high", 8192, "P2"),
