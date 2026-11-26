@@ -641,15 +641,15 @@ async def _find_ended_empty_births(
     db: Db, learner_id: UUID, *, session_id: UUID | None
 ) -> tuple[dict[UUID, UUID], set[UUID], set[UUID], set[UUID]]:
     """From `core.events`, compute `(birth_session_by_skill, ended_sessions, non_empty_skills,
-    tested_skills)`. A run after `session.ended` judges the births of that session only; a run
-    without a session (the periodic hygiene) judges every ended session. Any answer to a task
+    tested_skills)`. Every ended session is judged, the session of the run included: hygiene jobs
+    of a domain coalesce and keep the payload of the first one (Т-§13.1), so a run named by one
+    session also stands for the sessions that ended while it waited. Any answer to a task
     counts as work on its skills, a verdict still pending included. `tested_skills` are the
     skills some task tests: such a skill is never deleted, or its tasks would test nothing."""
+    ended_rows = await db.fetch_all(_ENDED_SESSIONS, {"learner_id": learner_id})
+    ended_sessions = {UUID(str(r["sid"])) for r in ended_rows if r.get("sid")}
     if session_id is not None:
-        ended_sessions = {session_id}
-    else:
-        ended_rows = await db.fetch_all(_ENDED_SESSIONS, {"learner_id": learner_id})
-        ended_sessions = {UUID(str(r["sid"])) for r in ended_rows if r.get("sid")}
+        ended_sessions.add(session_id)
     if not ended_sessions:
         return {}, set(), set(), set()
 

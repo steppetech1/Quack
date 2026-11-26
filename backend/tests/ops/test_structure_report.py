@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from neo4j import AsyncDriver
 
 from quack.cli import build_parser
 from quack.config import ModelPrice, Settings
@@ -19,6 +20,7 @@ from quack.ops.structure_report import (
     UsageSummaryRow,
     compute_structure_report,
     format_structure_report,
+    read_graph_snapshot,
 )
 
 
@@ -368,3 +370,23 @@ def test_structure_report_cli_args() -> None:
     assert args.domain == domain
     assert args.days == 30
     assert args.as_json is True
+
+
+async def test_graph_snapshot_reads_material_hub_ids(neo4j: AsyncDriver) -> None:
+    learner, domain = str(uuid4()), str(uuid4())
+    material, request = str(uuid4()), str(uuid4())
+    async with neo4j.session() as session:
+        await session.run(
+            "CREATE (d:Domain {id: $d, learnerId: $l}) "
+            "CREATE (d)-[:HAS_HUB]->(:Hub {id: $m, learnerId: $l, kind: 'material', "
+            "status: 'active'}) "
+            "CREATE (d)-[:HAS_HUB]->(:Hub {id: $r, learnerId: $l, kind: 'request', "
+            "status: 'active'})",
+            d=domain,
+            l=learner,
+            m=material,
+            r=request,
+        )
+    graph = await read_graph_snapshot(neo4j, learner_id=UUID(learner), domain_id=UUID(domain))
+    assert graph.hubs_by_kind == {"material": 1, "request": 1}
+    assert graph.material_hub_ids == frozenset({material})

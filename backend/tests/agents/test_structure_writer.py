@@ -842,7 +842,8 @@ async def test_addition2_empty_provisional_skills_cleanup(
 
 async def test_empty_births_count_pending_answers_and_tested_skills() -> None:
     """A pending answer is work on the skills of its task; a skill some task tests is reported
-    as tested (never deleted); a run after `session.ended` judges that session only."""
+    as tested (never deleted); a run named by one session judges every ended session too (the
+    hygiene jobs of a domain coalesce)."""
     learner_id, ended, other = uuid4(), uuid4(), uuid4()
     db = _FakeDb()
     task_answered, task_idle = uuid4(), uuid4()
@@ -881,10 +882,53 @@ async def test_empty_births_count_pending_answers_and_tested_skills() -> None:
         cast(Db, db), learner_id, session_id=ended
     )
 
-    assert ended_set == {ended}
+    assert ended_set == {ended, other}
     assert births[answered] == ended and births[idle] == ended and births[other_skill] == other
     assert answered in non_empty and idle not in non_empty
     assert {answered, idle} <= tested and other_skill not in tested
+
+
+async def test_material_candidate_creates_a_proposed_topic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A topic found in a material, with no work of the learner yet, is `topic.proposed`
+    (Т-§4.7); its core skill is created with it."""
+    learner_id = uuid4()
+    db = _FakeDb()
+    written = _patch_append(monkeypatch, db)
+    graph = DomainGraph(domain_name="Math", topics=[], skills=[])
+
+    def respond(_: dict[str, Any], __: int) -> StructureOutput:
+        return StructureOutput(
+            topic_candidates=[
+                TopicCandidateDecision(
+                    candidate_index=0,
+                    action="create",
+                    target_topic=None,
+                    name="Series",
+                    description="Infinite sums",
+                    core_skill=None,
+                    requires=[],
+                )
+            ],
+            provisional_skills=[],
+        )
+
+    res = await resolve_material_structure(
+        _fake_ctx(db, _StructureGateway(respond)),
+        learner_id=learner_id,
+        domain_id=DOMAIN,
+        candidates=[
+            MaterialTopicCandidate(
+                name="Series", description="Infinite sums", core_skill_name="sums series"
+            )
+        ],
+        graph=graph,
+    )
+    topic_events = [e for e in written if e.type.startswith("topic.")]
+    assert [e.type for e in topic_events] == ["topic.proposed"]
+    assert topic_events[0].idempotency_key == f"structure:topic.proposed:{res[0].topic_id}"
+    assert res[0].skill_names == ("sums series",)
 
 
 async def test_structure_topics_over_limit_shows_all_and_logs_warning(
