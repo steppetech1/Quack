@@ -55,16 +55,18 @@ T111: dict[str, tuple[str, str | None, int | None, str]] = {
     # Т-§6.10 (owner decision 2026-11-25): programming tasks; not in the document table.
     "code_task_generator": (WONDER, "high", 16384, "P2"),
     "code_task_checker": (SPARK, "high", 8192, "P2"),
+    # The code sandbox: hidden tests of a `full_problem` task, in the background.
+    "code_test_builder": (SPARK, "high", 8192, "P1"),
 }
 
 
 def test_role_table_matches_t111() -> None:
-    """T-AI1: 30 roles — model, effort, max_output_tokens, class as Т-§11.1 / Т-§11.3; the 27th,
+    """T-AI1: 31 roles — model, effort, max_output_tokens, class as Т-§11.1 / Т-§11.3; the 27th,
     `session_titler` (owner decision 2026-11-19), the 28th, `viz_planner` (owner decision
     2026-11-20), and the code task roles (owner decision 2026-11-25, Т-§6.10) are not in the
-    document table."""
+    document table, nor `code_test_builder` of the code sandbox (owner decision 2026-11-26)."""
     roles = Settings().llm_roles
-    assert len(T111) == 30
+    assert len(T111) == 31
     assert set(roles) == set(T111)
     for name, (model, effort, max_out, klass) in T111.items():
         row = roles[name]
@@ -75,7 +77,7 @@ def test_role_table_matches_t111() -> None:
             klass,
         ), name
         assert (row.prompt is None) == (effort is None), name
-    assert roles["teacher_fallback"].prompt == roles["teacher"].prompt == "teacher@4"
+    assert roles["teacher_fallback"].prompt == roles["teacher"].prompt == "teacher@5"
     assert roles["analyst_deep"].prompt == roles["analyst"].prompt
     assert all(r.max_output_tokens is None or r.max_output_tokens <= 16384 for r in roles.values())
 

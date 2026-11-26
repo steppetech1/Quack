@@ -34,9 +34,10 @@ class RunnerSettings:
     # How long a request waits for a free slot before 429.
     slot_wait_s: float = 2.0
 
-    # Python, one test.
+    # Python, one test. The code sandbox (owner decision 2026-11-26): 2–3 s of wall time per test,
+    # the start of the interpreter included; the CPU limit stays below it.
     py_cpu_s: int = 2
-    py_wall_s: float = 5.0
+    py_wall_s: float = 3.0
     py_memory_mb: int = 256
     py_nproc: int = 16
     # Python, one run (all tests of a request).

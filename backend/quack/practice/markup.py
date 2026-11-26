@@ -178,6 +178,10 @@ def _check_answer(spec: AnswerSpec, where: str, add: Callable[[MarkupRule, str],
         if correct != 1:
             add("choice_one_correct", f"{where}.options")
         return
+    if spec.type == "code":
+        # Т-§6.10: tests check a code answer; a value the model put next to it is not an expression
+        # to parse (the sandbox drops it, `code_sandbox.sandbox_answer_spec`).
+        return
     if spec.type in _TYPES_WITH_VALUE and spec.value is None:
         add("unknown_answer_type", f"{where}.value")
     if spec.type in ("set", "vector") and not spec.items:

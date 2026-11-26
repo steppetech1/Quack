@@ -1,11 +1,17 @@
 """Routes of `code` tasks (Т-§6.1 «По тестам», Т-§6.10).
 
 - `GET /v1/tasks/{task_id}/code` — what the editor needs: the language, the function, the starter
-  code and the open tests; of the hidden ones only their count.
-- `POST /v1/tasks/{task_id}/code/run` — the open tests (or, for Python, the learner's own
-  arguments); writes no event.
+  code and the open tests; of the hidden ones only their count; the sandbox mode, the state of the
+  background build of the hidden tests (`build`) and the learner's saved draft. The client asks
+  again while `build = pending`.
+- `POST /v1/tasks/{task_id}/code/run` — every test there is now: the open ones and, once built,
+  the hidden ones (teacher@4 tasks: the open ones only); or, for Python, the learner's own
+  arguments. Writes no event; the code and the statuses are kept as the draft.
+- `PUT /v1/tasks/{task_id}/code/draft` — the learner's current code, kept by `task_id`.
 - `POST /v1/sessions/{session_id}/tasks/{task_id}/code/submit` — every test, then
-  `answer.submitted` and `verdict.recorded`; hidden tests come back as number and status only.
+  `answer.submitted` and `verdict.recorded`. A hidden test never comes back with its expected
+  result: a named sandbox case with its input and what the code gave, an old one with its status.
+  The teacher's review is the next turn (`retry_turn` on this answer).
 
 The runner down or busy → 503 / 429, nothing is written. No model is called here: hints go
 through the usual `hint_request` action.
@@ -30,11 +36,22 @@ from quack.practice.code_answers import submit_code
 from quack.practice.code_check import (
     CodeTestView,
     CustomRunView,
+    all_numbers,
+    learner_views,
     open_numbers,
     run_cases,
     run_custom,
 )
-from quack.practice.code_tests import PythonTests, SqlTests, get_code_tests
+from quack.practice.code_tests import (
+    BuildStatus,
+    CodeDraft,
+    CodeMode,
+    PythonTests,
+    SqlTests,
+    get_code_draft,
+    get_code_tests,
+    store_code_draft,
+)
 from quack.practice.task_store import get_task
 from quack.runner_client.client import RunnerBusyError, RunnerClient, RunnerUnavailableError
 from quack.session import sessions
@@ -78,6 +95,17 @@ class CodeTaskView(BaseModel):
     open_python_tests: list[OpenPythonTest]
     open_sql_tests: list[OpenSqlTest]
     hidden_tests: int
+    # The code sandbox (teacher@5): `inline_patch` or `full_problem`; the hidden tests are built in
+    # the background — `pending` while they are, `failed` when the task stays on the sample.
+    mode: CodeMode
+    build: BuildStatus
+    sql_preset: str | None = None
+    # The learner's saved code and the statuses of its last run; `None` — nothing saved yet.
+    draft: CodeDraft | None = None
+
+
+class DraftRequest(BaseModel):
+    code: str
 
 
 class RunRequest(BaseModel):
@@ -89,6 +117,8 @@ class RunRequest(BaseModel):
 class RunResponse(BaseModel):
     tests: list[CodeTestView]
     custom: CustomRunView | None = None
+    # The build of the hidden tests when the code ran: `pending` — only the sample ran.
+    build: BuildStatus = "ready"
 
 
 class SubmitRequest(BaseModel):
@@ -175,9 +205,11 @@ async def get_element_code_task(
 async def _code_view(db: Db, learner_id: UUID, task_id: UUID) -> CodeTaskView:
     tests = await _task_tests(db, learner_id, task_id)
     task = await get_task(db, learner_id=learner_id, task_id=task_id)
+    draft = await get_code_draft(db, learner_id=learner_id, task_id=task_id)
     spec = task.answer_spec if task is not None else None
     condition = task.condition.text if task is not None else ""
     hidden = sum(case.hidden for case in tests.cases)
+    common: dict[str, Any] = {"mode": tests.mode, "build": tests.build, "draft": draft}
     if isinstance(tests, PythonTests):
         return CodeTaskView(
             task_id=task_id,
@@ -200,6 +232,7 @@ async def _code_view(db: Db, learner_id: UUID, task_id: UUID) -> CodeTaskView:
             ],
             open_sql_tests=[],
             hidden_tests=hidden,
+            **common,
         )
     return CodeTaskView(
         task_id=task_id,
@@ -216,6 +249,8 @@ async def _code_view(db: Db, learner_id: UUID, task_id: UUID) -> CodeTaskView:
             if not case.hidden
         ],
         hidden_tests=hidden,
+        sql_preset=tests.preset,
+        **common,
     )
 
 
@@ -234,12 +269,43 @@ async def run_code(
         if body.args is not None:
             if not isinstance(tests, PythonTests):
                 raise ApiError("VALIDATION_ERROR", "own arguments are for Python", status_code=422)
-            custom = await run_custom(runner, tests, body.code, body.args)
-            return RunResponse(tests=[], custom=custom)
-        views = await run_cases(runner, tests, body.code, open_numbers(tests), settings)
+            custom = await run_custom(
+                runner, tests, body.code, body.args, settings.code_output_chars
+            )
+            return RunResponse(tests=[], custom=custom, build=tests.build)
+        # The sandbox runs every test it has (the hidden ones once built; their expected results
+        # stay here); a teacher@4 task — its open tests, the hidden ones are for the submit.
+        numbers = open_numbers(tests) if _generated(tests) else all_numbers(tests)
+        views = learner_views(await run_cases(runner, tests, body.code, numbers, settings))
     except RunnerUnavailableError as exc:
         raise _runner_error(exc) from exc
-    return RunResponse(tests=views)
+    draft = CodeDraft(code=body.code, statuses={str(v.number): v.status for v in views})
+    await store_code_draft(resources.db, learner_id=learner_id, task_id=task_id, draft=draft)
+    return RunResponse(tests=views, build=tests.build)
+
+
+@router.put("/tasks/{task_id}/code/draft", status_code=204)
+async def save_draft(
+    task_id: UUID, body: DraftRequest, learner_id: CurrentLearnerId, resources: Resources
+) -> None:
+    """The learner's current code (the statuses of the last run are kept); writes no event."""
+    tests = await _task_tests(resources.db, learner_id, task_id)
+    _check_size(body.code, tests, resources.settings)
+    old = await get_code_draft(resources.db, learner_id=learner_id, task_id=task_id)
+    statuses = old.statuses if old is not None and old.code == body.code else {}
+    await store_code_draft(
+        resources.db,
+        learner_id=learner_id,
+        task_id=task_id,
+        draft=CodeDraft(code=body.code, statuses=statuses),
+    )
+
+
+def _generated(tests: PythonTests | SqlTests) -> bool:
+    """A task of the generator (teacher@4): hidden cases without names. Its run shows the open
+    tests only; the sandbox runs every case, since a hidden one never shows its expected result."""
+    hidden = [case for case in tests.cases if case.hidden]
+    return bool(hidden) and all(getattr(case, "name", None) is None for case in hidden)
 
 
 @router.post(

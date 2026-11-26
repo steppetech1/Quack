@@ -451,6 +451,15 @@
         "title": "Body_verify_link_submit_auth_link_verify_post",
         "type": "object"
       },
+      "BuildStatus": {
+        "enum": [
+          "none",
+          "pending",
+          "ready",
+          "failed"
+        ],
+        "type": "string"
+      },
       "CanvasList": {
         "properties": {
           "canvases": {
@@ -891,6 +900,35 @@
         "title": "ClientParams",
         "type": "object"
       },
+      "CodeDraft": {
+        "additionalProperties": false,
+        "description": "The learner's current code and the statuses of its last run (`number: status`).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "statuses": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Statuses",
+            "type": "object"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "CodeDraft",
+        "type": "object"
+      },
+      "CodeMode": {
+        "enum": [
+          "inline_patch",
+          "full_problem"
+        ],
+        "type": "string"
+      },
       "CodeRunErrorView": {
         "properties": {
           "line": {
@@ -918,6 +956,122 @@
           "message"
         ],
         "title": "CodeRunErrorView",
+        "type": "object"
+      },
+      "CodeSandboxElement": {
+        "additionalProperties": false,
+        "description": "Песочница для кода (teacher@5, owner decision 2026-11-26): a code task the teacher writes\nin the turn; the editor opens at once. Its markup is in `p3_markup.tasks` (answer type\n`code`), as for any task element.\n\n- `mode`: `inline_patch` — complete a `TODO` or fix a bug, checked on the sample and by the\n  teacher's review; `full_problem` — a whole block: hidden tests are built in the background.\n- `statement` — the statement (Markdown) the editor shows; `starter_code` — the code the\n  learner starts from.\n- Python: `entry_point` — the function the tests call; `sample_args_json` — a JSON array of\n  its arguments; `sample_expected_json` — the JSON of what it must return.\n- SQL: `sql_preset` — a ready database (`shop`, `university`), no `CREATE TABLE`;\n  `sample_expected_json` — the JSON array of the rows the query must give; `entry_point` and\n  `sample_args_json` are null. Column names are not compared.\n- `compare`: `exact` (for SQL — the order of rows counts), `unordered` (order does not count),\n  `float_approx` (numbers within `epsilon`; null — the default tolerance).",
+        "properties": {
+          "compare": {
+            "enum": [
+              "exact",
+              "unordered",
+              "float_approx"
+            ],
+            "title": "Compare",
+            "type": "string"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "entry_point": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Point"
+          },
+          "epsilon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epsilon"
+          },
+          "kind": {
+            "const": "code_sandbox",
+            "title": "Kind",
+            "type": "string"
+          },
+          "language": {
+            "enum": [
+              "python",
+              "sql"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "inline_patch",
+              "full_problem"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "sample_args_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Args Json"
+          },
+          "sample_expected_json": {
+            "title": "Sample Expected Json",
+            "type": "string"
+          },
+          "sql_preset": {
+            "anyOf": [
+              {
+                "enum": [
+                  "shop",
+                  "university"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sql Preset"
+          },
+          "starter_code": {
+            "title": "Starter Code",
+            "type": "string"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "mode",
+          "language",
+          "statement",
+          "starter_code",
+          "entry_point",
+          "sql_preset",
+          "sample_args_json",
+          "sample_expected_json",
+          "compare",
+          "epsilon"
+        ],
+        "title": "CodeSandboxElement",
         "type": "object"
       },
       "CodeTaskElement": {
@@ -949,9 +1103,22 @@
       "CodeTaskView": {
         "description": "The editor of a `code` task. Hidden tests: their count only.",
         "properties": {
+          "build": {
+            "$ref": "#/components/schemas/BuildStatus"
+          },
           "condition": {
             "title": "Condition",
             "type": "string"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "function": {
             "anyOf": [
@@ -975,6 +1142,9 @@
             ],
             "title": "Language",
             "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CodeMode"
           },
           "open_python_tests": {
             "items": {
@@ -1012,6 +1182,17 @@
             ],
             "title": "Schema Sql"
           },
+          "sql_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sql Preset"
+          },
           "starter_code": {
             "anyOf": [
               {
@@ -1039,7 +1220,9 @@
           "ordered",
           "open_python_tests",
           "open_sql_tests",
-          "hidden_tests"
+          "hidden_tests",
+          "mode",
+          "build"
         ],
         "title": "CodeTaskView",
         "type": "object"
@@ -1148,6 +1331,17 @@
           "hidden": {
             "title": "Hidden",
             "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           },
           "number": {
             "title": "Number",
@@ -1788,6 +1982,19 @@
         "title": "DomainSummary",
         "type": "object"
       },
+      "DraftRequest": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "DraftRequest",
+        "type": "object"
+      },
       "EditHub": {
         "additionalProperties": false,
         "description": "`topics` — the whole new scope with required levels (empty levels — by `controlType`,\nWP6.3); `deadline_at_ms` — the new date, `null` removes it. At least one of them.",
@@ -1840,6 +2047,7 @@
           "mapping": {
             "card_series": "#/components/schemas/CardSeriesElement",
             "choice": "#/components/schemas/ChoiceElement",
+            "code_sandbox": "#/components/schemas/CodeSandboxElement",
             "code_task": "#/components/schemas/CodeTaskElement",
             "free_answer": "#/components/schemas/FreeAnswerElement",
             "material_link": "#/components/schemas/MaterialLinkElement",
@@ -1898,6 +2106,9 @@
           },
           {
             "$ref": "#/components/schemas/CodeTaskElement"
+          },
+          {
+            "$ref": "#/components/schemas/CodeSandboxElement"
           },
           {
             "$ref": "#/components/schemas/SkillProposalElement"
@@ -4456,6 +4667,10 @@
       },
       "RunResponse": {
         "properties": {
+          "build": {
+            "$ref": "#/components/schemas/BuildStatus",
+            "default": "ready"
+          },
           "custom": {
             "anyOf": [
               {
@@ -12310,6 +12525,83 @@
           }
         },
         "summary": "Get Code Task",
+        "tags": [
+          "code"
+        ]
+      }
+    },
+    "/v1/tasks/{task_id}/code/draft": {
+      "put": {
+        "description": "The learner's current code (the statuses of the last run are kept); writes no event.",
+        "operationId": "save_draft_v1_tasks__task_id__code_draft_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Save Draft",
         "tags": [
           "code"
         ]

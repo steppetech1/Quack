@@ -45,11 +45,12 @@ from quack.events.values import AnswerSpec
 from quack.graph.ids import QUACK_UUID_NS
 from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.logging import get_logger
+from quack.practice.code_sandbox import sandbox_answer_spec, sandbox_tests
 from quack.practice.markup import markup_record
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.session_plan import merge_plan
 from quack.practice.task_store import get_task, insert_task_document, task_created_event
-from quack.session.elements import Element
+from quack.session.elements import CodeSandboxElement, Element
 from quack.session.guards import landmark_kind
 from quack.session.service_turns import settle_service_output
 from quack.session.teacher_output import (
@@ -186,6 +187,8 @@ class NewTurnTask:
     condition: TaskCondition
     answer_spec: AnswerSpec
     idempotency_key: str
+    # The code sandbox (teacher@5): the first tests of the task (its sample), document only.
+    code_tests: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -241,6 +244,13 @@ def turn_batch(
         task_id = uuid4()
         markup = markup_record(task, labels)
         task_key = f"{key}:task:{task.element_id}"
+        element = elements.get(task.element_id)
+        code_tests: dict[str, Any] | None = None
+        if isinstance(element, CodeSandboxElement):
+            markup = markup.model_copy(
+                update={"answer": sandbox_answer_spec(element, markup.answer)}
+            )
+            code_tests = sandbox_tests(element).model_dump(mode="json")
         task_records.append(
             records.TurnTaskRecord(
                 **markup.model_dump(), element_id=task.element_id, task_id=task_id
@@ -261,9 +271,10 @@ def turn_batch(
         tasks.append(
             NewTurnTask(
                 task_id=task_id,
-                condition=TaskCondition(text=_condition(elements.get(task.element_id)), latex=None),
+                condition=TaskCondition(text=_condition(element), latex=None),
                 answer_spec=markup.answer,
                 idempotency_key=task_key,
+                code_tests=code_tests,
             )
         )
     requests = [
@@ -528,6 +539,7 @@ async def commit_turn(
                 condition=task.condition,
                 answer_spec=task.answer_spec,
                 created_seq=by_key[task.idempotency_key].seq,
+                code_tests=task.code_tests,
             )
         await db.execute(_INSERT_MANIFEST, _manifest_params(manifest))
         keys = {"session_id": manifest.session_id, "learner_id": learner_id}
@@ -745,6 +757,8 @@ def _condition(element: Element | None) -> str:
     """The text the learner sees for the task (D-B-149)."""
     if element is None:
         return ""
+    if isinstance(element, CodeSandboxElement):
+        return element.statement
     text = getattr(element, "prompt", None) or getattr(element, "text", None)
     return str(text or "")
 

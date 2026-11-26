@@ -51,6 +51,7 @@ EXTENSIONS: tuple[frozenset[tuple[str, str]], ...] = (
     frozenset(),  # `content.sessions.title`: the stored title of a session
     frozenset(),  # `content.materials.title`: the name of the uploaded file
     frozenset(),  # Т-§6.10: `content.tasks.code_tests`
+    frozenset(),  # the code sandbox: `content.tasks.code_draft`
 )
 
 # dbmate keeps its own bookkeeping table in `public`; everything of ours is in core/content/ops.

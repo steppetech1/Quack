@@ -14,6 +14,8 @@ from quack.graph.read import SliceFocus, create_graph_reader
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob
 from quack.practice.answers import help_in_session, part_spec
+from quack.practice.code_hidden import build_hidden_tests
+from quack.practice.code_tests import PythonTests, get_code_tests, store_built_tests
 from quack.practice.model_check import (
     LevelState,
     check_with_model,
@@ -69,6 +71,12 @@ async def handle_task_check(job: ClaimedJob, ctx: JobContext) -> None:
         )
         names = {s.skill_id: s.name for s in found.skills if s.name}
     for task_id in task_ids:
+        doc = await get_task(ctx.db, learner_id=learner_id, task_id=task_id)
+        if doc is not None and doc.answer_spec.type == "code":
+            # The code sandbox (teacher@5): a code task is checked by running, not by the task
+            # checker; a `full_problem` gets its hidden tests here, in the background.
+            await _build_code_tests(ctx, learner_id, task_id)
+            continue
         await check_teacher_task(
             ctx.db,
             ctx.llm,
@@ -79,6 +87,20 @@ async def handle_task_check(job: ClaimedJob, ctx: JobContext) -> None:
             compute=ctx.compute,
             causation_seq=trigger_seq,
         )
+
+
+async def _build_code_tests(ctx: JobContext, learner_id: UUID, task_id: UUID) -> None:
+    tests = await get_code_tests(ctx.db, learner_id=learner_id, task_id=task_id)
+    if not isinstance(tests, PythonTests) or tests.build != "pending":
+        return
+    if ctx.runner is None:
+        # No runner in this process: nothing can be validated, the task stays on its sample.
+        failed = tests.model_copy(update={"build": "failed"})
+        await store_built_tests(ctx.db, learner_id=learner_id, task_id=task_id, tests=failed)
+        return
+    await build_hidden_tests(
+        ctx.db, ctx.llm, ctx.runner, ctx.settings, learner_id=learner_id, task_id=task_id
+    )
 
 
 @register_job_handler("check.model")

@@ -24,7 +24,7 @@ from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOut
 from quack.llm.labels import LABEL_PREFIX
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.materials.parse import MaterialParserOutput
-from quack.practice import code_role_outputs, role_outputs
+from quack.practice import code_hidden, code_role_outputs, role_outputs
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.registry import PromptRegistry
 from quack.session.schemas import ExtractorOutputV2, TeacherOutput
@@ -53,6 +53,8 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     "teacher@2": (TeacherOutputLegacyV2,),
     "teacher@3": (TeacherOutputV2,),
     "teacher@4": (TeacherOutputV2,),
+    # The code sandbox (owner decision 2026-11-26): the teacher writes a `code_sandbox` element.
+    "teacher@5": (TeacherOutputV2,),
     "extractor@3": (agents.ExtractorOutputV3,),
     "verdict_free@1": (role_outputs.ModelVerdictOutput,),
     "verdict_proof@1": (role_outputs.ModelVerdictOutput,),
@@ -63,6 +65,7 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     # Т-§6.10: programming tasks.
     "code_task_generator@1": (code_role_outputs.CodeTaskGeneratorOutput,),
     "code_task_checker@1": (code_role_outputs.CodeTaskCheckOutput,),
+    "code_test_builder@1": (code_hidden.CodeTestBuilderOutput,),
     "solution_space@1": (role_outputs.SolutionSpace,),
     "analyst@1": (agents.AnalystOutput,),
     "builder@1": (
@@ -177,6 +180,28 @@ LABEL_FIELDS: dict[str, list[str]] = {
         "p3_markup.deadline.hub_label",
         "p3_markup.deadline.coverage",
     ],
+    "teacher@5": [
+        "p1_head.targetSkills",
+        "p1_head.topicLabel",
+        "p3_markup.tasks.tests.skill",
+        "p3_markup.tasks.variantOf",
+        "p3_markup.tasks.options.misconception",
+        "p3_markup.tasks.pairTaskId",
+        "p3_markup.exposures.skill",
+        "p3_markup.targetsMisconception",
+        "p3_markup.planUpdate.cancel_requests",
+        "p3_markup.planUpdate.current_step.landmark",
+        "p3_markup.planUpdate.next_steps.landmark",
+        "p3_markup.planUpdate.landmark_edits.add.label",
+        "p3_markup.planUpdate.landmark_edits.add.before",
+        "p3_markup.planUpdate.landmark_edits.remove",
+        "p3_markup.agentRequests.params.skill",
+        "p3_markup.agentRequests.params.topic",
+        "p3_markup.agentRequests.params.task",
+        "p3_markup.agentRequests.params.misconception",
+        "p3_markup.deadline.hub_label",
+        "p3_markup.deadline.coverage",
+    ],
     "extractor@3": ["elements.skill", "elements.misconception", "elements.root_cause.skill"],
     "verdict_free@1": ["misconception"],
     "verdict_proof@1": ["misconception"],
@@ -225,6 +250,7 @@ MARKERS: dict[str, list[str]] = {
     "teacher@2": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@3": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@4": [MEMORY_UNAVAILABLE_MARKER],
+    "teacher@5": [MEMORY_UNAVAILABLE_MARKER],
     "viz_builder@1": [VIZ_PARAMS_MARKER],
     "viz_builder@2": [VIZ_PARAMS_MARKER],
 }

@@ -69,7 +69,7 @@ KIND_LLM_ROLES: dict[str, tuple[str, ...]] = {
     "analyst.run": ("analyst",),
     "analyst.deep": ("analyst_deep",),
     "check.symbolic": (),
-    "task.check": ("task_checker",),
+    "task.check": ("task_checker", "code_test_builder"),
     "check.model": ("verdict_proof", "verdict_free"),
     "today.prepare": ("today_planner",),
     "graph.hygiene": ("builder",),

@@ -254,6 +254,23 @@ class CodeTaskElementRecord(_Element):
     task_id: UUID
 
 
+class CodeSandboxElementRecord(_Element):
+    """The code sandbox (teacher@5): a code task written in the turn (`session.elements`). The
+    hidden tests are never here: they live in the task document only."""
+
+    kind: Literal["code_sandbox"]
+    mode: Literal["inline_patch", "full_problem"]
+    language: Literal["python", "sql"]
+    statement: str
+    starter_code: str
+    entry_point: str | None
+    sql_preset: str | None
+    sample_args_json: str | None
+    sample_expected_json: str
+    compare: Literal["exact", "unordered", "float_approx"]
+    epsilon: float | None
+
+
 class SkillProposalElementRecord(_Element):
     kind: Literal["skill_proposal"]
     name: str
@@ -276,6 +293,7 @@ type ElementRecord = Annotated[
     | MaterialLinkElementRecord
     | ReferenceCardElementRecord
     | CodeTaskElementRecord
+    | CodeSandboxElementRecord
     | SkillProposalElementRecord,
     Field(discriminator="kind"),
 ]

@@ -194,8 +194,10 @@ def default_llm_roles() -> dict[str, RoleConfig]:
     Т-§11.1 figure of 4096 came from a spike without a reasoning level."""
     return {
         # `teacher@4` (owner decision 2026-11-25, Т-§6.10): `teacher@3` plus code tasks.
-        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@4", 45.0),
-        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@4", 30.0),
+        # `teacher@5` (owner decision 2026-11-26, the code sandbox): the teacher writes a code task
+        # itself (`code_sandbox`); `teacher@4` stays for a rollback by this setting.
+        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@5", 45.0),
+        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@5", 30.0),
         "extractor": _role(SPARK, "high", 16384, "P2", "extractor@3"),
         "verdict_free": _role(SPARK, "high", 8192, "P1", "verdict_free@1"),
         "verdict_proof": _role(WONDER, "high", 8192, "P1", "verdict_proof@1"),
@@ -218,6 +220,9 @@ def default_llm_roles() -> dict[str, RoleConfig]:
         # out at 60 s on the live stand (2026-11-25).
         "code_task_generator": _role(WONDER, "high", 16384, "P2", "code_task_generator@1", 180.0),
         "code_task_checker": _role(SPARK, "high", 8192, "P2", "code_task_checker@1"),
+        # The code sandbox: the reference solution and up to four hidden inputs of a
+        # `full_problem` task, built in the background (`task.check`) while the learner writes.
+        "code_test_builder": _role(SPARK, "high", 8192, "P1", "code_test_builder@1", 90.0),
         "task_arbiter": _role(WONDER, "high", 8192, "P2", "task_arbiter@1"),
         "solution_space": _role(SPARK, "high", 8192, "P2", "solution_space@1").model_copy(
             update={"hard_model": WONDER}
@@ -331,6 +336,13 @@ class Settings(BaseSettings):
     # Т-§6.10: open and hidden tests of a task.
     code_open_tests: int = 2
     code_hidden_tests: int = 3
+    # The code sandbox (teacher@5, ТЗ «песочница для кода»): `stdout` / `stderr` of a test as the
+    # learner and the teacher see them, in characters; the hidden cases the background builder may
+    # add to the sample (at most 1 + 4 tests); the attempts of the builder (the first and one retry)
+    # before the task silently stays on the sample.
+    code_output_chars: int = 2000
+    code_hidden_max: int = 4
+    code_build_attempts: int = 2
 
     # Phase 3 (ТЗ Фазы 3 §6.2, §0.5): each stream edits only its own block below.
 

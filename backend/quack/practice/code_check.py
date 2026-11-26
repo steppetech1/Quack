@@ -2,7 +2,8 @@
 
 The runner gets the code and the inputs only; this module compares with the expected results.
 What the learner sees: an open test in full (input, expected, actual, output, error); a hidden
-test — its number and status only (`CodeTestView.hidden_view`).
+test — its name, input and what the code gave or the error, never the expected result
+(`CodeTestView.hidden_view`). Output is cut to `Settings.code_output_chars`.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ class CodeTestView(BaseModel):
     number: int
     hidden: bool
     status: CodeTestStatus
+    # The case name of a hidden test of the sandbox («дубликаты»); `None` for the others.
+    name: str | None = None
     args: list[Any] | None = None
     expected: Any = None
     actual: Any = None
@@ -67,7 +70,11 @@ class CodeTestView(BaseModel):
     time_ms: int | None = None
 
     def hidden_view(self) -> CodeTestView:
-        return CodeTestView(number=self.number, hidden=True, status=self.status)
+        """No expected result. A named case (the sandbox) also shows its input and what the code
+        gave, so the learner can trace it; an unnamed one (teacher@4) its status only."""
+        if self.name is None:
+            return CodeTestView(number=self.number, hidden=True, status=self.status)
+        return self.model_copy(update={"expected": None, "expected_rows": None})
 
 
 class CustomRunView(BaseModel):
@@ -89,10 +96,16 @@ def _error(error: RunError | None) -> CodeRunErrorView | None:
     return CodeRunErrorView(type=error.type, message=error.message, line=error.line)
 
 
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + "\n… (cut)"
+
+
 def _python_status(
-    case: PythonCase, result: PythonTestResult, settings: Settings
+    case: PythonCase, result: PythonTestResult, settings: Settings, epsilon: float | None = None
 ) -> CodeTestStatus:
     tolerance = settings.code_float_tolerance
+    if case.compare == "float_approx" and epsilon is not None:
+        tolerance = epsilon
     if case.raises is not None:
         if result.status == "error" and result.error is not None:
             return "passed" if result.error.type == case.raises else "wrong"
@@ -110,7 +123,10 @@ def _python_status(
         same = unordered_equal(case.expected, actual, tolerance=tolerance)
     else:
         same = values_equal(
-            case.expected, actual, tolerance=tolerance, mixed_numbers=case.compare == "float_tol"
+            case.expected,
+            actual,
+            tolerance=tolerance,
+            mixed_numbers=case.compare in ("float_tol", "float_approx"),
         )
     return "passed" if same else "wrong"
 
@@ -151,13 +167,14 @@ async def run_python_cases(
             CodeTestView(
                 number=number,
                 hidden=case.hidden,
-                status=_python_status(case, result, settings),
+                status=_python_status(case, result, settings, tests.epsilon),
+                name=case.name,
                 args=case.args,
                 expected=case.expected if case.raises is None else {"raises": case.raises},
                 actual=_python_actual(case, result),
                 error=_error(result.error),
-                stdout=result.stdout,
-                stderr=result.stderr,
+                stdout=_cut(result.stdout, settings.code_output_chars),
+                stderr=_cut(result.stderr, settings.code_output_chars),
                 time_ms=result.time_ms,
             )
         )
@@ -223,7 +240,7 @@ async def run_cases(
 
 
 async def run_custom(
-    runner: RunnerClient, tests: PythonTests, code: str, args: list[Any]
+    runner: RunnerClient, tests: PythonTests, code: str, args: list[Any], output_chars: int
 ) -> CustomRunView:
     response = await runner.run_python(
         PythonRunRequest(code=code, function=tests.function, tests=[PythonTest(args=args)])
@@ -233,8 +250,8 @@ async def run_custom(
         status="passed" if result.status == "ok" else _failure(result.status),
         value=result.value,
         error=_error(result.error),
-        stdout=result.stdout,
-        stderr=result.stderr,
+        stdout=_cut(result.stdout, output_chars),
+        stderr=_cut(result.stderr, output_chars),
         time_ms=result.time_ms,
     )
 
@@ -262,11 +279,13 @@ def _short(value: Any, limit: int) -> str:
 
 def verdict_tests(views: list[CodeTestView], detail_chars: int) -> list[CodeTestOutcome]:
     """The tests of a `code` verdict for the event: an open test with a short `detail` of what
-    the learner saw, a hidden one with its status only (Т-§6.10)."""
+    the learner saw; a named hidden test of the sandbox (teacher@5) too, with its expected result,
+    so the teacher's review sees it — the event never reaches the client; an unnamed hidden test
+    (teacher@4) with its status only (Т-§6.10)."""
     outcomes = []
     for view in views:
         detail = None
-        if not view.hidden and view.status != "passed":
+        if (not view.hidden or view.name is not None) and view.status != "passed":
             if view.error is not None:
                 detail = f"{view.error.type}: {view.error.message}"
                 if view.error.line is not None:
@@ -281,6 +300,8 @@ def verdict_tests(views: list[CodeTestView], detail_chars: int) -> list[CodeTest
                     f"expected rows {_short(view.expected_rows, detail_chars)}, got "
                     f"{_short(view.actual_rows, detail_chars)}"
                 )
+            if detail is not None and view.name is not None:
+                detail = f"«{view.name}»: {detail}"
             if detail is not None:
                 detail = detail[: detail_chars * 3]
         outcomes.append(

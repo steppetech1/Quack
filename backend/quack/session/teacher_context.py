@@ -58,7 +58,7 @@ ELEMENT_KINDS = (
     "visualization",
     "material_link",
     "reference_card",
-    "code_task",
+    "code_sandbox",
 )
 
 _CONTROL_WORDS = {
@@ -145,9 +145,8 @@ def render_tools_and_elements() -> str:
         "client from your SymPy, so write it in plain SymPy (`10*t - 4.9*t**2`)."
     )
     lines.append(
-        "A `code_task` element shows a ready programming task (`task`: the label of a code task "
-        "listed as made by a `task_generation` request); the learner solves it in a code editor "
-        "and its tests check it. Write no task markup for it."
+        "A `code_sandbox` element is a programming task you write yourself; the code editor opens "
+        "on it at once. Give its markup in `tasks` with answer type `code`, as for any task."
     )
     return "\n".join(lines)
 

@@ -592,6 +592,14 @@ export function SessionLive({ id }: { id: string }) {
           const seq = committed;
           const done = fresh.map((f) => ({ blockId: `${seq}:${(f.element as { element_id?: string }).element_id ?? f.block}`, element: f.element, turnSeq: seq, answered: false }));
           setElems((e) => [...e, ...done.filter((d) => !e.some((x) => x.blockId === d.blockId))]);
+          // the code sandbox: the editor opens on the new task at once, the learner can start writing
+          const sandbox = done.find((d) => (d.element as { kind?: string }).kind === "code_sandbox");
+          const sandboxId = (sandbox?.element as { element_id?: string } | undefined)?.element_id;
+          if (sandbox && seq !== null && sandboxId) {
+            elementCodeTask(id, seq, sandboxId)
+              .then((task) => task && setCode({ task, title: "", blockId: sandbox.blockId }))
+              .catch(() => {});
+          }
         }
         setUnansweredSeq(null);
         setLastFailedAction(null);
@@ -851,200 +859,208 @@ export function SessionLive({ id }: { id: string }) {
         : null;
 
   return (
-    <div ref={setChatEl} className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
-        <header className={cn("min-w-0", MEASURE)}>
-          <h1 className="line-clamp-2 display-caps text-display text-paper">{title}</h1>
-          <p className="mt-1.5 text-paper-dim">
-            {domain?.title}
-            {domain && " · "}
-            {modeLabel}
-          </p>
-        </header>
+    <div className="relative flex min-h-0 flex-1">
+      {/* the chat and, when a code task is open, its editor as a second column */}
+      <div ref={setChatEl} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
+          <header className={cn("min-w-0", MEASURE)}>
+            <h1 className="line-clamp-2 display-caps text-display text-paper">{title}</h1>
+            <p className="mt-1.5 text-paper-dim">
+              {domain?.title}
+              {domain && " · "}
+              {modeLabel}
+            </p>
+          </header>
 
-        <div className={cn("mt-6 flex flex-col gap-7", MEASURE)}>
-          {lines.length === 0 && streaming === null && <p className="text-paper-dim">{t.sessionEmpty}</p>}
-          {/* one keyed list: the streamed article of a turn and its committed line share a key, so React keeps the node and the text never blinks out */}
-          {[
-            ...lines.flatMap((l, idx) => {
-              if (l.role === "student") {
-                const showOrphanRetry = hasOrphanedStudent && idx === lastStudentIdx;
-                return [
-                  <StudentLine
-                    key={l.id}
-                    text={l.text}
-                    files={l.files}
-                    onRetry={showOrphanRetry ? () => void retryAction(l.id) : undefined}
-                    retryLabel={t.retry}
-                  />,
-                ];
-              }
-              let studentPrompt: string | null = null;
-              for (let j = idx - 1; j >= 0; j--) {
-                if (lines[j].role === "student") {
-                  studentPrompt = lines[j].text;
-                  break;
+          <div className={cn("mt-6 flex flex-col gap-7", MEASURE)}>
+            {lines.length === 0 && streaming === null && <p className="text-paper-dim">{t.sessionEmpty}</p>}
+            {/* one keyed list: the streamed article of a turn and its committed line share a key, so React keeps the node and the text never blinks out */}
+            {[
+              ...lines.flatMap((l, idx) => {
+                if (l.role === "student") {
+                  const showOrphanRetry = hasOrphanedStudent && idx === lastStudentIdx;
+                  return [
+                    <StudentLine
+                      key={l.id}
+                      text={l.text}
+                      files={l.files}
+                      onRetry={showOrphanRetry ? () => void retryAction(l.id) : undefined}
+                      retryLabel={t.retry}
+                    />,
+                  ];
                 }
-              }
-              return [
-                // a turn of one task has no text: only its forms are drawn
-                l.text || l.degraded || l.interrupted ? (
-                  <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper [overflow-wrap:anywhere]">
-                    <RichText text={l.text} />
-                    {l.degraded && <p className="mt-2 text-small text-paper-dim">{t.degraded}</p>}
-                    {l.interrupted && <p className="mt-2 text-small text-paper-dim">{t.interrupted}</p>}
-                    {!l.interrupted && l.text && (
-                      <ChatTurnActions
-                        ctx={{
-                          sessionId: id,
-                          domainId: detail.domain_id,
-                          topicId: activeTopicId,
-                          turnId: l.id,
-                          turnSeq: l.seq,
-                          turnText: l.text,
-                          studentPrompt,
-                          resolveTargets,
-                          onJobsRefresh: refreshJobs,
-                          artifactTick,
-                        }}
-                      />
-                    )}
-                  </article>
-                ) : null,
-                // the forms of a turn stay right after its text, in the order of the session, answered or not
-                ...(l.seq === undefined
-                  ? []
-                  : elems
-                      .filter((x) => x.turnSeq === l.seq)
-                      .map((el) => (
-                        <ElementCard
-                          key={el.blockId}
-                          el={el}
-                          disabled={busy}
-                          sessionId={id}
-                          onRespond={(r) => void respond(el, r)}
-                          onOpenCode={(task) => setCode({ task, title: tx.code.taskLabel, blockId: el.blockId })}
+                let studentPrompt: string | null = null;
+                for (let j = idx - 1; j >= 0; j--) {
+                  if (lines[j].role === "student") {
+                    studentPrompt = lines[j].text;
+                    break;
+                  }
+                }
+                return [
+                  // a turn of one task has no text: only its forms are drawn
+                  l.text || l.degraded || l.interrupted ? (
+                    <article key={l.id} aria-label={tx.session.teacherTurn} className="text-paper [overflow-wrap:anywhere]">
+                      <RichText text={l.text} />
+                      {l.degraded && <p className="mt-2 text-small text-paper-dim">{t.degraded}</p>}
+                      {l.interrupted && <p className="mt-2 text-small text-paper-dim">{t.interrupted}</p>}
+                      {!l.interrupted && l.text && (
+                        <ChatTurnActions
+                          ctx={{
+                            sessionId: id,
+                            domainId: detail.domain_id,
+                            topicId: activeTopicId,
+                            turnId: l.id,
+                            turnSeq: l.seq,
+                            turnText: l.text,
+                            studentPrompt,
+                            resolveTargets,
+                            onJobsRefresh: refreshJobs,
+                            artifactTick,
+                          }}
                         />
-                      ))),
-              ];
-            }),
-            streaming !== null && (
-              <article
-                key={streamId}
-                aria-label={tx.session.teacherTurn}
-                aria-busy="true"
-                className="text-paper [overflow-wrap:anywhere]"
-              >
-                {streaming ? (
-                  <RichText text={streaming} className={cn("transition-opacity duration-(--dur-s) ease-(--ease-out)", refining && "opacity-60")} />
-                ) : (
-                  <p role="status" className="flex items-center gap-2 text-small text-paper-dim">
-                    {thinking ? tx.session.teacherThinking : tx.session.teacherReading}
-                    <Dots />
-                  </p>
-                )}
-                {refining && streaming && (
-                  <p role="status" className="mt-2 text-small text-paper-dim">
-                    {tx.session.teacherRefining}
-                  </p>
-                )}
-              </article>
-            ),
-            // live cards of the turn in progress: already there, but not answerable until the turn is committed
-            ...(streaming !== null ? live.map((el) => <ElementCard key={el.blockId} el={el} disabled onRespond={() => {}} />) : []),
-          ]}
-          {verdict && (verdict === "correct" || verdict === "incorrect") && (
-            <p role="status" className={cn("text-body", verdict === "correct" ? "text-st-solid" : "text-st-confused")}>
-              {verdict === "correct" ? tx.stubs.practice.correct : tx.live.notQuite}
+                      )}
+                    </article>
+                  ) : null,
+                  // the forms of a turn stay right after its text, in the order of the session, answered or not
+                  ...(l.seq === undefined
+                    ? []
+                    : elems
+                        .filter((x) => x.turnSeq === l.seq)
+                        .map((el) => (
+                          <ElementCard
+                            key={el.blockId}
+                            el={el}
+                            disabled={busy}
+                            sessionId={id}
+                            onRespond={(r) => void respond(el, r)}
+                            onOpenCode={(task) => setCode({ task, title: tx.code.taskLabel, blockId: el.blockId, at: Date.now() })}
+                          />
+                        ))),
+                ];
+              }),
+              streaming !== null && (
+                <article
+                  key={streamId}
+                  aria-label={tx.session.teacherTurn}
+                  aria-busy="true"
+                  className="text-paper [overflow-wrap:anywhere]"
+                >
+                  {streaming ? (
+                    <RichText text={streaming} className={cn("transition-opacity duration-(--dur-s) ease-(--ease-out)", refining && "opacity-60")} />
+                  ) : (
+                    <p role="status" className="flex items-center gap-2 text-small text-paper-dim">
+                      {thinking ? tx.session.teacherThinking : tx.session.teacherReading}
+                      <Dots />
+                    </p>
+                  )}
+                  {refining && streaming && (
+                    <p role="status" className="mt-2 text-small text-paper-dim">
+                      {tx.session.teacherRefining}
+                    </p>
+                  )}
+                </article>
+              ),
+              // live cards of the turn in progress: already there, but not answerable until the turn is committed
+              ...(streaming !== null ? live.map((el) => <ElementCard key={el.blockId} el={el} disabled onRespond={() => {}} />) : []),
+            ]}
+            {verdict && (verdict === "correct" || verdict === "incorrect") && (
+              <p role="status" className={cn("text-body", verdict === "correct" ? "text-st-solid" : "text-st-confused")}>
+                {verdict === "correct" ? tx.stubs.practice.correct : tx.live.notQuite}
+              </p>
+            )}
+            {hasStandaloneUnanswered && !error && (
+              <div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void retryAction()}
+                  className="caps rounded-pill border border-seam px-3.5 py-1.5 text-small text-paper transition-colors hover:border-ribbon hover:text-ribbon disabled:opacity-50"
+                >
+                  {t.retry}
+                </button>
+              </div>
+            )}
+            {error && (
+              <div role="alert" className="flex flex-wrap items-center gap-3 text-small text-st-confused">
+                <p className="min-w-0 flex-1">{error}</p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void retryAction()}
+                  className="caps shrink-0 rounded-pill border border-st-confused/60 px-3 py-1 text-st-confused transition-colors hover:border-st-confused hover:bg-cloth-hover disabled:opacity-50"
+                >
+                  {t.retry}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={(d) => workspace?.open({ kind: "demo", id: d.requestId, title: d.title })} />
+        <div className="px-4 pb-4 md:px-7 md:pb-5">
+          {teacherStatusKey && (
+            <p role="status" className="mb-1.5 flex items-center gap-2 pr-12 text-small text-paper-dim">
+              <span aria-hidden className="size-1.5 rounded-pill bg-ribbon motion-safe:animate-pulse" />
+              <span>{tx.session.teacherStatus[teacherStatusKey]}</span>
             </p>
           )}
-          {hasStandaloneUnanswered && !error && (
-            <div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void retryAction()}
-                className="caps rounded-pill border border-seam px-3.5 py-1.5 text-small text-paper transition-colors hover:border-ribbon hover:text-ribbon disabled:opacity-50"
-              >
-                {t.retry}
-              </button>
-            </div>
+          {queue.items.length > 0 && (
+            <ul aria-label={tx.session.queueLabel} className="mb-2 flex flex-wrap gap-1.5 pr-12">
+              {queue.items.map((item) => (
+                <li
+                  key={item.id}
+                  className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-pill border border-seam bg-cloth-raised px-3 py-1 text-small text-paper"
+                >
+                  <span className="min-w-0 truncate">{item.text}</span>
+                  {item.files?.length ? (
+                    <span className="shrink-0 text-paper-dim">{tx.session.queueFiles(item.files.length)}</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={tx.session.queueRemove}
+                    onClick={() => queue.remove(item.id)}
+                    className="-mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-pill text-paper-dim hover:bg-cloth-hover hover:text-paper"
+                  >
+                    <X aria-hidden className="size-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
-          {error && (
-            <div role="alert" className="flex flex-wrap items-center gap-3 text-small text-st-confused">
-              <p className="min-w-0 flex-1">{error}</p>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void retryAction()}
-                className="caps shrink-0 rounded-pill border border-st-confused/60 px-3 py-1 text-st-confused transition-colors hover:border-st-confused hover:bg-cloth-hover disabled:opacity-50"
-              >
-                {t.retry}
-              </button>
-            </div>
-          )}
+          <Composer
+            label={tx.session.composerLabel}
+            placeholder={tx.session.replyPlaceholder}
+            submitText={tx.session.send}
+            onSend={handleComposerSend}
+            sessionId={id}
+            voice={{ onClip: sendVoice, disabled: busy }}
+            duck
+            creator
+            dropZone={chatEl}
+          />
         </div>
       </div>
-
-      <SessionCorner plan={plan} stale={planStale} jobs={jobRows(bg.jobs, bg.finished)} topicId={detail.topic_id} onOpenDemo={(d) => workspace?.open({ kind: "demo", id: d.requestId, title: d.title })} />
       {code && (
         <CodePanel
           key={code.task.task_id}
-          open={code}
+          // the title follows the language of the interface, whoever opened the editor
+          open={{ ...code, title: tx.code.taskLabel }}
           sessionId={id}
           onClose={() => setCode(null)}
           onVerdict={(outcome) => {
             const blockId = code.blockId;
             setElems((all) => all.map((x) => (x.blockId === blockId ? { ...x, answered: true, verdict: outcome } : x)));
           }}
+          // the code is an answer now; the teacher's review of it is the next turn, streamed into the chat
+          onReview={() => act({ kind: "retry_turn" })}
         />
       )}
-
-      <div className="px-4 pb-4 md:px-7 md:pb-5">
-        {teacherStatusKey && (
-          <p role="status" className="mb-1.5 flex items-center gap-2 pr-12 text-small text-paper-dim">
-            <span aria-hidden className="size-1.5 rounded-pill bg-ribbon motion-safe:animate-pulse" />
-            <span>{tx.session.teacherStatus[teacherStatusKey]}</span>
-          </p>
-        )}
-        {queue.items.length > 0 && (
-          <ul aria-label={tx.session.queueLabel} className="mb-2 flex flex-wrap gap-1.5 pr-12">
-            {queue.items.map((item) => (
-              <li
-                key={item.id}
-                className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-pill border border-seam bg-cloth-raised px-3 py-1 text-small text-paper"
-              >
-                <span className="min-w-0 truncate">{item.text}</span>
-                {item.files?.length ? (
-                  <span className="shrink-0 text-paper-dim">{tx.session.queueFiles(item.files.length)}</span>
-                ) : null}
-                <button
-                  type="button"
-                  aria-label={tx.session.queueRemove}
-                  onClick={() => queue.remove(item.id)}
-                  className="-mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-pill text-paper-dim hover:bg-cloth-hover hover:text-paper"
-                >
-                  <X aria-hidden className="size-3" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <Composer
-          label={tx.session.composerLabel}
-          placeholder={tx.session.replyPlaceholder}
-          submitText={tx.session.send}
-          onSend={handleComposerSend}
-          sessionId={id}
-          voice={{ onClip: sendVoice, disabled: busy }}
-          duck
-          creator
-          dropZone={chatEl}
-        />
-      </div>
     </div>
   );
 }
+
+/** Elements that may stand for a code task: a plain task (old), a generated one (teacher@4), the sandbox (teacher@5) */
+const CODE_KINDS = new Set(["task", "code_task", "code_sandbox"]);
 
 /** A task or a question of the teacher: its prompt and a box for the answer. Other element kinds show only what they carry */
 function ElementCard({
@@ -1070,7 +1086,7 @@ function ElementCard({
   const turnSeq = el.turnSeq;
   const elementId = (el.element as { element_id?: string }).element_id;
   useEffect(() => {
-    if ((e.kind !== "task" && e.kind !== "code_task") || turnSeq === null || !sessionId || !elementId || !onOpenCode) return;
+    if (!CODE_KINDS.has(e.kind) || turnSeq === null || !sessionId || !elementId || !onOpenCode) return;
     let alive = true;
     elementCodeTask(sessionId, turnSeq, elementId)
       .then((found) => alive && setCodeTask(found))
@@ -1088,7 +1104,7 @@ function ElementCard({
   return (
     <section aria-label={tx.live.taskFromTeacher} aria-busy={inactive || undefined} className="rounded-[2px] border border-seam p-4">
       <p className="caps text-paper-dim">
-        {e.kind === "task" ? tx.live.taskFromTeacher : e.kind === "code_task" ? tx.code.taskLabel : e.kind.replace(/_/g, " ")}
+        {e.kind === "task" ? tx.live.taskFromTeacher : CODE_KINDS.has(e.kind) ? tx.code.taskLabel : e.kind.replace(/_/g, " ")}
       </p>
       {e.prompt && (
         <div className="mt-2 text-paper">
@@ -1096,12 +1112,12 @@ function ElementCard({
         </div>
       )}
       {/* a code task element carries no text of its own: the statement comes with the task */}
-      {e.kind === "code_task" && codeTask?.condition && (
+      {(e.kind === "code_task" || e.kind === "code_sandbox") && codeTask?.condition && (
         <div className="mt-2 text-paper">
           <RichText text={codeTask.condition} />
         </div>
       )}
-      {e.kind === "code_task" && !codeTask && !inactive && <p className="mt-2 text-small text-paper-dim">{tx.code.loading}</p>}
+      {(e.kind === "code_task" || e.kind === "code_sandbox") && !codeTask && !inactive && <p className="mt-2 text-small text-paper-dim">{tx.code.loading}</p>}
       {viz &&
         // `request_id` is resolved only once the turn is committed (ТЗ §12.3): a live `element` frame still
         // carries the raw `request` label and has nothing fetchable yet (Д-B-178 serves by `request_id`)

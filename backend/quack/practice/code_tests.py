@@ -18,7 +18,16 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from quack.db.db import Db
 
-type PythonCompare = Literal["exact", "float_tol", "unordered"]
+# `float_tol` — the strict tolerance of `Settings.code_float_tolerance` and an int equal to a
+# float; `float_approx` — the same with the task's own `epsilon` (the code sandbox, teacher@5).
+type PythonCompare = Literal["exact", "float_tol", "unordered", "float_approx"]
+# The code sandbox (teacher@5): `inline_patch` — the learner completes or fixes a piece and checks
+# it on the sample only; `full_problem` — a whole block, with hidden tests built in the background.
+type CodeMode = Literal["inline_patch", "full_problem"]
+# The hidden tests of a `full_problem` task: `none` — the mode has none; `pending` — the background
+# builder is at work; `ready` — stored; `failed` — the reference failed twice, the task stays on the
+# sample and the teacher's review.
+type BuildStatus = Literal["none", "pending", "ready", "failed"]
 
 
 class _Model(BaseModel):
@@ -34,13 +43,21 @@ class PythonCase(_Model):
     # The name of the exception the call must raise (`ValueError`); `expected` is unused.
     raises: str | None = None
     hidden: bool
+    # The short name of a hidden case the learner sees when it fails («пустой массив»).
+    name: str | None = None
 
 
 class PythonTests(_Model):
     language: Literal["python"] = "python"
     function: str
+    # Empty while the hidden tests of a sandbox task are not built (and for `inline_patch`).
     reference: str
     cases: list[PythonCase]
+    # Tasks of the generator (teacher@4) predate the sandbox: a whole task with ready tests.
+    mode: CodeMode = "full_problem"
+    build: BuildStatus = "ready"
+    # The tolerance of `float_approx`; `None` — `Settings.code_float_tolerance`.
+    epsilon: float | None = None
 
 
 class SqlCase(_Model):
@@ -55,6 +72,11 @@ class SqlTests(_Model):
     reference: str
     ordered: bool
     cases: list[SqlCase]
+    mode: CodeMode = "full_problem"
+    build: BuildStatus = "ready"
+    # A ready read-only database of `quack.practice.sql_presets` (`shop`, `university`): its schema
+    # and data are copied into `schema_sql` and the data of every case.
+    preset: str | None = None
 
 
 type CodeTests = Annotated[PythonTests | SqlTests, Field(discriminator="language")]
@@ -67,6 +89,13 @@ _SELECT = (
 _UPDATE = (
     "UPDATE content.tasks SET code_tests = %(code_tests)s "
     "WHERE learner_id = %(learner_id)s AND task_id = %(task_id)s"
+)
+
+
+_UPDATE_BUILT = (
+    "UPDATE content.tasks SET code_tests = %(code_tests)s "
+    "WHERE learner_id = %(learner_id)s AND task_id = %(task_id)s "
+    "AND code_tests->>'build' = 'pending' RETURNING task_id"
 )
 
 
@@ -94,5 +123,66 @@ async def store_code_tests(
             "learner_id": learner_id,
             "task_id": task_id,
             "code_tests": Jsonb(tests.model_dump(mode="json")),
+        },
+    )
+
+
+async def store_built_tests(
+    db: Db, *, learner_id: UUID, task_id: UUID, tests: PythonTests | SqlTests
+) -> bool:
+    """The background builder's result, written only while the task still waits for it
+    (`build = pending`): a late or repeated result for the same `task_id` is dropped. `False` —
+    nothing was written."""
+    row = await db.fetch_one(
+        _UPDATE_BUILT,
+        {
+            "learner_id": learner_id,
+            "task_id": task_id,
+            "code_tests": Jsonb(tests.model_dump(mode="json")),
+        },
+    )
+    return row is not None
+
+
+# --- the learner's draft (the code sandbox) -----------------------------------------------------
+
+
+class CodeDraft(_Model):
+    """The learner's current code and the statuses of its last run (`number: status`)."""
+
+    code: str
+    statuses: dict[str, str] = Field(default_factory=dict)
+
+
+_SELECT_DRAFT = (
+    "SELECT code_draft FROM content.tasks "
+    "WHERE learner_id = %(learner_id)s AND task_id = %(task_id)s"
+)
+_UPDATE_DRAFT = (
+    "UPDATE content.tasks SET code_draft = %(code_draft)s "
+    "WHERE learner_id = %(learner_id)s AND task_id = %(task_id)s AND code_tests IS NOT NULL"
+)
+
+
+class _DraftRow(BaseModel):
+    code_draft: dict[str, Any] | None
+
+
+async def get_code_draft(db: Db, *, learner_id: UUID, task_id: UUID) -> CodeDraft | None:
+    row = await db.fetch_one(
+        _SELECT_DRAFT, {"learner_id": learner_id, "task_id": task_id}, row=_DraftRow
+    )
+    if row is None or row.code_draft is None:
+        return None
+    return CodeDraft.model_validate(row.code_draft)
+
+
+async def store_code_draft(db: Db, *, learner_id: UUID, task_id: UUID, draft: CodeDraft) -> None:
+    await db.execute(
+        _UPDATE_DRAFT,
+        {
+            "learner_id": learner_id,
+            "task_id": task_id,
+            "code_draft": Jsonb(draft.model_dump(mode="json")),
         },
     )

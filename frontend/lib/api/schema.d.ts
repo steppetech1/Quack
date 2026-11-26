@@ -1174,6 +1174,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{task_id}/code/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save Draft
+         * @description The learner's current code (the statuses of the last run are kept); writes no event.
+         */
+        put: operations["save_draft_v1_tasks__task_id__code_draft_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{task_id}/code/run": {
         parameters: {
             query?: never;
@@ -1539,6 +1559,8 @@ export interface components {
             /** Token */
             token: string;
         };
+        /** @enum {string} */
+        BuildStatus: "none" | "pending" | "ready" | "failed";
         /** CanvasList */
         CanvasList: {
             /** Canvases */
@@ -1724,6 +1746,20 @@ export interface components {
             /** Stroke Batch Ms */
             stroke_batch_ms: number;
         };
+        /**
+         * CodeDraft
+         * @description The learner's current code and the statuses of its last run (`number: status`).
+         */
+        CodeDraft: {
+            /** Code */
+            code: string;
+            /** Statuses */
+            statuses?: {
+                [key: string]: string;
+            };
+        };
+        /** @enum {string} */
+        CodeMode: "inline_patch" | "full_problem";
         /** CodeRunErrorView */
         CodeRunErrorView: {
             /** Line */
@@ -1732,6 +1768,62 @@ export interface components {
             message: string;
             /** Type */
             type: string;
+        };
+        /**
+         * CodeSandboxElement
+         * @description Песочница для кода (teacher@5, owner decision 2026-11-26): a code task the teacher writes
+         *     in the turn; the editor opens at once. Its markup is in `p3_markup.tasks` (answer type
+         *     `code`), as for any task element.
+         *
+         *     - `mode`: `inline_patch` — complete a `TODO` or fix a bug, checked on the sample and by the
+         *       teacher's review; `full_problem` — a whole block: hidden tests are built in the background.
+         *     - `statement` — the statement (Markdown) the editor shows; `starter_code` — the code the
+         *       learner starts from.
+         *     - Python: `entry_point` — the function the tests call; `sample_args_json` — a JSON array of
+         *       its arguments; `sample_expected_json` — the JSON of what it must return.
+         *     - SQL: `sql_preset` — a ready database (`shop`, `university`), no `CREATE TABLE`;
+         *       `sample_expected_json` — the JSON array of the rows the query must give; `entry_point` and
+         *       `sample_args_json` are null. Column names are not compared.
+         *     - `compare`: `exact` (for SQL — the order of rows counts), `unordered` (order does not count),
+         *       `float_approx` (numbers within `epsilon`; null — the default tolerance).
+         */
+        CodeSandboxElement: {
+            /**
+             * Compare
+             * @enum {string}
+             */
+            compare: "exact" | "unordered" | "float_approx";
+            /** Element Id */
+            element_id: string;
+            /** Entry Point */
+            entry_point: string | null;
+            /** Epsilon */
+            epsilon: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "code_sandbox";
+            /**
+             * Language
+             * @enum {string}
+             */
+            language: "python" | "sql";
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "inline_patch" | "full_problem";
+            /** Sample Args Json */
+            sample_args_json: string | null;
+            /** Sample Expected Json */
+            sample_expected_json: string;
+            /** Sql Preset */
+            sql_preset: ("shop" | "university") | null;
+            /** Starter Code */
+            starter_code: string;
+            /** Statement */
+            statement: string;
         };
         /**
          * CodeTaskElement
@@ -1755,8 +1847,10 @@ export interface components {
          * @description The editor of a `code` task. Hidden tests: their count only.
          */
         CodeTaskView: {
+            build: components["schemas"]["BuildStatus"];
             /** Condition */
             condition: string;
+            draft?: components["schemas"]["CodeDraft"] | null;
             /** Function */
             function: string | null;
             /** Hidden Tests */
@@ -1766,6 +1860,7 @@ export interface components {
              * @enum {string}
              */
             language: "python" | "sql";
+            mode: components["schemas"]["CodeMode"];
             /** Open Python Tests */
             open_python_tests: components["schemas"]["OpenPythonTest"][];
             /** Open Sql Tests */
@@ -1774,6 +1869,8 @@ export interface components {
             ordered: boolean | null;
             /** Schema Sql */
             schema_sql: string | null;
+            /** Sql Preset */
+            sql_preset?: string | null;
             /** Starter Code */
             starter_code: string | null;
             /**
@@ -1806,6 +1903,8 @@ export interface components {
             expected_rows?: unknown[][] | null;
             /** Hidden */
             hidden: boolean;
+            /** Name */
+            name?: string | null;
             /** Number */
             number: number;
             status: components["schemas"]["CodeTestStatus"];
@@ -2068,6 +2167,11 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** DraftRequest */
+        DraftRequest: {
+            /** Code */
+            code: string;
+        };
         /**
          * EditHub
          * @description `topics` — the whole new scope with required levels (empty levels — by `controlType`,
@@ -2087,7 +2191,7 @@ export interface components {
             /** Seq */
             seq: number;
         };
-        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"] | components["schemas"]["CodeTaskElement"] | components["schemas"]["SkillProposalElement"];
+        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"] | components["schemas"]["CodeTaskElement"] | components["schemas"]["CodeSandboxElement"] | components["schemas"]["SkillProposalElement"];
         /**
          * ElementFrame
          * @description `element {block_id, element}`: after its markup passed the code check.
@@ -3221,6 +3325,8 @@ export interface components {
         };
         /** RunResponse */
         RunResponse: {
+            /** @default ready */
+            build?: components["schemas"]["BuildStatus"];
             custom?: components["schemas"]["CustomRunView"] | null;
             /** Tests */
             tests: components["schemas"]["CodeTestView"][];
@@ -8626,6 +8732,66 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CodeTaskView"];
                 };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_draft_v1_tasks__task_id__code_draft_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {

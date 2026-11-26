@@ -1,4 +1,4 @@
-import { ApiError, get, idem, post, type S } from "./client";
+import { ApiError, get, idem, post, put, type S } from "./client";
 
 /** A code task as the editor gets it: the language, the function, the starter code and the open tests. Hidden tests: their count only */
 export type CodeTask = S["CodeTaskView"];
@@ -27,4 +27,14 @@ export function runCode(taskId: string, code: string, args?: unknown[]): Promise
 /** Every test; the answer and its verdict are written. Hidden tests come back as number and status only */
 export function submitCode(sessionId: string, taskId: string, code: string): Promise<SubmitResult> {
   return post(`/v1/sessions/${sessionId}/tasks/${taskId}/code/submit`, { code, idempotency_key: idem() });
+}
+
+/** The task as the editor gets it again: while `build` is `pending` the hidden tests are still being made */
+export function codeTask(taskId: string): Promise<CodeTask> {
+  return get<CodeTask>(`/v1/tasks/${taskId}/code`);
+}
+
+/** The learner's current code, kept on the server by task, so a reload or another device opens it where it was */
+export function saveDraft(taskId: string, code: string): Promise<void> {
+  return put(`/v1/tasks/${taskId}/code/draft`, { code });
 }
