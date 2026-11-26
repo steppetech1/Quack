@@ -1005,6 +1005,7 @@ class ResolvedTopic:
     topic_id: UUID
     core_skill_id: UUID
     skill_ids: tuple[UUID, ...] = ()
+    skill_names: tuple[str, ...] = ()  # names of `skill_ids`, same order ("" — unknown)
 
 
 class StructureResolver(Protocol):
@@ -1039,6 +1040,7 @@ class SeminarSpec:
     course_context: str
     topic_id: UUID | None = None
     topic_skill_ids: tuple[UUID, ...] = ()
+    topic_skill_names: tuple[str, ...] = ()  # names of `topic_skill_ids`, same order
 
 
 class SeminarWriter(Protocol):
@@ -1205,6 +1207,7 @@ def _seminar_specs(
                 course_context=title,
                 topic_id=resolved.topic_id,
                 topic_skill_ids=tuple(resolved.skill_ids),
+                topic_skill_names=tuple(resolved.skill_names),
             )
         )
     return specs
@@ -1238,6 +1241,7 @@ def _seminar_plan(material: _Material, job: ClaimedJob, specs: Sequence[SeminarS
                     "course_context": s.course_context,
                     "topic_id": str(s.topic_id) if s.topic_id is not None else None,
                     "topic_skill_ids": [str(sid) for sid in s.topic_skill_ids],
+                    "topic_skill_names": list(s.topic_skill_names),
                 }
                 for s in specs
             ],
@@ -1384,6 +1388,7 @@ def _spec_of(item: dict[str, Any]) -> SeminarSpec:
         course_context=str(item["course_context"]),
         topic_id=UUID(str(raw_topic_id)) if raw_topic_id else None,
         topic_skill_ids=tuple(UUID(str(sid)) for sid in item.get("topic_skill_ids", ())),
+        topic_skill_names=tuple(str(n) for n in item.get("topic_skill_names", ())),
     )
 
 

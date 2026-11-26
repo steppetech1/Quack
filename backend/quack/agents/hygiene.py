@@ -50,6 +50,7 @@ from quack.events.event_types import (
     SkillPlaced,
     TopicCreated,
     TopicMerged,
+    TopicProposed,
     TopicRenamed,
 )
 from quack.events.log import NewEvent
@@ -207,6 +208,9 @@ class ResolvedStructureTopic:
     topic_id: UUID
     core_skill_id: UUID
     skill_ids: tuple[UUID, ...] = ()
+    # Names of `skill_ids` (same order; "" when unknown): the closed choice of task markup
+    # shows the model each skill of the topic by name, not by a bare label (Т-§4.6).
+    skill_names: tuple[str, ...] = ()
 
 
 async def read_domain_graph(
@@ -635,14 +639,19 @@ def _markup_new_skill_ids(
 
 async def _find_ended_empty_births(
     db: Db, learner_id: UUID, *, session_id: UUID | None
-) -> tuple[dict[UUID, UUID], set[UUID], set[UUID]]:
-    """From `core.events`, compute `(birth_session_by_skill, ended_sessions, non_empty_skills)`."""
-    ended_rows = await db.fetch_all(_ENDED_SESSIONS, {"learner_id": learner_id})
-    ended_sessions = {UUID(str(r["sid"])) for r in ended_rows if r.get("sid")}
+) -> tuple[dict[UUID, UUID], set[UUID], set[UUID], set[UUID]]:
+    """From `core.events`, compute `(birth_session_by_skill, ended_sessions, non_empty_skills,
+    tested_skills)`. A run after `session.ended` judges the births of that session only; a run
+    without a session (the periodic hygiene) judges every ended session. Any answer to a task
+    counts as work on its skills, a verdict still pending included. `tested_skills` are the
+    skills some task tests: such a skill is never deleted, or its tasks would test nothing."""
     if session_id is not None:
-        ended_sessions.add(session_id)
+        ended_sessions = {session_id}
+    else:
+        ended_rows = await db.fetch_all(_ENDED_SESSIONS, {"learner_id": learner_id})
+        ended_sessions = {UUID(str(r["sid"])) for r in ended_rows if r.get("sid")}
     if not ended_sessions:
-        return {}, set(), set()
+        return {}, set(), set(), set()
 
     rows = await db.fetch_all(
         _SESSION_SKILL_EVENTS, {"learner_id": learner_id, "types": _ACTIVITY_EVENT_TYPES}
@@ -710,8 +719,7 @@ async def _find_ended_empty_births(
             if payload.get("task_id"):
                 tid = UUID(str(payload["task_id"]))
                 answer_task[seq] = tid
-                if payload.get("source") == "card" and payload.get("self_assessment") is not None:
-                    non_empty.update(task_skills.get(tid, ()))
+                non_empty.update(task_skills.get(tid, ()))
         elif etype == "verdict.recorded":
             if payload.get("outcome") != "unclear" and payload.get("answer_seq") is not None:
                 ans_tid = answer_task.get(int(payload["answer_seq"]))
@@ -720,7 +728,8 @@ async def _find_ended_empty_births(
         elif etype == "observation.diagnosed" and payload.get("task_id"):
             non_empty.update(task_skills.get(UUID(str(payload["task_id"])), ()))
 
-    return birth_session, ended_sessions, non_empty
+    tested = {sid for sids in task_skills.values() for sid in sids}
+    return birth_session, ended_sessions, non_empty, tested
 
 
 async def _cleanup_empty_provisional_skills(
@@ -737,7 +746,7 @@ async def _cleanup_empty_provisional_skills(
     candidates = state.provisional_skills()
     if not candidates:
         return []
-    birth_session, ended_sessions, non_empty = await _find_ended_empty_births(
+    birth_session, ended_sessions, non_empty, tested = await _find_ended_empty_births(
         ctx.db, learner_id, session_id=session_id
     )
     if not ended_sessions:
@@ -767,7 +776,7 @@ async def _cleanup_empty_provisional_skills(
                 )
             )
             state.remove_skill(sk.skill_id)
-        else:
+        elif sk.skill_id not in tested:
             events.append(
                 NewEvent(
                     type="skill.deleted",
@@ -1095,18 +1104,12 @@ def _structure_problem(
     return None
 
 
-def _select_topics_for_prompt(
-    state: _StructureState,
-    *,
-    limit: int,
-    priority_topic_ids: set[UUID],
-) -> list[_TopicState]:
-    if len(state.topics) <= limit:
-        return list(state.topics)
-    log.warning("structure_topics_truncated", total=len(state.topics), limit=limit)
-    prioritized = [t for t in state.topics if t.topic_id in priority_topic_ids]
-    others = [t for t in state.topics if t.topic_id not in priority_topic_ids]
-    return (prioritized + others)[:limit]
+def _topics_for_prompt(state: _StructureState, *, limit: int) -> list[_TopicState]:
+    """Every topic of the domain goes to the prompt (Т-§4.2): above `limit` only a warning with
+    the count, no short list yet (a topic cut from the list could only be duplicated)."""
+    if len(state.topics) > limit:
+        log.warning("structure_topics_over_limit", total=len(state.topics), limit=limit)
+    return list(state.topics)
 
 
 def _render_structure_input(
@@ -1332,17 +1335,7 @@ async def _run_structure(
                         topic_id=c.topic_id,
                     )
 
-        priority_topics: set[UUID] = {sk.topic_id for sk in p_entries if sk.topic_id is not None}
-        for sims in sim_results:
-            for c in sims:
-                if c.topic_id is not None:
-                    priority_topics.add(c.topic_id)
-
-        shown_topics = _select_topics_for_prompt(
-            state,
-            limit=settings.structure_full_list_max_topics,
-            priority_topic_ids=priority_topics,
-        )
+        shown_topics = _topics_for_prompt(state, limit=settings.structure_full_list_max_topics)
 
         skill_ids_order: list[UUID] = []
         for t in shown_topics:
@@ -1428,8 +1421,12 @@ async def _run_structure(
                 ts = state.topics_by_id[target_topic_id]
                 if ts.core_skill_id is not None:
                     resolved_core_id = ts.core_skill_id
+                elif ts.skill_ids:
+                    # A topic of an old subject has no core skill: its first skill anchors the
+                    # material, and nothing is written (old subjects are not rebuilt, Т-§3, §8).
+                    resolved_core_id = ts.skill_ids[0]
                 else:
-                    # Legacy topic without core skill yet: create its single core=True skill.
+                    # A topic with no skill at all: create its single core=True skill.
                     spec = tc.core_skill if tc is not None else None
                     c_name = (spec.name if spec else cand.core_skill_name).strip() or ts.name
                     c_def = (spec.definition if spec else cand.description).strip()
@@ -1529,17 +1526,22 @@ async def _run_structure(
                     resolved_core_id = _allocate_core_skill_id(
                         state, learner_id, domain_id, target_topic_id, c_name
                     )
+                    # A topic found in a material, with no work of the learner yet, is
+                    # proposed (pale on the graph, Т-§4.7, П-2.2); the fold makes it active on
+                    # the first work. Topics born of a session's work are created.
+                    topic_event = "topic.proposed" if origin == "material" else "topic.created"
+                    topic_payload = TopicProposed if origin == "material" else TopicCreated
                     batch_events.append(
                         make_event(
-                            "topic.created",
-                            TopicCreated(
+                            topic_event,
+                            topic_payload(
                                 topic_id=target_topic_id,
                                 domain_id=domain_id,
                                 name=clean_name,
                                 origin=origin,
                                 description=t_desc,
                             ),
-                            f"structure:topic.created:{target_topic_id}",
+                            f"structure:{topic_event}:{target_topic_id}",
                         )
                     )
                     batch_events.append(
@@ -1564,7 +1566,7 @@ async def _run_structure(
                     state.register_topic(
                         topic_id=target_topic_id,
                         name=clean_name,
-                        status="active",
+                        status="proposed" if origin == "material" else "active",
                         description=t_desc,
                         core_skill_id=resolved_core_id,
                         core_skill_name=c_name,
@@ -1894,7 +1896,12 @@ async def _run_structure(
         ts = state.topics_by_id.get(tid)
         skills_in_topic = tuple(dict.fromkeys([cid, *(ts.skill_ids if ts is not None else ())]))
         resolved_list.append(
-            ResolvedStructureTopic(topic_id=tid, core_skill_id=cid, skill_ids=skills_in_topic)
+            ResolvedStructureTopic(
+                topic_id=tid,
+                core_skill_id=cid,
+                skill_ids=skills_in_topic,
+                skill_names=tuple(_skill_name(state, ts, sid) for sid in skills_in_topic),
+            )
         )
 
     log.info(
@@ -1913,6 +1920,16 @@ async def _run_structure(
         cached_tokens=totals.cached_tokens,
     )
     return all_written, resolved_list
+
+
+def _skill_name(state: _StructureState, topic: _TopicState | None, skill_id: UUID) -> str:
+    if topic is not None:
+        if (name := topic.skill_names.get(skill_id)) is not None:
+            return name
+        if topic.core_skill_id == skill_id and topic.core_skill_name:
+            return topic.core_skill_name
+    skill = state.skills_by_id.get(skill_id)
+    return skill.name if skill is not None else ""
 
 
 # --- Public entry points ---------------------------------------------------------------------

@@ -22,6 +22,7 @@ from quack.agents.hygiene import (
     SkillNode,
     TopicNode,
     UnassignedSkillNode,
+    _find_ended_empty_births,
     _RawRequires,
     filter_requires_edges,
     resolve_material_structure,
@@ -312,7 +313,14 @@ async def test_structure_unknown_label_triggers_repair_retry(
     )
     assert len(repair_errors) == 1
     assert "T999" in repair_errors[0]
-    assert res == [ResolvedStructureTopic(topic_id=t1, core_skill_id=s1, skill_ids=(s1,))]
+    assert res == [
+        ResolvedStructureTopic(
+            topic_id=t1,
+            core_skill_id=s1,
+            skill_ids=(s1,),
+            skill_names=("differentiates functions",),
+        )
+    ]
     assert written == []
 
 
@@ -727,20 +735,15 @@ async def test_addition2_empty_provisional_skills_cleanup(
     )
     sk_in_topic = UUID(deterministic_id(learner_id, seq_in_topic, "skill:empty in topic"))
 
-    # Birth 2: unassigned, 0 evidence & 0 exposures -> should emit skill.deleted
-    seq_unassigned = db.add_stored(
+    # Birth 2: a provisional skill no task tests, unassigned, 0 evidence & 0 exposures ->
+    # should emit skill.deleted
+    sk_unassigned = uuid4()
+    db.add_stored(
         learner_id,
-        "task.created",
-        {
-            "task_id": str(uuid4()),
-            "markup": {
-                "tests": [{"new_skill": {"name": "Empty unassigned"}, "level": 3}],
-                "parts": [],
-            },
-        },
+        "skill.created",
+        {"skill_id": str(sk_unassigned), "name": "Empty unassigned", "status": "provisional"},
         session_id=session_id,
     )
-    sk_unassigned = UUID(deterministic_id(learner_id, seq_unassigned, "skill:empty unassigned"))
 
     # Birth 3: in observation.extracted WITH evidence -> NOT empty, kept for Structure LLM
     seq_with_ev = db.add_stored(
@@ -837,7 +840,54 @@ async def test_addition2_empty_provisional_skills_cleanup(
     assert created_p.status == "active"
 
 
-async def test_structure_topics_truncated_logs_warning(
+async def test_empty_births_count_pending_answers_and_tested_skills() -> None:
+    """A pending answer is work on the skills of its task; a skill some task tests is reported
+    as tested (never deleted); a run after `session.ended` judges that session only."""
+    learner_id, ended, other = uuid4(), uuid4(), uuid4()
+    db = _FakeDb()
+    task_answered, task_idle = uuid4(), uuid4()
+    seq_answered = db.add_stored(
+        learner_id,
+        "task.created",
+        {
+            "task_id": str(task_answered),
+            "markup": {"tests": [{"new_skill": {"name": "Answered"}, "level": 3}], "parts": []},
+        },
+        session_id=ended,
+    )
+    seq_idle = db.add_stored(
+        learner_id,
+        "task.created",
+        {
+            "task_id": str(task_idle),
+            "markup": {"tests": [{"new_skill": {"name": "Idle"}, "level": 3}], "parts": []},
+        },
+        session_id=ended,
+    )
+    # an answer with no verdict yet, and not from a card
+    db.add_stored(learner_id, "answer.submitted", {"task_id": str(task_answered)}, session_id=ended)
+    other_skill = uuid4()
+    db.add_stored(
+        learner_id,
+        "skill.created",
+        {"skill_id": str(other_skill), "name": "Other", "status": "provisional"},
+        session_id=other,
+    )
+    db.add_stored(learner_id, "session.ended", {"session_id": str(other)}, session_id=other)
+    answered = UUID(deterministic_id(learner_id, seq_answered, "skill:answered"))
+    idle = UUID(deterministic_id(learner_id, seq_idle, "skill:idle"))
+
+    births, ended_set, non_empty, tested = await _find_ended_empty_births(
+        cast(Db, db), learner_id, session_id=ended
+    )
+
+    assert ended_set == {ended}
+    assert births[answered] == ended and births[idle] == ended and births[other_skill] == other
+    assert answered in non_empty and idle not in non_empty
+    assert {answered, idle} <= tested and other_skill not in tested
+
+
+async def test_structure_topics_over_limit_shows_all_and_logs_warning(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
     learner_id = uuid4()
@@ -892,4 +942,6 @@ async def test_structure_topics_truncated_logs_warning(
         graph=graph,
     )
     out_log = capsys.readouterr().out
-    assert "structure_topics_truncated" in out_log
+    assert "structure_topics_over_limit" in out_log
+    shown = str(gw.calls[0])
+    assert all(f"Topic {i}" in shown for i in range(5))

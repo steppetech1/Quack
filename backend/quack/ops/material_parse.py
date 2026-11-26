@@ -42,6 +42,7 @@ from quack.practice.seminar_tasks import SeminarTask, create_seminar_task, semin
 # What the reconciliation reads from Neo4j: the nodes of the domain, their vectors and edges.
 _GRAPH_TYPES = (
     "topic.created",
+    "topic.proposed",
     "skill.created",
     "skill.placed",
     "topic.merged",
@@ -55,7 +56,8 @@ _LAST_GRAPH_SEQ = (
 )
 _DOMAIN_NODES = (
     "SELECT type, payload FROM core.events WHERE learner_id = %(learner_id)s "
-    "AND type IN ('topic.created', 'skill.created') AND payload->>'domain_id' = %(domain_id)s "
+    "AND type IN ('topic.created', 'topic.proposed', 'skill.created') "
+    "AND payload->>'domain_id' = %(domain_id)s "
     "ORDER BY seq"
 )
 _MADE_TASKS = (
@@ -68,7 +70,7 @@ def node_text(event_type: str, payload: dict[str, Any]) -> EmbeddingNode:
     """What is embedded (decision of 2026-11-24 on the `[ПРОВЕРИТЬ]` of Т-§3.4.2): a topic by its
     name, a skill by its name and definition (or summary for legacy events) — the words its
     candidates are searched with."""
-    if event_type == "topic.created":
+    if event_type in ("topic.created", "topic.proposed"):
         return EmbeddingNode("topic", UUID(str(payload["topic_id"])), str(payload["name"]))
     body = payload.get("definition") or payload.get("summary") or ""
     text = "\n".join((str(payload["name"]), str(body))).strip()
@@ -151,6 +153,7 @@ async def resolve_structure_candidates(
             topic_id=r.topic_id,
             core_skill_id=r.core_skill_id,
             skill_ids=tuple(r.skill_ids),
+            skill_names=tuple(r.skill_names),
         )
         for r in resolved
     ]
@@ -187,8 +190,15 @@ async def create_seminar_tasks(
                     answer=spec.answer,
                     course_context=spec.course_context,
                     domain_id=spec.domain_id,
-                    topic_id=spec.topic_id,  # type: ignore[call-arg]
-                    topic_skill_ids=spec.topic_skill_ids,  # type: ignore[call-arg]
+                    topic_id=spec.topic_id,
+                    topic_skill_ids=spec.topic_skill_ids,
+                    topic_skill_names={
+                        sid: name
+                        for sid, name in zip(
+                            spec.topic_skill_ids, spec.topic_skill_names, strict=False
+                        )
+                        if name
+                    },
                 ),
                 learner_id=learner_id,
                 compute=ctx.compute,

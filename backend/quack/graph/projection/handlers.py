@@ -765,27 +765,11 @@ def _topic_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
                 (s := view.node("Skill", sid)) is not None and s.get("core") is True
                 for sid in skills_in_part
             )
-            if not has_core:
-                core_id = deterministic_id(event.learner_id, event.seq, f"core:{topic}")
-                changes += [
-                    MergeNode(
-                        "Skill",
-                        core_id,
-                        {
-                            "learnerId": str(event.learner_id),
-                            "domainId": domain,
-                            "name": part.name,
-                            "summary": "",
-                            "status": old_props["status"],
-                            "origin": old_props["origin"],
-                            "core": True,
-                            "definition": "",
-                            "exemplar": "",
-                            "kind": "",
-                        },
-                    ),
-                    MergeRel("Topic", topic, "COVERS", "Skill", core_id, {}),
-                ]
+            # The first skill of the part becomes its core: the projector makes no skill of
+            # its own (a node without an event would be invisible to the log and to evidence).
+            first = next(iter(assigned.get(topic, ())), None)
+            if not has_core and first is not None:
+                changes.append(SetProps("Skill", first, {"core": True}))
     if old not in parts:
         changes.append(SetProps("Topic", old, {"status": "hidden"}))
     return changes
@@ -794,14 +778,16 @@ def _topic_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
 def _skill_split_needs(event: StoredEvent) -> Need:
     p = _payload(event, SkillSplit)
     topics = {("Topic", str(part.topic_id)) for part in p.into}
-    return Need(nodes=frozenset({("Skill", str(p.skill_id)), *topics}))
+    return Need(
+        nodes=frozenset({("Skill", str(p.skill_id)), *topics}), neighbourhoods=frozenset(topics)
+    )
 
 
 def _skill_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
     """New skills appear; the old evidence stays on the old skill and the dispatcher re-extracts
     its episodes (Т-§2.8). A part takes the domain, status, origin, and core flag of the split
-    skill; when a core skill is split, the old node is demoted so each part keeps one core
-    skill."""
+    skill; when a core skill is split, the old node is demoted and the core flag goes to the
+    first part in each topic that has no other core, so a topic keeps one core skill."""
     p = _payload(event, SkillSplit)
     old_id = view.resolve("Skill", str(p.skill_id))
     old = None if old_id is None else view.node("Skill", old_id)
@@ -811,11 +797,22 @@ def _skill_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
     changes: list[Mutation] = []
     if old_is_core:
         changes.append(SetProps("Skill", old_id, {"core": False}))
+    cored: set[str] = set()  # topics that have a core besides the split skill, or got one here
     for part in p.into:
         topic = view.resolve("Topic", str(part.topic_id))
         if topic is None:
             continue
         skill = str(part.skill_id)
+        if topic not in cored and any(
+            r.to_id != old_id
+            and (s := view.node("Skill", r.to_id)) is not None
+            and s.get("core") is True
+            for r in view.out_rels("Topic", topic, "COVERS")
+        ):
+            cored.add(topic)
+        core = old_is_core and topic not in cored
+        if core:
+            cored.add(topic)
         changes += [
             MergeNode(
                 "Skill",
@@ -827,7 +824,7 @@ def _skill_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
                     "summary": "",
                     "status": old["status"],
                     "origin": old["origin"],
-                    "core": old_is_core,
+                    "core": core,
                     "definition": "",
                     "exemplar": "",
                     "kind": "",

@@ -57,7 +57,7 @@ _HUBS_QUERY = """
 MATCH (d:Domain {id: $d})-[:HAS_HUB]->(h:Hub)
 WHERE d.learnerId = $l AND h.learnerId = $l
   AND coalesce(h.status, 'active') = 'active'
-RETURN coalesce(h.kind, 'unknown') AS kind, count(*) AS n
+RETURN coalesce(h.kind, 'unknown') AS kind, count(*) AS n, collect(h.id) AS ids
 """
 
 _EVENTS_QUERY = """
@@ -142,6 +142,7 @@ class GraphSnapshot:
     unassigned_skill_ids: frozenset[str] = frozenset()
     requires_edges: tuple[RequiresEdgeRow, ...] = ()
     hubs_by_kind: Mapping[str, int] = field(default_factory=dict)
+    material_hub_ids: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -241,6 +242,10 @@ def compute_structure_report(
     merged_to: dict[str, tuple[str, bool]] = {}
     deleted_skills: dict[str, bool] = {}
     placed_skills: set[str] = set()
+    tasks_in_window = 0
+    tasks_with_new_skill = 0
+    new_skill_reasons: Counter[str] = Counter()
+    syllabus_hub_ids: set[str] = set()
 
     for ev in sorted(events, key=lambda e: e.seq):
         p = ev.payload
@@ -252,6 +257,16 @@ def compute_structure_report(
                 if tid:
                     task_skills[tid] = by_part
                 source = str(p.get("source") or "")
+                if ev.occurred_at >= since:
+                    tasks_in_window += 1
+                    reasons = [
+                        str(t["new_skill"].get("reason") or "none")
+                        for _, t in _all_task_tests(markup)
+                        if isinstance(t.get("new_skill"), Mapping)
+                    ]
+                    if reasons:
+                        tasks_with_new_skill += 1
+                        new_skill_reasons.update(reasons)
                 if source in ("teacher", "generated", "seminar") and ev.occurred_at >= since:
                     for sid, name in new_skills:
                         births.setdefault(
@@ -328,6 +343,10 @@ def compute_structure_report(
             sid = str(p.get("skill_id") or "")
             if sid:
                 placed_skills.add(sid)
+        elif (ev.type == "hub.created" and ":syllabus:" in ev.idempotency_key) or (
+            ev.type == "hub.deadline_set" and p.get("source") == "syllabus"
+        ):
+            syllabus_hub_ids.add(str(p.get("hub_id") or ""))
 
     by_source: dict[str, dict[str, Any]] = {
         src: {
@@ -377,6 +396,20 @@ def compute_structure_report(
             reached_3_evidence += 1
 
     total_new = len(births)
+    # The same skill born again under one name: the writer did not find the first birth.
+    names = Counter(_norm(b.name) for b in births.values())
+    repeated = {n: c for n, c in names.items() if c > 1}
+    repeat_summary: dict[str, Any] = {
+        "names": len(repeated),
+        "extra_births": sum(c - 1 for c in repeated.values()),
+        "top": dict(sorted(repeated.items(), key=lambda kv: (-kv[1], kv[0]))[:10]),
+    }
+    task_new_skill_summary: dict[str, Any] = {
+        "tasks": tasks_in_window,
+        "with_new_skill": tasks_with_new_skill,
+        "share": (tasks_with_new_skill / tasks_in_window) if tasks_in_window else None,
+        "reasons": dict(sorted(new_skill_reasons.items())),
+    }
     evidence_summary: dict[str, Any] = {
         "window_days": EVIDENCE_WINDOW_DAYS,
         "total_new_skills": total_new,
@@ -414,6 +447,12 @@ def compute_structure_report(
     hubs: dict[str, int] = dict.fromkeys(HUB_KINDS, 0)
     for kind, count in graph.hubs_by_kind.items():
         hubs[kind] = hubs.get(kind, 0) + int(count)
+    # A syllabus hub is `kind: material` too (a control of the course); told apart by its events.
+    syllabus_hubs = len(graph.material_hub_ids & syllabus_hub_ids)
+    material_split = {
+        "syllabus": syllabus_hubs,
+        "other": len(graph.material_hub_ids) - syllabus_hubs,
+    }
 
     # 5. Cost by LLM role
     by_role: dict[str, dict[str, Any]] = {}
@@ -458,10 +497,13 @@ def compute_structure_report(
             "total": total_new,
             "by_source": by_source,
             "empty_births_total": sum(v["empty_births"] for v in by_source.values()),
+            "repeat_births": repeat_summary,
             "evidence_3_within_14d": evidence_summary,
         },
+        "tasks_new_skill": task_new_skill_summary,
         "requires_edges": requires_summary,
         "hubs_by_kind": hubs,
+        "material_hubs": material_split,
         "llm_cost": {
             "scope": "learner_window",
             "total_tokens": total_tokens,
@@ -512,12 +554,18 @@ async def read_graph_snapshot(
         )
 
         h_res = await session.run(cypher(_HUBS_QUERY), l=l_id, d=d_id)
-        hubs = {str(r["kind"]): int(r["n"]) async for r in h_res}
+        hubs: dict[str, int] = {}
+        material_hubs: set[str] = set()
+        async for r in h_res:
+            hubs[str(r["kind"])] = int(r["n"])
+            if r["kind"] == "material":
+                material_hubs |= {str(i) for i in (r["ids"] or ()) if i}
     return GraphSnapshot(
         topics=topics,
         unassigned_skill_ids=unassigned,
         requires_edges=edges,
         hubs_by_kind=hubs,
+        material_hub_ids=frozenset(material_hubs),
     )
 
 
@@ -580,6 +628,10 @@ def format_structure_report(report: Mapping[str, Any]) -> str:
     share_str = f"{ev14['share']:.1%}" if ev14["share"] is not None else "n/a"
     req = report["requires_edges"]
     hubs = report["hubs_by_kind"]
+    material_hubs = report.get("material_hubs", {})
+    repeats = new_skills.get("repeat_births", {})
+    task_ns = report.get("tasks_new_skill", {})
+    task_share = f"{task_ns['share']:.1%}" if task_ns.get("share") is not None else "n/a"
     cost = report["llm_cost"]
 
     lines = [
@@ -613,6 +665,14 @@ def format_structure_report(report: Mapping[str, Any]) -> str:
                 f"  evidence>=3 within 14d: {ev14['with_at_least_3_evidence']}/"
                 f"{ev14['total_new_skills']} ({share_str})"
             ),
+            (
+                f"  repeat births: names={repeats.get('names', 0)} "
+                f"extra={repeats.get('extra_births', 0)} top={repeats.get('top', {})}"
+            ),
+            (
+                f"  tasks with new_skill: {task_ns.get('with_new_skill', 0)}/"
+                f"{task_ns.get('tasks', 0)} ({task_share}) reasons={task_ns.get('reasons', {})}"
+            ),
             "",
             f"REQUIRES edges (total={req['total']}):",
             (
@@ -624,6 +684,10 @@ def format_structure_report(report: Mapping[str, Any]) -> str:
             "",
             "Hubs by kind:",
             "  " + " ".join(f"{k}={v}" for k, v in hubs.items()),
+            (
+                f"  material: syllabus={material_hubs.get('syllabus', 0)} "
+                f"other={material_hubs.get('other', 0)}"
+            ),
             "",
             (
                 f"LLM cost (scope={cost['scope']}, total_tokens={cost['total_tokens']}, "

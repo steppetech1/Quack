@@ -1661,12 +1661,30 @@ def test_topic_split_ensures_every_part_has_a_core_skill() -> None:
             _rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL_B)),
         ],
     )
-    new_core = deterministic_id(LEARNER, 55, f"core:{TOPIC_NEW}")
+    # the first skill of the part becomes its core; the projector makes no skill of its own
     assert nodes[("Skill", SKILL)]["core"] is True
-    assert nodes[("Skill", new_core)]["core"] is True
-    assert nodes[("Skill", new_core)]["name"] == "Common denominators"
-    assert ("Topic", TOPIC_NEW, "COVERS", "Skill", new_core) in rels
+    assert nodes[("Skill", SKILL_B)]["core"] is True
+    assert ("Skill", deterministic_id(LEARNER, 55, f"core:{TOPIC_NEW}")) not in nodes
     assert ("Topic", TOPIC_NEW, "COVERS", "Skill", SKILL_B) in rels
+
+
+def test_core_skill_split_within_one_topic_keeps_one_core() -> None:
+    core_skill = _node("Skill", SKILL, **(_SKILL.props | {"core": True}))
+    skill_split = {
+        "skill_id": SKILL,
+        "into": [
+            {"skill_id": SKILL_P1, "name": "same", "topic_id": TOPIC},
+            {"skill_id": SKILL_P2, "name": "unlike", "topic_id": TOPIC},
+        ],
+    }
+    nodes, _ = _run(
+        [_event(62, "skill.split", skill_split)],
+        [_DOMAIN, _TOPIC, core_skill],
+        [_rel(("Topic", TOPIC), "COVERS", ("Skill", SKILL))],
+    )
+    assert nodes[("Skill", SKILL)]["core"] is False
+    assert nodes[("Skill", SKILL_P1)]["core"] is True
+    assert nodes[("Skill", SKILL_P2)]["core"] is False
 
 
 def test_one_skill_core_topic_split_gives_both_parts_core_skills() -> None:

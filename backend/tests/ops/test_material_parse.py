@@ -43,6 +43,7 @@ class _FakeResolvedStructureTopic:
     topic_id: UUID
     core_skill_id: UUID
     skill_ids: tuple[UUID, ...] = ()
+    skill_names: tuple[str, ...] = ()
 
 
 def test_node_text_prefers_definition_and_falls_back_to_summary() -> None:

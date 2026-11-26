@@ -304,6 +304,7 @@ class _FakeResolvedStructureTopic:
     topic_id: UUID
     core_skill_id: UUID
     skill_ids: tuple[UUID, ...] = ()
+    skill_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

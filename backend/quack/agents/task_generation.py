@@ -84,6 +84,7 @@ async def run_request(
             k: v for k, v in misconceptions.items() if k == params.misconception_id
         } or misconceptions
     purpose: Purpose = "retest" if source is not None else "practice"
+    topic_skill_ids, topic_skill_names = await _topic_skills(reader, skill.topic_id)
     stored = await generate_tasks(
         ctx.db,
         ctx.llm,
@@ -101,6 +102,9 @@ async def run_request(
             source=source,
             domain_id=requested.domain_id or skill.domain_id,
             session_id=requested.session_id,
+            topic_id=skill.topic_id,
+            topic_skill_ids=topic_skill_ids,
+            topic_skill_names=topic_skill_names,
         ),
         learner_id=learner_id,
         compute=ctx.compute,
@@ -119,6 +123,21 @@ async def run_request(
         session_id=requested.session_id,
         causation_seq=requested.seq,
     )
+
+
+async def _topic_skills(
+    reader: GraphReader, topic_id: UUID | None
+) -> tuple[list[UUID], dict[UUID, str]]:
+    """The skills of the topic by name, for the closed choice of task markup (Т-§4.6): without
+    them the generator sees the other skills of the topic as bare labels, and a task without a
+    topic gives its `new_skill` no topic to land in."""
+    if topic_id is None:
+        return [], {}
+    topics = await reader.topic_memory([topic_id])
+    if not topics:
+        return [], {}
+    skills = topics[0].skills
+    return [s.skill_id for s in skills], {s.skill_id: s.name for s in skills if s.name}
 
 
 @register_job_handler("agent.task_generation")
@@ -186,6 +205,9 @@ async def known_check(
                     misconceptions=_statements(memory.misconceptions, skill.skill_id),
                     domain_id=memory.domain_id,
                     session_id=trigger.session_id if trigger else None,
+                    topic_id=memory.topic_id,
+                    topic_skill_ids=[s.skill_id for s in memory.skills],
+                    topic_skill_names={s.skill_id: s.name for s in memory.skills if s.name},
                 ),
                 learner_id=learner_id,
                 compute=ctx.compute,

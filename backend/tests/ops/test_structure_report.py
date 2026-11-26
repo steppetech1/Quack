@@ -290,6 +290,63 @@ def test_structure_report_computation_and_formatting() -> None:
     assert "builder:" in text
 
 
+def test_structure_report_new_skill_share_repeats_and_syllabus_hubs() -> None:
+    learner_id, domain_id = uuid4(), uuid4()
+    now = datetime(2026, 11, 25, 12, 0, tzinfo=UTC)
+    syllabus_hub, other_hub = str(uuid4()), str(uuid4())
+
+    def task(seq: int, tests: list[dict[str, object]]) -> StructureEventRow:
+        return StructureEventRow(
+            seq=seq,
+            type="task.created",
+            occurred_at=now - timedelta(days=1),
+            idempotency_key=f"t:{seq}",
+            payload={"task_id": str(uuid4()), "source": "generated", "markup": {"tests": tests}},
+        )
+
+    events = [
+        task(1, [{"new_skill": {"name": "Chain rule", "reason": "no_fit"}, "level": 3}]),
+        task(2, [{"new_skill": {"name": "chain  Rule"}, "level": 3}]),
+        task(3, [{"skill_id": str(uuid4()), "level": 3}]),
+        task(4, [{"skill_id": str(uuid4()), "level": 3}]),
+        StructureEventRow(
+            seq=5,
+            type="hub.created",
+            occurred_at=now,
+            idempotency_key=f"hub.created:syllabus:{uuid4()}:{syllabus_hub}",
+            payload={"hub_id": syllabus_hub},
+        ),
+    ]
+    graph = GraphSnapshot(
+        hubs_by_kind={"material": 2},
+        material_hub_ids=frozenset({syllabus_hub, other_hub}),
+    )
+    report = compute_structure_report(
+        learner_id=learner_id,
+        domain_id=domain_id,
+        graph=graph,
+        events=events,
+        usage_rows=[],
+        settings=Settings(),
+        now=now,
+    )
+    assert report["tasks_new_skill"] == {
+        "tasks": 4,
+        "with_new_skill": 2,
+        "share": 0.5,
+        "reasons": {"no_fit": 1, "none": 1},
+    }
+    assert report["new_skills"]["repeat_births"] == {
+        "names": 1,
+        "extra_births": 1,
+        "top": {"chain rule": 2},
+    }
+    assert report["material_hubs"] == {"syllabus": 1, "other": 1}
+    text = format_structure_report(report)
+    assert "tasks with new_skill: 2/4" in text
+    assert "material: syllabus=1 other=1" in text
+
+
 def test_structure_report_cli_args() -> None:
     learner, domain = uuid4(), uuid4()
     args = build_parser().parse_args(
