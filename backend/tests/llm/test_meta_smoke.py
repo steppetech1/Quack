@@ -118,13 +118,13 @@ def test_smoke_calls_follow_the_role_table_and_contracts() -> None:
 
 
 async def test_smoke_runs_every_role_through_the_gateway(settings: Settings, pg_db: Db) -> None:
-    """All 28 roles of the table, the Phase 3 prompts and the stream with a tool pass; a role
+    """All 30 roles of the table, the Phase 3 prompts and the stream with a tool pass; a role
     without a prompt is `skipped`; the table and the report carry model, status and latency."""
     smoke = _script()
     provider = MetaScripted()
     rows = await smoke.run_smoke(settings, pg_db, provider)
     by_role = {row["role"]: row for row in rows}
-    assert set(settings.llm_roles) <= set(by_role) and len(settings.llm_roles) == 28
+    assert set(settings.llm_roles) <= set(by_role) and len(settings.llm_roles) == 30
     registry = PromptRegistry()
     for role, row in settings.llm_roles.items():
         status = by_role[role]["status"]

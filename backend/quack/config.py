@@ -683,6 +683,8 @@ class Settings(BaseSettings):
     # WP8.2 (WP16.6): the short check of «я это уже знаю» — at most this many tasks, one per
     # skill of the topic (the document says «1–3»). D-B-193.
     known_check_max_tasks: int = Field(default=3, ge=1)
+    # DEMO-ONLY (`domains/demo_seed.py`): at most this many topics from the learner's list.
+    demo_seed_max_topics: int = Field(default=6, ge=3)
     # WP10.6 (ТЗ Ф4 §2.3 строка 20): UUIDv5 namespace of the learner pseudonym in traces.
     # Phase 4 decision D-B-105: a fixed namespace, never changed after the first trace.
     langsmith_pseudonym_ns: str = "6f1c2a9e-4b7d-5e3a-9c21-0d8e7f6a5b43"

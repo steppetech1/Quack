@@ -101,7 +101,9 @@ async def demo_seed_endpoint(
     domain_id: UUID, req: demo_seed.DemoSeedRequest, request: Request, learner_id: CurrentLearnerId
 ) -> demo_seed.DemoSeedResponse:
     r = get_resources(request)
-    seeded = await demo_seed.seed_domain(r.db, r.redis, learner_id, domain_id, req)
+    seeded = await demo_seed.seed_domain(
+        r.db, r.redis, learner_id, domain_id, req, r.settings.demo_seed_max_topics
+    )
     if seeded is None:
         raise _not_yours()
     return seeded

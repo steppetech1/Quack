@@ -8,6 +8,7 @@ import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { PRIMARY_BTN, SECONDARY_BTN } from "../stubs/stub-parts";
 import { CodeEditor } from "./code-editor";
+import { Markdown } from "./markdown";
 
 export type OpenCode = { task: CodeTask; title: string };
 type Outcome = "correct" | "incorrect" | "partial" | "unclear";
@@ -237,6 +238,12 @@ export function CodePanel({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        {/* a long statement scrolls on its own, so the editor stays in view */}
+        {task.condition && (
+          <div tabIndex={0} className="max-h-[35vh] shrink-0 overflow-y-auto">
+            <Markdown text={task.condition} />
+          </div>
+        )}
         {fn && <p className="text-small text-paper-dim">{tx.writeFunction(fn)}</p>}
         {task.schema_sql && (
           <details className="rounded-[6px] border border-seam-soft">

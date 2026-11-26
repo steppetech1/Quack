@@ -24,7 +24,6 @@ from quack.db import Db
 from quack.events.log import NewEvent, append_events
 from quack.graph.ids import deterministic_id
 
-_MAX_TOPICS = 6
 _OWN_DOMAIN = (
     "SELECT payload ->> 'name' AS name FROM core.events WHERE learner_id = %(learner_id)s "
     "AND type = 'domain.created' AND payload ->> 'domain_id' = %(domain_id)s LIMIT 1"
@@ -58,7 +57,7 @@ class DemoSeedResponse(BaseModel):
     requires: int
 
 
-def outline(text: str, domain_name: str) -> list[str]:
+def outline(text: str, domain_name: str, max_topics: int) -> list[str]:
     """Topic names from the learner's text: «X: a, b, c» gives a, b, c; else the template."""
     body = _LEAD.sub("", text).strip().rstrip(".!?")
     head, sep, tail = body.partition(":")
@@ -68,19 +67,24 @@ def outline(text: str, domain_name: str) -> list[str]:
         seen: dict[str, str] = {}
         for p in items:
             seen.setdefault(p.casefold(), p[0].upper() + p[1:])
-        return list(seen.values())[:_MAX_TOPICS]
+        return list(seen.values())[:max_topics]
     subject = (head if sep and head.strip() else domain_name).strip() or domain_name
     return [t.format(s=subject) for t in _TEMPLATE]
 
 
 async def seed_domain(
-    db: Db, redis: Redis | None, learner_id: UUID, domain_id: UUID, req: DemoSeedRequest
+    db: Db,
+    redis: Redis | None,
+    learner_id: UUID,
+    domain_id: UUID,
+    req: DemoSeedRequest,
+    max_topics: int,
 ) -> DemoSeedResponse | None:
     """`None` — the domain is not the learner's (`404`)."""
     own = await db.fetch_one(_OWN_DOMAIN, {"learner_id": learner_id, "domain_id": str(domain_id)})
     if own is None:
         return None
-    names = outline(req.text, str(own["name"]))
+    names = outline(req.text, str(own["name"]), max_topics)
     scope = f"demo-seed:{domain_id}"
 
     def eid(kind: str, name: str) -> str:
@@ -109,9 +113,15 @@ async def seed_domain(
         for label in (f"Explain: {name}", f"Apply: {name}"):
             skill = eid("skill", label)
             skills.append(skill)
-            payload = {"skill_id": skill, "topic_id": topic, "domain_id": str(domain_id),
-                       "name": label, "summary": label, "status": "active",
-                       "origin": "learner"}  # fmt: skip
+            payload: dict[str, object] = {
+                "skill_id": skill,
+                "topic_id": topic,
+                "domain_id": str(domain_id),
+                "name": label,
+                "summary": label,
+                "status": "active",
+                "origin": "learner",
+            }
             events.append(new("skill.created", payload, skill))
     pairs = [(skills[2 * i + 2], skills[2 * i]) for i in range(len(names) - 1)]
     for a, b in pairs:
