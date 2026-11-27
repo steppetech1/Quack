@@ -107,9 +107,12 @@ const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
  */
 /** Topics that have at least one "needed before" link, and those links. The rest go to the left column */
 export function chainOf(model: GraphModel) {
-  const visible = model.topics.filter(onGraph);
+  // Sorted by id: the order the backend lists topics and links in is not guaranteed, and the layout must not depend on it
+  const visible = model.topics.filter(onGraph).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const ids = new Set(visible.map((t) => t.id));
-  const edges = model.requires.filter((e) => ids.has(e.topicId) && ids.has(e.requiresId) && e.topicId !== e.requiresId);
+  const edges = model.requires
+    .filter((e) => ids.has(e.topicId) && ids.has(e.requiresId) && e.topicId !== e.requiresId)
+    .sort((a, b) => (a.topicId < b.topicId ? -1 : a.topicId > b.topicId ? 1 : a.requiresId < b.requiresId ? -1 : a.requiresId > b.requiresId ? 1 : 0));
   const linked = new Set(edges.flatMap((e) => [e.topicId, e.requiresId]));
   return { topics: visible.filter((t) => linked.has(t.id)), edges, unlinked: visible.filter((t) => !linked.has(t.id)).map((t) => t.id) };
 }
@@ -149,7 +152,8 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
   for (const l of model.includes) {
     const i = at.get(l.topicId);
     const h = hubIdx.get(l.hubId);
-    if (i !== undefined && h !== undefined && ownHub[i] < 0) ownHub[i] = h;
+    // the first chapter in the order of the chapters, not in the order of the links
+    if (i !== undefined && h !== undefined && (ownHub[i] < 0 || h < ownHub[i])) ownHub[i] = h;
   }
 
   const x = new Array<number>(n).fill(NaN);
