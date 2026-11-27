@@ -827,6 +827,7 @@ export const LayeredGraph = forwardRef<
   }, []);
 
   useEffect(() => {
+    const was = sizeRef.current;
     sizeRef.current = size;
     const c = canvas.current;
     if (c && size.w && size.h) {
@@ -839,6 +840,15 @@ export const LayeredGraph = forwardRef<
           view.current = fitView(size.w, size.h);
           centeredRef.current?.();
         } else view.current = initialView(size.w, size.h);
+      } else if (was.w && was.h && (was.w !== size.w || was.h !== size.h)) {
+        // The area changed (a side panel folded or unfolded): the same point stays in the middle, the zoom follows the room
+        const v = viewTween.current?.to ?? view.current;
+        const cw = scene.current.colW;
+        const k = clamp((v.k * fitView(size.w, size.h).k) / fitView(was.w, was.h).k, K_MIN, K_MAX);
+        const x = (cw + (was.w - cw) / 2 - v.tx) / v.k;
+        const y = (was.h / 2 - v.ty) / v.k;
+        viewTween.current = null;
+        view.current = { k, tx: cw + (size.w - cw) / 2 - x * k, ty: size.h / 2 - y * k };
       }
       // Resizing clears the canvas: paint at once so there is no blank frame
       draw();

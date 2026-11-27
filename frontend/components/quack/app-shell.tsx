@@ -52,6 +52,7 @@ export function useShell() {
 
 /** Сессии пока есть только в матанализе */
 const SESSION_DOMAIN = "matan";
+const SIDEBAR_KEY = "quack.sidebar-collapsed";
 
 /** Вид домена (граф или канвасы) живёт здесь; «/» — экран «Все графы» */
 export const DOMAIN_PATH = "/domain";
@@ -93,6 +94,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
   const [drawer, setDrawer] = useState(false);
   const [centerPending, setCenterPending] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  // localStorage is only readable after mount
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
+  }, []);
+  const toggleSidebar = () => {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? "0" : "1");
+    setCollapsed(!collapsed);
+  };
   const trigger = useRef<HTMLElement | null>(null);
   const closeBtn = useRef<HTMLButtonElement | null>(null);
   const openDrawer = (el: HTMLElement) => {
@@ -188,8 +199,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </a>
         <div inert={drawer} className="flex h-dvh">
           {!fullscreen && (
-            <aside aria-label={t.shell.subjects} className="hidden w-62 shrink-0 border-r border-seam-soft md:block">
-              <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} />
+            <aside aria-label={t.shell.subjects} className={cn("hidden shrink-0 border-r border-seam-soft md:block", collapsed ? "w-15" : "w-62")}>
+              <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} collapsed={collapsed} onToggle={toggleSidebar} />
             </aside>
           )}
 
