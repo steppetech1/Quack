@@ -433,6 +433,7 @@ Output fields:
 - `p3_markup.agentRequests.params.task`: string | null
 - `p3_markup.agentRequests.params.misconception`: string | null
 - `p3_markup.agentRequests.params.description`: string | null
+- `p3_markup.agentRequests.params.language`: "python" | "sql" | null
 - `p3_markup.agentRequests.needed_in_session`: boolean
 - `p3_markup.correctionsAcknowledged`: list[integer]
 - `p3_markup.decisionReason`: string
@@ -473,144 +474,6 @@ Output fields:
 - `p3_markup.tasks.tests.new_skill.reason`: string | null
 - `p3_markup.tasks.tests.level`: integer
 - `p3_markup.tasks.tests.context`: string | null
-- `p3_markup.tasks.methodNamed`: boolean
-- `p3_markup.tasks.variantOf`: string | null
-- `p3_markup.tasks.answer`: object
-- `p3_markup.tasks.answer.type`: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text"
-- `p3_markup.tasks.answer.value`: object | null
-- `p3_markup.tasks.answer.value.latex`: string
-- `p3_markup.tasks.answer.value.sympy`: string
-- `p3_markup.tasks.answer.items`: list[object] | null
-- `p3_markup.tasks.answer.items.latex`: string
-- `p3_markup.tasks.answer.items.sympy`: string
-- `p3_markup.tasks.answer.options`: list[object] | null
-- `p3_markup.tasks.answer.options.option_id`: string
-- `p3_markup.tasks.answer.options.text`: string
-- `p3_markup.tasks.answer.options.correct`: boolean
-- `p3_markup.tasks.answer.accepted`: list[string] | null
-- `p3_markup.tasks.answer.tol_abs`: number | null
-- `p3_markup.tasks.answer.tol_rel`: number | null
-- `p3_markup.tasks.answer.sig_digits`: integer | null
-- `p3_markup.tasks.answer.unit`: string | null
-- `p3_markup.tasks.answer.mode`: "equal" | "up_to_constant" | "solution_set" | "interval" | "form" | null
-- `p3_markup.tasks.answer.form_target`: "factored" | "simplified" | null
-- `p3_markup.tasks.answer.variables`: list[object] | null
-- `p3_markup.tasks.answer.variables.name`: string
-- `p3_markup.tasks.answer.variables.assumptions`: list["real" | "positive" | "nonnegative" | "integer" | "nonzero"]
-- `p3_markup.tasks.answer.key_ideas`: list[string] | null
-- `p3_markup.tasks.options`: list[object] | null
-- `p3_markup.tasks.options.option_id`: string
-- `p3_markup.tasks.options.misconception`: string | null
-- `p3_markup.tasks.options.hypothesis`: string | null
-- `p3_markup.tasks.options.neighbor_idea`: boolean
-- `p3_markup.tasks.pairTaskId`: string | null
-- `p3_markup.tasks.form`: "multistep" | "explain_why" | "what_breaks" | null
-- `p3_markup.tasks.parts`: list[object] | null
-- `p3_markup.tasks.parts.part`: string
-- `p3_markup.tasks.parts.answer`: object
-- `p3_markup.tasks.parts.answer.type`: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text"
-- `p3_markup.tasks.parts.answer.value`: object | null
-- `p3_markup.tasks.parts.answer.value.latex`: string
-- `p3_markup.tasks.parts.answer.value.sympy`: string
-- `p3_markup.tasks.parts.answer.items`: list[object] | null
-- `p3_markup.tasks.parts.answer.items.latex`: string
-- `p3_markup.tasks.parts.answer.items.sympy`: string
-- `p3_markup.tasks.parts.answer.options`: list[object] | null
-- `p3_markup.tasks.parts.answer.options.option_id`: string
-- `p3_markup.tasks.parts.answer.options.text`: string
-- `p3_markup.tasks.parts.answer.options.correct`: boolean
-- `p3_markup.tasks.parts.answer.accepted`: list[string] | null
-- `p3_markup.tasks.parts.answer.tol_abs`: number | null
-- `p3_markup.tasks.parts.answer.tol_rel`: number | null
-- `p3_markup.tasks.parts.answer.sig_digits`: integer | null
-- `p3_markup.tasks.parts.answer.unit`: string | null
-- `p3_markup.tasks.parts.answer.mode`: "equal" | "up_to_constant" | "solution_set" | "interval" | "form" | null
-- `p3_markup.tasks.parts.answer.form_target`: "factored" | "simplified" | null
-- `p3_markup.tasks.parts.answer.variables`: list[object] | null
-- `p3_markup.tasks.parts.answer.variables.name`: string
-- `p3_markup.tasks.parts.answer.variables.assumptions`: list["real" | "positive" | "nonnegative" | "integer" | "nonzero"]
-- `p3_markup.tasks.parts.answer.key_ideas`: list[string] | null
-- `p3_markup.tasks.parts.tests`: list[object] | null
-- `p3_markup.tasks.parts.tests.skill`: string | null
-- `p3_markup.tasks.parts.tests.new_skill`: object | null
-- `p3_markup.tasks.parts.tests.new_skill.name`: string
-- `p3_markup.tasks.parts.tests.new_skill.reason`: string | null
-- `p3_markup.tasks.parts.tests.level`: integer
-- `p3_markup.tasks.parts.tests.context`: string | null
-- `p3_markup.tasks.element_id`: string
-- `p3_markup.elements`: list[any]
-- `p3_markup.exposures`: list[object]
-- `p3_markup.exposures.skill`: string
-- `p3_markup.exposures.kind`: "explained" | "example" | "method_named" | "solution_shown"
-- `p3_markup.exposures.approach`: "example_first" | "attempt_first" | "small_steps" | "prediction_first" | "faded_example" | "interleaving" | "contrast_pair" | "refutation" | "explain_in_own_words" | "visualization" | "none"
-- `p3_markup.targetsMisconception`: string | null
-- `p3_markup.planUpdate`: object
-- `p3_markup.planUpdate.goal`: string | null
-- `p3_markup.planUpdate.current_step`: object | null
-- `p3_markup.planUpdate.current_step.id`: string
-- `p3_markup.planUpdate.current_step.text`: string
-- `p3_markup.planUpdate.current_step.landmark`: string | null
-- `p3_markup.planUpdate.next_steps`: list[object] | null
-- `p3_markup.planUpdate.next_steps.id`: string
-- `p3_markup.planUpdate.next_steps.text`: string
-- `p3_markup.planUpdate.next_steps.landmark`: string | null
-- `p3_markup.planUpdate.landmark_edits`: object | null
-- `p3_markup.planUpdate.landmark_edits.add`: list[object]
-- `p3_markup.planUpdate.landmark_edits.add.label`: string
-- `p3_markup.planUpdate.landmark_edits.add.before`: string | null
-- `p3_markup.planUpdate.landmark_edits.remove`: list[string]
-- `p3_markup.planUpdate.branches`: list[object]
-- `p3_markup.planUpdate.branches.description`: string
-- `p3_markup.planUpdate.branches.type`: "corrective" | "curiosity" | "external"
-- `p3_markup.planUpdate.cancel_requests`: list[string]
-- `p3_markup.agentRequests`: list[object]
-- `p3_markup.agentRequests.kind`: "viz" | "illustration" | "task_generation" | "solution_space" | "artifact" | "known_check"
-- `p3_markup.agentRequests.params`: object
-- `p3_markup.agentRequests.params.skill`: string | null
-- `p3_markup.agentRequests.params.level`: integer | null
-- `p3_markup.agentRequests.params.topic`: string | null
-- `p3_markup.agentRequests.params.task`: string | null
-- `p3_markup.agentRequests.params.misconception`: string | null
-- `p3_markup.agentRequests.params.description`: string | null
-- `p3_markup.agentRequests.params.language`: "python" | "sql" | null
-- `p3_markup.agentRequests.needed_in_session`: boolean
-- `p3_markup.correctionsAcknowledged`: list[integer]
-- `p3_markup.decisionReason`: string
-- `p3_markup.deadline`: object | null
-- `p3_markup.deadline.hub_label`: string | null
-- `p3_markup.deadline.new_hub_name`: string | null
-- `p3_markup.deadline.deadline_at`: string
-- `p3_markup.deadline.coverage`: list[string]
-- `p3_markup.deadline.quote`: string
-- `p3_markup.deadline.control_type`: "tasks" | "colloquium_proofs" | "oral_theory" | null
-
-Input blocks: `tools_and_elements`, `profile`, `domain_and_goals`, `conversation`, `session_plan`, `memory_picture`, `materials`, `labels`, `tail`, `guard_feedback`
-Label fields: `p1_head.targetSkills`, `p1_head.topicLabel`, `p3_markup.tasks.tests.skill`, `p3_markup.tasks.variantOf`, `p3_markup.tasks.options.misconception`, `p3_markup.tasks.pairTaskId`, `p3_markup.exposures.skill`, `p3_markup.targetsMisconception`, `p3_markup.planUpdate.cancel_requests`, `p3_markup.planUpdate.current_step.landmark`, `p3_markup.planUpdate.next_steps.landmark`, `p3_markup.planUpdate.landmark_edits.add.label`, `p3_markup.planUpdate.landmark_edits.add.before`, `p3_markup.planUpdate.landmark_edits.remove`, `p3_markup.agentRequests.params.skill`, `p3_markup.agentRequests.params.topic`, `p3_markup.agentRequests.params.task`, `p3_markup.agentRequests.params.misconception`, `p3_markup.deadline.hub_label`, `p3_markup.deadline.coverage`
-Markers: "memory temporarily unavailable"
-
-## `teacher@4` → `TeacherOutputV2`
-
-Output fields:
-
-- `p1_head`: object
-- `p1_head.intent`: "clarify_goal" | "explain" | "worked_example" | "practice" | "retrieval" | "diagnose" | "hint" | "feedback" | "answer_question" | "plan" | "wrap_up" | "split_topic"
-- `p1_head.targetSkills`: list[string]
-- `p1_head.verdict_stance`: "code" | "formative" | null
-- `p1_head.branchType`: "corrective" | "curiosity" | "external" | null
-- `p1_head.approach`: "example_first" | "attempt_first" | "small_steps" | "prediction_first" | "faded_example" | "interleaving" | "contrast_pair" | "refutation" | "explain_in_own_words" | "visualization" | "none"
-- `p1_head.topicLabel`: string | null
-- `p2_body`: object
-- `p2_body.blocks`: list[object]
-- `p2_body.blocks.block_id`: string
-- `p2_body.blocks.text`: string | null
-- `p2_body.blocks.element_id`: string | null
-- `p3_markup`: object
-- `p3_markup.tasks`: list[object]
-- `p3_markup.tasks.tests`: list[object]
-- `p3_markup.tasks.tests.skill`: string | null
-- `p3_markup.tasks.tests.new_skill`: object | null
-- `p3_markup.tasks.tests.new_skill.name`: string
-- `p3_markup.tasks.tests.level`: integer
 - `p3_markup.tasks.methodNamed`: boolean
 - `p3_markup.tasks.variantOf`: string | null
 - `p3_markup.tasks.answer`: object
@@ -678,7 +541,9 @@ Output fields:
 - `p3_markup.tasks.parts.tests.skill`: string | null
 - `p3_markup.tasks.parts.tests.new_skill`: object | null
 - `p3_markup.tasks.parts.tests.new_skill.name`: string
+- `p3_markup.tasks.parts.tests.new_skill.reason`: string | null
 - `p3_markup.tasks.parts.tests.level`: integer
+- `p3_markup.tasks.parts.tests.context`: string | null
 - `p3_markup.tasks.element_id`: string
 - `p3_markup.elements`: list[any]
 - `p3_markup.exposures`: list[object]
@@ -752,7 +617,9 @@ Output fields:
 - `p3_markup.tasks.tests.skill`: string | null
 - `p3_markup.tasks.tests.new_skill`: object | null
 - `p3_markup.tasks.tests.new_skill.name`: string
+- `p3_markup.tasks.tests.new_skill.reason`: string | null
 - `p3_markup.tasks.tests.level`: integer
+- `p3_markup.tasks.tests.context`: string | null
 - `p3_markup.tasks.methodNamed`: boolean
 - `p3_markup.tasks.variantOf`: string | null
 - `p3_markup.tasks.answer`: object
@@ -820,7 +687,9 @@ Output fields:
 - `p3_markup.tasks.parts.tests.skill`: string | null
 - `p3_markup.tasks.parts.tests.new_skill`: object | null
 - `p3_markup.tasks.parts.tests.new_skill.name`: string
+- `p3_markup.tasks.parts.tests.new_skill.reason`: string | null
 - `p3_markup.tasks.parts.tests.level`: integer
+- `p3_markup.tasks.parts.tests.context`: string | null
 - `p3_markup.tasks.element_id`: string
 - `p3_markup.elements`: list[any]
 - `p3_markup.exposures`: list[object]
@@ -1057,7 +926,7 @@ Output fields:
 - `tasks.markup.methodNamed`: boolean
 - `tasks.markup.variantOf`: string | null
 - `tasks.markup.answer`: object
-- `tasks.markup.answer.type`: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text"
+- `tasks.markup.answer.type`: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text" | "code"
 - `tasks.markup.answer.value`: object | null
 - `tasks.markup.answer.value.latex`: string
 - `tasks.markup.answer.value.sympy`: string
@@ -1079,6 +948,9 @@ Output fields:
 - `tasks.markup.answer.variables.name`: string
 - `tasks.markup.answer.variables.assumptions`: list["real" | "positive" | "nonnegative" | "integer" | "nonzero"]
 - `tasks.markup.answer.key_ideas`: list[string] | null
+- `tasks.markup.answer.language`: "python" | "sql" | null
+- `tasks.markup.answer.function`: string | null
+- `tasks.markup.answer.starter_code`: string | null
 - `tasks.markup.options`: list[object] | null
 - `tasks.markup.options.option_id`: string
 - `tasks.markup.options.misconception`: string | null
@@ -1089,7 +961,7 @@ Output fields:
 - `tasks.markup.parts`: list[object] | null
 - `tasks.markup.parts.part`: string
 - `tasks.markup.parts.answer`: object
-- `tasks.markup.parts.answer.type`: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text"
+- `tasks.markup.parts.answer.type`: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text" | "code"
 - `tasks.markup.parts.answer.value`: object | null
 - `tasks.markup.parts.answer.value.latex`: string
 - `tasks.markup.parts.answer.value.sympy`: string
@@ -1111,6 +983,9 @@ Output fields:
 - `tasks.markup.parts.answer.variables.name`: string
 - `tasks.markup.parts.answer.variables.assumptions`: list["real" | "positive" | "nonnegative" | "integer" | "nonzero"]
 - `tasks.markup.parts.answer.key_ideas`: list[string] | null
+- `tasks.markup.parts.answer.language`: "python" | "sql" | null
+- `tasks.markup.parts.answer.function`: string | null
+- `tasks.markup.parts.answer.starter_code`: string | null
 - `tasks.markup.parts.tests`: list[object] | null
 - `tasks.markup.parts.tests.skill`: string | null
 - `tasks.markup.parts.tests.new_skill`: object | null
@@ -1166,7 +1041,9 @@ Output fields:
 - `tasks.markup.tests.skill`: string | null
 - `tasks.markup.tests.new_skill`: object | null
 - `tasks.markup.tests.new_skill.name`: string
+- `tasks.markup.tests.new_skill.reason`: string | null
 - `tasks.markup.tests.level`: integer
+- `tasks.markup.tests.context`: string | null
 - `tasks.markup.methodNamed`: boolean
 - `tasks.markup.variantOf`: string | null
 - `tasks.markup.answer`: object
@@ -1234,7 +1111,9 @@ Output fields:
 - `tasks.markup.parts.tests.skill`: string | null
 - `tasks.markup.parts.tests.new_skill`: object | null
 - `tasks.markup.parts.tests.new_skill.name`: string
+- `tasks.markup.parts.tests.new_skill.reason`: string | null
 - `tasks.markup.parts.tests.level`: integer
+- `tasks.markup.parts.tests.context`: string | null
 - `tasks.language`: "python" | "sql"
 - `tasks.function`: string | null
 - `tasks.starter_code`: string
