@@ -931,6 +931,63 @@ async def test_material_candidate_creates_a_proposed_topic(
     assert res[0].skill_names == ("sums series",)
 
 
+async def test_new_topics_of_one_material_can_require_each_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """New topics of one batch have no `S…` label yet: a claim names another candidate as
+    `C<index>`, resolved to its core skill once every candidate has one."""
+    learner_id = uuid4()
+    db = _FakeDb()
+    written = _patch_append(monkeypatch, db)
+    graph = DomainGraph(domain_name="Physics", topics=[], skills=[])
+    seen: list[dict[str, Any]] = []
+
+    def create(index: int, name: str, requires: list[RequiresClaim]) -> TopicCandidateDecision:
+        return TopicCandidateDecision(
+            candidate_index=index,
+            action="create",
+            target_topic=None,
+            name=name,
+            description=name,
+            core_skill=None,
+            requires=requires,
+        )
+
+    def respond(variables: dict[str, Any], _: int) -> StructureOutput:
+        seen.append(variables)
+        return StructureOutput(
+            topic_candidates=[
+                create(0, "Kinematics", []),
+                create(
+                    1,
+                    "Dynamics",
+                    [RequiresClaim(target_core_skill_label="C0", score=0.9, origin="model")],
+                ),
+            ],
+            provisional_skills=[],
+        )
+
+    res = await resolve_material_structure(
+        _fake_ctx(db, _StructureGateway(respond)),
+        learner_id=learner_id,
+        domain_id=DOMAIN,
+        candidates=[
+            MaterialTopicCandidate(
+                name="Kinematics", description="Motion", core_skill_name="describes motion"
+            ),
+            MaterialTopicCandidate(
+                name="Dynamics", description="Forces", core_skill_name="applies Newton's laws"
+            ),
+        ],
+        graph=graph,
+    )
+    assert "[1] C1 Dynamics" in str(seen[0])
+    edges = [cast(EdgeAdded, e.payload) for e in written if e.type == "edge.added"]
+    assert [(e.from_id, e.to_id, e.origin) for e in edges] == [
+        (res[1].core_skill_id, res[0].core_skill_id, "model")
+    ]
+
+
 async def test_structure_topics_over_limit_shows_all_and_logs_warning(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:

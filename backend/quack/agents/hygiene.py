@@ -1027,6 +1027,16 @@ def filter_requires_edges(
     return accepted, dropped
 
 
+def _candidate_label(label: str, candidate_count: int) -> int | None:
+    """`C<index>` names another topic candidate of the same input (its core skill): new topics of
+    one material have no `S…` label yet, and without it no prerequisite between them could be
+    said (2026-11-27: eight topics of a problem sheet came out with no edge)."""
+    if len(label) > 1 and label[0] == "C" and label[1:].isdigit():
+        index = int(label[1:])
+        return index if index < candidate_count else None
+    return None
+
+
 def _structure_problem(
     output: StructureOutput,
     labels: LabelMap,
@@ -1044,6 +1054,8 @@ def _structure_problem(
             except UnknownLabelError:
                 bad.append(tc.target_topic)
         for req in tc.requires:
+            if _candidate_label(req.target_core_skill_label, candidate_count) is not None:
+                continue
             try:
                 labels.resolve("skill", req.target_core_skill_label)
             except UnknownLabelError:
@@ -1137,7 +1149,7 @@ def _render_structure_input(
                 lbl for c in sims if (lbl := labels.label("skill", c.node_id)) is not None
             ]
             cand_lines.append(
-                f"[{idx}] {cand.name}\n"
+                f"[{idx}] C{idx} {cand.name}\n"
                 f"  description: {cand.description}\n"
                 f"  core_skill_name: {cand.core_skill_name}\n"
                 f"  builds_on: {builds}\n"
@@ -1399,6 +1411,8 @@ async def _run_structure(
 
         # 1. Process topic_candidates
         tc_by_idx: dict[int, TopicCandidateDecision] = {}
+        core_by_local: dict[int, UUID] = {}
+        pending_requires: list[tuple[UUID, TopicCandidateDecision, bool]] = []
         for tc in result.value.topic_candidates:
             tc_by_idx.setdefault(tc.candidate_index, tc)
 
@@ -1576,23 +1590,33 @@ async def _run_structure(
             outcome_counts[used_action] += 1
             resolved_topics[global_idx] = (target_topic_id, resolved_core_id)
 
+            core_by_local[local_idx] = resolved_core_id
             if tc is not None:
-                for req in tc.requires:
+                pending_requires.append((resolved_core_id, tc, bool(cand.builds_on)))
+
+        # A claim may name another candidate of this batch (`C<index>`): resolved once every
+        # candidate has its core skill.
+        for from_id, tc, has_quotes in pending_requires:
+            for req in tc.requires:
+                local = _candidate_label(req.target_core_skill_label, len(c_entries))
+                if local is not None:
+                    to_skill_id = core_by_local.get(local)
+                    if to_skill_id is None:
+                        continue
+                else:
                     try:
                         to_skill_id = labels.resolve("skill", req.target_core_skill_label)
                     except UnknownLabelError:
                         continue
-                    req_origin: Literal["material", "model"] = (
-                        req.origin if cand.builds_on else "model"
+                req_origin: Literal["material", "model"] = req.origin if has_quotes else "model"
+                raw_requires.append(
+                    _RawRequires(
+                        from_id=from_id,
+                        to_id=to_skill_id,
+                        score=req.score,
+                        origin=req_origin,
                     )
-                    raw_requires.append(
-                        _RawRequires(
-                            from_id=resolved_core_id,
-                            to_id=to_skill_id,
-                            score=req.score,
-                            origin=req_origin,
-                        )
-                    )
+                )
 
         # 2. Process provisional_skills
         handled_provs: set[UUID] = set()
