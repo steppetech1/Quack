@@ -36,6 +36,19 @@
   --ind-weak: #e75cc4;
   --ind-review: #c6e35a;
 
+  /* подсветка кода: чат и редактор; светлее 4.5:1 на --cloth-deep, янтарь не используется */
+  --code-text: #e8e4dc;
+  --code-keyword: #d98b86;
+  --code-function: #8db7e0;
+  --code-class: #7ec9b0;
+  --code-definition: #e8e4dc;
+  --code-builtin: #e0a8c4;
+  --code-string: #a9c99a;
+  --code-number: #c4a4e0;
+  --code-comment: #8d877b;
+  --code-property: #c9c3b6;
+  --code-operator: #aaa497;
+
   /* движение */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-s: 0.3s;
@@ -561,3 +574,17 @@
   color: transparent;
   -webkit-text-stroke: 1px rgba(243, 234, 220, 0.24);
 }
+
+/* токены подсветки (lib/code-highlight.ts) */
+.code-kw { color: var(--code-keyword); }
+.code-fn { color: var(--code-function); }
+.code-cls { color: var(--code-class); }
+.code-def { color: var(--code-definition); font-weight: 600; }
+.code-builtin { color: var(--code-builtin); }
+.code-str { color: var(--code-string); }
+.code-num { color: var(--code-number); }
+.code-com { color: var(--code-comment); font-style: italic; }
+.code-prop { color: var(--code-property); }
+.code-op { color: var(--code-operator); }
+.code-var { color: var(--code-text); }
+

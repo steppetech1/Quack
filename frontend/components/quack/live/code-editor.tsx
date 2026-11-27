@@ -5,8 +5,8 @@ import { basicSetup } from "codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { indentWithTab } from "@codemirror/commands";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags as t } from "@lezer/highlight";
+import { syntaxHighlighting } from "@codemirror/language";
+import { codeHighlightStyle } from "@/lib/code-highlight";
 import { python } from "@codemirror/lang-python";
 import { sql, SQLite } from "@codemirror/lang-sql";
 
@@ -15,8 +15,8 @@ const theme = EditorView.theme(
   {
     "&": { backgroundColor: "var(--cloth-deep)", color: "var(--paper)", fontSize: "0.875rem", height: "100%" },
     ".cm-scroller": { fontFamily: "var(--font-mono), ui-monospace, monospace", lineHeight: "1.55" },
-    ".cm-content": { caretColor: "var(--accent)", padding: "8px 0" },
-    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)" },
+    ".cm-content": { caretColor: "var(--paper)", padding: "8px 0" },
+    ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--paper)", marginLeft: "-1px" },
     "&.cm-focused": { outline: "none" },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
       backgroundColor: "color-mix(in oklab, var(--accent) 28%, transparent)",
@@ -26,18 +26,6 @@ const theme = EditorView.theme(
   },
   { dark: true },
 );
-
-/** Calm colours readable on the warm graphite (the default style of basicSetup is made for a light page) */
-const highlight = HighlightStyle.define([
-  { tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.operatorKeyword], color: "#d9a66b" },
-  { tag: [t.function(t.variableName), t.function(t.definition(t.variableName))], color: "#e9dcc4", fontWeight: "600" },
-  { tag: [t.definition(t.variableName), t.variableName, t.propertyName], color: "var(--paper)" },
-  { tag: [t.string, t.special(t.string)], color: "#a9c99a" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "#c7a6d8" },
-  { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--paper-dim)", fontStyle: "italic" },
-  { tag: [t.typeName, t.className], color: "#9fc3d6" },
-  { tag: [t.operator, t.punctuation, t.bracket], color: "var(--paper-dim)" },
-]);
 
 /**
  * CodeMirror 6 with Python or SQLite. Uncontrolled: `initial` seeds the document once per `docKey`, every edit goes
@@ -73,7 +61,7 @@ export function CodeEditor({
           keymap.of([indentWithTab]),
           language === "python" ? python() : sql({ dialect: SQLite }),
           theme,
-          syntaxHighlighting(highlight),
+          syntaxHighlighting(codeHighlightStyle),
           EditorView.contentAttributes.of({ "aria-label": label }),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) change.current(u.state.doc.toString());

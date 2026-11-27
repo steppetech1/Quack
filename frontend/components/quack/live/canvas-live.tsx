@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Maximize2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -54,8 +54,12 @@ export function NewCanvasLive() {
   return <Status text={error ?? tx.live.canvasOpening} error={!!error} />;
 }
 
-/** The board of a canvas of the backend, full screen. The title stays in this browser (the backend has no field for it yet) */
-export function CanvasLive({ id }: { id: string }) {
+/**
+ * The board of a canvas of the backend, full screen. The title stays in this browser (the backend has no field for it yet).
+ * `embedded`: the board stands in the workspace pane of a session instead of the whole page: a strip with the title and a link
+ * to the full page replaces the corner with the way back, and the board's keys work only after a click on it.
+ */
+export function CanvasLive({ id, embedded = false }: { id: string; embedded?: boolean }) {
   const tx = useT();
   const { fullDate } = useFmt();
   const errorText = useErrorText();
@@ -85,6 +89,30 @@ export function CanvasLive({ id }: { id: string }) {
   if (missing) return <Status text={tx.live.canvasMissing} error />;
   if (error) return <Status text={error} error />;
   if (!view) return <Status text={tx.live.canvasLoading} />;
+
+  if (embedded) {
+    return (
+      <>
+        <div className="flex shrink-0 items-center gap-1 border-b border-seam-soft pr-1 pl-4">
+          <input
+            value={title}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              writeCanvasTitle(view.canvas_id, e.target.value.trim());
+            }}
+            aria-label={tx.canvases.nameLabel}
+            placeholder={tx.canvases.untitled}
+            maxLength={80}
+            className="h-10 min-w-0 flex-1 bg-transparent font-display text-body uppercase tracking-[0.02em] text-paper outline-none placeholder:text-paper-dim focus-visible:outline-2 focus-visible:outline-ribbon"
+          />
+          <Link href={`/canvas/${view.canvas_id}`} aria-label={tx.workspace.canvasDoc.full} title={tx.workspace.canvasDoc.full} className={BACK_CLS}>
+            <Maximize2 aria-hidden />
+          </Link>
+        </div>
+        <Board canvasId={view.canvas_id} live={view.session_id ? { sessionId: view.session_id, doc: view.doc } : undefined} mode="edit" scoped />
+      </>
+    );
+  }
 
   return (
     <Board

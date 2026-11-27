@@ -1,13 +1,18 @@
 "use client";
 
-import { ArrowLeft, BookOpen, ChevronDown, FileText, Maximize2, Minimize2, PanelRight, Play, Slash, X } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronDown, FileText, Maximize2, Minimize2, Network, PanelRight, PenTool, Play, Shapes, Slash, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
+import { ResizeHandle, useResizable } from "../resize-handle";
+import { CanvasDoc } from "./doc-canvas";
 import { DemoDoc } from "./doc-demo";
+import { DemosDoc } from "./doc-demos";
+import { GraphDoc } from "./doc-graph";
 import { MaterialDoc } from "./doc-material";
 import { NoteDoc } from "./doc-note";
 import { SkillDoc } from "./doc-skill";
+import { SkillsDoc } from "./doc-skills";
 import { SkillDraftDoc } from "./doc-skill-draft";
 import { WorkspaceProvider, useWorkspace, type DocKind, type PaneMode, type WorkspaceDoc } from "./workspace-context";
 
@@ -16,7 +21,13 @@ const SIDE_MIN_PX = 1100;
 /** Below the `md` breakpoint (the left panel is a drawer there) the screen is a phone */
 const PHONE_MAX_PX = 768;
 
-const KIND_ICON: Record<DocKind, typeof Play> = { demo: Play, material: FileText, skill: Slash, note: BookOpen, skill_draft: Slash };
+const KIND_ICON: Record<DocKind, typeof Play> = { demo: Play, material: FileText, skill: Slash, note: BookOpen, skill_draft: Slash, graph: Network, demos: Shapes, canvas: PenTool, skills: Slash };
+
+/** The pane beside the chat can be dragged from 320 px wide up to what leaves the chat 26rem */
+const PANE_MIN_PX = 320;
+const PANE_MAX_PX = 1000;
+const CHAT_MIN_REM = 26;
+const paneMax = (panel: HTMLElement) => Math.min(PANE_MAX_PX, (panel.parentElement?.clientWidth ?? 1200) - CHAT_MIN_REM * 16);
 
 const modeFor = (width: number): PaneMode => (window.innerWidth < PHONE_MAX_PX ? "full" : width >= SIDE_MIN_PX ? "side" : "sheet");
 
@@ -82,6 +93,14 @@ function DocBody({ doc }: { doc: WorkspaceDoc }) {
       return <SkillDraftDoc doc={doc} />;
     case "note":
       return <NoteDoc doc={doc} />;
+    case "graph":
+      return <GraphDoc doc={doc} />;
+    case "demos":
+      return <DemosDoc doc={doc} />;
+    case "canvas":
+      return <CanvasDoc doc={doc} />;
+    case "skills":
+      return <SkillsDoc />;
   }
 }
 
@@ -93,6 +112,12 @@ function Pane() {
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const listId = useId();
+  const resize = useResizable({
+    id: "workspace-pane",
+    min: PANE_MIN_PX,
+    max: paneMax,
+    edge: "left",
+  });
 
   const active = ws.docs.find((d) => d.key === ws.activeId) ?? ws.docs[0];
   const { expanded, setExpanded } = ws;
@@ -126,6 +151,8 @@ function Pane() {
   if (!active) return null;
   const Icon = KIND_ICON[active.kind];
   const full = ws.mode === "full";
+  /** beside the chat and not stretched over the screen: the only place the pane has a width of its own */
+  const side = ws.mode === "side" && !expanded;
   const IconSize = expanded ? Minimize2 : Maximize2;
   const iconBtn = "inline-flex size-10 shrink-0 items-center justify-center rounded-pill text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper";
 
@@ -167,9 +194,12 @@ function Pane() {
           ? "fixed inset-0 z-50"
           : ws.mode === "sheet"
             ? "absolute inset-y-0 right-0 z-30 w-[min(34rem,92%)] border-l border-seam shadow-[-12px_0_32px_-16px_rgba(0,0,0,0.6)]"
-            : "relative w-[40%] max-w-[640px] min-w-[360px] shrink-0 border-l border-seam",
+            : cn("relative shrink-0 border-l border-seam", resize.width === null && "w-[40%] max-w-[640px] min-w-[360px]"),
       )}
+      // a width the learner dragged to; never wider than what leaves the chat its room, even when the window gets smaller
+      style={side && resize.width !== null ? { width: `min(${resize.width}px, calc(100% - ${CHAT_MIN_REM}rem))` } : undefined}
     >
+      {side && <ResizeHandle r={resize} />}
       <header className="relative flex shrink-0 items-center gap-1 border-b border-seam-soft px-1.5">
         {ws.mode !== "side" && !expanded && (
           <button type="button" aria-label={t.back} onClick={() => ws.setHidden(true)} className={iconBtn}>

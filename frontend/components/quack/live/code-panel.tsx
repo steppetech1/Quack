@@ -6,6 +6,7 @@ import { ApiError } from "@/lib/api/client";
 import { codeTask, runCode, saveDraft, submitCode, type CodeTask, type CodeTestView, type CustomRunView } from "@/lib/api/code";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
+import { ResizeHandle, useResizable } from "../resize-handle";
 import { PRIMARY_BTN, SECONDARY_BTN } from "../stubs/stub-parts";
 import { CodeEditor } from "./code-editor";
 import { Markdown } from "./markdown";
@@ -128,6 +129,11 @@ function TestRow({ t, language }: { t: CodeTestView; language: "python" | "sql" 
   );
 }
 
+/** The editor can be dragged by its left edge from 360 px up to what leaves the chat 22rem (from `lg`, where it is a column) */
+const CODE_MIN_PX = 360;
+const CHAT_MIN_REM = 22;
+const codeMax = (panel: HTMLElement) => (panel.parentElement?.clientWidth ?? 1200) - CHAT_MIN_REM * 16;
+
 const ICON_BTN = "inline-flex size-10 shrink-0 items-center justify-center text-paper-dim hover:text-paper";
 
 /**
@@ -157,6 +163,8 @@ export function CodePanel({
   const task = open.task;
   const language = task.language;
   const [wide, setWide] = useState(true);
+  /** the width the learner dragged to; the «wider / narrower» button goes back to its two presets */
+  const resize = useResizable({ id: "code-panel", min: CODE_MIN_PX, max: codeMax, edge: "left" });
   /** over the whole screen */
   const [full, setFull] = useState(false);
   /** from `lg`: folded into a narrow strip, the editor stays mounted behind it */
@@ -317,10 +325,12 @@ export function CodePanel({
       // From `lg` the editor is a column beside the chat and narrows it; below, there is no room for two: it covers the chat
       className={cn(
         "flex min-w-0 flex-col border-l border-seam bg-cloth-raised outline-none",
-        full ? "fixed inset-0 z-50" : "absolute inset-0 z-30 lg:static lg:z-auto lg:shrink-0",
-        !full && (folded ? "lg:w-12 lg:items-center lg:py-1" : wide ? "lg:w-[58%]" : "lg:w-[42%]"),
+        full ? "fixed inset-0 z-50" : "absolute inset-0 z-30 lg:relative lg:z-auto lg:shrink-0",
+        !full && (folded ? "lg:w-12 lg:items-center lg:py-1" : resize.width !== null ? "lg:w-(--code-w)" : wide ? "lg:w-[58%]" : "lg:w-[42%]"),
       )}
+      style={!full && !folded && resize.width !== null ? ({ "--code-w": `min(${resize.width}px, calc(100% - ${CHAT_MIN_REM}rem))` } as React.CSSProperties) : undefined}
     >
+      {!full && !folded && <ResizeHandle r={resize} className="hidden lg:block" />}
       {folded && (
         <>
           <button type="button" aria-label={tx.unfold} title={tx.unfold} onClick={() => setFolded(false)} className={cn(ICON_BTN, "hidden lg:inline-flex")}>
@@ -351,7 +361,10 @@ export function CodePanel({
           {open.title} · {language === "python" ? "Python 3.12" : "SQLite"}
         </h2>
         {!full && (
-          <button type="button" aria-label={wide ? tx.narrow : tx.wide} onClick={() => setWide((w) => !w)} className={cn(ICON_BTN, "hidden lg:inline-flex")}>
+          <button type="button" aria-label={wide ? tx.narrow : tx.wide} onClick={() => {
+              setWide((w) => !w);
+              resize.reset();
+            }} className={cn(ICON_BTN, "hidden lg:inline-flex")}>
             <Resize aria-hidden className="size-4" />
           </button>
         )}

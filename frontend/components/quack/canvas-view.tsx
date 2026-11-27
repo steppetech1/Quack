@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Maximize2 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -14,15 +14,29 @@ const clean = (s: string) => s.replace(/­/g, "");
 const BACK_CLS = "inline-flex size-10 shrink-0 items-center justify-center rounded-pill text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper [&_svg]:size-[18px]";
 const LINK_CLS = "relative text-paper-dim underline decoration-seam underline-offset-4 transition-colors after:absolute after:-inset-y-3 after:inset-x-0 hover:text-paper hover:decoration-paper-dim";
 
-/** Доска существующего канваса: на весь экран, без боковых панелей */
-export function CanvasView({ id }: { id: string }) {
+/** Доска существующего канваса: на весь экран, без боковых панелей. `embedded` — в рабочей панели сессии: полоса с названием вместо угла с «назад» */
+export function CanvasView({ id, embedded = false }: { id: string; embedded?: boolean }) {
   const tx = useT();
   const { fullDate } = useFmt();
   const { getCanvas } = useMocks();
   const { domain } = useShell();
   const canvas = getCanvas(id);
   const blockParam = useSearchParams().get("block");
-  if (!canvas) return null;
+  if (!canvas) return embedded ? <p className="p-5 text-paper-dim">{tx.workspace.canvasDoc.none}</p> : null;
+
+  if (embedded) {
+    return (
+      <>
+        <div className="flex shrink-0 items-center gap-1 border-b border-seam-soft pr-1 pl-4">
+          <h2 className="display-caps min-w-0 flex-1 truncate py-2 text-body leading-tight text-paper">{canvas.title}</h2>
+          <Link href={`/canvas/${canvas.id}`} aria-label={tx.workspace.canvasDoc.full} title={tx.workspace.canvasDoc.full} className={BACK_CLS}>
+            <Maximize2 aria-hidden />
+          </Link>
+        </div>
+        <Board canvas={canvas} canvasId={canvas.id} mode="edit" headingLevel={3} scoped />
+      </>
+    );
+  }
 
   return (
     <Board

@@ -18,6 +18,12 @@ import { StateDot, TopicCardBody } from "../topic-card";
 
 export type GraphHandle = { focusTopic: (id: string) => void };
 
+/** What a click on the graph points at: a topic or a hub (the cheat sheet of a chapter) */
+export type GraphTarget = { kind: "topic" | "hub"; id: string };
+
+/** A click that a plain left press made: the ones with a modifier keep their meaning (a new tab) */
+const plain = (e: React.MouseEvent) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+
 type View = { k: number; tx: number; ty: number };
 type Pt = { x: number; y: number };
 type Colors = Record<"paper" | "dim" | "ribbon" | "cloth" | TopicState, string> & { label: string; body: string; ribbonRgb: string; ind: Record<IndicatorId, string> };
@@ -47,6 +53,8 @@ const TWEEN_MS = 450;
 const MOVE_MS = 900;
 /** Width of the left column. It is fixed on screen, so the labels stay readable at any zoom */
 const COL_W = 208;
+/** In a narrow pane the column is slimmer, so the graph keeps its room */
+const COL_W_COMPACT = 144;
 /** Smallest zoom at which labels still read. An indicator never zooms out past it: what does not fit gets an arrow */
 const K_READ = 0.6;
 const CARD_W = 320;
@@ -140,10 +148,24 @@ export const LayeredGraph = forwardRef<
     onCentered?: () => void;
     /** The graph appears for the first time (files being read): its first nodes pop in too */
     popFirst?: boolean;
+    /** A graph in a narrow pane beside the chat: no column of indicators, the camera of the subject page is left alone */
+    compact?: boolean;
+    /** A click on a topic or a hub: the caller shows it (in the pane); without it the graph goes to the page of the thing */
+    onOpen?: (target: GraphTarget) => void;
   }
->(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus, center = false, onCentered, popFirst = false }, ref) {
+>(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus, center = false, onCentered, popFirst = false, compact = false, onOpen }, ref) {
   const tx = useT();
   const router = useRouter();
+  const openNode = (kind: GraphTarget["kind"], id: string) => (onOpen ? onOpen({ kind, id }) : router.push(kind === "hub" ? `/hub/${id}` : `/topic/${id}`));
+  /** the `onClick` of a link that must not leave the page when the caller shows the target itself */
+  const stay = (kind: GraphTarget["kind"], id: string) =>
+    onOpen
+      ? (e: React.MouseEvent) => {
+          if (!plain(e)) return;
+          e.preventDefault();
+          onOpen({ kind, id });
+        }
+      : undefined;
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -210,6 +232,7 @@ export const LayeredGraph = forwardRef<
   const hubMap = useMemo(() => new Map(model.hubs.map((h) => [h.id, h])), [model]);
   // Saved positions keep known topics in place. The node list does not depend on them, so server and client markup match
   const layout = useMemo(() => layoutGraph(model, loadPositions(LEARNER, model.domainId)), [model]);
+  const colW = compact ? COL_W_COMPACT : COL_W;
   // Left column: unlinked topics of this domain, then topics from other subjects
   const column = useMemo(() => {
     const free = layout.unlinked.map((id) => topicMap.get(id)).filter((t): t is GraphTopic => !!t);
@@ -217,8 +240,8 @@ export const LayeredGraph = forwardRef<
       ...model.otherDomain.map((o) => ({ topic: o.topic, domainName: o.domainName as string | undefined })),
       ...model.topics.filter((t) => t.status === "off_domain" && t.visibility !== "hidden").map((t) => ({ topic: t, domainName: undefined })),
     ];
-    return { free, outside, width: free.length || outside.length ? COL_W : 0 };
-  }, [layout, topicMap, model]);
+    return { free, outside, width: free.length || outside.length ? colW : 0 };
+  }, [layout, topicMap, model, colW]);
   const lookup = useMemo(() => new Map([...topicMap, ...model.otherDomain.map((o): [string, GraphTopic] => [o.topic.id, o.topic])]), [topicMap, model]);
   const links = useMemo(() => {
     const byHub = new Map<string, string[]>();
@@ -762,8 +785,8 @@ export const LayeredGraph = forwardRef<
       .slice(0, 4)
       .map(({ id, x, y }) => ({ id, x, y }));
     const cam: SavedCamera = { k: v.k, cx, cy, anchor: near[0], near: near.slice(1) };
-    saveCamera(LEARNER, scene.current.model.domainId, cam);
-  }, []);
+    if (!compact) saveCamera(LEARNER, scene.current.model.domainId, cam);
+  }, [compact]);
   const queueSave = useCallback(() => {
     if (activeRef.current.size) return;
     clearTimeout(camTimer.current);
@@ -794,14 +817,14 @@ export const LayeredGraph = forwardRef<
   // First view of a domain: where the learner stood last time, else the whole graph
   const initialView = useCallback(
     (w: number, h: number): View => {
-      const saved = loadCamera(LEARNER, scene.current.model.domainId);
+      const saved = compact ? null : loadCamera(LEARNER, scene.current.model.domainId);
       if (!saved) return fitView(w, h);
       const k = clamp(saved.k, K_MIN, K_MAX);
       const c = restoreCenter(saved, (id) => target.current.get(id));
       const cw = scene.current.colW;
       return { k, tx: cw + (w - cw) / 2 - c.x * k, ty: h / 2 - c.y * k };
     },
-    [fitView],
+    [fitView, compact],
   );
 
   const zoomAt = useCallback(
@@ -888,7 +911,7 @@ export const LayeredGraph = forwardRef<
       if (from.current.has(key)) continue;
       const cy = was.includes(key) ? colY.current.get(key) : undefined;
       if (!first && cy !== undefined) {
-        from.current.set(key, { x: (COL_W + 6 - vx) / k, y: (cy - vy) / k });
+        from.current.set(key, { x: (colW + 6 - vx) / k, y: (cy - vy) / k });
         fromColumn = true;
       } else from.current.set(key, to);
     }
@@ -910,7 +933,7 @@ export const LayeredGraph = forwardRef<
       posTween.current = null;
     } else posTween.current = performance.now();
     schedule();
-  }, [layout, model, topicMap, hubMap, column.width, links, schedule]);
+  }, [layout, model, topicMap, hubMap, column.width, colW, links, schedule]);
 
   // Where each column item stands (for the lines to hubs). Measured after the column is laid out and whenever it scrolls
   const measureColumn = useCallback(() => {
@@ -1176,7 +1199,7 @@ export const LayeredGraph = forwardRef<
     if (!d || d.moved) return;
     const p = local(e);
     const key = hitTest(p.x, p.y);
-    if (key) router.push(key.startsWith("h:") ? `/hub/${key.slice(2)}` : `/topic/${key}`);
+    if (key) openNode(key.startsWith("h:") ? "hub" : "topic", key.startsWith("h:") ? key.slice(2) : key);
     else if (pinHub.current) clearPinRef.current?.();
   };
 
@@ -1199,7 +1222,7 @@ export const LayeredGraph = forwardRef<
   const enterItem = (id: string) => {
     clearTimeout(hideTimer.current);
     hoverKey.current = id;
-    setHover({ id, x: COL_W, y: colY.current.get(id) ?? 0 });
+    setHover({ id, x: colW, y: colY.current.get(id) ?? 0 });
   };
 
   /** One group of the column. Names wrap instead of being cut, so a label is always whole */
@@ -1222,6 +1245,7 @@ export const LayeredGraph = forwardRef<
               >
                 <Link
                   href={`/topic/${topic.id}`}
+                  onClick={stay("topic", topic.id)}
                   className="flex items-start gap-2.5 px-4 py-2 text-small text-paper outline-none transition-colors duration-(--dur-s) ease-(--ease-out) hover:bg-cloth-hover focus-visible:bg-cloth-hover"
                   style={{ opacity: topic.status === "proposed" ? 0.65 : 1 }}
                 >
@@ -1365,12 +1389,16 @@ export const LayeredGraph = forwardRef<
             <ul className="sr-only">
               {layout.hubs.map((n) => (
                 <li key={n.key}>
-                  <Link href={`/hub/${n.id}`}>{hubMap.get(n.id)?.name}</Link>
+                  <Link href={`/hub/${n.id}`} onClick={stay("hub", n.id)}>
+                    {hubMap.get(n.id)?.name}
+                  </Link>
                 </li>
               ))}
               {layout.topics.map((n) => (
                 <li key={n.key}>
-                  <Link href={`/topic/${n.id}`}>{topicMap.get(n.id)?.name}</Link>
+                  <Link href={`/topic/${n.id}`} onClick={stay("topic", n.id)}>
+                    {topicMap.get(n.id)?.name}
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -1392,11 +1420,11 @@ export const LayeredGraph = forwardRef<
               }}
             >
               {hoverMock ? (
-                <TopicCardBody topic={hoverMock} hubLabel={domain.hubs.find((h) => h.id === hoverMock.hubId)?.title} />
+                <TopicCardBody topic={hoverMock} hubLabel={domain.hubs.find((h) => h.id === hoverMock.hubId)?.title} onOpen={onOpen ? () => onOpen({ kind: "topic", id: hoverMock.id }) : undefined} />
               ) : (
                 <>
                   <h3 className="display-caps text-[1.0625rem]">
-                    <Link href={`/topic/${hoverTopic.id}`} className="text-paper underline decoration-seam decoration-1 underline-offset-4 hover:decoration-rule">
+                    <Link href={`/topic/${hoverTopic.id}`} onClick={stay("topic", hoverTopic.id)} className="text-paper underline decoration-seam decoration-1 underline-offset-4 hover:decoration-rule">
                       {hoverTopic.name}
                     </Link>
                   </h3>
@@ -1411,11 +1439,12 @@ export const LayeredGraph = forwardRef<
         </div>
 
         {/* The indicators and the count have a column of their own: nothing of the graph or of its controls lies under them */}
-        <div className="hidden w-32 shrink-0 flex-col gap-3 overflow-y-auto pt-2 pl-2 md:flex">
+        {!compact && <div className="hidden w-32 shrink-0 flex-col gap-3 overflow-y-auto pt-2 pl-2 md:flex">
           <IndicatorPills />
           {allHub && (
             <Link
               href={`/hub/${allHub.id}`}
+              onClick={stay("hub", allHub.id)}
               aria-label={tx.graph.allTopicsPillAria}
               className="caps inline-flex h-10 w-full shrink-0 items-center justify-center rounded-pill border border-seam px-3 whitespace-nowrap text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-rule hover:bg-cloth-hover"
             >
@@ -1425,7 +1454,7 @@ export const LayeredGraph = forwardRef<
           <p aria-live="polite" className="caps px-1 text-paper-dim">
             {tx.graph.status(hubCount, topicCount)}
           </p>
-        </div>
+        </div>}
       </div>
     </div>
   );

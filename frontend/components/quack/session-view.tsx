@@ -17,7 +17,9 @@ import { RichText } from "./rich-text";
 import { SkillProposalCard, type Proposal } from "./skill-proposal";
 import { useSoon } from "./soon";
 import { SentFiles } from "./attachments";
+import { SessionTools } from "./live/session-tools";
 import { DemoCard, NoteRefCard } from "./workspace/doc-cards";
+import { publishDemos } from "./workspace/session-demos";
 import { StudentText } from "./workspace/student-text";
 import { StateDot } from "./topic-card";
 
@@ -26,14 +28,15 @@ const MEASURE = "mx-auto w-full max-w-[34rem]";
 
 export function SessionView({ id }: { id: string }) {
   const { radiusSession } = useMocks();
-  return id === "new" ? <NewSession /> : <RadiusSession data={radiusSession} />;
+  return id === "new" ? <NewSession /> : <RadiusSession id={id} data={radiusSession} />;
 }
 
 /** The mock of the built-in `/skill-creator` talk: what the learner and the teacher said, in order */
 type Talk = { id: string; role: "student" | "teacher"; text: string; proposal?: Proposal };
 
-function RadiusSession({ data }: { data: SessionData }) {
+function RadiusSession({ id, data }: { id: string; data: SessionData }) {
   const tx = useT();
+  const { domain } = useShell();
   const soon = useSoon();
   const mock = tx.skillCreatorMock;
   const hit = (words: string, text: string) => new RegExp(words, "i").test(text);
@@ -43,6 +46,14 @@ function RadiusSession({ data }: { data: SessionData }) {
   const stage = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+
+  // the demos of the turns, for the «Visualizations» document of the pane
+  useEffect(() => {
+    publishDemos(
+      id,
+      data.turns.flatMap((t) => (t.kind === "teacher" && t.demo ? [{ requestId: t.demo.id, title: t.demo.title, status: "ready" as const, mock: true }] : [])),
+    );
+  }, [id, data.turns]);
 
   // Without the backend `/skill-creator` is a script: one question, then a proposal; «shorter», «cards» change it, «thanks» ends it
   const send = (text: string) => {
@@ -151,6 +162,8 @@ function RadiusSession({ data }: { data: SessionData }) {
             <Dots />
           </p>
         )}
+        {/* the tool buttons are drawn in the top bar of the session (a portal into the app shell) */}
+        <SessionTools sessionId={id} domainId={domain.id} code={null} />
       </div>
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6 @[52rem]:pr-[17rem]">
         <header ref={header} className={MEASURE}>

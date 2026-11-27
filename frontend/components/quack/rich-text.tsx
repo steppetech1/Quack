@@ -2,6 +2,7 @@ import katex from "katex";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { ScrollRegion } from "./scroll-region";
+import { CodeBlock } from "./code-block";
 
 const MAX_INLINE_DEPTH = 16;
 
@@ -431,16 +432,16 @@ const QUOTE_RE = /^\s{0,3}>\s?(.*)$/;
 const LIST_RE = /^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)$/;
 const HR_RE = /^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/;
 
-function matchFenceOpen(line: string): { char: "`" | "~"; len: number } | null {
+function matchFenceOpen(line: string): { char: "`" | "~"; len: number; info: string } | null {
   const m = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
   if (!m) return null;
   const marker = m[1];
   const info = m[2];
   if (marker[0] === "`" && info.includes("`")) return null;
-  return { char: marker[0] as "`" | "~", len: marker.length };
+  return { char: marker[0] as "`" | "~", len: marker.length, info: info.trim() };
 }
 
-function isFenceClose(line: string, fence: { char: "`" | "~"; len: number }): boolean {
+function isFenceClose(line: string, fence: { char: "`" | "~"; len: number; info?: string }): boolean {
   const trimmed = line.trim();
   if (trimmed.length < fence.len) return false;
   for (let i = 0; i < trimmed.length; i++) {
@@ -663,12 +664,7 @@ function renderBlocks(text: string, keyPrefix = "b"): ReactNode[] {
       }
       if (i < lines.length) i++;
       blocks.push(
-        <pre
-          key={`${keyPrefix}-pre-${blocks.length}`}
-          className="overflow-x-auto rounded-[2px] border border-seam-soft bg-cloth-deep p-3 font-mono text-small text-paper"
-        >
-          <code>{codeLines.join("\n")}</code>
-        </pre>,
+        <CodeBlock key={`${keyPrefix}-pre-${blocks.length}`} code={codeLines.join("\n")} info={fence.info} />,
       );
       continue;
     }

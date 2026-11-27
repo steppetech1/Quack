@@ -57,6 +57,7 @@ export function Board({
   topLeft,
   headingLevel = 2,
   className,
+  scoped = false,
 }: {
   canvas?: Canvas;
   canvasId: string;
@@ -67,6 +68,8 @@ export function Board({
   topLeft?: React.ReactNode;
   headingLevel?: 2 | 3;
   className?: string;
+  /** The board shares the page with something else (a chat beside it): its keys and paste work only after a click on the board */
+  scoped?: boolean;
 }) {
   const tx = useT();
   const edit = mode === "edit";
@@ -345,6 +348,8 @@ export function Board({
     if (e.button === 2) return;
     const t = e.target as Element;
     if (t.closest("[data-nopan]")) return;
+    // a board that shares the page takes the keyboard when it is pressed (and gives it up when the learner clicks away)
+    if (scoped) viewport.current?.focus({ preventScroll: true });
     cancelAnim();
     touched.current = true;
     const el = viewport.current!;
@@ -560,8 +565,9 @@ export function Board({
   useEffect(() => {
     if (!edit) return;
     const TOOL_KEYS: Record<string, Tool> = { KeyV: "select", KeyH: "hand", KeyP: "pen", KeyM: "marker", KeyE: "eraser", KeyT: "text", KeyF: "formula" };
+    const mine = (e: Event) => !scoped || (e.target instanceof Node && !!outer.current?.contains(e.target));
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e.target)) return;
+      if (isTyping(e.target) || !mine(e)) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.code === "KeyZ") {
         e.preventDefault();
@@ -627,7 +633,7 @@ export function Board({
       setSpaceDown(false);
     };
     const onPaste = (e: ClipboardEvent) => {
-      if (isTyping(e.target)) return;
+      if (isTyping(e.target) || !mine(e)) return;
       const files = e.clipboardData?.files;
       if (files && [...files].some((f) => f.type.startsWith("image/"))) {
         e.preventDefault();
@@ -644,7 +650,7 @@ export function Board({
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("paste", onPaste);
     };
-  }, [edit, addImages, mutate]);
+  }, [edit, addImages, mutate, scoped]);
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
@@ -717,7 +723,8 @@ export function Board({
           e.preventDefault();
           addImages(e.dataTransfer.files, toWorld(e.clientX, e.clientY));
         }}
-        className="absolute inset-0 touch-none overflow-hidden select-none"
+        tabIndex={scoped ? -1 : undefined}
+        className="absolute inset-0 touch-none overflow-hidden outline-none select-none"
         style={{ cursor }}
       >
         <p id={descId} className="sr-only">

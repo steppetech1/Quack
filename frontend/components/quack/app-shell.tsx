@@ -14,6 +14,7 @@ import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
+import { ResizeHandle, useResizable } from "./resize-handle";
 import { BackLink } from "./page-parts";
 import { SoonProvider } from "./soon";
 
@@ -53,6 +54,13 @@ export function useShell() {
 /** Сессии пока есть только в матанализе */
 const SESSION_DOMAIN = "matan";
 const SIDEBAR_KEY = "quack.sidebar-collapsed";
+
+/** Левую панель можно тянуть за правый край: от 200 px до 480 px, но чтобы центру осталось не меньше 640 px */
+const SIDEBAR_MIN_PX = 200;
+const sidebarMax = (panel: HTMLElement) => Math.min(480, (panel.parentElement?.clientWidth ?? 1280) - 640);
+
+/** Правый край верхней полосы сессии: сюда сессия кладёт кнопки инструментов */
+export const SESSION_TOOLS_SLOT = "session-tools-slot";
 
 /** Вид домена (граф или канвасы) живёт здесь; «/» — экран «Все графы» */
 export const DOMAIN_PATH = "/domain";
@@ -95,6 +103,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const [centerPending, setCenterPending] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const sidebar = useResizable({ id: "sidebar", min: SIDEBAR_MIN_PX, max: sidebarMax, edge: "right" });
   // localStorage is only readable after mount
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -199,7 +208,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </a>
         <div inert={drawer} className="flex h-dvh">
           {!fullscreen && (
-            <aside aria-label={t.shell.subjects} className={cn("hidden shrink-0 border-r border-seam-soft md:block", collapsed ? "w-15" : "w-62")}>
+            <aside
+              aria-label={t.shell.subjects}
+              className={cn("relative hidden shrink-0 border-r border-seam-soft md:block", collapsed ? "w-15" : sidebar.width === null && "w-62")}
+              // a width the learner dragged to (never more than 45% of the window, so the centre keeps its room)
+              style={!collapsed && sidebar.width !== null ? { width: `min(${sidebar.width}px, 45vw)` } : undefined}
+            >
+              {!collapsed && <ResizeHandle r={sidebar} />}
               <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} collapsed={collapsed} onToggle={toggleSidebar} />
             </aside>
           )}
@@ -213,8 +228,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>}
             {/* Сессия: путь назад в граф домена; граф открывается по «/» */}
             {inSessionPage && (
-              <div className="shrink-0 border-b border-seam-soft px-4 md:px-7">
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-seam-soft px-4 md:px-7">
                 <BackLink href={DOMAIN_PATH}>{t.shell.backToGraph}</BackLink>
+                {/* the session puts its tool buttons here (live/session-tools.tsx): the bar is outside the session's workspace, so they come through a portal */}
+                <div id={SESSION_TOOLS_SLOT} className="-mr-2 flex items-center" />
               </div>
             )}
             {busy ? (

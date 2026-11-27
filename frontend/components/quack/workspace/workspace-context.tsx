@@ -9,7 +9,7 @@ import { createContext, useCallback, useContext, useMemo, useState, useSyncExter
  * The pane itself is `workspace-pane.tsx`; what it draws for each kind is `doc-*.tsx`.
  */
 
-export type DocKind = "demo" | "material" | "skill" | "note" | "skill_draft";
+export type DocKind = "demo" | "material" | "skill" | "note" | "skill_draft" | "graph" | "demos" | "canvas" | "skills";
 
 type Base = {
   /** The id of the thing itself (the demo's request id, a material id, a skill id, a topic or hub id): unique within its kind */
@@ -22,6 +22,14 @@ export type DocInput =
   | (Base & { kind: "demo"; /** mock mode: the page is drawn from the app itself, there is no backend to ask */ mock?: boolean })
   | (Base & { kind: "material" })
   | (Base & { kind: "skill" })
+  /** the graph of the session's subject (`id` is the domain id): a click on a topic opens its notes beside it */
+  | (Base & { kind: "graph" })
+  /** the demos of the session (`id` is the session id) */
+  | (Base & { kind: "demos" })
+  /** a canvas of the session, drawn inside the pane (`id` is the canvas id) */
+  | (Base & { kind: "canvas" })
+  /** the learner's skills (`id` is the session id, there is one list) */
+  | (Base & { kind: "skills" })
   /** a skill the teacher proposed in the chat, opened beside it: `id` is the key of the draft (`lib/skill-drafts.ts`), `base` the proposal */
   | (Base & { kind: "skill_draft"; base: Draft })
   | (Base & { kind: "note"; noteKind: "topic" | "hub"; /** the full page of the same notes */ href?: string });
@@ -35,6 +43,8 @@ export const docKey = (kind: DocKind, id: string) => `${kind}:${id}`;
 export type PaneMode = "side" | "sheet" | "full";
 
 type Workspace = {
+  /** the session the pane belongs to */
+  sessionId: string;
   docs: WorkspaceDoc[];
   /** the tab id of the document shown, `null` when nothing is open */
   activeId: string | null;
@@ -73,7 +83,7 @@ export function useWorkspace() {
 // ── what is remembered: sessionStorage by session id, with a copy in memory when the storage is not there ──────────────
 
 type Saved = { docs: DocInput[]; active: string | null };
-const KINDS = new Set<string>(["demo", "material", "skill", "note", "skill_draft"]);
+const KINDS = new Set<string>(["demo", "material", "skill", "note", "skill_draft", "graph", "demos", "canvas", "skills"]);
 const storageKey = (sessionId: string) => `quack.workspace.${sessionId}`;
 const memory = new Map<string, string>();
 const listeners = new Set<() => void>();
@@ -125,7 +135,7 @@ function parse(raw: string | null): Saved {
       } else if (x.kind === "demo") {
         docs.push({ kind: "demo", id: x.id, title: x.title, mock: x.mock === true ? true : undefined });
       } else {
-        docs.push({ kind: x.kind as "material" | "skill", id: x.id, title: x.title });
+        docs.push({ kind: x.kind as "material" | "skill" | "graph" | "demos" | "canvas" | "skills", id: x.id, title: x.title });
       }
     }
     const active = typeof v.active === "string" && docs.some((d) => docKey(d.kind, d.id) === v.active) ? v.active : (docs[0] ? docKey(docs[0].kind, docs[0].id) : null);
@@ -194,8 +204,8 @@ export function WorkspaceProvider({ sessionId, children }: { sessionId: string; 
   const visible = docs.length > 0 && (mode === "side" || !hidden);
 
   const value = useMemo<Workspace>(
-    () => ({ docs, activeId: saved.active, open, close, closeAll, activate, expanded: expanded && docs.length > 0, setExpanded, hidden, setHidden, mode, setMode, folded, setFolded, visible }),
-    [docs, saved.active, open, close, closeAll, activate, expanded, setExpanded, hidden, mode, folded, visible],
+    () => ({ sessionId, docs, activeId: saved.active, open, close, closeAll, activate, expanded: expanded && docs.length > 0, setExpanded, hidden, setHidden, mode, setMode, folded, setFolded, visible }),
+    [sessionId, docs, saved.active, open, close, closeAll, activate, expanded, setExpanded, hidden, mode, folded, visible],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

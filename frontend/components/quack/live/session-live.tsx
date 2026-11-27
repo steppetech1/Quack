@@ -28,6 +28,8 @@ import { CodePanel, type OpenCode } from "./code-panel";
 import { elementCodeTask, type CodeTask } from "@/lib/api/code";
 import { PlotCard, type PlotSpec } from "./plot-card";
 import { SessionCorner, useSessionPlan } from "./plan-graph-live";
+import { SessionTools } from "./session-tools";
+import { publishDemos, type SessionDemo } from "../workspace/session-demos";
 import { StudentText } from "../workspace/student-text";
 import { useWorkspaceOptional } from "../workspace/workspace-context";
 
@@ -417,6 +419,13 @@ export function SessionLive({ id }: { id: string }) {
   const refreshJobs = bg.refresh;
   /** The code editor of a task element (Т-§6.10), opened on the right */
   const [code, setCode] = useState<(OpenCode & { blockId: string }) | null>(null);
+  /** The code tasks the cards of the session found for their elements (a reload brings the cards back, and these with them): the newest is what the «Code» tool of the corner opens */
+  const [codeTasks, setCodeTasks] = useState<Record<string, { task: CodeTask; seq: number }>>({});
+  const noteCodeTask = useCallback(
+    (blockId: string, seq: number, task: CodeTask) =>
+      setCodeTasks((all) => (all[blockId]?.task.task_id === task.task_id ? all : { ...all, [blockId]: { task, seq } })),
+    [],
+  );
   // a demo of the plan opens as a tab of the workspace pane (the pane is there for every session but a new one)
   const workspace = useWorkspaceOptional();
   // a demo goes into the queue a moment after the turn: the plan shows it as being made once the builder starts
@@ -424,6 +433,25 @@ export function SessionLive({ id }: { id: string }) {
   useEffect(() => {
     if (building) refreshPlan();
   }, [building, refreshPlan]);
+
+  // the demos of the session for the «Visualizations» document of the pane: the demos of the plan, then the visualizations of the turns that are not in it
+  const demoLabel = tx.workspace.kind.demo;
+  useEffect(() => {
+    const list: SessionDemo[] = [];
+    const seen = new Set<string>();
+    for (const d of plan?.demos ?? []) {
+      if (d.status === "failed" || seen.has(d.request_id)) continue;
+      seen.add(d.request_id);
+      list.push({ requestId: d.request_id, title: d.title, status: d.status });
+    }
+    for (const x of elems) {
+      const e = x.element as { kind: string; request_id?: string | null };
+      if (e.kind !== "visualization" || !e.request_id || seen.has(e.request_id)) continue;
+      seen.add(e.request_id);
+      list.push({ requestId: e.request_id, title: `${demoLabel} ${list.length + 1}`, status: "ready" });
+    }
+    publishDemos(id, list);
+  }, [id, plan, elems, demoLabel]);
 
   // Clear red session error once jobs poll succeeds/updates
   useEffect(() => {
@@ -597,7 +625,11 @@ export function SessionLive({ id }: { id: string }) {
           const sandboxId = (sandbox?.element as { element_id?: string } | undefined)?.element_id;
           if (sandbox && seq !== null && sandboxId) {
             elementCodeTask(id, seq, sandboxId)
-              .then((task) => task && setCode({ task, title: "", blockId: sandbox.blockId }))
+              .then((task) => {
+                if (!task) return;
+                setCode({ task, title: "", blockId: sandbox.blockId });
+                noteCodeTask(sandbox.blockId, seq, task);
+              })
               .catch(() => {});
           }
         }
@@ -625,7 +657,7 @@ export function SessionLive({ id }: { id: string }) {
         if (!accepted) refreshElements();
       }
     },
-    [busy, id, t.turnLocked, t.interrupted, t.busyTimeout, tx.composer.attachFallbackName, errorText, reopened, refreshJobs, refreshPlan, refreshElements],
+    [busy, id, t.turnLocked, t.interrupted, t.busyTimeout, tx.composer.attachFallbackName, errorText, reopened, refreshJobs, refreshPlan, refreshElements, noteCodeTask],
   );
 
   const send = useCallback(
@@ -818,6 +850,13 @@ export function SessionLive({ id }: { id: string }) {
     );
   }
 
+  // the newest code task of the session; the «Code» tool opens its editor (or unfolds it when it is open already)
+  const latestCode = Object.entries(codeTasks).reduce<{ blockId: string; task: CodeTask; seq: number } | null>(
+    (best, [blockId, v]) => (!best || v.seq >= best.seq ? { blockId, ...v } : best),
+    null,
+  );
+  const openLatestCode = latestCode ? () => setCode({ task: latestCode.task, title: tx.code.taskLabel, blockId: latestCode.blockId, at: Date.now() }) : null;
+
   const intent = detail.intent ?? "free";
   const modeLabel = t.modes[intent as keyof typeof t.modes] ?? intent;
   const domain = domains.find((d) => d.id === detail.domain_id);
@@ -862,6 +901,8 @@ export function SessionLive({ id }: { id: string }) {
     <div className="relative flex min-h-0 flex-1">
       {/* the chat and, when a code task is open, its editor as a second column */}
       <div ref={setChatEl} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* the tool buttons are drawn in the top bar of the session (a portal into the app shell) */}
+        <SessionTools sessionId={id} domainId={detail.domain_id} code={openLatestCode} codeOpen={!!code} />
         <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8 md:px-7 md:pt-6">
           <header className={cn("min-w-0", MEASURE)}>
             <h1 className="line-clamp-2 display-caps text-display text-paper">{title}</h1>
@@ -934,6 +975,7 @@ export function SessionLive({ id }: { id: string }) {
                             sessionId={id}
                             onRespond={(r) => void respond(el, r)}
                             onOpenCode={(task) => setCode({ task, title: tx.code.taskLabel, blockId: el.blockId, at: Date.now() })}
+                            onCodeTask={(task) => el.turnSeq !== null && noteCodeTask(el.blockId, el.turnSeq, task)}
                           />
                         ))),
                 ];
@@ -1069,12 +1111,15 @@ function ElementCard({
   onRespond,
   sessionId,
   onOpenCode,
+  onCodeTask,
 }: {
   el: Elem;
   disabled: boolean;
   onRespond: (text: string) => void;
   sessionId?: string;
   onOpenCode?: (task: CodeTask) => void;
+  /** The element turned out to be a code task: the session keeps the newest of them for its «Code» tool */
+  onCodeTask?: (task: CodeTask) => void;
 }) {
   const tx = useT();
   const [text, setText] = useState("");
@@ -1089,7 +1134,11 @@ function ElementCard({
     if (!CODE_KINDS.has(e.kind) || turnSeq === null || !sessionId || !elementId || !onOpenCode) return;
     let alive = true;
     elementCodeTask(sessionId, turnSeq, elementId)
-      .then((found) => alive && setCodeTask(found))
+      .then((found) => {
+        if (!alive) return;
+        setCodeTask(found);
+        if (found) onCodeTask?.(found);
+      })
       .catch(() => {});
     return () => {
       alive = false;
