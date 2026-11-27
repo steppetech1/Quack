@@ -265,7 +265,12 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
       const near = [...req[v], ...dep[v]].map((w) => x[w]).filter((p) => !Number.isNaN(p));
       const row = rows[layerOf[v]].filter((w) => w !== v && !Number.isNaN(x[w])).map((w) => x[w]);
       const was = stored[topics[v].id]?.[0];
-      const want = near.length ? mean(near) : was !== undefined ? was : row.length ? mean(row) : 0;
+      // Pulled by its links and, as in the first layout, by its chapter: the middle of the chapter's topics that already
+      // stand (without this a topic that arrives later drifts to its links and leaves its chapter behind)
+      const mates = topics.map((_, i) => i).filter((i) => i !== v && ownHub[i] === ownHub[v] && !Number.isNaN(x[i])).map((i) => x[i]);
+      const home = ownHub[v] >= 0 && mates.length ? mean(mates) : NaN;
+      const link = near.length ? mean(near) : NaN;
+      const want = !Number.isNaN(home) && !Number.isNaN(link) ? link * (1 - HUB_PULL) + home * HUB_PULL : !Number.isNaN(link) ? link : !Number.isNaN(home) ? home : was !== undefined ? was : row.length ? mean(row) : 0;
       x[v] = freeSlot(want, row, GAP_X);
     }
   }
@@ -393,7 +398,8 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     .sort((a, b) => a.y - b.y || (a.h.id < b.h.id ? -1 : 1));
   for (const { h, m, y } of hubs) {
     const s = stored?.[hubKey(h.id)];
-    const want = s ? s[0] : m.length ? mean(m.map((t) => t.x)) : 0;
+    // Over the middle of its topics (they are the steady part). A saved place is only for a chapter with no topic on the graph
+    const want = m.length ? mean(m.map((t) => t.x)) : s ? s[0] : 0;
     const row = placed.filter((p) => Math.abs(p.y - y) < GAP_Y * 0.55).map((p) => p.x);
     const node: LayoutNode = { key: hubKey(h.id), id: h.id, kind: "hub", x: freeSlot(want, row, HUB_GAP_X), y, layer: Math.round(-y / GAP_Y) };
     nodes.set(node.key, node);
