@@ -8,7 +8,7 @@ import { scrollToId } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { useShell } from "./app-shell";
+import { DOMAIN_PATH, useShell } from "./app-shell";
 import { COPIES_DAYS, RowMenu, type RowAction } from "./row-menu";
 import { useSidebarDelete } from "./use-sidebar-delete";
 import { SessionsBlock } from "./sessions-block";
@@ -42,7 +42,7 @@ export function DomainTree({
   const remove = useSidebarDelete(activeId);
   const { graphMode, openGraph, sessions, closeDrawer } = useShell();
   const pathname = usePathname();
-  const onGraph = pathname === "/";
+  const onGraph = pathname === DOMAIN_PATH;
   // Настройки прячут сессии, как раньше пряталась правая панель
   const showSessions = !pathname.startsWith("/settings");
   // Какой хаб сейчас развёрнут (видны его темы); один за раз

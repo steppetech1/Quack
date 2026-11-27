@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useGraphModel } from "@/lib/graph/use-graph-model";
 import type { TodayRec } from "@/lib/graph/types";
 import { useFmt, useLocale, useMocks, useT } from "@/lib/i18n/provider";
@@ -14,13 +14,13 @@ import { useShell } from "./app-shell";
 import { CanvasesList, CanvasSearch } from "./canvases-page";
 import { Composer } from "./composer";
 import { DomainGraph, type GraphHandle } from "./domain-graph";
-import { DomainTree } from "./domain-tree";
 import { LayeredGraph } from "./graph/layered-graph";
 import { DomainJobsCorner } from "./live/domain-jobs-corner";
 import { useDomainJobs } from "./live/use-domain-jobs";
 import { NumText } from "./num-text";
 import { EmptyDomain } from "./empty-domain";
 import { TodayCards } from "./today-cards";
+import { TopicList } from "./topic-list";
 import { TopicSearch } from "./topic-search";
 
 type View = "graph" | "canvases";
@@ -67,7 +67,7 @@ function ViewToggle({ view, onChange, count, panelId }: { view: View; onChange: 
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(t.id)}
             className={cn(
-              "caps inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-pill border px-5 whitespace-nowrap transition-colors duration-(--dur-s) ease-(--ease-out) focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ribbon sm:flex-none",
+              "caps inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-pill border px-4 whitespace-nowrap transition-colors duration-(--dur-s) ease-(--ease-out) focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ribbon sm:flex-none",
               on ? "border-ribbon/70 bg-cloth-raised text-paper" : "border-transparent text-paper-dim hover:text-paper",
             )}
           >
@@ -85,9 +85,8 @@ export function DomainView() {
   const { fullDate, inDays } = useFmt();
   const { canvasesOf } = useMocks();
   const { locale } = useLocale();
-  const { domain, selectDomain, startSession, graphMode, setGraphMode } = useShell();
+  const { domain, startSession, graphMode, setGraphMode, centerPending, consumeCenter } = useShell();
   const data = useData();
-  const domains = data.domains.length ? data.domains : [domain];
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -100,7 +99,7 @@ export function DomainView() {
   const jobs = useDomainJobs(domain.id);
 
   useEffect(() => {
-    const title = view === "canvases" ? tx.meta.canvasesTitle(domain.title) : tx.meta.title(domain.title);
+    const title = !domain.id ? "Qvack!" : view === "canvases" ? tx.meta.canvasesTitle(domain.title) : tx.meta.title(domain.title);
     // Next возвращает заголовок из metadata после навигации — держим свой, пока виден этот вид
     const apply = () => {
       document.querySelectorAll("title").forEach((el) => {
@@ -111,7 +110,7 @@ export function DomainView() {
     const mo = new MutationObserver(apply);
     mo.observe(document.head, { childList: true, characterData: true, subtree: true });
     return () => mo.disconnect();
-  }, [view, domain.title, tx]);
+  }, [view, domain.id, domain.title, tx]);
 
   const setView = (v: View) => {
     if (v === view) return;
@@ -129,6 +128,7 @@ export function DomainView() {
     }
   };
 
+  const clearFocus = useCallback(() => setGraphMode({ kind: "overview" }), [setGraphMode]);
   const deadlineHub = domain.hubs.find((h) => h.deadline);
   // The layered graph runs on the slice model. With the API on, the old graph stays until the adapter exists
   const model = useGraphModel(locale, domain.id);
@@ -151,6 +151,11 @@ export function DomainView() {
   const [hot, setHot] = useState<TodayRec | null>(null);
   const highlight = useMemo(() => (hot ? { topicIds: hot.topicId ? [hot.topicId] : [], hubIds: hot.hubId ? [hot.hubId] : [] } : undefined), [hot]);
 
+  // Nothing to centre (canvases, no graph, phone list): drop the request so it does not hit a later graph
+  useEffect(() => {
+    if (centerPending && (view !== "graph" || !hasGraph || !window.matchMedia("(min-width: 768px)").matches)) consumeCenter();
+  }, [centerPending, view, hasGraph, consumeCenter]);
+
   // A subject that had no graph when it was opened: when the graph first shows up (files being read), its first nodes pop in too
   // (decided once the backend has answered about the graph, so a graph that is only still loading does not count as empty)
   const graphKnown = !API_MODE || !!data.graphSettled[domain.id];
@@ -164,16 +169,22 @@ export function DomainView() {
     setQuery("");
   }
 
+  // No subject yet: creating one is the first screen (a card, not a chat)
+  if (!domain.id) return null;
+
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-3 md:overflow-hidden md:px-7 md:pt-6">
-        <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-6">
-          <div className="min-w-0">
-            <h1 className="display-caps text-[clamp(1.875rem,3.4vw,2.75rem)] text-paper">{domain.title}</h1>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-3 md:gap-3 md:overflow-hidden md:px-7 md:pt-5">
+        {/* On sm and up: title, view toggle and search share the first row, the deadline line gets the whole second one and never wraps */}
+        <header className="grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-y-2">
+          <h1 title={domain.title} className="display-caps min-w-0 truncate text-[clamp(1.75rem,2.6vw,2.25rem)] text-paper sm:col-start-1 sm:row-start-1">
+            {domain.title}
+          </h1>
+          <div className="min-w-0 sm:col-span-3 sm:row-start-2">
             {deadlineHub?.deadline ? (
-              <p className="caps mt-2.5 text-paper-dim">
+              <p className="caps text-paper-dim">
                 <span className="whitespace-nowrap">{deadlineHub.deadline.label}</span> ·{" "}
-                <span className="whitespace-nowrap text-ribbon">
+                <span className="whitespace-nowrap text-ind-deadline-text">
                   <NumText text={`${fullDate(deadlineHub.deadline.date)}, ${inDays(deadlineHub.deadline.date)}`} />
                 </span>
                 {domain.readiness !== undefined && (
@@ -186,7 +197,7 @@ export function DomainView() {
                 )}
               </p>
             ) : (
-              <p className="caps mt-2.5 text-paper-dim">{tx.domain.noDeadlines}</p>
+              <p className="caps text-paper-dim">{tx.domain.noDeadlines}</p>
             )}
             {domain.lagging && (
               <p role="status" className="mt-1 text-small text-paper-dim">
@@ -194,16 +205,16 @@ export function DomainView() {
               </p>
             )}
           </div>
-          <div className="sm:ml-auto sm:shrink-0">
+          <div className="sm:col-start-2 sm:row-start-1">
             <ViewToggle view={view} onChange={setView} count={canvasCount} panelId={panelId} />
           </div>
           {view === "graph" && hasGraph && (
-            <div className="shrink-0">
+            <div className="sm:col-start-3 sm:row-start-1">
               <TopicSearch key={domain.id} domain={domain} onPick={findTopic} />
             </div>
           )}
           {view === "canvases" && canvasCount > 0 && (
-            <div className="shrink-0">
+            <div className="sm:col-start-3 sm:row-start-1">
               <CanvasSearch value={query} onChange={setQuery} />
             </div>
           )}
@@ -222,14 +233,25 @@ export function DomainView() {
               <div className="relative hidden min-h-0 flex-1 md:flex">
                 <DomainJobsCorner rows={jobs.rows} where="graph" />
                 {model ? (
-                  <LayeredGraph key={domain.id} ref={graph} model={model} domain={domain} highlight={highlight} popFirst={emptyOnEntry.empty === true && jobs.rows.length > 0} />
+                  <LayeredGraph
+                    key={domain.id}
+                    ref={graph}
+                    model={model}
+                    domain={domain}
+                    highlight={highlight}
+                    focusHubId={graphMode.kind === "hub" ? graphMode.hubId : null}
+                    onClearFocus={clearFocus}
+                    center={centerPending}
+                    onCentered={consumeCenter}
+                    popFirst={emptyOnEntry.empty === true && jobs.rows.length > 0}
+                  />
                 ) : (
-                  <DomainGraph key={domain.id} ref={graph} domain={domain} mode={graphMode} onModeChange={setGraphMode} />
+                  <DomainGraph key={domain.id} ref={graph} domain={domain} mode={graphMode} onModeChange={setGraphMode} center={centerPending} onCentered={consumeCenter} />
                 )}
               </div>
               <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} minutes={model?.todayMinutes} className="md:hidden" idPrefix="m" />
               <div className="md:hidden">
-                <DomainTree domains={domains} activeId={domain.id} onSelect={selectDomain} showNewSubject={false} openTopicId={openTopic} />
+                <TopicList domain={domain} openId={openTopic} />
               </div>
               <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} minutes={model?.todayMinutes} className="hidden md:grid" />
             </>

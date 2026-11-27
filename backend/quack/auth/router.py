@@ -220,7 +220,7 @@ async def post_link(body: LinkRequest, request: Request, resources: Resources) -
             resources.settings,
             email=body.email,
             ip=ip,
-            verify_url=str(request.url_for("verify_link")),
+            verify_url=resources.settings.auth_verify_url or str(request.url_for("verify_link")),
             now=_now(),
         )
     except AuthRateLimited as exc:

@@ -242,6 +242,66 @@ jobs:
         working-directory: compute
         run: uv run pytest -q
 
+  # The learner-code sandbox (documentation/идея-редактор-кода-и-запуск.md). Unit tests run
+  # natively; the sandbox tests run in the image with the capabilities and the network of
+  # compose (`pytest -m sandbox`). Heavy steps only when runner/ or the workflow changed.
+  runner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Changed paths
+        id: changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "runner=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -Eq '^(runner/|\.github/workflows/)'; then
+            echo "runner=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "runner=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.runner == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          working-directory: runner
+      - if: steps.changes.outputs.runner == 'true'
+        working-directory: runner
+        run: uv sync --frozen
+      - if: steps.changes.outputs.runner == 'true'
+        working-directory: runner
+        run: uv run ruff check .
+      - if: steps.changes.outputs.runner == 'true'
+        working-directory: runner
+        run: uv run ruff format --check .
+      - if: steps.changes.outputs.runner == 'true'
+        working-directory: runner
+        run: uv run pyright
+      - if: steps.changes.outputs.runner == 'true'
+        working-directory: runner
+        run: uv run pytest -q
+      - if: steps.changes.outputs.runner == 'true'
+        name: Sandbox tests in the image
+        run: |
+          docker build --target test -t quack-runner:test runner
+          docker run --rm --init \
+            --network none --read-only \
+            --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add KILL \
+            --security-opt no-new-privileges:true --pids-limit 256 \
+            --tmpfs /tmp:size=64m,mode=1777 \
+            --tmpfs /work/slot-1:size=64m,uid=20001,gid=20001,mode=0700 \
+            --tmpfs /work/slot-2:size=64m,uid=20002,gid=20002,mode=0700 \
+            --tmpfs /work/slot-3:size=64m,uid=20003,gid=20003,mode=0700 \
+            --tmpfs /work/slot-4:size=64m,uid=20004,gid=20004,mode=0700 \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            quack-runner:test pytest -q -p no:cacheprovider
+
   images:
     # Build both images for linux/amd64 without publishing (publishing is the DevOps track).
     # Pull requests and pushes to main and phase-4; on a pull request only when backend/ or
@@ -269,7 +329,7 @@ jobs:
             echo "images=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only "$BASE" HEAD | grep -Eq '^(backend/|compute/|deploy/static/viz/|\.github/workflows/)'; then
+          if git diff --name-only "$BASE" HEAD | grep -Eq '^(backend/|compute/|runner/|deploy/static/viz/|\.github/workflows/)'; then
             echo "images=true" >> "$GITHUB_OUTPUT"
           else
             echo "nothing relevant changed; the heavy steps are skipped"
@@ -292,6 +352,14 @@ jobs:
           platforms: linux/amd64
           push: false
           tags: quack-compute:ci
+      - if: steps.changes.outputs.images == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: runner
+          target: runtime
+          platforms: linux/amd64
+          push: false
+          tags: quack-runner:ci
 
   publish:
     # ТЗ Фазы 4 WP9.3, Д-§5.1: both images to GHCR with the tags <short sha> and <branch>, only

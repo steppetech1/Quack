@@ -155,7 +155,7 @@ export function DomainCreateCard({
           {twin && (
             <p role="status" className="text-small text-paper-dim">
               {t.domainDupPre(twin.title)}{" "}
-              <Link href={`/?domain=${twin.id}`} className="inline-flex min-h-10 items-center text-ribbon underline-offset-2 hover:underline">
+              <Link href={`/domain?domain=${twin.id}`} className="inline-flex min-h-10 items-center text-ribbon underline-offset-2 hover:underline">
                 {t.domainDupOpen}
               </Link>
             </p>

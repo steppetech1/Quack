@@ -11,7 +11,7 @@
 
 Бэк — `docker compose --profile loadtest up -d --build` из корня репозитория (миграции `migrate`, `projector`, `workers` поднимаются сами). Рядом с `compose.yaml` нужен `.env`; обязательные `POSTGRES_PASSWORD`, `NEO4J_PASSWORD`, `JWT_SECRET`, остальные имена — `backend/.env.example`, но он отстаёт от `compose.yaml`: реально читаются ещё `TERMS_VERSION`, `AUTH_SUCCESS_REDIRECT_URL`, `EMAIL_API_KEY`, `GOOGLE_OIDC_CLIENT_ID/SECRET`, `S3_*`, `DELETIONS_S3_*` — все с пустым значением по умолчанию, можно не задавать для стенда. Без живого ключа Meta — `META_API_KEY=stand`, `META_API_BASE_URL=http://meta-mock:8080`, `META_MOCK_LATENCY=zero` (подменный сервер `meta-mock`, профиль `loadtest`).
 
-Браузер обращается только к фронту; Next.js проксирует `/api/*` на `QUACK_API_URL` (по умолчанию `http://localhost:8000`, `next.config.ts`).
+Бэк берётся из `main` (Фаза 3 влита) либо из ветки `phase-4` (Фаза 4). Удобнее всего поднять его через compose из корня репозитория.
 
 ### Вход на локальном стенде — два открытых вопроса
 
@@ -63,7 +63,7 @@
 | Удаление аккаунта | `DELETE /v1/learner` (на этом стенде падает 500: `quack/storage/deletions.py::write` тоже `NotImplementedError` — журнал удалений в S3 не доведён, см. WP25 в `STATUS.md`) |
 | Живые обновления | `GET /v1/learner/stream` (SSE `projection_advanced`, сами данные — обычными `GET`) |
 
-## Чего нет во фронте (на бэке в основном уже есть — см. `STATUS.md`)
+## Готовность к Фазе 4 (Phase 4 Readiness)
 
 Контракт даёт 65 путей, из них не вызывается ни один из этих (все — реальные модули бэка, большинство «влит» по `STATUS.md` §4):
 

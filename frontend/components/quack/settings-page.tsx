@@ -1,6 +1,5 @@
 "use client";
 
-import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -342,10 +341,6 @@ function DomainsTab() {
           </li>
         ))}
       </ul>
-      <Link href="/domains/new" className={cn(SECONDARY, "mt-5 gap-2")}>
-        <Plus aria-hidden className="size-4" />
-        {tx.shell.newSubject}
-      </Link>
     </div>
   );
 }

@@ -24,6 +24,7 @@ from quack.events.event_types import (
     TurnCommitted,
 )
 from quack.events.log import NewEvent, append_events
+from quack.events.records import CodeTaskElementRecord
 from quack.events.registry import EventPayload
 from quack.events.service_turns import BUILTIN_SKILL_CREATOR
 from quack.events.values import AnswerSpec, LearnerAnswer
@@ -310,7 +311,15 @@ async def _find_element_task(
         return None
     turn = TurnCommitted.model_validate(event.payload)
     task = next((t for t in turn.markup.tasks if t.element_id == element_id), None)
-    return None if task is None else task.task_id
+    if task is not None:
+        return task.task_id
+    # Т-§6.10: a code task element points at a ready task of the bank, not at a task markup.
+    element = next((e for e in turn.markup.elements if e.element_id == element_id), None)
+    return element.task_id if isinstance(element, CodeTaskElementRecord) else None
+
+
+# Public for the code editor routes (Т-§6.10): the task behind an element of a turn.
+find_element_task = _find_element_task
 
 
 async def _element_task(db: Db, learner_id: UUID, turn_seq: int, element_id: str) -> UUID:

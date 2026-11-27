@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, BookOpen, ChevronDown, FileText, Maximize2, Minimize2, Play, Slash, X } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronDown, FileText, Maximize2, Minimize2, PanelRight, Play, Slash, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
@@ -129,6 +129,34 @@ function Pane() {
   const IconSize = expanded ? Minimize2 : Maximize2;
   const iconBtn = "inline-flex size-10 shrink-0 items-center justify-center rounded-pill text-paper-dim transition-colors duration-(--dur-s) ease-out hover:bg-cloth-hover hover:text-paper";
 
+  if (ws.folded && ws.mode === "side" && !expanded) {
+    return (
+      <aside aria-label={t.pane} className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-l border-seam bg-cloth-raised py-1">
+        <button type="button" aria-label={t.unfold} title={t.unfold} onClick={() => ws.setFolded(false)} className={iconBtn}>
+          <PanelRight aria-hidden className="size-4" />
+        </button>
+        {ws.docs.map((d) => {
+          const DocIcon = KIND_ICON[d.kind];
+          return (
+            <button
+              key={d.key}
+              type="button"
+              aria-label={d.title}
+              title={d.title}
+              onClick={() => {
+                ws.activate(d.key);
+                ws.setFolded(false);
+              }}
+              className={cn(iconBtn, d.key === active.key && "text-ribbon")}
+            >
+              <DocIcon aria-hidden className="size-4" />
+            </button>
+          );
+        })}
+      </aside>
+    );
+  }
+
   return (
     <aside
       ref={root}
@@ -146,6 +174,11 @@ function Pane() {
         {ws.mode !== "side" && !expanded && (
           <button type="button" aria-label={t.back} onClick={() => ws.setHidden(true)} className={iconBtn}>
             <ArrowLeft aria-hidden className="size-4" />
+          </button>
+        )}
+        {ws.mode === "side" && !expanded && (
+          <button type="button" aria-label={t.fold} title={t.fold} onClick={() => ws.setFolded(true)} className={iconBtn}>
+            <PanelRight aria-hidden className="size-4" />
           </button>
         )}
         <button

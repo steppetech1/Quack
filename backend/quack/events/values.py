@@ -37,7 +37,11 @@ type AnswerType = Literal[
     "free_text",
     "drawing",
     "short_text",
+    # Т-§5.2, Т-§6.10: code checked by the task's tests in the runner.
+    "code",
 ]
+# Т-§6.10: languages of a `code` answer.
+type CodeLanguage = Literal["python", "sql"]
 # Т-§6.6: comparison modes of math answers.
 type CompareMode = Literal["equal", "up_to_constant", "solution_set", "interval", "form"]
 # Т-§6.6 «разложено на множители, упрощено».
@@ -85,6 +89,12 @@ class AnswerSpec(_Value):
     form_target: FormTarget | None = None
     variables: list[Variable] | None = None
     key_ideas: list[str] | None = None
+    # Т-§5.2, Т-§6.10: a `code` answer — the language, the function the tests call (Python)
+    # and the starter code the learner completes. The tests are not here: they live in the task
+    # document only (`content.tasks.code_tests`), never in an event.
+    language: CodeLanguage | None = None
+    function: str | None = None
+    starter_code: str | None = None
 
 
 class LearnerAnswer(_Value):
@@ -100,7 +110,7 @@ class LearnerAnswer(_Value):
 # --- verdicts (Т-§6.2, WP11.4; B: quack.practice.check) ---------------------------------
 
 type Outcome = Literal["correct", "incorrect", "partial", "unclear"]
-type Method = Literal["exact", "numeric", "symbolic", "units", "model"]
+type Method = Literal["exact", "numeric", "symbolic", "units", "model", "tests"]
 type Verification = Literal["code", "model"]
 # Т-§6.2 ориентир: cheap deterministic checks of a wrong answer.
 type ErrorHint = Literal["sign", "coefficient", "dimension"]
@@ -123,6 +133,31 @@ class RubricItemResult(_Value):
     item: str
     status: Literal["found", "missing", "wrong"]
     quote: str | None = None
+
+
+type CodeTestStatus = Literal[
+    "passed",
+    "wrong",
+    "error",
+    "timeout",
+    "memory",
+    "output_limit",
+    "no_function",
+    "unsupported_value",
+    "row_limit",
+    "not_run",
+]
+
+
+class CodeTestOutcome(_Value):
+    """Т-§6.10: one test of a `code` verdict. `detail` — what an open test showed the learner
+    (arguments, expected, got, the error); null for a hidden test, whose input and expected
+    result never reach an event."""
+
+    number: int
+    hidden: bool
+    status: CodeTestStatus
+    detail: str | None = None
 
 
 class Verdict(_Value):
@@ -148,6 +183,8 @@ class Verdict(_Value):
     misconception_id: UUID | None = None
     misconception_hypothesis: str | None = None
     needs_reading_confirmation: bool = False
+    # Т-§6.10: the tests of a `code` answer (method `tests`); null for every other verdict.
+    tests: list[CodeTestOutcome] | None = None
 
 
 class CheckFailed(_Value):

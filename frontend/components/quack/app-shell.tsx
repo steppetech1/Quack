@@ -9,12 +9,11 @@ import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useT } from "@/lib/i18n/provider";
-import { todayIso } from "@/lib/format";
+import { MOCK_TODAY } from "@/lib/mock";
 import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
-import { IndicatorPills } from "./graph/indicator-pills";
 import { BackLink } from "./page-parts";
 import { SoonProvider } from "./soon";
 
@@ -38,6 +37,9 @@ type Shell = {
   sessions: Session[];
   /** Сделать домен текущим без перехода (страница темы или сессии реального домена) */
   focusDomain: (id: string) => void;
+  /** Клик по названию домена в левой панели: граф встаёт по центру экрана. Граф сбрасывает флаг, когда выровнялся */
+  centerPending: boolean;
+  consumeCenter: () => void;
 };
 
 const ShellContext = createContext<Shell | null>(null);
@@ -50,8 +52,12 @@ export function useShell() {
 
 /** Сессии пока есть только в матанализе */
 const SESSION_DOMAIN = "matan";
+const SIDEBAR_KEY = "quack.sidebar-collapsed";
 
-/** «/?domain=» (ссылка из просмотра канваса) выбирает домен и убирает параметр из адреса */
+/** Вид домена (граф или канвасы) живёт здесь; «/» — экран «Все графы» */
+export const DOMAIN_PATH = "/domain";
+
+/** «/domain?domain=» (ссылка из просмотра канваса) выбирает домен и убирает параметр из адреса */
 function DomainFromQuery({ domains, onDomain }: { domains: Domain[]; onDomain: (id: string) => void }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -59,10 +65,10 @@ function DomainFromQuery({ domains, onDomain }: { domains: Domain[]; onDomain: (
   const param = search.get("domain");
   const view = search.get("view");
   useEffect(() => {
-    if (pathname !== "/" || !param) return;
+    if (pathname !== DOMAIN_PATH || !param) return;
     const id = domains.find((d) => d.id === param)?.id;
     if (id) onDomain(id);
-    router.replace(view === "canvases" ? "/?view=canvases" : "/", { scroll: false });
+    router.replace(view === "canvases" ? `${DOMAIN_PATH}?view=canvases` : DOMAIN_PATH, { scroll: false });
   }, [pathname, param, view, domains, onDomain, router]);
   return null;
 }
@@ -73,7 +79,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const domains = data.domains.length ? data.domains : [EMPTY_DOMAIN];
   const router = useRouter();
   const pathname = usePathname();
-  const inSettings = pathname.startsWith("/settings");
   const inSession = /^\/(session|topic|hub|canvas)\//.test(pathname);
   const inSessionPage = pathname.startsWith("/session/");
   // Доска канваса занимает весь экран: ни панели доменов, ни индикаторов графа
@@ -86,10 +91,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<string | null>(null);
   const [pendingTopic, setPendingTopic] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
-  // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
-  const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
   const [drawer, setDrawer] = useState(false);
+  const [centerPending, setCenterPending] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  // localStorage is only readable after mount
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
+  }, []);
+  const toggleSidebar = () => {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? "0" : "1");
+    setCollapsed(!collapsed);
+  };
   const trigger = useRef<HTMLElement | null>(null);
   const closeBtn = useRef<HTMLButtonElement | null>(null);
   const openDrawer = (el: HTMLElement) => {
@@ -142,13 +156,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setDomainId(id);
     setGraphMode({ kind: "overview" });
     setDrawer(false);
-    if (pathname !== "/") router.push("/");
+    setCenterPending(true);
+    if (pathname !== DOMAIN_PATH) router.push(DOMAIN_PATH);
   };
 
   const openGraph = (m: GraphMode) => {
     setGraphMode(m);
     setDrawer(false);
-    if (pathname !== "/" || window.location.search.includes("view=canvases")) router.push("/");
+    if (pathname !== DOMAIN_PATH || window.location.search.includes("view=canvases")) router.push(DOMAIN_PATH);
   };
 
   const startSession = (text: string, topicId: string | null = null, files: FileRef[] = []) => {
@@ -163,7 +178,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sessions: Session[] =
     // С бэкендом новая сессия появляется в списке сама, как только создана
     pending && !API_MODE && domain.id === SESSION_DOMAIN
-      ? [{ id: "new", href: "/session/new", date: todayIso(), title: pending, topics: [] }, ...domain.sessions]
+      ? [{ id: "new", href: "/session/new", date: MOCK_TODAY, title: pending, topics: [] }, ...domain.sessions]
       : domain.sessions;
 
   return (
@@ -171,7 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(false), sessions, focusDomain: setDomainId }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(false), sessions, focusDomain: setDomainId, centerPending, consumeCenter: () => setCenterPending(false) }}>
         <a
           href="#main"
           onClick={(e) => {
@@ -184,34 +199,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </a>
         <div inert={drawer} className="flex h-dvh">
           {!fullscreen && (
-            <aside
-              aria-label={t.shell.subjects}
-              className={cn("hidden shrink-0 border-r border-seam-soft transition-[width] duration-300 ease-out md:block", domainsCollapsed ? "w-14" : "w-62")}
-            >
-              <DomainSidebar
-                domains={domains}
-                activeId={activeId}
-                onSelect={selectDomain}
-                collapsed={domainsCollapsed}
-                onToggle={() => setDomainsCollapsed((v) => !v)}
-              />
+            <aside aria-label={t.shell.subjects} className={cn("hidden shrink-0 border-r border-seam-soft md:block", collapsed ? "w-15" : "w-62")}>
+              <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} collapsed={collapsed} onToggle={toggleSidebar} />
             </aside>
           )}
 
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
-            {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
-              {pathname !== "/" && (
-                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer(e.currentTarget)}>
-                  <PanelLeft />
-                </IconButton>
-              )}
-              <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
+              <IconButton label={t.shell.subjects} onClick={(e) => openDrawer(e.currentTarget)}>
+                <PanelLeft />
+              </IconButton>
+              <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
             </div>}
             {/* Сессия: путь назад в граф домена; граф открывается по «/» */}
             {inSessionPage && (
               <div className="shrink-0 border-b border-seam-soft px-4 md:px-7">
-                <BackLink href="/">{t.shell.backToGraph}</BackLink>
+                <BackLink href={DOMAIN_PATH}>{t.shell.backToGraph}</BackLink>
               </div>
             )}
             {busy ? (
@@ -233,12 +236,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className={busy || failed ? "hidden" : "contents"}>{children}</div>
           </main>
 
-          {/* Индикаторы графа стоят у правого края центра: нулевая ширина, сами «выезжают» влево */}
-          {!inSettings && !fullscreen && (
-            <div className="relative hidden w-0 shrink-0 md:block">
-              <IndicatorPills />
-            </div>
-          )}
         </div>
 
         {/* Телефон: левая панель (предметы, темы, сессии) — шторка */}
@@ -265,7 +262,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <IconButton ref={drawer ? closeBtn : undefined} label={t.shell.close} className="absolute top-2 right-2 z-10" onClick={() => setDrawer(false)}>
               <X />
             </IconButton>
-            <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
+            <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} />
           </div>
         )}
       </ShellContext.Provider>

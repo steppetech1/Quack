@@ -88,6 +88,7 @@ from quack.llm.tool_loop import (
 )
 from quack.logging import get_logger
 from quack.practice.check import Verdict
+from quack.practice.code_sandbox import sandbox_problems
 from quack.practice.markup import validate_markup
 from quack.session.actions import (
     ElementFrame,
@@ -97,7 +98,7 @@ from quack.session.actions import (
     TurnCommittedFrame,
     VerdictFrame,
 )
-from quack.session.elements import TASK_ELEMENT_KINDS, Element
+from quack.session.elements import TASK_ELEMENT_KINDS, CodeSandboxElement, Element
 from quack.session.guards import (
     Boundary,
     GuardViolation,
@@ -746,7 +747,9 @@ async def _elements(run: _Run, output: TeacherOutputV2, text: str) -> TeacherOut
     # check (there is no element to fix it for, so a bad one is dropped).
     dropped: set[str] = set()
     for element_id, task in tasks.items():
-        if element_id not in checked and (problems := _task_problems(run.guard, task)):
+        if element_id not in checked and (
+            problems := _task_problems(run.guard, task, elements.get(element_id), run.settings)
+        ):
             dropped.add(element_id)
             for problem in problems:
                 _note(run, "task_markup", problem, "markup")
@@ -824,8 +827,13 @@ async def _checked_task(
 ) -> TurnTask | None:
     """The task markup of `element` that passes `validate_markup`, after up to
     `guard_max_retries` fix calls; `None` — none passed."""
-    problems = _task_problems(run.guard, task)
-    for attempt in range(1, run.settings.guard_max_retries + 1):
+    problems = _task_problems(run.guard, task, element, run.settings)
+    if isinstance(element, CodeSandboxElement) and sandbox_problems(element, run.settings):
+        # A fix call mends the task markup, not the element: a bad sandbox goes at once.
+        attempts = 0
+    else:
+        attempts = run.settings.guard_max_retries
+    for attempt in range(1, attempts + 1):
         if not problems:
             return task
         fixed = await _cancellable(
@@ -839,7 +847,7 @@ async def _checked_task(
         if not isinstance(fixed, TurnTask) or fixed.element_id != element.element_id:
             problems = ["fix for another element"]
             continue
-        task, problems = fixed, _task_problems(run.guard, fixed)
+        task, problems = fixed, _task_problems(run.guard, fixed, element, run.settings)
     if not problems:
         return task
     for problem in problems:
@@ -850,10 +858,20 @@ async def _checked_task(
     return None
 
 
-def _task_problems(guard: GuardInputs, task: TurnTask | None) -> list[str]:
+def _task_problems(
+    guard: GuardInputs,
+    task: TurnTask | None,
+    element: Element | None = None,
+    settings: Settings | None = None,
+) -> list[str]:
     if task is None:
         return ["no task markup"]
-    return [
+    sandbox = isinstance(element, CodeSandboxElement)
+    if task.answer.type == "code" and not sandbox:
+        # Т-§6.10: a code task is shown with a `code_sandbox` element (teacher@5), whose sample
+        # makes its first test, or with a `code_task` element of a generated task (teacher@4).
+        return ["code_task_written_by_teacher"]
+    problems = [
         v.rule
         for v in validate_markup(
             task,
@@ -862,6 +880,13 @@ def _task_problems(guard: GuardInputs, task: TurnTask | None) -> list[str]:
             task_labels=guard.task_labels,
         )
     ]
+    if sandbox:
+        assert isinstance(element, CodeSandboxElement)
+        if task.answer.type != "code":
+            problems.append("code_sandbox: answer type must be code")
+        if settings is not None:
+            problems.extend(sandbox_problems(element, settings))
+    return problems
 
 
 async def _commit(state: _State, config: RunnableConfig) -> _Update:

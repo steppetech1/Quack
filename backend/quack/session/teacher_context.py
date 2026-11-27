@@ -58,6 +58,7 @@ ELEMENT_KINDS = (
     "visualization",
     "material_link",
     "reference_card",
+    "code_sandbox",
 )
 
 _CONTROL_WORDS = {
@@ -142,6 +143,10 @@ def render_tools_and_elements() -> str:
         "finished demo (`request`: the label of a `viz` agent request, with `plot` null). Use the "
         "plot when the learner needs to see the shape of one function; a plot is drawn by the "
         "client from your SymPy, so write it in plain SymPy (`10*t - 4.9*t**2`)."
+    )
+    lines.append(
+        "A `code_sandbox` element is a programming task you write yourself; the code editor opens "
+        "on it at once. Give its markup in `tasks` with answer type `code`, as for any task."
     )
     return "\n".join(lines)
 

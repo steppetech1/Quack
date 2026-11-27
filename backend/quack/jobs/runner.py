@@ -15,6 +15,7 @@ from quack.db import Db
 from quack.embeddings.client import EmbeddingClient
 from quack.jobs.types import ClaimedJob
 from quack.llm.gateway import LLMGateway
+from quack.runner_client.client import RunnerClient
 from quack.storage.deletions import DeletionJournal
 from quack.storage.objects import ObjectStore
 
@@ -37,6 +38,9 @@ class JobContext:
     storage: ObjectStore
     embeddings: EmbeddingClient
     deletions: DeletionJournal
+    # Т-§6.10: the learner-code sandbox, for checking generated `code` tasks; `None` in tests
+    # and processes that run no code.
+    runner: RunnerClient | None = None
 
 
 type JobHandler = Callable[[ClaimedJob, JobContext], Awaitable[None]]

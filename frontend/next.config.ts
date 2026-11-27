@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
   compress: false,
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    agentUpgrade: "security",
+  },
   // The browser talks to the backend through this proxy, so the backend needs no CORS
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${API_URL}/:path*` }];

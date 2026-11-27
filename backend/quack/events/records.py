@@ -248,6 +248,30 @@ class ReferenceCardElementRecord(_Element):
     items: list[ReferenceItemRecord]
 
 
+class CodeTaskElementRecord(_Element):
+    """Т-§6.10: a generated code task shown as it is (the editor opens on it)."""
+
+    kind: Literal["code_task"]
+    task_id: UUID
+
+
+class CodeSandboxElementRecord(_Element):
+    """The code sandbox (teacher@5): a code task written in the turn (`session.elements`). The
+    hidden tests are never here: they live in the task document only."""
+
+    kind: Literal["code_sandbox"]
+    mode: Literal["inline_patch", "full_problem"]
+    language: Literal["python", "sql"]
+    statement: str
+    starter_code: str
+    entry_point: str | None
+    sql_preset: str | None
+    sample_args_json: str | None
+    sample_expected_json: str
+    compare: Literal["exact", "unordered", "float_approx"]
+    epsilon: float | None
+
+
 class SkillProposalElementRecord(_Element):
     kind: Literal["skill_proposal"]
     name: str
@@ -269,6 +293,8 @@ type ElementRecord = Annotated[
     | VisualizationElementRecord
     | MaterialLinkElementRecord
     | ReferenceCardElementRecord
+    | CodeTaskElementRecord
+    | CodeSandboxElementRecord
     | SkillProposalElementRecord,
     Field(discriminator="kind"),
 ]
@@ -377,6 +403,9 @@ class AgentParamsRecord(_Record):
     # belongs to and its name for the learner. Null for every other request.
     step_id: str | None = None
     title: str | None = None
+    # Т-§6.10: a `task_generation` request for a programming task in this language (the
+    # answer type `code`); null — the answer type follows the level as before.
+    language: Literal["python", "sql"] | None = None
 
 
 class AgentRequestRecord(_Record):

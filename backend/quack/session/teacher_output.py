@@ -165,6 +165,9 @@ class AgentRequestParams(_Strict):
     task: str | None
     misconception: str | None
     description: str | None
+    # `teacher@4`, Т-§6.10: a `task_generation` request for a programming task in this language;
+    # null — the answer type follows the level as before.
+    language: Literal["python", "sql"] | None = None
 
 
 class AgentRequest(_Strict):
@@ -209,7 +212,8 @@ class TurnMarkup(_Strict):
 
 
 class TeacherOutputV2(_Strict):
-    """`teacher@3`; `teacher_fallback` uses the same prompt and schema (ТЗ Ф4 §6.6)."""
+    """`teacher@3` and `teacher@4` (code tasks: `params.language`, the `code_task` element);
+    `teacher_fallback` uses the same prompt and schema (ТЗ Ф4 §6.6)."""
 
     p1_head: TurnHead
     p2_body: TurnBody

@@ -9,7 +9,6 @@ export const FIELD =
   "h-10 w-full rounded-control border border-seam bg-cloth px-3 text-body text-paper transition-colors duration-(--dur-s) ease-out placeholder:text-paper-dim hover:border-rule focus-visible:border-ribbon";
 export const AREA =
   "min-h-24 w-full rounded-control border border-seam bg-cloth px-3 py-2 text-body text-paper transition-colors duration-(--dur-s) ease-out placeholder:text-paper-dim hover:border-rule focus-visible:border-ribbon";
-/** Длинная пилюля ввода на экране «Новый предмет»: плейсхолдер тусклый и ненавязчивый до ввода */
 export const PILL_FIELD =
   "h-14 w-full rounded-pill border border-seam bg-cloth px-6 text-body text-paper transition-colors duration-(--dur-s) ease-out placeholder:text-paper-dim/70 hover:border-rule focus-visible:border-ribbon";
 export const PRIMARY_BTN =

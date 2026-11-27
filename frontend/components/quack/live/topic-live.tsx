@@ -192,7 +192,7 @@ export function TopicLive({ id }: { id: string }) {
       notice(what === "known" ? t.knownDone : t.hiddenDone);
       if (what === "hide") {
         await loadGraph(topic.domain_id).catch(() => {});
-        router.push("/");
+        router.push("/domain");
       }
     } catch (e) {
       notice(errorText(e));

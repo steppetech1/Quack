@@ -6,6 +6,7 @@ import { idem, post } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { uploadInBackground } from "@/lib/api/domain-uploads";
 import { useT } from "@/lib/i18n/provider";
+import { DOMAIN_PATH } from "../app-shell";
 import { BackLink, PageShell } from "../page-parts";
 import { NodeChains } from "../stubs/node-chain";
 import type { FileRef } from "../attachments";
@@ -78,7 +79,7 @@ export function NewDomainLive() {
       const made = await post("/v1/domains", { name, ...(about ? { about } : {}), idempotency_key: key.current.value });
       await reload();
       uploadInBackground(made.domain_id, files);
-      router.push(`/?domain=${made.domain_id}`);
+      router.push(`${DOMAIN_PATH}?domain=${made.domain_id}`);
     } catch (e) {
       setError(errorText(e));
       setBusy(false);

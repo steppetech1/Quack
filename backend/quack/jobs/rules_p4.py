@@ -54,7 +54,7 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
     _k("analyst.deep", "P2", roles=("analyst_deep",)),
     _k("check.symbolic", "P1", visible=True),
     _k("check.model", "P1", visible=True, roles=("verdict_proof", "verdict_free")),
-    _k("task.check", "P1", visible=True, roles=("task_checker",)),
+    _k("task.check", "P1", visible=True, roles=("task_checker", "code_test_builder")),
     _k("task.solution_space", "P2", roles=("solution_space",)),
     _k("second_opinion.diagnosis", "P1", roles=("second_opinion",)),
     _k("canvas.rediagnose", "P1", roles=("canvas_diagnoser",)),

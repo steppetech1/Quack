@@ -23,6 +23,11 @@ from quack.events.values import AnswerType, Level
 from quack.graph.read import GraphReader, MisconceptionFact, SliceFocus, create_graph_reader
 from quack.jobs.runner import JobContext, register_job_handler
 from quack.jobs.types import ClaimedJob, JobFailedPermanently
+from quack.practice.code_generation import (
+    CODE_GENERATOR_ROLE,
+    CodeGenerationRequest,
+    generate_code_tasks,
+)
 from quack.practice.repo import agent_request, event_by_seq
 from quack.practice.task_generation import (
     GENERATOR_ROLE,
@@ -84,6 +89,45 @@ async def run_request(
             k: v for k, v in misconceptions.items() if k == params.misconception_id
         } or misconceptions
     purpose: Purpose = "retest" if source is not None else "practice"
+    if params.language is not None:
+        # Т-§6.10: a programming task; checked by running its reference and an independent
+        # solution in the runner. Without a runner nothing can be checked: the job retries.
+        if ctx.runner is None:
+            raise RuntimeError("code task generation needs the runner")
+        code_stored = await generate_code_tasks(
+            ctx.db,
+            ctx.llm,
+            ctx.runner,
+            ctx.settings,
+            CodeGenerationRequest(
+                key=f"task_generation:{learner_id}:{request_id}",
+                skill_id=params.skill_id,
+                skill_name=skill.name,
+                topic_name=skill.topic_name or "",
+                level=params.level,
+                language=params.language,
+                misconceptions=misconceptions,
+                course_context=params.description or "",
+                domain_id=requested.domain_id or skill.domain_id,
+                session_id=requested.session_id,
+            ),
+            learner_id=learner_id,
+        )
+        await deliver(
+            ctx.db,
+            learner_id=learner_id,
+            request_id=request_id,
+            job_key=None,
+            kind=KIND,
+            ok=bool(code_stored),
+            actor=ctx.settings.llm_roles[CODE_GENERATOR_ROLE].prompt or CODE_GENERATOR_ROLE,
+            task_ids=code_stored,
+            error=None if code_stored else "no_task_passed_check",
+            domain_id=requested.domain_id,
+            session_id=requested.session_id,
+            causation_seq=requested.seq,
+        )
+        return
     topic_skill_ids, topic_skill_names = await _topic_skills(reader, skill.topic_id)
     stored = await generate_tasks(
         ctx.db,

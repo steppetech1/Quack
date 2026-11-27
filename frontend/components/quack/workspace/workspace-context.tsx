@@ -50,6 +50,9 @@ type Workspace = {
   setHidden: (v: boolean) => void;
   mode: PaneMode;
   setMode: (m: PaneMode) => void;
+  /** the pane beside the chat folded into a narrow strip of icons */
+  folded: boolean;
+  setFolded: (v: boolean) => void;
   /** the pane is on screen right now */
   visible: boolean;
 };
@@ -143,6 +146,7 @@ export function WorkspaceProvider({ sessionId, children }: { sessionId: string; 
   // tabs restored after a reload do not cover the chat of a narrow screen: they wait behind the «Documents» button until one is opened
   const [hidden, setHidden] = useState(true);
   const [mode, setMode] = useState<PaneMode>("side");
+  const [folded, setFolded] = useState(false);
 
   const save = useCallback((next: Saved) => writeRaw(sessionId, next.docs.length ? JSON.stringify(next) : ""), [sessionId]);
   const current = useCallback(() => parse(readRaw(sessionId)), [sessionId]);
@@ -155,6 +159,7 @@ export function WorkspaceProvider({ sessionId, children }: { sessionId: string; 
       // an open document is only brought forward (its tab keeps the title it has)
       save({ docs: exists ? cur.docs : [...cur.docs, doc], active: key });
       setHidden(false);
+      setFolded(false);
     },
     [current, save],
   );
@@ -189,8 +194,8 @@ export function WorkspaceProvider({ sessionId, children }: { sessionId: string; 
   const visible = docs.length > 0 && (mode === "side" || !hidden);
 
   const value = useMemo<Workspace>(
-    () => ({ docs, activeId: saved.active, open, close, closeAll, activate, expanded: expanded && docs.length > 0, setExpanded, hidden, setHidden, mode, setMode, visible }),
-    [docs, saved.active, open, close, closeAll, activate, expanded, setExpanded, hidden, mode, visible],
+    () => ({ docs, activeId: saved.active, open, close, closeAll, activate, expanded: expanded && docs.length > 0, setExpanded, hidden, setHidden, mode, setMode, folded, setFolded, visible }),
+    [docs, saved.active, open, close, closeAll, activate, expanded, setExpanded, hidden, mode, folded, visible],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

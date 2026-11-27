@@ -45,11 +45,12 @@ from quack.events.values import AnswerSpec
 from quack.graph.ids import QUACK_UUID_NS
 from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.logging import get_logger
+from quack.practice.code_sandbox import sandbox_answer_spec, sandbox_tests
 from quack.practice.markup import markup_record
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.session_plan import merge_plan
 from quack.practice.task_store import get_task, insert_task_document, task_created_event
-from quack.session.elements import Element
+from quack.session.elements import CodeSandboxElement, Element
 from quack.session.guards import landmark_kind
 from quack.session.service_turns import settle_service_output
 from quack.session.teacher_output import (
@@ -188,6 +189,8 @@ class NewTurnTask:
     condition: TaskCondition
     answer_spec: AnswerSpec
     idempotency_key: str
+    # The code sandbox (teacher@5): the first tests of the task (its sample), document only.
+    code_tests: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -354,6 +357,13 @@ def turn_batch(
         task_id = uuid4()
         markup = markup_record(task, labels)
         task_key = f"{key}:task:{task.element_id}"
+        element = elements.get(task.element_id)
+        code_tests: dict[str, Any] | None = None
+        if isinstance(element, CodeSandboxElement):
+            markup = markup.model_copy(
+                update={"answer": sandbox_answer_spec(element, markup.answer)}
+            )
+            code_tests = sandbox_tests(element).model_dump(mode="json")
         task_records.append(
             records.TurnTaskRecord(
                 **markup.model_dump(), element_id=task.element_id, task_id=task_id
@@ -375,9 +385,10 @@ def turn_batch(
         tasks.append(
             NewTurnTask(
                 task_id=task_id,
-                condition=TaskCondition(text=_condition(elements.get(task.element_id)), latex=None),
+                condition=TaskCondition(text=_condition(element), latex=None),
                 answer_spec=markup.answer,
                 idempotency_key=task_key,
+                code_tests=code_tests,
             )
         )
     requests = [
@@ -404,7 +415,7 @@ def turn_batch(
         blocks=[records.BodyBlockRecord(**b.model_dump()) for b in output.p2_body.blocks],
         head=records.TurnHeadRecord(
             intent=head.intent,
-            target_skill_ids=[labels.resolve("skill", s) for s in head.target_skills],
+            target_skill_ids=_known_skill_ids(labels, head.target_skills),
             verdict_stance=head.verdict_stance,
             branch_type=head.branch_type,
             approach=head.approach,
@@ -643,6 +654,7 @@ async def commit_turn(
                 condition=task.condition,
                 answer_spec=task.answer_spec,
                 created_seq=by_key[task.idempotency_key].seq,
+                code_tests=task.code_tests,
             )
         await db.execute(_INSERT_MANIFEST, _manifest_params(manifest))
         keys = {"session_id": manifest.session_id, "learner_id": learner_id}
@@ -707,6 +719,19 @@ def _optional(labels: LabelMap, kind: Any, label: str | None) -> UUID | None:
     return None if label is None else labels.resolve(kind, label)
 
 
+def _known_skill_ids(labels: LabelMap, names: list[str]) -> list[UUID]:
+    """Ids of the skill labels of the table. A label that is not in it survived the guard only
+    because its retries ran out (Т-§12.4: the turn is shown and the case logged): it is dropped
+    here, so the shown turn is still committed — a subject without skills has no valid label."""
+    ids: list[UUID] = []
+    for name in names:
+        try:
+            ids.append(labels.resolve("skill", name))
+        except UnknownLabelError:
+            log.warning("turn_unknown_skill_label_dropped", label=name)
+    return ids
+
+
 def _requestable(request: AgentRequest) -> bool:
     """`known_check` is `check.known_claim` over the skills of a topic (WP8.2): without a topic
     label there is nothing to check (review B of #117). A `task_generation` without a skill or a
@@ -755,6 +780,7 @@ def _request_record(request: AgentRequest, labels: LabelMap) -> records.AgentReq
             task_id=_optional(labels, "task", params.task),
             misconception_id=_optional(labels, "misconception", params.misconception),
             description=params.description,
+            language=params.language,
         ),
         needed_in_session=request.needed_in_session,
     )
@@ -772,10 +798,9 @@ def _turn_markup(
         tasks=tasks,
         elements=[_element_record(e, labels) for e in markup.elements],
         exposures=[
-            records.ExposureRecord(
-                skill_id=labels.resolve("skill", e.skill), kind=e.kind, approach=e.approach
-            )
+            records.ExposureRecord(skill_id=skill_id, kind=e.kind, approach=e.approach)
             for e in markup.exposures
+            for skill_id in _known_skill_ids(labels, [e.skill])
         ],
         targets_misconception_id=_optional(labels, "misconception", markup.targets_misconception),
         plan_update=_plan_record(plan, labels),
@@ -838,6 +863,8 @@ def _element_record(element: Element, labels: LabelMap) -> records.ElementRecord
         data["request_id"] = _optional(labels, "request", data.pop("request"))
     elif element.kind == "material_link":
         data["chunk_id"] = labels.resolve("chunk", data.pop("chunk"))
+    elif element.kind == "code_task":
+        data["task_id"] = labels.resolve("task", data.pop("task"))
     return _ELEMENT_RECORD.validate_python(data)
 
 
@@ -845,6 +872,8 @@ def _condition(element: Element | None) -> str:
     """The text the learner sees for the task (D-B-149)."""
     if element is None:
         return ""
+    if isinstance(element, CodeSandboxElement):
+        return element.statement
     text = getattr(element, "prompt", None) or getattr(element, "text", None)
     return str(text or "")
 

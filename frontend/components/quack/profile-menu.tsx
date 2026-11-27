@@ -17,7 +17,7 @@ const ITEM =
 const ICON = "size-[18px] shrink-0 stroke-[1.6] text-paper-dim";
 
 /** Меню профиля внизу левой панели: открывается вверх, как в claude.ai */
-export function ProfileMenu({ active }: { active: boolean }) {
+export function ProfileMenu({ active, collapsed = false }: { active: boolean; collapsed?: boolean }) {
   const router = useRouter();
   const t = useT();
   const { locale, setLocale } = useLocale();
@@ -61,9 +61,9 @@ export function ProfileMenu({ active }: { active: boolean }) {
   };
 
   return (
-    <div ref={root} className="relative mt-auto border-t border-seam-soft pt-3">
+    <div ref={root} className={cn("relative mt-auto border-t border-seam-soft pt-3", !collapsed && "w-full")}>
       {open && (
-        <div className="absolute inset-x-0 bottom-full z-30 mb-2 rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-16px_rgb(0_0_0/0.6)]">
+        <div className={cn("absolute bottom-full left-0 z-30 mb-2 ", collapsed ? "w-60" : "right-0", "rounded-[2px] border border-seam bg-cloth-raised p-1.5 shadow-[0_12px_32px_-16px_rgb(0_0_0/0.6)]")}>
           <div className="px-3 pt-2 pb-2.5">
             <p className="display-caps truncate text-body text-paper">{name}</p>
             <p className="truncate text-small text-paper-dim">{email}</p>
@@ -137,16 +137,19 @@ export function ProfileMenu({ active }: { active: boolean }) {
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={collapsed ? name || t.profile.menu : undefined}
+        title={collapsed ? name || t.profile.menu : undefined}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex min-h-11 w-full items-center gap-2.5 rounded-[2px] border border-transparent px-3 text-left text-paper transition-colors duration-[var(--dur-s)] ease-out hover:bg-cloth-hover",
+          "flex min-h-11 items-center gap-2.5 rounded-[2px] border border-transparent text-left text-paper transition-colors duration-[var(--dur-s)] ease-out hover:bg-cloth-hover",
+          collapsed ? "w-11 justify-center" : "w-full px-3",
           (open || active) && "border-seam bg-cloth-raised",
         )}
       >
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-pill border border-seam text-small text-paper-dim">
           {initial}
         </span>
-        <span className="caps min-w-0 flex-1 truncate">{name}</span>
+        {!collapsed && <span className="caps min-w-0 flex-1 truncate">{name}</span>}
       </button>
     </div>
   );

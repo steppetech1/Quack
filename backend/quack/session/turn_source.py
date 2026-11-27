@@ -70,7 +70,7 @@ from quack.llm.streaming import StreamRequest
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.llm.tool_loop import stream_step
 from quack.logging import get_logger
-from quack.practice.answer_spec import SLOW_TYPES, LearnerAnswer
+from quack.practice.answer_spec import CODE_TYPES, SLOW_TYPES, LearnerAnswer
 from quack.practice.answers import DEFAULT_PART, help_in_session, part_spec
 from quack.practice.check import check
 from quack.practice.model_check import record_verdict
@@ -399,6 +399,16 @@ def _requests(events: Sequence[StoredEvent]) -> dict[UUID, str]:
     return found
 
 
+def _code_task_note(made: Sequence[UUID], code_tasks: dict[UUID, str], labels: LabelMap) -> str:
+    """`teacher@4`: the code tasks a request made, to show with a `code_task` element."""
+    found = [
+        f"{label} ({code_tasks[t]})"
+        for t in made
+        if t in code_tasks and (label := labels.label("task", t))
+    ]
+    return f": code tasks {', '.join(found)}" if found else ""
+
+
 def _canvas(events: Sequence[StoredEvent]) -> tuple[dict[str, CanvasLine], list[VoiceSegment]]:
     """Canvas lines by the numbers of slot 5 (`L1…`, in the order of the session, D-B-163) and
     the voice segments, for `voice_at_line` and `past_solution` (WP14.4)."""
@@ -566,6 +576,17 @@ def _goal_topics(goal: SessionGoal, hubs: Sequence[HubGoal]) -> list[UUID]:
     if goal.hub_id is not None:
         return [t.topic_id for hub in hubs if hub.hub_id == goal.hub_id for t in hub.topics]
     return []
+
+
+def skill_topics(goal_topics: Sequence[UUID], hubs: Sequence[HubGoal], limit: int) -> list[UUID]:
+    """The topics whose skills the turn reads: those of the goal; a session on the whole domain
+    (no topic, no hub) takes the topics of the domain's hubs, at most `limit`. Without them a
+    chat on a domain gets the topics in its label table but none of their skills, and the
+    teacher cannot name a skill (a `task_generation` request needs one)."""
+    if goal_topics:
+        return list(goal_topics)
+    found = [t.topic_id for hub in hubs for t in hub.topics]
+    return list(dict.fromkeys(found))[:limit]
 
 
 def _plan_refs(plan: PlanDoc | None) -> tuple[list[UUID], list[UUID]]:
@@ -833,14 +854,32 @@ class MemoryTurnContextSource:
         row = await self._db.fetch_one(_LATEST_DIGEST, {"learner_id": learner_id, "d": domain_id})
         return None if row is None else str(row["payload"]["text"])
 
-    async def _completed(self, learner_id: UUID, requests: dict[UUID, str]) -> set[UUID]:
-        """Requests of the session with a successful `agent.completed` (Т-§13.7)."""
+    async def _completed(
+        self, learner_id: UUID, requests: dict[UUID, str]
+    ) -> dict[UUID, list[UUID]]:
+        """Requests of the session with a successful `agent.completed` (Т-§13.7), with the tasks
+        they made (a `task_generation` request; `teacher@4` shows a code task by its label)."""
         if not requests:
-            return set()
+            return {}
         rows = await self._db.fetch_all(
             _COMPLETED, {"learner_id": learner_id, "ids": [str(r) for r in requests]}
         )
-        return {UUID(str(r["payload"]["request_id"])) for r in rows if r["payload"]["ok"]}
+        return {
+            UUID(str(r["payload"]["request_id"])): [
+                UUID(str(t)) for t in r["payload"].get("task_ids") or []
+            ]
+            for r in rows
+            if r["payload"]["ok"]
+        }
+
+    async def _code_tasks(self, learner_id: UUID, task_ids: list[UUID]) -> dict[UUID, str]:
+        """The code tasks among `task_ids` with their language (Т-§6.10)."""
+        found: dict[UUID, str] = {}
+        for task_id in task_ids:
+            task = await get_task(self._db, learner_id=learner_id, task_id=task_id)
+            if task is not None and task.answer_spec.type in CODE_TYPES:
+                found[task_id] = task.answer_spec.language or "code"
+        return found
 
     async def _answers(self, learner_id: UUID, journal: SessionJournal) -> list[str]:
         found: list[str] = []
@@ -875,8 +914,8 @@ class MemoryTurnContextSource:
             if task is None:
                 return None
             spec = await part_spec(self._db, learner_id=learner_id, task=task, part=payload.part)
-            if spec.type in SLOW_TYPES:
-                return None
+            if spec.type in SLOW_TYPES or spec.type in CODE_TYPES:
+                return None  # Т-§6.10: code has its verdict from the tests already
             result = await check(
                 LearnerAnswer.model_validate(payload.answer.model_dump()),
                 spec,
@@ -968,11 +1007,20 @@ class MemoryTurnContextSource:
             hubs = await reader.domain_goals(request.domain_id)
             topics = _goal_topics(journal.goal, hubs)
             memory: list[TopicMemory] = await reader.topic_memory(topics) if topics else []
+            read_topics = skill_topics(topics, hubs, settings.label_max_topics)
+            skill_memory: list[TopicMemory] = (
+                memory
+                if read_topics == topics
+                else await reader.topic_memory(read_topics)
+                if read_topics
+                else []
+            )
         except NEO4J_UNAVAILABLE:
             memory_down = True
             now, hubs, topics, memory = LearnerState(profile=Profile()), [], [], []
+            skill_memory = []
         put_since(parts, "memory_ms", started)
-        topic_skills = [s.skill_id for m in memory for s in m.skills]
+        topic_skills = [s.skill_id for m in skill_memory for s in m.skills]
         targets = target_levels(hubs, memory)
         focus = SliceFocus(
             skill_ids=list(dict.fromkeys([*journal.task_skills, *topic_skills])),
@@ -1074,11 +1122,21 @@ class MemoryTurnContextSource:
             dict.fromkeys([*read_focus.skill_ids, *(s.skill_id for s in memory_slice.skills)])
         )
         bank = {} if unavailable else await self._bank(reader, learner_id, review, targets)
+        made = [t for ts in completed.values() for t in ts]
+        code_tasks = await self._code_tasks(learner_id, made)
         labels = LabelMap.build(
             settings,
             skills=skill_ids,
             topics=label_topics,
-            tasks=[*journal.open_tasks, *(t.task_id for ts in bank.values() for t in ts)],
+            tasks=list(
+                dict.fromkeys(
+                    [
+                        *journal.open_tasks,
+                        *(t.task_id for ts in bank.values() for t in ts),
+                        *code_tasks,
+                    ]
+                )
+            ),
             misconceptions=[m.misconception_id for m in memory_slice.misconceptions],
             hubs=[hub.hub_id for hub in hubs],
             chunks=[chunk.chunk_id for chunk in chunks],
@@ -1111,6 +1169,7 @@ class MemoryTurnContextSource:
                     analyst_summary=digest,
                     agent_results=[
                         f"{labels.label('request', r) or 'a request'}: {kind} is ready"
+                        + _code_task_note(completed[r], code_tasks, labels)
                         for r, kind in journal.requests.items()
                         if r in completed
                     ],
@@ -1177,7 +1236,7 @@ class MemoryTurnContextSource:
             )
         )
         role = request.role
-        prompt_version = settings.llm_roles[role].prompt or "teacher@3"
+        prompt_version = settings.llm_roles[role].prompt or "teacher@4"
         prompt_name, version = prompt_version.rsplit("@", 1)
         template = self._gateway.prompts.load(prompt_name, int(version))
         variables = fit_budget(template.render, variables, settings.teacher_context_max_tokens)
@@ -1232,17 +1291,19 @@ class MemoryTurnContextSource:
             teacher_fallback=role == "teacher_fallback",
             projector_lag=memory_slice.lag_degraded,
         )
-        skill_topics: dict[UUID, UUID] = {s.skill_id: m.topic_id for m in memory for s in m.skills}
+        topic_of_skill: dict[UUID, UUID] = {
+            s.skill_id: m.topic_id for m in memory for s in m.skills
+        }
         for s in memory_slice.skills:
             if s.topic_id is not None:
-                skill_topics[s.skill_id] = s.topic_id
+                topic_of_skill[s.skill_id] = s.topic_id
         if (
             not unavailable
             and journal.message_topic_id is None
             and journal.session_topic_id is None
         ):
             missing_skills = [
-                sid for sid in dict.fromkeys(journal.turn_skill_ids) if sid not in skill_topics
+                sid for sid in dict.fromkeys(journal.turn_skill_ids) if sid not in topic_of_skill
             ]
             if missing_skills:
                 try:
@@ -1253,7 +1314,7 @@ class MemoryTurnContextSource:
                     )
                     for s in extra_slice.skills:
                         if s.topic_id is not None:
-                            skill_topics[s.skill_id] = s.topic_id
+                            topic_of_skill[s.skill_id] = s.topic_id
                 except NEO4J_UNAVAILABLE:
                     pass
         return TurnSetup(
@@ -1314,7 +1375,7 @@ class MemoryTurnContextSource:
             message_topic_id=journal.message_topic_id,
             session_topic_id=journal.session_topic_id,
             prior_turn_skill_ids=journal.turn_skill_ids,
-            skill_topics=skill_topics,
+            skill_topics=topic_of_skill,
         )
 
 

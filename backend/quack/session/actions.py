@@ -192,7 +192,7 @@ class VerdictFrame(_Frame):
     answer_seq: int
     part: str
     outcome: Literal["correct", "incorrect", "partial", "unclear"]
-    method: Literal["exact", "numeric", "symbolic", "units", "model"]
+    method: Literal["exact", "numeric", "symbolic", "units", "model", "tests"]
     verification: Literal["code", "model"]
 
 
