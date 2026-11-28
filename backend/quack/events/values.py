@@ -151,8 +151,9 @@ type CodeTestStatus = Literal[
 
 class CodeTestOutcome(_Value):
     """Т-§6.10: one test of a `code` verdict. `detail` — what an open test showed the learner
-    (arguments, expected, got, the error); null for a hidden test, whose input and expected
-    result never reach an event."""
+    (arguments, expected, got, the error), after a note when the tests called another function
+    of the learner; null for a hidden test, whose input and expected result never reach an
+    event."""
 
     number: int
     hidden: bool

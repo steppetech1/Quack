@@ -62,6 +62,39 @@ def test_verdict_tests_keep_open_details_and_hide_hidden_ones() -> None:
     assert SECRET not in str([t.model_dump() for t in tests])
 
 
+def test_called_note_reaches_the_verdict_detail_and_the_teacher() -> None:
+    views = [
+        CodeTestView(
+            number=1, hidden=False, status="passed", args=[2], expected=4, actual=4, called="hash"
+        ),
+        CodeTestView(
+            number=2, hidden=False, status="wrong", args=[3], expected=9, actual=None, called="hash"
+        ),
+        CodeTestView(number=3, hidden=True, status="passed", called="hash"),
+        CodeTestView(number=4, hidden=False, status="passed", args=[1], expected=1, actual=1),
+    ]
+    tests = verdict_tests(views, SETTINGS.code_test_detail_chars, "polynomial_hash")
+    assert tests[0].detail == "вызвана hash вместо polynomial_hash"
+    assert tests[1].detail == (
+        "вызвана hash вместо polynomial_hash; args [3], expected 9, got null"
+    )
+    assert tests[2].detail is None  # an unnamed hidden test: its status only
+    assert tests[3].detail is None  # called the required function: no note
+    assert [t.status for t in tests] == ["passed", "wrong", "passed", "passed"]
+    verdict = Verdict(
+        answer_seq=10,
+        part="main",
+        outcome="partial",
+        method="tests",
+        verification="code",
+        tests=tests,
+    )
+    labels = LabelMap.build(SETTINGS, tasks=[TASK])
+    text = render_conversation([_event(11, "verdict.recorded", verdict)], labels, SETTINGS)
+    assert "example 1: passed — вызвана hash вместо polynomial_hash" in text
+    assert "example 2: wrong — вызвана hash вместо polynomial_hash; args [3]" in text
+
+
 def test_conversation_shows_code_and_test_results() -> None:
     answer = AnswerSubmitted(
         task_id=TASK,

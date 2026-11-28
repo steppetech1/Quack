@@ -85,6 +85,11 @@ def _status(outcome: ProcessOutcome) -> tuple[TestStatus, dict[str, Any], RunErr
     return status, result, run_error  # type: ignore[return-value]
 
 
+def _called(result: dict[str, Any]) -> str | None:
+    called = result.get("called")
+    return called[:64] if isinstance(called, str) else None
+
+
 async def run_python(
     request: PythonRunRequest, pool: SlotPool, settings: RunnerSettings
 ) -> PythonRunResponse:
@@ -116,6 +121,7 @@ async def run_python(
                     stdout=outcome.stdout,
                     stderr=outcome.stderr,
                     time_ms=int(result.get("time_ms", outcome.wall_ms)),
+                    called=_called(result),
                 )
             )
     return PythonRunResponse(tests=results)

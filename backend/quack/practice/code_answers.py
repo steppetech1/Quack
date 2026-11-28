@@ -86,7 +86,11 @@ async def submit_code(
             verification="code",
             help_step=help_used.hint_step,
             solution_shown=help_used.solution_requested,
-            tests=verdict_tests(views, settings.code_test_detail_chars),
+            tests=verdict_tests(
+                views,
+                settings.code_test_detail_chars,
+                tests.function if isinstance(tests, PythonTests) else None,
+            ),
         )
         await append_events(
             db,

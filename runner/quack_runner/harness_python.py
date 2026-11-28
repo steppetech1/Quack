@@ -9,6 +9,8 @@ The result channel gets one JSON object:
     {"status": "ok", "value": value, "args_after": [value, ...] | null, "time_ms": int}
     {"status": "error" | "memory" | "no_function" | "unsupported_value" | "bad_input",
      "error": {"type": str, "message": str, "line": int | null}, "time_ms": int}
+Either may also carry "called": str - the name of the learner's only own function, called because
+the required `function` is not defined.
 
 Values are tagged JSON: null, bool, int, float, str and list as they are; {"$float": "nan" |
 "inf" | "-inf"}, {"$tuple": [...]}, {"$set": [...]}, {"$dict": [[key, value], ...]}.
@@ -139,6 +141,21 @@ def describe(exc):
     return {"type": type(exc).__name__, "message": message[:MAX_MESSAGE], "line": line}
 
 
+def own_functions(namespace):
+    """(name, function) of the plain functions the learner's code defined at the top level: not
+    lambdas, classes or imported names. One object under two names counts once."""
+    found = []
+    for name, value in list(namespace.items()):
+        if (
+            inspect.isfunction(value)
+            and value.__code__.co_filename == SOURCE_NAME
+            and value.__name__ != "<lambda>"
+            and all(value is not other for _, other in found)
+        ):
+            found.append((name, value))
+    return found
+
+
 def main():
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     channel = Channel(request["result"])
@@ -158,17 +175,27 @@ def main():
 
     name = request["function"]
     function = namespace.get(name)
+    extra = {}
     if not callable(function):
-        channel.emit(
-            "no_function",
-            error={"type": "NameError", "message": f"не найдена функция {name}", "line": None},
-        )
+        own = own_functions(namespace)
+        if len(own) != 1:
+            message = f"не найдена функция {name}"
+            if own:
+                message += f"; в коде есть: {', '.join(own_name for own_name, _ in own)}"
+            channel.emit(
+                "no_function",
+                error={"type": "NameError", "message": message[:MAX_MESSAGE], "line": None},
+            )
+        # The one function the learner defined stands in for the missing name; the result says so.
+        name, function = own[0]
+        extra["called"] = name
     try:
         inspect.signature(function).bind(*args)
     except TypeError as exc:
         channel.emit(
             "no_function",
             error={"type": "TypeError", "message": f"{name}: {exc}"[:MAX_MESSAGE], "line": None},
+            **extra,
         )
     except ValueError:
         pass  # no signature to inspect (a builtin): the call itself will tell
@@ -177,9 +204,9 @@ def main():
     try:
         value = function(*args)
     except MemoryError as exc:
-        channel.emit("memory", error=describe(exc))
+        channel.emit("memory", error=describe(exc), **extra)
     except BaseException as exc:
-        channel.emit("error", error=describe(exc))
+        channel.emit("error", error=describe(exc), **extra)
 
     try:
         encoded = encode(value, [0])
@@ -188,10 +215,11 @@ def main():
         channel.emit(
             "unsupported_value",
             error={"type": "TypeError", "message": str(exc), "line": None},
+            **extra,
         )
     except MemoryError as exc:
-        channel.emit("memory", error=describe(exc))
-    channel.emit("ok", value=encoded, args_after=after)
+        channel.emit("memory", error=describe(exc), **extra)
+    channel.emit("ok", value=encoded, args_after=after, **extra)
 
 
 if __name__ == "__main__":

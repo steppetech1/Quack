@@ -68,6 +68,8 @@ class CodeTestView(BaseModel):
     stdout: str | None = None
     stderr: str | None = None
     time_ms: int | None = None
+    # The learner's only own function, called because the required name was not defined.
+    called: str | None = None
 
     def hidden_view(self) -> CodeTestView:
         """No expected result. A named case (the sandbox) also shows its input and what the code
@@ -88,6 +90,7 @@ class CustomRunView(BaseModel):
     stdout: str = ""
     stderr: str = ""
     time_ms: int = 0
+    called: str | None = None
 
 
 def _error(error: RunError | None) -> CodeRunErrorView | None:
@@ -176,6 +179,7 @@ async def run_python_cases(
                 stdout=_cut(result.stdout, settings.code_output_chars),
                 stderr=_cut(result.stderr, settings.code_output_chars),
                 time_ms=result.time_ms,
+                called=result.called,
             )
         )
     return views
@@ -253,6 +257,7 @@ async def run_custom(
         stdout=_cut(result.stdout, output_chars),
         stderr=_cut(result.stderr, output_chars),
         time_ms=result.time_ms,
+        called=result.called,
     )
 
 
@@ -277,15 +282,25 @@ def _short(value: Any, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def verdict_tests(views: list[CodeTestView], detail_chars: int) -> list[CodeTestOutcome]:
+def called_note(called: str, function: str | None) -> str:
+    """For the teacher: the tests called another function of the learner."""
+    return f"вызвана {called} вместо {function}" if function else f"вызвана {called}"
+
+
+def verdict_tests(
+    views: list[CodeTestView], detail_chars: int, function: str | None = None
+) -> list[CodeTestOutcome]:
     """The tests of a `code` verdict for the event: an open test with a short `detail` of what
     the learner saw; a named hidden test of the sandbox (teacher@5) too, with its expected result,
     so the teacher's review sees it — the event never reaches the client; an unnamed hidden test
-    (teacher@4) with its status only (Т-§6.10)."""
+    (teacher@4) with its status only (Т-§6.10). When the tests called another function of the
+    learner (`called`, `function` is the required name), the detail starts with a note on it —
+    also for a passed test; pass or fail still rests on the result."""
     outcomes = []
     for view in views:
         detail = None
-        if (not view.hidden or view.name is not None) and view.status != "passed":
+        shown = not view.hidden or view.name is not None
+        if shown and view.status != "passed":
             if view.error is not None:
                 detail = f"{view.error.type}: {view.error.message}"
                 if view.error.line is not None:
@@ -304,6 +319,9 @@ def verdict_tests(views: list[CodeTestView], detail_chars: int) -> list[CodeTest
                 detail = f"«{view.name}»: {detail}"
             if detail is not None:
                 detail = detail[: detail_chars * 3]
+        if shown and view.called is not None:
+            note = called_note(view.called, function)
+            detail = note if detail is None else f"{note}; {detail}"
         outcomes.append(
             CodeTestOutcome(
                 number=view.number, hidden=view.hidden, status=view.status, detail=detail

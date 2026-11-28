@@ -79,10 +79,72 @@ async def test_syntax_error(py) -> None:
 
 
 async def test_missing_function_and_wrong_signature(py) -> None:
-    (missing,) = await py("def g():\n    return 1\n", [])
-    assert missing.status == "no_function"
+    code = "def g():\n    return 1\ndef h():\n    return 2\n"
+    (missing,) = await py(code, [])
+    assert missing.status == "no_function" and missing.called is None
+    assert missing.error is not None and "g, h" in missing.error.message
     (wrong,) = await py("def f(a):\n    return a\n", [1, 2])
-    assert wrong.status == "no_function"
+    assert wrong.status == "no_function" and wrong.called is None
+
+
+async def test_the_only_own_function_stands_in_for_a_missing_name(py) -> None:
+    code = "def hash(s, p=29):\n    return len(s) * p\n"
+    results = await py(code, ["ab"], ["abc"], function="polynomial_hash")
+    assert [r.status for r in results] == ["ok", "ok"]
+    assert [r.value for r in results] == [58, 87]
+    assert [r.called for r in results] == ["hash", "hash"]
+
+
+async def test_the_required_function_is_never_replaced_when_defined(py) -> None:
+    (result,) = await py("def f():\n    return 1\ndef g():\n    return 2\n", [])
+    assert result.status == "ok" and result.value == 1 and result.called is None
+
+
+async def test_substitution_is_reported_with_a_runtime_error(py) -> None:
+    (result,) = await py("def g(x):\n    return 1 // x\n", [0], function="f")
+    assert result.status == "error" and result.called == "g"
+    assert result.error is not None and result.error.type == "ZeroDivisionError"
+
+
+async def test_two_own_functions_are_not_guessed(py) -> None:
+    code = "def helper(x):\n    return x\ndef main(x):\n    return helper(x)\n"
+    (result,) = await py(code, [1], function="solve")
+    assert result.status == "no_function" and result.called is None
+    assert result.error is not None
+    assert result.error.type == "NameError" and "helper, main" in result.error.message
+
+
+async def test_an_alias_of_one_function_is_one_function(py) -> None:
+    code = "def solve_it(x):\n    return x + 1\nalias = solve_it\n"
+    (result,) = await py(code, [1], function="solve")
+    assert result.status == "ok" and result.value == 2 and result.called == "solve_it"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "class Solution:\n    def f(self, x):\n        return x\n",
+        "from math import floor\nimport os\n",
+        "g = lambda x: x\n",
+        "from math import floor\nsquare = lambda x: x * x\nx = 5\n",
+    ],
+)
+async def test_a_class_an_import_or_a_lambda_is_not_a_function(py, code: str) -> None:
+    (result,) = await py(code, [1], function="solve")
+    assert result.status == "no_function" and result.called is None
+
+
+async def test_imports_and_lambdas_do_not_count_next_to_the_one_def(py) -> None:
+    code = "from math import floor\nsquare = lambda x: x * x\ndef only(x):\n    return x\n"
+    (result,) = await py(code, [1], function="solve")
+    assert result.status == "ok" and result.called == "only"
+
+
+async def test_substituted_function_with_a_wrong_signature(py) -> None:
+    (result,) = await py("def g(a):\n    return a\n", [1, 2], function="f")
+    assert result.status == "no_function" and result.called == "g"
+    assert result.error is not None and result.error.type == "TypeError"
+    assert result.error.message.startswith("g:")
 
 
 async def test_sys_exit_is_an_error_and_next_test_runs(py) -> None:

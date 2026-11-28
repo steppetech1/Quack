@@ -54,6 +54,7 @@ class PythonTestResult(_Response):
     stdout: str = ""
     stderr: str = ""
     time_ms: int = 0
+    called: str | None = None
 
 
 class PythonRunResponse(_Response):

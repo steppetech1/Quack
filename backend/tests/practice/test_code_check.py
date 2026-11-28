@@ -88,6 +88,20 @@ async def test_python_judging_and_hidden_views() -> None:
     assert [v.hidden for v in learner_views(views)] == [False, False, True, True, True]
 
 
+async def test_the_called_function_name_reaches_the_views() -> None:
+    runner, _ = _runner(
+        lambda p, b: httpx.Response(
+            200, json={"tests": [{**_ok(4), "called": "sq"}, {**_ok(10), "called": "sq"}]}
+        )
+    )
+    views = await run_cases(runner, PY_TESTS, "code", [1, 2], Settings())
+    assert [v.called for v in views] == ["sq", "sq"]
+    assert [v.status for v in views] == ["passed", "wrong"]  # the result decides, not the name
+    plain_runner, _ = _runner(lambda p, b: httpx.Response(200, json={"tests": [_ok(4)]}))
+    (plain,) = await run_cases(plain_runner, PY_TESTS, "code", [1], Settings())
+    assert plain.called is None
+
+
 async def test_open_numbers_and_outcomes() -> None:
     assert open_numbers(PY_TESTS) == [1, 2]
     runner, _ = _runner(lambda p, b: httpx.Response(200, json={"tests": [_ok(4), _ok(9)]}))

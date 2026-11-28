@@ -54,6 +54,8 @@ class PythonTestResult(_Model):
     stdout: str = ""
     stderr: str = ""
     time_ms: int = 0
+    # The name of the learner's only own function, called because `function` is not defined.
+    called: str | None = None
 
 
 class PythonRunResponse(_Model):
