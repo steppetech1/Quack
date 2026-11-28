@@ -340,8 +340,11 @@ export const LayeredGraph = forwardRef<
       const hx = sx(hp.x), hy = sy(hp.y);
       const lit = hubSel === hubId;
       const mute = bright(`h:${hubId}`);
-      // The foot of the stem sits below the hub on screen; the curves end there
-      const sxp = hx, syp = hy + Math.max(ringR + 6, 0.5 * GAP_Y * k);
+      // A collection (a hub with no topic of its own) stands beside its topics: dashed, fainter, no stem; the curves end at the ring.
+      // A chapter's foot of the stem sits below the hub on screen; its curves end there
+      const loose = L.collections.has(hubId);
+      const sxp = hx, syp = loose ? hy : hy + Math.max(ringR + 6, 0.5 * GAP_Y * k);
+      ctx.setLineDash(loose ? [6, 5] : []);
       let any = false;
       for (const topicId of members) {
         // A topic of the left column has no node, so there is nothing to draw the curve to
@@ -350,9 +353,9 @@ export const LayeredGraph = forwardRef<
         const ax = sx(a.x), ay = sy(a.y);
         if (!near(ax, ay, 300) && !near(hx, hy, 300)) continue;
         any = true;
-        const dist = Math.max(0, ay - hy) / Math.max(k, 1e-6) / GAP_Y; // in layers
+        const dist = (loose ? Math.abs(ay - hy) : Math.max(0, ay - hy)) / Math.max(k, 1e-6) / GAP_Y; // in layers
         const close = Math.exp(-dist / 4);
-        let alpha = 0.06 + 0.24 * close;
+        let alpha = (0.06 + 0.24 * close) * (loose ? 0.7 : 1);
         if (lit) alpha = 0.5 + 0.3 * close;
         else if (hoverTopic === topicId) alpha = 0.85;
         alpha *= mute * indFor(topicId) * Math.min(1, popOf(topicId), popOf(`h:${hubId}`));
@@ -366,7 +369,7 @@ export const LayeredGraph = forwardRef<
         ctx.bezierCurveTo(ax, mid, sxp, mid, sxp, syp);
         ctx.stroke();
       }
-      if (any) {
+      if (any && !loose) {
         ctx.strokeStyle = col.ribbon;
         ctx.globalAlpha = (lit || litHubs.has(hubId) ? 0.9 : 0.38) * mute;
         ctx.lineWidth = 2;
@@ -378,6 +381,8 @@ export const LayeredGraph = forwardRef<
         ctx.lineWidth = 1.2;
       }
     }
+
+    ctx.setLineDash([]);
 
     // Topic to topic: straight and solid, from the prerequisite up to the topic that needs it
     const edges = links.edges;
@@ -661,7 +666,8 @@ export const LayeredGraph = forwardRef<
     const ease = 1 - Math.exp(-dt / 90);
     const unit = GAP_X * k;
     const fadeTopic = smooth(40, 78, unit);
-    const fadeHub = smooth(8, 26, unit);
+    // The name of a hub holds on almost to the farthest zoom (the camera stops at K_MIN, unit = 4.4 there)
+    const fadeHub = smooth(2, 8, unit);
     type Label = { key: string; text: string; x: number; y: number; above: boolean; prio: number; fade: number; deg: number; fill: string; font: string };
     const labels: Label[] = [];
     const hubFont = `500 12px ${col.label}`;
@@ -671,7 +677,7 @@ export const LayeredGraph = forwardRef<
       if (!p) continue;
       const x = sx(p.x), y = sy(p.y);
       if (!near(x, y, 120)) continue;
-      labels.push({ key: n.key, text: (hubs.get(n.id)?.name ?? "").toUpperCase(), x, y: y - rH - 5, above: true, prio: 3, fade: marks.current.has(n.key) ? 1 : fadeHub, deg: 0, fill: col.paper, font: hubFont });
+      labels.push({ key: n.key, text: (hubs.get(n.id)?.name ?? "").toUpperCase(), x, y: y - rH - 5, above: true, prio: 3, fade: marks.current.has(n.key) || n.key === hovered || n.id === hubSel ? 1 : fadeHub, deg: 0, fill: col.paper, font: hubFont });
     }
     for (const n of L.topics) {
       const p = pos(n.key);
@@ -910,9 +916,12 @@ export const LayeredGraph = forwardRef<
   useEffect(() => {
     const was = scene.current.layout.unlinked;
     scene.current = { layout, model, topicMap, hubMap, colW: column.width, links };
-    savePositions(LEARNER, model.domainId, layout);
     const first = shown.current.size === 0;
+    // The picture of the last visit: on the first layout a node glides from where it stood then to where it stands now
+    const prev = first ? loadPositions(LEARNER, model.domainId) : undefined;
+    savePositions(LEARNER, model.domainId, layout);
     from.current = new Map(shown.current);
+    if (prev) for (const n of layout.nodes.values()) if (prev[n.key]) from.current.set(n.key, { x: prev[n.key][0], y: prev[n.key][1] });
     target.current = new Map([...layout.nodes.values()].map((n) => [n.key, { x: n.x, y: n.y }]));
     // A new node appears where it belongs, it does not fly in from the corner.
     // A topic that just got a link starts from its spot in the column, so the learner sees where it went
@@ -939,10 +948,17 @@ export const LayeredGraph = forwardRef<
       }
     }
     posMs.current = fromColumn ? MOVE_MS : born.current.size ? GROW_TWEEN_MS : TWEEN_MS;
-    if (first || reduced) {
+    const glide = first && !reduced && [...target.current].some(([key, to]) => {
+      const f = from.current.get(key);
+      return !!f && Math.hypot(f.x - to.x, f.y - to.y) > 1;
+    });
+    if ((first && !glide) || reduced) {
       shown.current = new Map(target.current);
       posTween.current = null;
-    } else posTween.current = performance.now();
+    } else {
+      if (first) shown.current = new Map(from.current);
+      posTween.current = performance.now();
+    }
     // Nobody has moved the camera: the whole new graph stays in view
     const { w: sw, h: sh } = sizeRef.current;
     if (!first && autoFit.current && sw && sh) moveView(fitView(sw, sh), true);
