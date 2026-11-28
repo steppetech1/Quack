@@ -48,7 +48,7 @@ function ViewToggle({ view, onChange, count, panelId }: { view: View; onChange: 
       role="tablist"
       aria-label={tx.domain.viewLabel}
       onKeyDown={onKey}
-      className="flex h-11 w-full gap-0.5 rounded-pill border border-seam bg-cloth-deep p-0.5 sm:w-auto"
+      className="flex h-11 w-full gap-0.5 rounded-pill p-0.5 sm:w-auto"
     >
       {TABS.map((t) => {
         const on = view === t.id;
@@ -171,12 +171,35 @@ export function DomainView() {
   // No subject yet: creating one is the first screen (a card, not a chat)
   if (!domain.id) return null;
 
+  // On md and up the graph is the page: it fills the whole centre column and the title row, the cards and the input float over it.
+  // On a phone (a list instead of the graph), for canvases and for an empty subject everything stays in the normal flow.
+  const floating = view === "graph" && hasGraph;
+
   return (
-    <>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-3 md:gap-3 md:overflow-hidden md:px-7 md:pt-5">
-        {/* On sm and up: title, view toggle and search share the first row, the deadline line gets the whole second one and never wraps */}
-        <header className="grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-y-2">
-          <h1 title={domain.title} className="display-caps min-w-0 truncate text-[clamp(1.75rem,2.6vw,2.25rem)] text-paper sm:col-start-1 sm:row-start-1">
+    <div className="relative isolate flex min-h-0 flex-1 flex-col">
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-3",
+          // floating: the scroll box dissolves on md and up, so the header and the graph layer answer to the column itself
+          floating ? "md:contents" : "md:gap-3 md:overflow-hidden md:px-7 md:pt-5",
+        )}
+      >
+        {/* On sm and up: title, view toggle and search share the first row, the deadline line gets the whole second one and never wraps.
+            Floating: no panel, no border; the strip under the text fades into the graph, and only the controls take pointer events. */}
+        <header
+          className={cn(
+            "grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-y-1.5",
+            floating && "md:pointer-events-none md:relative md:z-20 md:shrink-0 md:px-7 md:pt-4 md:pb-1",
+          )}
+        >
+          {floating && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 -bottom-10 -z-10 hidden md:block"
+              style={{ background: "linear-gradient(to bottom, var(--cloth) 0%, color-mix(in srgb, var(--cloth) 88%, transparent) 55%, transparent 100%)" }}
+            />
+          )}
+          <h1 title={domain.title} className="display-caps min-w-0 truncate text-[clamp(1.5rem,2.3vw,2rem)] text-paper sm:col-start-1 sm:row-start-1">
             {domain.title}
           </h1>
           <div className="min-w-0 sm:col-span-3 sm:row-start-2">
@@ -204,11 +227,11 @@ export function DomainView() {
               </p>
             )}
           </div>
-          <div className="sm:col-start-2 sm:row-start-1">
+          <div className={cn("sm:col-start-2 sm:row-start-1", floating && "md:pointer-events-auto")}>
             <ViewToggle view={view} onChange={setView} count={canvasCount} panelId={panelId} />
           </div>
           {view === "graph" && hasGraph && (
-            <div className="sm:col-start-3 sm:row-start-1">
+            <div className={cn("sm:col-start-3 sm:row-start-1", floating && "md:pointer-events-auto")}>
               <TopicSearch key={domain.id} domain={domain} onPick={findTopic} />
             </div>
           )}
@@ -223,14 +246,18 @@ export function DomainView() {
           role="tabpanel"
           id={panelId}
           aria-labelledby={`view-tab-${view}`}
-          className={cn("flex flex-col gap-4 md:min-h-0 md:flex-1", view === "canvases" && "md:overflow-y-auto")}
+          className={cn(
+            "flex flex-col gap-4 md:min-h-0 md:flex-1",
+            view === "canvases" && "md:overflow-y-auto",
+            // floating: the graph panel is the whole column, under the header and the bottom controls
+            floating && "md:absolute md:inset-0 md:z-0 md:gap-0",
+          )}
         >
           {view === "canvases" ? (
             <CanvasesList query={query} onResetQuery={() => setQuery("")} />
           ) : hasGraph ? (
             <>
               <div className="relative hidden min-h-0 flex-1 md:flex">
-                <DomainJobsCorner rows={jobs.rows} where="graph" />
                 {model ? (
                   <LayeredGraph
                     key={domain.id}
@@ -253,7 +280,6 @@ export function DomainView() {
               <div className="md:hidden">
                 <TopicList domain={domain} openId={openTopic} />
               </div>
-              <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} minutes={model?.todayMinutes} className="hidden md:grid" />
             </>
           ) : (
             <EmptyDomain titleDat={domain.titleDat} />
@@ -261,10 +287,37 @@ export function DomainView() {
         </div>
       </div>
 
-      <div className="relative px-4 pb-4 md:px-7 md:pb-5">
-        <DomainJobsCorner rows={jobs.rows} where="input" className={hasGraph && view === "graph" ? "md:hidden" : undefined} />
-        <Composer label={tx.domain.composerLabel(domain.title)} onSend={(text, files) => startSession(text, null, files)} />
+      <div className={cn("relative px-4 pb-4 md:px-7 md:pb-5", floating && "z-20 shrink-0 md:pointer-events-none md:mt-auto md:flex md:flex-col md:gap-3")}>
+        {floating && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 -top-12 -z-10 hidden md:block"
+            style={{ background: "linear-gradient(to top, var(--cloth) 0%, color-mix(in srgb, var(--cloth) 82%, transparent) 45%, transparent 100%)" }}
+          />
+        )}
+        {floating ? (
+          <>
+            {/* phone: right above the input, as before */}
+            <DomainJobsCorner rows={jobs.rows} where="input" className="md:hidden" />
+            {/* md and up: bottom right of the graph, i.e. right above the cards (a zero-height anchor the corner hangs above) */}
+            <div className="relative -mb-3 hidden h-0 md:block">
+              <DomainJobsCorner rows={jobs.rows} where="input" className="md:right-0" />
+            </div>
+            <TodayCards
+              recs={recs}
+              nameOf={nameOf}
+              onHover={setHot}
+              minutes={model?.todayMinutes}
+              className="hidden md:grid md:pointer-events-none [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_li>*]:pointer-events-auto [&_li>*]:bg-cloth"
+            />
+          </>
+        ) : (
+          <DomainJobsCorner rows={jobs.rows} where="input" />
+        )}
+        <div className={cn(floating && "md:pointer-events-auto")}>
+          <Composer label={tx.domain.composerLabel(domain.title)} onSend={(text, files) => startSession(text, null, files)} />
+        </div>
       </div>
-    </>
+    </div>
   );
 }
