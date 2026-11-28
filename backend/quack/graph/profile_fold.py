@@ -208,6 +208,8 @@ def collect_profile_inputs(
             continue
         payload = validate_payload(event.type, event.payload, event.schema_version)
         if isinstance(payload, TurnCommitted):
+            if payload.service is not None:
+                continue  # the built-in `/skill-creator` dialogue says nothing of how they learn
             head = payload.head
             turns.append(
                 TurnSample(

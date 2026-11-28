@@ -70,8 +70,9 @@ const SIT = [BLANK, BLANK, ...BODY.slice(0, 14), "...klllllrrrrk..", "....kkkkkk
 /** 0 стоит, 1–2 шаги (тело +1px вверх, ноги по очереди), 3 кряк (клюв открыт), 4 сидит, 5 сидит с закрытым глазом */
 const FRAMES = [
   BASE,
-  [...BODY, "....kkkkkkokk...", "....kook.kok....", ".........koook.."],
-  [...BODY, "....kkokkkkkkk..", ".....kok..kook..", ".....koook......"],
+  // поднятая лапа идёт вперёд под телом (носок вперёд, голень на месте), а не торчит назад за контур
+  [...BODY, "....kkokkkokk...", ".....kookkok....", ".........koook.."],
+  [...BODY, "....kkokkkkokk..", ".....kok..kook..", ".....koook......"],
   patch(BASE, {
     4: "......kdgggggkk.",
     5: "......kdgeggayyk",

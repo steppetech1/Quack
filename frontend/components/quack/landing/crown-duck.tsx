@@ -10,7 +10,7 @@ export function CrownDuck({ className }: { className?: string }) {
         <g transform="rotate(-10 78 20)">
           <path
             d="M68 22 L66.5 8 L73 14 L78 5.5 L83 14 L89.5 8 L88 22 Z"
-            fill="#ff8a2a"
+            fill="#edb966"
             stroke="#080504"
             strokeWidth="1.2"
             strokeLinejoin="round"

@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from quack.config import Settings
 from quack.db.db import Db
 from quack.events.errors import IdempotencyConflictError
-from quack.events.event_types import SessionEnded, SessionStarted
+from quack.events.event_types import SessionDeleted, SessionEnded, SessionStarted
 from quack.events.log import NewEvent, append_events
 from quack.events.values import Outcome
 from quack.practice.session_resume import resume_if_ended, touch_session
@@ -60,6 +60,12 @@ _UNANSWERED_SEQ = (
     "WHERE t.learner_id = s.learner_id AND t.session_id = s.session_id "
     "AND t.type = 'turn.committed') AS last_turn)"
 )
+# A session the learner deleted from the left panel (`session.deleted`): its row stays (the domain
+# deletion finds the conversation by it), every read skips it.
+NOT_DELETED = (
+    "NOT EXISTS (SELECT 1 FROM core.events x WHERE x.learner_id = s.learner_id "
+    "AND x.session_id = s.session_id AND x.type = 'session.deleted')"
+)
 _COLUMNS = (
     "s.session_id, s.domain_id, s.intent, s.topic_id, s.hub_id, s.status, s.started_at, "
     "s.ended_at, s.last_activity_at, (SELECT min(e.seq) FROM core.events e "
@@ -70,17 +76,18 @@ _COLUMNS = (
 )
 _SESSION = (
     f"SELECT {_COLUMNS} FROM content.sessions s "
-    "WHERE s.learner_id = %(learner_id)s AND s.session_id = %(session_id)s"
+    f"WHERE s.learner_id = %(learner_id)s AND s.session_id = %(session_id)s AND {NOT_DELETED}"
 )
 _SESSION_FOR_UPDATE = _SESSION + " FOR UPDATE OF s"
 _SESSIONS = (
     f"SELECT {_COLUMNS} FROM content.sessions s WHERE s.learner_id = %(learner_id)s "
     "AND (%(domain_id)s::uuid IS NULL OR s.domain_id = %(domain_id)s) "
+    f"AND {NOT_DELETED} "
     "ORDER BY s.started_at DESC, start_seq DESC LIMIT %(limit)s"
 )
 _ACTIVE = (
     f"SELECT {_COLUMNS} FROM content.sessions s WHERE s.learner_id = %(learner_id)s "
-    "AND s.status = 'active' ORDER BY s.started_at DESC, start_seq DESC LIMIT 1"
+    f"AND s.status = 'active' AND {NOT_DELETED} ORDER BY s.started_at DESC, start_seq DESC LIMIT 1"
 )
 _FEED = (
     "SELECT seq, type, actor, occurred_at, causation_seq, payload FROM core.events "
@@ -471,11 +478,34 @@ async def end_if_inactive(
     → `session.ended {reason: inactive}`. True if it ended the session."""
     limit = timedelta(minutes=settings.session_inactivity_timeout_min)
     async with db.transaction():
-        row = await _locked(db, learner_id, session_id)
+        try:
+            row = await _locked(db, learner_id, session_id)
+        except LookupError:
+            return False  # deleted by the learner while the sweep ran
         if row.status != "active" or now - row.last_activity_at < limit:
             return False
         await _end(db, learner_id, row, "inactive")
     return True
+
+
+async def delete_session(db: Db, *, learner_id: UUID, session_id: UUID) -> int:
+    """`DELETE /v1/sessions/{id}`: `session.deleted` — the session leaves every read (the list, the
+    page, the stream, the actions). Its events and its row stay: the evidence and the model are
+    not touched, the domain deletion finds the conversation by the row. A session of another
+    learner, none, or deleted already — `LookupError` (`404`). A turn in progress finishes; what
+    it writes goes to the journal of the deleted session. Returns the seq of the event."""
+    async with db.transaction():
+        row = await _locked(db, learner_id, session_id)
+        event = NewEvent(
+            type="session.deleted",
+            payload=SessionDeleted(session_id=session_id),
+            actor="learner",
+            idempotency_key=f"session.deleted:{session_id}",
+            session_id=session_id,
+            domain_id=row.domain_id,
+        )
+        [stored] = await append_events(db, learner_id, [event])
+    return stored.seq
 
 
 # --- internals ---
@@ -551,6 +581,7 @@ __all__ = [
     "SessionView",
     "StartSession",
     "active_session",
+    "delete_session",
     "end_if_inactive",
     "get_session",
     "heartbeat",

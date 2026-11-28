@@ -1,0 +1,7 @@
+-- 06-task-markup-new-skill
+-- captured 2026-11-25T20:33:25Z from the local stand
+ tasks_with_new_skill | tasks 
+----------------------+-------
+                   60 |   121
+(1 row)
+

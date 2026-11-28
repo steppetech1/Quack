@@ -3,6 +3,7 @@ import { getDict, getLocale, getMocks } from "@/lib/i18n/server";
 import { Suspense } from "react";
 import { SessionView } from "@/components/quack/session-view";
 import { NewSessionLive, SessionLive } from "@/components/quack/live/session-live";
+import { SessionWorkspace } from "@/components/quack/workspace/workspace-pane";
 import { API_MODE } from "@/lib/api/client";
 
 export function generateStaticParams() {
@@ -27,6 +28,11 @@ export default function SessionPage({ params }: PageProps<"/session/[id]">) {
 
 async function Session({ params }: { params: PageProps<"/session/[id]">["params"] }) {
   const { id } = await params;
-  if (API_MODE) return id === "new" ? <NewSessionLive /> : <SessionLive key={id} id={id} />;
-  return <SessionView id={id} />;
+  // a session has the workspace pane beside its chat (documents the learner opens); a session that is just being made has none
+  if (id === "new") return API_MODE ? <NewSessionLive /> : <SessionView id={id} />;
+  return (
+    <SessionWorkspace key={id} sessionId={id}>
+      {API_MODE ? <SessionLive id={id} /> : <SessionView id={id} />}
+    </SessionWorkspace>
+  );
 }

@@ -1,0 +1,18 @@
+-- 07-same-files-two-domains
+-- captured 2026-11-25T20:33:25Z from the local stand
+              domain_id               |                             skill                             
+--------------------------------------+---------------------------------------------------------------
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | build a contingency table
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | build a contingency table from raw data
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | check independence
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | check independence
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | compute probability for sampling with and without replacement
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | compute probability without and with replacement
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | identify mutually exclusive events
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | recognise mutually exclusive events
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | test independence
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | test independence of events
+ 72d2e36a-f67e-529f-ba07-c094a99263a9 | write sample space
+ 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | write the sample space
+(12 rows)
+

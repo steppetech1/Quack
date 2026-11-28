@@ -28,12 +28,17 @@ from quack.events.log import NewEvent, append_events
 from quack.jobs.kinds import JOB_KINDS, KIND_LLM_ROLES
 from quack.jobs.runner import JOB_HANDLERS, JobContext
 from quack.jobs.types import ClaimedJob, JobFailedPermanently
+from quack.llm.errors import LLMUnavailableError
 from quack.llm.gateway import LLMGateway
 from quack.materials.library import upload_material
 from quack.materials.parse import (
+    BuildsOnClaim,
     MaterialParserOutput,
+    MaterialParserV2Output,
+    MaterialTocOutput,
+    ResolvedTopic,
     SheetReading,
-    SubjectSpec,
+    TopicCandidateSpec,
     mark_failed,
     parse_step,
     split_chunks,
@@ -77,7 +82,7 @@ def _job(learner: UUID, material_id: UUID, **extra: Any) -> ClaimedJob:
 
 
 def _parser_answer(request: Any) -> dict[str, Any]:
-    """One mark per chunk of the input: the numbers are read from the prompt."""
+    """One mark per chunk of the input (`material_parser@2` mode `parse`)."""
     numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", request.prompt, flags=re.M)]
     title = "Calculus lectures"
     chunks = []
@@ -87,23 +92,57 @@ def _parser_answer(request: Any) -> dict[str, Any]:
             chunks.append(
                 {
                     "n": n,
-                    "topic": "Derivatives",
+                    "section": "Differentiating composite functions (chain rule)",
                     "notation": ["f'(g(x))"],
-                    "teaches": ["Chain rule"],
-                    "uses": ["Power rule"],
+                    "builds_on": [
+                        {"concept": "Power rule", "quote": "derivative of a power first"}
+                    ],
                 }
             )
         else:
             chunks.append(
                 {
                     "n": n,
-                    "topic": "Integrals",
+                    "section": "Integration by parts",
                     "notation": ["int u dv"],
-                    "teaches": ["Integration by parts"],
-                    "uses": ["Product rule", "chain rule"],
+                    "builds_on": [{"concept": "Product rule", "quote": "product rule backwards"}],
                 }
             )
     return {"title": title, "chunks": chunks, "deadlines": [], "seminar_tasks": []}
+
+
+def _toc_answer(request: Any) -> dict[str, Any]:
+    """TOC output (`material_parser@2` mode `toc`) derived from the chunks in the input."""
+    numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", request.prompt, flags=re.M)]
+    candidates = [
+        {
+            "name": "Derivatives",
+            "description": "Differentiation of composite functions using the chain rule.",
+            "core_skill_name": "Apply the chain rule",
+            "builds_on": [{"concept": "Power rule", "quote": "derivative of a power first"}],
+        },
+        {
+            "name": "Integrals",
+            "description": "Evaluating integrals with integration by parts.",
+            "core_skill_name": "Apply integration by parts",
+            "builds_on": [{"concept": "Product rule", "quote": "product rule backwards"}],
+        },
+    ]
+    chunk_candidates = []
+    for n in numbers:
+        line = request.prompt.split(f"[{n}]", 1)[1].splitlines()[0]
+        idx = 0 if "chain rule" in line.lower() or "composite" in line.lower() else 1
+        chunk_candidates.append({"n": n, "candidate_index": idx})
+    task_matches = re.findall(r"^Task (\d+) \(chunk \[(\d+)\]\):", request.prompt, flags=re.M)
+    by_chunk = {m["n"]: m["candidate_index"] for m in chunk_candidates}
+    task_candidates = [
+        {"task_index": int(ti), "candidate_index": by_chunk.get(int(cn))} for ti, cn in task_matches
+    ]
+    return {
+        "candidates": candidates,
+        "chunk_candidates": chunk_candidates,
+        "task_candidates": task_candidates,
+    }
 
 
 class _World:
@@ -113,7 +152,8 @@ class _World:
         self.storage = InMemoryObjectStore()
         self.scenario = ComputeScenario()
         self.provider = ScriptedLLMProvider()
-        self.provider.respond("MaterialParserOutput", _parser_answer)
+        self.provider.respond("MaterialParserV2Output", _parser_answer)
+        self.provider.respond("MaterialTocOutput", _toc_answer)
         self.ctx = cast(
             JobContext,
             SimpleNamespace(
@@ -196,17 +236,33 @@ class _World:
 
 
 class _Resolver:
-    """The reconciliation of B behind the seam: an id for every subject, remembered by name."""
+    """The structure writer behind the seam: returns a `ResolvedTopic` per candidate."""
 
     def __init__(self) -> None:
-        self.calls: list[list[SubjectSpec]] = []
-        self.ids: dict[tuple[str, str], UUID] = {}
+        self.calls: list[list[TopicCandidateSpec]] = []
+        self.topics: dict[str, ResolvedTopic] = {}
 
     async def __call__(
-        self, ctx: JobContext, *, learner_id: UUID, domain_id: UUID, subjects: Sequence[SubjectSpec]
-    ) -> dict[tuple[str, str], UUID]:
-        self.calls.append(list(subjects))
-        return {(s.kind, s.name): self.ids.setdefault((s.kind, s.name), uuid4()) for s in subjects}
+        self,
+        ctx: JobContext,
+        *,
+        learner_id: UUID,
+        domain_id: UUID,
+        candidates: Sequence[TopicCandidateSpec],
+        source_refs: Sequence[dict[str, Any]] = (),
+    ) -> list[ResolvedTopic]:
+        self.calls.append(list(candidates))
+        out: list[ResolvedTopic] = []
+        for c in candidates:
+            if c.name not in self.topics:
+                core_id = uuid4()
+                self.topics[c.name] = ResolvedTopic(
+                    topic_id=uuid4(),
+                    core_skill_id=core_id,
+                    skill_ids=(core_id,),
+                )
+            out.append(self.topics[c.name])
+        return out
 
 
 @pytest.fixture
@@ -269,35 +325,28 @@ async def test_material_parse_pipeline(world: _World) -> None:
     structure_job = _job(learner, material, **payload)
     await structure_step(world.ctx, structure_job, resolver)
 
-    # one reconciliation per batch of subjects; topics first, then skills with their order
-    subjects = [s for call in resolver.calls for s in call]
-    by_name = {(s.kind, s.name): s for s in subjects}
-    assert {("topic", "Derivatives"), ("topic", "Integrals")} <= set(by_name)
-    chain = by_name[("skill", "Chain rule")]
-    assert chain.topic == "Derivatives" and chain.requires == ("Power rule",)
-    parts = by_name[("skill", "Integration by parts")]
-    assert parts.topic == "Integrals" and set(parts.requires) == {"Product rule", "Chain rule"}
-    # the same name written in another case is one subject
-    assert [s.name for s in subjects if s.name.casefold() == "chain rule"] == ["Chain rule"]
+    assert len(resolver.calls) == 1
+    candidates = resolver.calls[0]
+    by_name = {c.name: c for c in candidates}
+    assert {"Derivatives", "Integrals"} <= set(by_name)
+    assert by_name["Derivatives"].builds_on == (
+        BuildsOnClaim("Power rule", "derivative of a power first"),
+    )
+    assert by_name["Integrals"].builds_on == (
+        BuildsOnClaim("Product rule", "product rule backwards"),
+    )
 
     chunks = await world.types(learner, "chunk.indexed")
     assert [c["payload"]["page"] for c in chunks] == [1, 2]
     first = chunks[0]["payload"]
     assert first["material_id"] == str(material) and first["text"] == PAGE_ONE
     assert first["notation"] == ["f'(g(x))"]
-    assert first["teaches"] == [str(resolver.ids[("skill", "Chain rule")])]
-    assert first["uses"] == [str(resolver.ids[("skill", "Power rule")])]
+    assert first["teaches"] == [str(resolver.topics["Derivatives"].core_skill_id)]
+    assert first["uses"] == []
     assert chunks[0]["domain_id"] == domain
-    hub, topics = await world.types(learner, "hub.created", "hub.topics_changed")
-    assert hub["payload"]["kind"] == "material" and hub["payload"]["origin"] == "material"
-    assert hub["payload"]["name"] == "Calculus lectures" and hub["payload"]["domain_id"] == str(
-        domain
-    )
-    assert {t["topic_id"] for t in topics["payload"]["topics"]} == {
-        str(resolver.ids[("topic", "Derivatives")]),
-        str(resolver.ids[("topic", "Integrals")]),
-    }
-    assert all(t["required_levels"] == [3] for t in topics["payload"]["topics"])
+    # No material hub created (syllabus hubs only)
+    assert await world.types(learner, "hub.created", "hub.topics_changed") == []
+    assert await world.types(learner, "skill.created") == []
     (parsed,) = await world.types(learner, "material.parsed")
     assert parsed["payload"] == {"material_id": str(material), "pages_count": 2}
     row = await world.db.fetch_one(
@@ -307,13 +356,11 @@ async def test_material_parse_pipeline(world: _World) -> None:
     assert row == {"status": "parsed", "pages_count": 2}
 
     # law 5: a repeat of either step writes nothing twice and asks nobody
-    before = len(await world.types(learner, "chunk.indexed", "hub.created", "material.parsed"))
+    before = len(await world.types(learner, "chunk.indexed", "material.parsed"))
     await structure_step(world.ctx, structure_job, resolver)
     await parse_step(world.ctx, _job(learner, material))
-    assert (
-        len(await world.types(learner, "chunk.indexed", "hub.created", "material.parsed")) == before
-    )
-    assert len(world.provider.calls) == 1
+    assert len(await world.types(learner, "chunk.indexed", "material.parsed")) == before
+    assert len(world.provider.calls) == 2  # 1 parse batch + 1 toc call
     assert len(world.scenario.requests) == 1
 
 
@@ -378,26 +425,47 @@ async def test_parser_gets_batches_and_loses_nothing_on_bad_numbers(world: _Worl
     def answer(request: Any) -> dict[str, Any]:
         numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", request.prompt, flags=re.M)]
         marks = [
-            {"n": n, "topic": "T", "notation": [], "teaches": [f"Skill {n}"], "uses": []}
+            {
+                "n": n,
+                "section": f"Section {n}",
+                "notation": [],
+                "builds_on": [{"concept": "Basics", "quote": f"Fact number {n}"}],
+            }
             for n in numbers[1:]  # the first chunk of every batch is skipped
         ]
-        marks.append({"n": 999, "topic": "T", "notation": [], "teaches": ["Ghost"], "uses": []})
+        marks.append({"n": 999, "section": "Ghost", "notation": [], "builds_on": []})
         marks.append({**marks[0]})  # a repeated number
         return {"title": "", "chunks": marks, "deadlines": [], "seminar_tasks": []}
 
-    world.provider.respond("MaterialParserOutput", answer)
+    def toc_answer(request: Any) -> dict[str, Any]:
+        numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", request.prompt, flags=re.M)]
+        return {
+            "candidates": [
+                {
+                    "name": "Topic T",
+                    "description": "Covers facts.",
+                    "core_skill_name": "Apply Topic T",
+                    "builds_on": [],
+                }
+            ],
+            "chunk_candidates": [{"n": n, "candidate_index": 0} for n in numbers],
+            "task_candidates": [],
+        }
+
+    world.provider.respond("MaterialParserV2Output", answer)
+    world.provider.respond("MaterialTocOutput", toc_answer)
     await parse_step(world.ctx, _job(learner, material))
 
-    assert len(world.provider.calls) == 3
+    assert len(world.provider.calls_for(schema_name="MaterialParserV2Output")) == 3
+    assert len(world.provider.calls_for(schema_name="MaterialTocOutput")) == 1
     (queued,) = await world.db.fetch_all(
         "SELECT payload FROM ops.jobs WHERE kind = 'material.parse'"
     )
     marks = queued["payload"]["chunks"]
     assert len(marks) == len(texts)
-    taught = [m["teaches"] for m in marks]
-    assert ["Ghost"] not in taught
-    assert sum(1 for t in taught if t == []) == 3
-    assert all(len(t) <= 1 for t in taught)
+    sections = [m["section"] for m in marks]
+    assert "Ghost" not in sections
+    assert sum(1 for s in sections if s == "") == 3
     assert queued["payload"]["title"] == ""
 
 
@@ -536,6 +604,26 @@ def test_the_prompt_material_parser_v1_has_its_contract() -> None:
     assert "deadlines" in template.text and "seminar_tasks" in template.text
 
 
+def test_the_prompt_material_parser_v2_has_its_contract() -> None:
+    from quack.llm.strict_schema import to_strict_json_schema
+    from quack.prompts.registry import PROMPTS_DIR
+    from tests.llm.prompt_contracts import field_names, output_contract_block
+
+    path = PROMPTS_DIR / "material_parser" / "v2.md"
+    raw = path.read_bytes()
+    assert b"\r\n" not in raw, "material_parser/v2.md must use LF line endings only"
+    text = raw.decode("utf-8")
+    assert set(re.findall(r"\{\{\s*(\w+)\s*\}\}", text)) == {"mode", "chunks"}
+    for model in (MaterialParserV2Output, MaterialTocOutput):
+        schema = to_strict_json_schema(model)
+        assert schema["additionalProperties"] is False
+    block = output_contract_block(text)
+    assert block is not None
+    allowed = field_names(MaterialParserV2Output) | field_names(MaterialTocOutput)
+    undeclared = sorted({n for n in re.findall(r"`([^`]+)`", block) if n not in allowed})
+    assert undeclared == []
+
+
 # --- the rest of WP20.2: deadlines of a syllabus (D-C-213), a scan without text (D-C-214) ------
 
 SYLLABUS = (
@@ -547,7 +635,7 @@ SYLLABUS = (
 def _syllabus_answer(request: Any) -> dict[str, Any]:
     return {
         "title": "Calculus syllabus",
-        "chunks": [{"n": 1, "topic": "Derivatives", "notation": [], "teaches": [], "uses": []}],
+        "chunks": [{"n": 1, "section": "Derivatives", "notation": [], "builds_on": []}],
         "deadlines": [
             {
                 "label": "Colloquium",
@@ -579,6 +667,21 @@ def _syllabus_answer(request: Any) -> dict[str, Any]:
     }
 
 
+def _syllabus_toc_answer(request: Any) -> dict[str, Any]:
+    return {
+        "candidates": [
+            {
+                "name": "Derivatives",
+                "description": "Derivatives section.",
+                "core_skill_name": "Compute derivatives",
+                "builds_on": [],
+            }
+        ],
+        "chunk_candidates": [{"n": 1, "candidate_index": 0}],
+        "task_candidates": [],
+    }
+
+
 async def _structure_job(world: _World, learner: UUID, material: UUID) -> ClaimedJob:
     (queued,) = await world.db.fetch_all(
         "SELECT payload FROM ops.jobs WHERE kind = 'material.parse'"
@@ -597,7 +700,8 @@ async def test_a_syllabus_gives_hubs_with_deadlines(world: _World) -> None:
         '\'{"timezone": "Europe/Moscow"}\'::jsonb WHERE learner_id = %(l)s',
         {"l": learner},
     )
-    world.provider.respond("MaterialParserOutput", _syllabus_answer)
+    world.provider.respond("MaterialParserV2Output", _syllabus_answer)
+    world.provider.respond("MaterialTocOutput", _syllabus_toc_answer)
     world.pdf_pages(SYLLABUS)
     await parse_step(world.ctx, _job(learner, material))
     job = await _structure_job(world, learner, material)
@@ -606,10 +710,10 @@ async def test_a_syllabus_gives_hubs_with_deadlines(world: _World) -> None:
     resolver = _Resolver()
     await structure_step(world.ctx, job, resolver)
 
-    topics = {s.name for call in resolver.calls for s in call if s.kind == "topic"}
+    topics = {c.name for call in resolver.calls for c in call}
     assert {"Derivatives", "Limits", "Integrals"} <= topics  # the covers are topics of the course
     hubs = {h["payload"]["name"]: h for h in await world.types(learner, "hub.created")}
-    assert set(hubs) == {"Calculus syllabus", "Colloquium", "Test"}
+    assert set(hubs) == {"Colloquium", "Test"}
     colloquium = hubs["Colloquium"]["payload"]
     assert colloquium["control_type"] == "colloquium_proofs" and colloquium["kind"] == "material"
     assert colloquium["origin"] == "material" and colloquium["domain_id"] == str(domain)
@@ -631,8 +735,8 @@ async def test_a_syllabus_gives_hubs_with_deadlines(world: _World) -> None:
         for t in await world.types(learner, "hub.topics_changed")
     }
     assert {x["topic_id"] for x in covered[colloquium["hub_id"]]} == {
-        str(resolver.ids[("topic", "Derivatives")]),
-        str(resolver.ids[("topic", "Limits")]),
+        str(resolver.topics["Derivatives"].topic_id),
+        str(resolver.topics["Limits"].topic_id),
     }
     levels = world.settings.control_type_levels["colloquium_proofs"]
     assert all(x["required_levels"] == levels for x in covered[colloquium["hub_id"]])
@@ -662,7 +766,7 @@ async def test_deadlines_are_capped_by_the_setting(world: _World) -> None:
         ]
         return {"title": "", "chunks": [], "deadlines": found, "seminar_tasks": []}
 
-    world.provider.respond("MaterialParserOutput", many)
+    world.provider.respond("MaterialParserV2Output", many)
     world.pdf_pages(SYLLABUS)
     await parse_step(world.ctx, _job(learner, material))
     await structure_step(world.ctx, await _structure_job(world, learner, material), _Resolver())
@@ -807,3 +911,66 @@ async def test_a_presentation_compute_refuses_fails_the_job_for_good(world: _Wor
         "SELECT status FROM content.materials WHERE material_id = %(m)s", {"m": material}
     )
     assert row is not None and row["status"] == "failed"
+
+
+async def test_a_later_material_does_not_wait_for_an_older_one(world: _World) -> None:
+    """Upload order no longer blocks `structure_step` (`_wait_for_older` removed;
+    `lock_key = domain:{id}` serializes writes)."""
+    learner, domain, _older = await world.upload()
+    later = (
+        await upload_material(
+            world.db, world.storage, world.settings, learner_id=learner, domain_id=domain, data=PDF
+        )
+    ).material_id
+    world.pdf_pages(PAGE_ONE)
+    await parse_step(world.ctx, _job(learner, later))
+    job = await _structure_job(world, learner, later)
+
+    await structure_step(world.ctx, job, _Resolver())
+    assert len(await world.types(learner, "material.parsed")) == 1
+
+
+class _FlakyResolver(_Resolver):
+    """Fails once before succeeding on retry, verifying Law 5 / Law 7 in `structure_step`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempt = 0
+
+    async def __call__(
+        self,
+        ctx: JobContext,
+        *,
+        learner_id: UUID,
+        domain_id: UUID,
+        candidates: Sequence[TopicCandidateSpec],
+        source_refs: Sequence[dict[str, Any]] = (),
+    ) -> list[ResolvedTopic]:
+        self.attempt += 1
+        if self.attempt == 1:
+            raise LLMUnavailableError("builder@2: provider timeout", reason="timeout")
+        return await super().__call__(
+            ctx,
+            learner_id=learner_id,
+            domain_id=domain_id,
+            candidates=candidates,
+            source_refs=source_refs,
+        )
+
+
+async def test_a_retry_of_the_structure_step_commits_once(world: _World) -> None:
+    """Law 7: a resolver failure leaves `material.parsed` and `chunk.indexed` unwritten;
+    the retry commits cleanly once."""
+    learner, _, material = await world.upload()
+    world.pdf_pages(PAGE_ONE, PAGE_TWO)
+    await parse_step(world.ctx, _job(learner, material))
+    job = await _structure_job(world, learner, material)
+    resolver = _FlakyResolver()
+
+    with pytest.raises(LLMUnavailableError):
+        await structure_step(world.ctx, job, resolver)
+    assert await world.types(learner, "material.parsed", "chunk.indexed") == []
+
+    await structure_step(world.ctx, job, resolver)
+    assert len(await world.types(learner, "material.parsed")) == 1
+    assert len(await world.types(learner, "chunk.indexed")) == 2

@@ -69,3 +69,30 @@ export function skillInvocation(text: string): string | undefined {
   const m = /^\/([\p{L}\p{N}_-]{1,40})(?:\s|$)/u.exec(text.trim());
   return m?.[1].toLowerCase();
 }
+
+/**
+ * The built-in command of the teacher chat: `/skill-creator <what I want>` starts a short talk in which the teacher
+ * proposes a skill (an element of the turn). It is not a learner skill and its name cannot be taken by one (the backend
+ * refuses it with 409 too).
+ */
+export const SKILL_CREATOR = "skill-creator";
+
+/** What a skill draft is checked against before it is sent: the backend's own limits and what the learner already has */
+export type DraftCheck = { name?: string; text?: string };
+
+/** `taken` — the names the learner already has; the backend still decides (409/422 come back into the form) */
+export function checkSkillDraft(
+  d: { name: string; text: string },
+  taken: readonly string[],
+  m: { nameError: string; nameTaken: (n: string) => string; reserved: string; textError: string; textTooLong: (max: number) => string },
+): { errors: DraftCheck; name: string | null } {
+  const clean = validSkillName(d.name);
+  const errors: DraftCheck = {};
+  if (!clean) errors.name = m.nameError;
+  else if (clean === SKILL_CREATOR) errors.name = m.reserved;
+  else if (taken.includes(clean)) errors.name = m.nameTaken(clean);
+  const body = d.text.trim();
+  if (!body) errors.text = m.textError;
+  else if (body.length > SKILL_TEXT_MAX) errors.text = m.textTooLong(SKILL_TEXT_MAX);
+  return { errors, name: clean };
+}

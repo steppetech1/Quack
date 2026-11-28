@@ -18,7 +18,16 @@ from quack.practice.answer_spec import MathValue
 
 # Elements whose answer is checked (`check()`): they need a task in `p3_markup.tasks`.
 TASK_ELEMENT_KINDS: frozenset[str] = frozenset(
-    {"choice", "why_choice", "short_answer", "task", "scaffold", "prediction", "free_answer"}
+    {
+        "choice",
+        "why_choice",
+        "short_answer",
+        "task",
+        "scaffold",
+        "prediction",
+        "free_answer",
+        "code_sandbox",
+    }
 )
 
 
@@ -164,6 +173,62 @@ class ReferenceCardElement(_Element):
     items: list[ReferenceItem]
 
 
+class CodeTaskElement(_Element):
+    """Задача с кодом (Т-§6.10): a ready code task of the label table (`K…`, from a
+    `task_generation` request with a language), shown as it is; the learner solves it in the
+    code editor and its tests check it. The teacher writes no task markup for it."""
+
+    kind: Literal["code_task"]
+    task: str
+
+
+class CodeSandboxElement(_Element):
+    """Песочница для кода (teacher@5, owner decision 2026-11-26): a code task the teacher writes
+    in the turn; the editor opens at once. Its markup is in `p3_markup.tasks` (answer type
+    `code`), as for any task element.
+
+    - `mode`: `inline_patch` — complete a `TODO` or fix a bug, checked on the sample and by the
+      teacher's review; `full_problem` — a whole block: hidden tests are built in the background.
+    - `statement` — the statement (Markdown) the editor shows; `starter_code` — the code the
+      learner starts from.
+    - Python: `entry_point` — the function the tests call; `sample_args_json` — a JSON array of
+      its arguments; `sample_expected_json` — the JSON of what it must return.
+    - SQL: `sql_preset` — a ready database (`shop`, `university`), no `CREATE TABLE`;
+      `sample_expected_json` — the JSON array of the rows the query must give; `entry_point` and
+      `sample_args_json` are null. Column names are not compared.
+    - `compare`: `exact` (for SQL — the order of rows counts), `unordered` (order does not count),
+      `float_approx` (numbers within `epsilon`; null — the default tolerance)."""
+
+    kind: Literal["code_sandbox"]
+    mode: Literal["inline_patch", "full_problem"]
+    language: Literal["python", "sql"]
+    statement: str
+    starter_code: str
+    entry_point: str | None
+    sql_preset: Literal["shop", "university"] | None
+    sample_args_json: str | None
+    sample_expected_json: str
+    compare: Literal["exact", "unordered", "float_approx"]
+    epsilon: float | None
+
+
+# The artifact types a learner skill may be bound to (`artifacts.documents.ArtifactKind`).
+type SkillArtifactType = Literal["notes", "cards", "cheatsheet"]
+
+
+class SkillProposalElement(_Element):
+    """Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision
+    2026-11-24): a draft of a learner skill the learner may edit and save from the browser
+    (`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the
+    name and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it
+    is bound to, or null."""
+
+    kind: Literal["skill_proposal"]
+    name: str
+    text: str
+    artifact_type: SkillArtifactType | None
+
+
 type Element = Annotated[
     ChoiceElement
     | WhyChoiceElement
@@ -177,6 +242,9 @@ type Element = Annotated[
     | TimedQuizElement
     | VisualizationElement
     | MaterialLinkElement
-    | ReferenceCardElement,
+    | ReferenceCardElement
+    | CodeTaskElement
+    | CodeSandboxElement
+    | SkillProposalElement,
     Field(discriminator="kind"),
 ]

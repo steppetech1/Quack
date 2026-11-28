@@ -35,7 +35,7 @@ export function TopicSearch({ domain, onPick }: { domain: Domain; onPick: (id: s
   const showList = open && q.trim().length > 0;
 
   return (
-    <div className="relative w-full sm:w-52 xl:w-64">
+    <div className="relative w-full sm:w-44 xl:w-52">
       <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-paper-dim" />
       <input
         ref={input}

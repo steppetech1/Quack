@@ -51,17 +51,101 @@ async def test_create_and_list_domains(
 
     [event] = await _events(pg_db, learner_id, "domain.created")
     domain_id = first.json()["domain_id"]
-    assert event["payload"] == {"domain_id": domain_id, "name": "Physics"}
+    assert event["payload"] == {"domain_id": domain_id, "name": "Physics", "about": None}
     assert (event["actor"], str(event["domain_id"])) == ("learner", domain_id)
 
     listed = await api_client.get("/v1/domains", headers=headers)
-    assert [(d["domain_id"], d["name"]) for d in listed.json()["domains"]] == [
-        (domain_id, "Physics")
+    assert [(d["domain_id"], d["name"], d["about"]) for d in listed.json()["domains"]] == [
+        (domain_id, "Physics", None)
     ]
     stranger = await session_token(pg_db, await create_learner(pg_db), settings)
     assert (await api_client.get("/v1/domains", headers=session_cookie(stranger))).json() == {
         "domains": []
     }
+
+
+async def test_create_domain_stores_about(
+    api_client: httpx.AsyncClient, pg_db: Db, seeded_learner: tuple[UUID, str]
+) -> None:
+    """`about` is trimmed and stored in `domain.created`, comes back in the create answer and the
+    list; blank is `None`; a retry returns the same domain, the same key with another `about` is
+    409; more than 500 characters is 422 (the create card, nothing reads it yet)."""
+    learner_id, token = seeded_learner
+    headers = session_cookie(token)
+    body = {
+        "name": "Physics",
+        "about": "  Exam in January, weak at optics  ",
+        "idempotency_key": "a-1",
+    }
+
+    first = await api_client.post("/v1/domains", headers=headers, json=body)
+    assert first.status_code == 201, first.text
+    assert first.json()["about"] == "Exam in January, weak at optics"
+    again = await api_client.post("/v1/domains", headers=headers, json=body)
+    assert again.status_code == 201 and again.json() == first.json()
+    changed = await api_client.post(
+        "/v1/domains", headers=headers, json={**body, "about": "Something else"}
+    )
+    assert changed.status_code == 409
+    assert changed.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    dropped = await api_client.post(
+        "/v1/domains", headers=headers, json={"name": "Physics", "idempotency_key": "a-1"}
+    )
+    assert dropped.status_code == 409
+
+    blank = await api_client.post(
+        "/v1/domains",
+        headers=headers,
+        json={"name": "Chemistry", "about": "   ", "idempotency_key": "a-2"},
+    )
+    assert blank.status_code == 201 and blank.json()["about"] is None
+    too_long = await api_client.post(
+        "/v1/domains",
+        headers=headers,
+        json={"name": "Biology", "about": "x" * 501, "idempotency_key": "a-3"},
+    )
+    assert too_long.status_code == 422
+    edge = await api_client.post(
+        "/v1/domains",
+        headers=headers,
+        json={"name": "Biology", "about": "x" * 500, "idempotency_key": "a-4"},
+    )
+    assert edge.status_code == 201
+
+    payloads = [e["payload"] for e in await _events(pg_db, learner_id, "domain.created")]
+    assert [p["about"] for p in payloads] == ["Exam in January, weak at optics", None, "x" * 500]
+    listed = await api_client.get("/v1/domains", headers=headers)
+    assert [(d["name"], d["about"]) for d in listed.json()["domains"]] == [
+        ("Physics", "Exam in January, weak at optics"),
+        ("Chemistry", None),
+        ("Biology", "x" * 500),
+    ]
+
+
+async def test_domain_created_without_about_stays_valid(
+    api_client: httpx.AsyncClient, pg_db: Db, seeded_learner: tuple[UUID, str]
+) -> None:
+    """An older `domain.created` (no `about` in the payload) is still a valid event and lists
+    with `about: null`."""
+    learner_id, token = seeded_learner
+    domain = uuid4()
+    await append_events(
+        pg_db,
+        learner_id,
+        [
+            NewEvent(
+                type="domain.created",
+                payload={"domain_id": str(domain), "name": "Old"},
+                actor="learner",
+                idempotency_key="old-d",
+                domain_id=domain,
+            )
+        ],
+    )
+    listed = await api_client.get("/v1/domains", headers=session_cookie(token))
+    assert [(d["domain_id"], d["name"], d["about"]) for d in listed.json()["domains"]] == [
+        (str(domain), "Old", None)
+    ]
 
 
 async def test_set_preference(

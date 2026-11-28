@@ -22,6 +22,7 @@ from redis.asyncio import Redis
 
 from quack.db import Db
 from quack.embeddings.client import EMBEDDING_MODEL, EmbeddingClient
+from quack.events.errors import IdempotencyConflictError
 from quack.events.event_types import EmbeddingReady
 from quack.events.keys import embedding_key
 from quack.events.log import NewEvent, append_events
@@ -78,5 +79,18 @@ async def compute_embeddings(
         )
         for node, vector in zip(todo, vectors, strict=True)
     ]
-    stored = await append_events(db, learner_id, events, redis=redis)
-    return [event.seq for event in stored]
+    while events:
+        try:
+            stored = await append_events(db, learner_id, events, redis=redis)
+            return [event.seq for event in stored]
+        except IdempotencyConflictError:
+            # Another worker may have embedded a node in this batch between our `_DONE` check
+            # and `append_events`; GPU batching produces 1-ULP float32 differences for the same
+            # text, so drop whatever is already in the log and write only the rest.
+            done = await db.fetch_all(_DONE, {"learner_id": learner_id, "keys": list(keys)})
+            done_keys = {r["idempotency_key"] for r in done}
+            remaining = [e for e in events if e.idempotency_key not in done_keys]
+            if len(remaining) == len(events):
+                raise
+            events = remaining
+    return []

@@ -46,6 +46,9 @@ x-db-env: &db-env
   NEO4J_USER: neo4j
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
   REDIS_URL: redis://redis:6379/0
+  # Domain of the `quack_session` cookie (Т-§19.1, WP9.1): `qvack.online` on the server; a local
+  # stand sets `localhost`, else the browser drops the cookie. Not secret.
+  SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-qvack.online}
 
 # WP9.2, WP16.5 (Т-§13.6 п.1, D-C-218): the libraries a visualization page may load, name -> path
 # under VIZ_STATIC_BASE_URL. Caddy serves deploy/static/viz/ at /static/viz/ of the API domain;
@@ -193,6 +196,7 @@ services:
       # `https` of the sign-in link). `api` is reachable only from the `backend` network.
       API_FORWARDED_ALLOW_IPS: "*"
       COMPUTE_URL: http://compute:8001
+      RUNNER_URL: unix:/run/quack-runner/runner.sock
       META_API_KEY: ${META_API_KEY:-}
       META_API_BASE_URL: ${META_API_BASE_URL:-}
       # D-B-198, D-B-201: the price table of Т-§11.4 (JSON; prod refuses to start without it) and
@@ -215,6 +219,8 @@ services:
       DELETIONS_S3_ACCESS_KEY: ${DELETIONS_S3_ACCESS_KEY:-}
       DELETIONS_S3_SECRET_KEY: ${DELETIONS_S3_SECRET_KEY:-}
     networks: [backend, egress]
+    volumes:
+      - runner-socket:/run/quack-runner
     healthcheck:
       test:
         - CMD
@@ -265,6 +271,7 @@ services:
     environment:
       <<: [*db-env, *viz-env]
       COMPUTE_URL: http://compute:8001
+      RUNNER_URL: unix:/run/quack-runner/runner.sock
       WORKER_SHUTDOWN_GRACE_S: "20"
       # Д-§4.1: 5 Postgres connections per workers process (2 × 5).
       PG_POOL_MAX_SIZE: "5"
@@ -286,6 +293,8 @@ services:
       DELETIONS_S3_ACCESS_KEY: ${DELETIONS_S3_ACCESS_KEY:-}
       DELETIONS_S3_SECRET_KEY: ${DELETIONS_S3_SECRET_KEY:-}
     networks: [backend, egress]
+    volumes:
+      - runner-socket:/run/quack-runner
     stop_grace_period: 25s
     mem_limit: 1g
     logging: *default-logging
@@ -309,6 +318,48 @@ services:
     logging: *default-logging
     memswap_limit: 2560m
     cpus: 3.0
+
+  runner:
+    # Learner code (documentation/идея-редактор-кода-и-запуск.md). No network at all: `api` and
+    # `workers` reach it over a Unix socket in the `runner-socket` volume, so the runner can
+    # open no connection anywhere, not even back to them. Root inside, but only SETUID/SETGID
+    # (drop to a slot uid) and KILL (stop a slot's processes) are left.
+    image: ${QUACK_RUNNER_IMAGE:-quack-runner:local}
+    build:
+      context: runner
+      target: runtime
+    restart: unless-stopped
+    command:
+      - uvicorn
+      - quack_runner.app:app
+      - --uds
+      - /run/quack-runner/runner.sock
+      - --timeout-graceful-shutdown
+      - "5"
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    network_mode: none
+    # An init as PID 1 reaps the learner's orphaned processes: zombies of a slot uid would
+    # otherwise pile up and count against its RLIMIT_NPROC.
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    volumes:
+      - runner-socket:/run/quack-runner
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /work/slot-1:size=64m,uid=20001,gid=20001,mode=0700
+      - /work/slot-2:size=64m,uid=20002,gid=20002,mode=0700
+      - /work/slot-3:size=64m,uid=20003,gid=20003,mode=0700
+      - /work/slot-4:size=64m,uid=20004,gid=20004,mode=0700
+    stop_grace_period: 10s
+    mem_limit: 2g
+    logging: *default-logging
+    memswap_limit: 2560m
+    cpus: 2.0
 
   backup:
     # Д-§8.1: run by the host timer (`docker compose run --rm backup`) and by deploy.sh before a
@@ -395,10 +446,13 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./deploy/static:/srv/static:ro
       - caddy-data:/data
+      # Other projects on this host put one `<name>.caddy` site file here (see deploy/README.md).
+      - ${EDGE_SITES_DIR:-/srv/edge/sites}:/etc/caddy/sites:ro
     depends_on:
       api:
         condition: service_healthy
-    networks: [backend, egress]
+    # `edge`: Caddy reaches the other projects' containers by name, they never see `backend`.
+    networks: [backend, egress, edge]
     stop_grace_period: 10s
     mem_limit: 128m
     memswap_limit: 160m
@@ -422,8 +476,13 @@ networks:
   backend:
     internal: true
   egress: {}
+  # Shared with other projects on this host; a fixed name so their compose files can join it
+  # as `external: true`.
+  edge:
+    name: edge
 
 volumes:
   postgres-data: {}
+  runner-socket: {}
   neo4j-data: {}
   caddy-data: {}

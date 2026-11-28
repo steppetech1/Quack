@@ -24,7 +24,10 @@ SERVICES = {
     "backup",
     "alerts",
     "meta-mock",
+    # Т-§6.10: the learner-code sandbox; no network at all, a Unix socket in a volume.
+    "runner",
 }
+NO_NETWORK = {"runner"}
 # Д-§6.1 table.
 STOP_GRACE_S = {"api": 35, "workers": 25, "projector": 15, "compute": 10}
 BACKEND_ONLY = {"projector", "compute", "postgres", "neo4j", "redis", "migrate"}
@@ -59,6 +62,9 @@ def test_only_caddy_publishes_ports(compose: dict[str, Any]):
 def test_networks_follow_d_3_2(compose: dict[str, Any]):
     assert compose["networks"]["backend"] == {"internal": True}
     for name, service in compose["services"].items():
+        if name in NO_NETWORK:
+            assert service["network_mode"] == "none" and "networks" not in service, name
+            continue
         networks = set(service["networks"])
         assert "backend" in networks, name
         wants_internet = name in {"caddy", "api", "workers", "backup", "alerts"}
@@ -160,3 +166,37 @@ def test_the_learners_bucket_name_reaches_api_and_workers(compose: dict[str, Any
 
 def test_the_price_table_reaches_the_processes_that_call_models(compose: dict[str, Any]):
     assert _holders(compose, "LLM_PRICES") == {"api", "workers"}
+
+
+def test_the_session_cookie_domain_reaches_every_process_that_reads_settings(
+    compose: dict[str, Any],
+):
+    """A local stand sets `SESSION_COOKIE_DOMAIN=localhost`, else the browser drops
+    `quack_session`; on the server the default is `qvack.online` (WP9.1)."""
+    assert _holders(compose, "SESSION_COOKIE_DOMAIN") == {"api", "workers", "projector"}
+    for name in ("api", "workers", "projector"):
+        value = compose["services"][name]["environment"]["SESSION_COOKIE_DOMAIN"]
+        assert value == "${SESSION_COOKIE_DOMAIN:-qvack.online}", name
+
+
+# Set by compose itself (fixed address, port or limit), so the developer's list does not carry them.
+_FIXED_BY_COMPOSE = {
+    "API_HOST",
+    "API_PORT",
+    "API_WORKERS",
+    "API_GRACEFUL_SHUTDOWN_S",
+    "QUACK_VERSION",
+}
+
+
+def test_backend_env_example_lists_every_variable_api_reads(compose: dict[str, Any]):
+    """`backend/.env.example` is the developer's list (names only, Д-§7): it must not fall behind
+    the `api` service of `compose.yaml`."""
+    path = COMPOSE.parent / "backend" / ".env.example"
+    listed = {
+        line.split("=", 1)[0]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.startswith("#")
+    }
+    wanted = set(compose["services"]["api"]["environment"]) - _FIXED_BY_COMPOSE
+    assert wanted <= listed, sorted(wanted - listed)

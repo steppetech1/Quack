@@ -20,6 +20,7 @@ from quack.config import Settings
 from quack.events import registry
 from quack.events.event_types import TurnCommitted
 from quack.events.log import StoredEvent
+from quack.events.service_turns import is_service_event
 
 type PriorityClass = Literal["P1", "P2", "P3"]
 
@@ -53,12 +54,13 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
     _k("analyst.deep", "P2", roles=("analyst_deep",)),
     _k("check.symbolic", "P1", visible=True),
     _k("check.model", "P1", visible=True, roles=("verdict_proof", "verdict_free")),
-    _k("task.check", "P1", visible=True, roles=("task_checker",)),
+    _k("task.check", "P1", visible=True, roles=("task_checker", "code_test_builder")),
     _k("task.solution_space", "P2", roles=("solution_space",)),
     _k("second_opinion.diagnosis", "P1", roles=("second_opinion",)),
     _k("canvas.rediagnose", "P1", roles=("canvas_diagnoser",)),
     _k("photo.pipeline", "P1", visible=True, roles=("recognizer", "segmenter")),
     _k("material.parse", "P1", visible=True, roles=("material_parser",)),
+    _k("material.seminar_tasks", "P2", roles=("task_generator", "task_checker", "task_arbiter")),
     _k("agent.viz", "P2", visible=True, roles=("viz_builder", "viz_checker")),
     _k("agent.illustration", "P2", visible=True, roles=("illustrator",)),
     _k("agent.task_generation", "P2", visible=True, roles=("task_generator", "task_arbiter")),
@@ -83,6 +85,10 @@ JOB_KIND_SPECS: tuple[JobKindSpec, ...] = (
 )
 
 JOB_KINDS: tuple[str, ...] = tuple(s.kind for s in JOB_KIND_SPECS if not s.periodic)
+# Kinds no event of the table puts: another job queues them in its own transaction
+# (`material.parse` structure step → `material.seminar_tasks`, decision of 2026-11-25), so they
+# have no row in `RULES`.
+QUEUED_BY_JOBS: frozenset[str] = frozenset({"material.seminar_tasks"})
 PERIODIC_JOB_KINDS: tuple[str, ...] = tuple(s.kind for s in JOB_KIND_SPECS if s.periodic)
 # §6.5: dropped with WP1.3 together with the Phase 3 handlers.
 REMOVED_JOB_KINDS: tuple[str, ...] = (
@@ -300,8 +306,8 @@ def _turn_committed(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
 def _turn_titled(event: StoredEvent, _s: Settings, _p: Any) -> list[JobPlan]:
     """The name of the session: one job per session (its key ends with the session), planned by
     the first committed turn; the later turns hit the same key and add nothing."""
-    if event.session_id is None:
-        return []
+    if event.session_id is None or is_service_event(event.type, event.payload):
+        return []  # a `/skill-creator` turn names nothing; the first learning turn does
     return [_plan(event, "session.title", key_tail=str(event.session_id))]
 
 
@@ -388,19 +394,52 @@ def _has_new_skill(markup: Any) -> bool:
     return any(t.new_skill is not None for t in tests)
 
 
-def _task_created(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+def _turn_hygiene(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
+    if event.domain_id is None or not any(_has_new_skill(t) for t in p.markup.tasks):
+        return []
+    return [
+        _hygiene(
+            event,
+            event.domain_id,
+            "new_skills",
+            run_at=event.occurred_at + timedelta(minutes=s.curation_defer_min),
+        )
+    ]
+
+
+def _task_created(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
     plans: list[JobPlan] = []
     if p.source in BANK_TASK_SOURCES:
         plans.append(_plan(event, "task.solution_space", payload={"task_id": str(p.task_id)}))
     if event.domain_id is not None and _has_new_skill(p.markup):
-        plans.append(_hygiene(event, event.domain_id, "new_skills"))
+        plans.append(
+            _hygiene(
+                event,
+                event.domain_id,
+                "new_skills",
+                run_at=event.occurred_at + timedelta(minutes=s.curation_defer_min),
+            )
+        )
     return plans
 
 
-def _observation_hygiene(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+def _observation_hygiene(event: StoredEvent, s: Settings, p: Any) -> list[JobPlan]:
     if event.domain_id is None or not any(el.new_skill is not None for el in p.elements):
         return []
-    return [_hygiene(event, event.domain_id, "new_skills")]
+    return [
+        _hygiene(
+            event,
+            event.domain_id,
+            "new_skills",
+            run_at=event.occurred_at + timedelta(minutes=s.curation_defer_min),
+        )
+    ]
+
+
+def _material_parsed_hygiene(event: StoredEvent, _s: Settings, _p: Any) -> list[JobPlan]:
+    if event.domain_id is None:
+        return []
+    return [_hygiene(event, event.domain_id, "material_parsed")]
 
 
 def _agent_requested(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
@@ -547,23 +586,35 @@ def _skill_split_reextract(event: StoredEvent, p: Any, facts: RuleFacts) -> list
     ]
 
 
-def _hygiene(event: StoredEvent, domain_id: UUID, reason: str) -> JobPlan:
+def _hygiene(
+    event: StoredEvent,
+    domain_id: UUID,
+    reason: str,
+    *,
+    run_at: datetime | None = None,
+    session_id: UUID | None = None,
+) -> JobPlan:
     """`Т-§4.10`: one waiting hygiene job per domain; `domain:{id}` is the lock of the writes to
     the structure of the domain (WP7.1)."""
+    payload: dict[str, Any] = {"domain_id": str(domain_id), "reason": reason}
+    if session_id is not None:
+        payload["session_id"] = str(session_id)
     return _plan(
         event,
         "graph.hygiene",
         lock_key=f"domain:{domain_id}",
         coalesce_key=f"hygiene:{domain_id}",
         graph=True,
-        payload={"domain_id": str(domain_id), "reason": reason},
+        run_at=run_at,
+        payload=payload,
     )
 
 
-def _session_hygiene(event: StoredEvent, _p: Any, facts: RuleFacts) -> list[JobPlan]:
+def _session_hygiene(event: StoredEvent, p: Any, facts: RuleFacts) -> list[JobPlan]:
     if not facts.temporary_entities or facts.domain_id is None:
         return []
-    return [_hygiene(event, facts.domain_id, "temporary_entities")]
+    sid = getattr(p, "session_id", None) or event.session_id
+    return [_hygiene(event, facts.domain_id, "temporary_entities", session_id=sid)]
 
 
 def _topics_hygiene(event: StoredEvent, p: Any, facts: RuleFacts) -> list[JobPlan]:
@@ -585,6 +636,19 @@ def _chunk_indexed(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
 
 def _misconception_described(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
     return _embedding(event, "misconception", p.misconception_id, p.statement)
+
+
+def _topic_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+    """A topic is embedded by its name (decision of 2026-11-24 on the `[ПРОВЕРИТЬ]` of
+    Т-§3.4.2): without a vector the reconciliation does not see it and creates its twin."""
+    return _embedding(event, "topic", p.topic_id, p.name)
+
+
+def _skill_embedding(event: StoredEvent, _s: Settings, p: Any) -> list[JobPlan]:
+    """A skill is embedded by its name and definition (or summary for legacy events; the same text
+    as the structure step of a material uses, `quack.ops.material_parse.node_text`)."""
+    body = getattr(p, "definition", "") or p.summary
+    return _embedding(event, "skill", p.skill_id, "\n".join((p.name, body)).strip())
 
 
 RULES: tuple[RuleRow, ...] = (
@@ -629,9 +693,21 @@ RULES: tuple[RuleRow, ...] = (
         "the turn set the current step or the next steps: the demos for them are decided ahead",
         _turn_viz_plan,
     ),
+    RuleRow(
+        "turn.committed",
+        ("graph.hygiene",),
+        "markup.tasks names a new skill",
+        _turn_hygiene,
+    ),
     RuleRow("photo.uploaded", ("photo.pipeline",), "always", _photo_uploaded),
     RuleRow(
         "material.uploaded", ("material.parse",), "P1 with session_id, else P2", _material_uploaded
+    ),
+    RuleRow(
+        "material.parsed",
+        ("graph.hygiene",),
+        "material parsed -> structure hygiene of the domain",
+        _material_parsed_hygiene,
     ),
     RuleRow(
         "task.created",
@@ -696,12 +772,22 @@ RULES: tuple[RuleRow, ...] = (
         _misconception_described,
     ),
     RuleRow(
+        "topic.created", ("embedding.compute",), "always: the name of the topic", _topic_embedding
+    ),
+    RuleRow(
+        "topic.proposed", ("embedding.compute",), "always: the name of the topic", _topic_embedding
+    ),
+    RuleRow(
+        "skill.created",
+        ("embedding.compute",),
+        "always: the name and the summary of the skill",
+        _skill_embedding,
+    ),
+    RuleRow(
         "*",
         ("embedding.compute",),
-        "new topic, skill or evidence with text",
-        needs="topic and skill: which property is embedded (`name`, for a skill `summary` too) "
-        "is [ПРОВЕРИТЬ] in Т-§3.4.2 (D-A-117); evidence: its id is given by the projector, not "
-        "the event",
+        "new evidence with text",
+        needs="evidence: its id is given by the projector, not the event",
     ),
     RuleRow(
         "session.ended",

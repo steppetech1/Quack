@@ -449,6 +449,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/domains/{domain_id}/demo-seed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Demo Seed Endpoint */
+        post: operations["demo_seed_endpoint_v1_domains__domain_id__demo_seed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/domains/{domain_id}/graph": {
         parameters: {
             query?: never;
@@ -547,7 +564,11 @@ export interface paths {
         get: operations["hub_view_endpoint_v1_hubs__hub_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Hub Endpoint
+         * @description The chapter leaves the left panel (`hub.deleted`); the topics stay without a chapter.
+         */
+        delete: operations["delete_hub_endpoint_v1_hubs__hub_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -902,7 +923,14 @@ export interface paths {
         get: operations["get_session_v1_sessions__session_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Session
+         * @description The session leaves the left panel and every read: its page, its stream and its actions
+         *     answer `404` from now on. Its events stay in the journal (the evidence and the model are not
+         *     touched); a turn in progress finishes. A session of another learner, none, or one deleted
+         *     already — `404`.
+         */
+        delete: operations["delete_session_v1_sessions__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1048,6 +1076,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{session_id}/tasks/{task_id}/code/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit */
+        post: operations["submit_v1_sessions__session_id__tasks__task_id__code_submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{session_id}/turns/{turn_seq}/elements/{element_id}/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Element Code Task
+         * @description The code task behind an element of a teacher turn: elements carry no task id, so the
+         *     client asks here whether to open the editor; 404 — no task, or not a code task.
+         */
+        get: operations["get_element_code_task_v1_sessions__session_id__turns__turn_seq__elements__element_id__code_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{session_id}/voice": {
         parameters: {
             query?: never;
@@ -1085,6 +1151,60 @@ export interface paths {
         get: operations["get_system_templates_v1_system_templates_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Code Task */
+        get: operations["get_code_task_v1_tasks__task_id__code_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/code/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save Draft
+         * @description The learner's current code (the statuses of the last run are kept); writes no event.
+         */
+        put: operations["save_draft_v1_tasks__task_id__code_draft_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/code/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Code */
+        post: operations["run_code_v1_tasks__task_id__code_run_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1349,7 +1469,7 @@ export interface components {
         /** @enum {string} */
         AnswerSource: "chat" | "canvas" | "photo" | "card";
         /** @enum {string} */
-        AnswerType: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text";
+        AnswerType: "choice" | "number" | "expression" | "set" | "vector" | "quantity" | "proof" | "free_text" | "drawing" | "short_text" | "code";
         /**
          * ArtifactConsentRequest
          * @description Consent to generate topic notes or a hub cheat sheet, optionally within a session.
@@ -1439,6 +1559,8 @@ export interface components {
             /** Token */
             token: string;
         };
+        /** @enum {string} */
+        BuildStatus: "none" | "pending" | "ready" | "failed";
         /** CanvasList */
         CanvasList: {
             /** Canvases */
@@ -1624,6 +1746,177 @@ export interface components {
             /** Stroke Batch Ms */
             stroke_batch_ms: number;
         };
+        /**
+         * CodeDraft
+         * @description The learner's current code and the statuses of its last run (`number: status`).
+         */
+        CodeDraft: {
+            /** Code */
+            code: string;
+            /** Statuses */
+            statuses?: {
+                [key: string]: string;
+            };
+        };
+        /** @enum {string} */
+        CodeMode: "inline_patch" | "full_problem";
+        /** CodeRunErrorView */
+        CodeRunErrorView: {
+            /** Line */
+            line?: number | null;
+            /** Message */
+            message: string;
+            /** Type */
+            type: string;
+        };
+        /**
+         * CodeSandboxElement
+         * @description Песочница для кода (teacher@5, owner decision 2026-11-26): a code task the teacher writes
+         *     in the turn; the editor opens at once. Its markup is in `p3_markup.tasks` (answer type
+         *     `code`), as for any task element.
+         *
+         *     - `mode`: `inline_patch` — complete a `TODO` or fix a bug, checked on the sample and by the
+         *       teacher's review; `full_problem` — a whole block: hidden tests are built in the background.
+         *     - `statement` — the statement (Markdown) the editor shows; `starter_code` — the code the
+         *       learner starts from.
+         *     - Python: `entry_point` — the function the tests call; `sample_args_json` — a JSON array of
+         *       its arguments; `sample_expected_json` — the JSON of what it must return.
+         *     - SQL: `sql_preset` — a ready database (`shop`, `university`), no `CREATE TABLE`;
+         *       `sample_expected_json` — the JSON array of the rows the query must give; `entry_point` and
+         *       `sample_args_json` are null. Column names are not compared.
+         *     - `compare`: `exact` (for SQL — the order of rows counts), `unordered` (order does not count),
+         *       `float_approx` (numbers within `epsilon`; null — the default tolerance).
+         */
+        CodeSandboxElement: {
+            /**
+             * Compare
+             * @enum {string}
+             */
+            compare: "exact" | "unordered" | "float_approx";
+            /** Element Id */
+            element_id: string;
+            /** Entry Point */
+            entry_point: string | null;
+            /** Epsilon */
+            epsilon: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "code_sandbox";
+            /**
+             * Language
+             * @enum {string}
+             */
+            language: "python" | "sql";
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "inline_patch" | "full_problem";
+            /** Sample Args Json */
+            sample_args_json: string | null;
+            /** Sample Expected Json */
+            sample_expected_json: string;
+            /** Sql Preset */
+            sql_preset: ("shop" | "university") | null;
+            /** Starter Code */
+            starter_code: string;
+            /** Statement */
+            statement: string;
+        };
+        /**
+         * CodeTaskElement
+         * @description Задача с кодом (Т-§6.10): a ready code task of the label table (`K…`, from a
+         *     `task_generation` request with a language), shown as it is; the learner solves it in the
+         *     code editor and its tests check it. The teacher writes no task markup for it.
+         */
+        CodeTaskElement: {
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "code_task";
+            /** Task */
+            task: string;
+        };
+        /**
+         * CodeTaskView
+         * @description The editor of a `code` task. Hidden tests: their count only.
+         */
+        CodeTaskView: {
+            build: components["schemas"]["BuildStatus"];
+            /** Condition */
+            condition: string;
+            draft?: components["schemas"]["CodeDraft"] | null;
+            /** Function */
+            function: string | null;
+            /** Hidden Tests */
+            hidden_tests: number;
+            /**
+             * Language
+             * @enum {string}
+             */
+            language: "python" | "sql";
+            mode: components["schemas"]["CodeMode"];
+            /** Open Python Tests */
+            open_python_tests: components["schemas"]["OpenPythonTest"][];
+            /** Open Sql Tests */
+            open_sql_tests: components["schemas"]["OpenSqlTest"][];
+            /** Ordered */
+            ordered: boolean | null;
+            /** Schema Sql */
+            schema_sql: string | null;
+            /** Sql Preset */
+            sql_preset?: string | null;
+            /** Starter Code */
+            starter_code: string | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** @enum {string} */
+        CodeTestStatus: "passed" | "wrong" | "error" | "timeout" | "memory" | "output_limit" | "no_function" | "unsupported_value" | "row_limit" | "not_run";
+        /**
+         * CodeTestView
+         * @description One test as the learner sees it. Every field after `status` is `None` for a hidden test.
+         */
+        CodeTestView: {
+            /** Actual */
+            actual?: unknown;
+            /** Actual Rows */
+            actual_rows?: unknown[][] | null;
+            /** Args */
+            args?: unknown[] | null;
+            /** Called */
+            called?: string | null;
+            /** Columns */
+            columns?: string[] | null;
+            /** Data Sql */
+            data_sql?: string | null;
+            error?: components["schemas"]["CodeRunErrorView"] | null;
+            /** Expected */
+            expected?: unknown;
+            /** Expected Rows */
+            expected_rows?: unknown[][] | null;
+            /** Hidden */
+            hidden: boolean;
+            /** Name */
+            name?: string | null;
+            /** Number */
+            number: number;
+            status: components["schemas"]["CodeTestStatus"];
+            /** Stderr */
+            stderr?: string | null;
+            /** Stdout */
+            stdout?: string | null;
+            /** Time Ms */
+            time_ms?: number | null;
+        };
         Confidence: number;
         /**
          * ConfidenceAction
@@ -1704,6 +1997,8 @@ export interface components {
         };
         /** CreateDomainRequest */
         CreateDomainRequest: {
+            /** About */
+            about?: string | null;
             /** Idempotency Key */
             idempotency_key: string;
             /** Name */
@@ -1711,6 +2006,8 @@ export interface components {
         };
         /** CreateDomainResponse */
         CreateDomainResponse: {
+            /** About */
+            about?: string | null;
             /**
              * Domain Id
              * Format: uuid
@@ -1735,6 +2032,33 @@ export interface components {
             name: string;
         };
         /**
+         * CustomRunView
+         * @description «Запустить свой ввод»: the function on the learner's own arguments, nothing compared.
+         */
+        CustomRunView: {
+            /** Called */
+            called?: string | null;
+            error?: components["schemas"]["CodeRunErrorView"] | null;
+            status: components["schemas"]["CodeTestStatus"];
+            /**
+             * Stderr
+             * @default
+             */
+            stderr?: string;
+            /**
+             * Stdout
+             * @default
+             */
+            stdout?: string;
+            /**
+             * Time Ms
+             * @default 0
+             */
+            time_ms?: number;
+            /** Value */
+            value?: unknown;
+        };
+        /**
          * DeletionResponse
          * @description The id of the deletion and the term the copies still live (Д-§8.6).
          */
@@ -1746,6 +2070,27 @@ export interface components {
              * Format: uuid
              */
             deletion_id: string;
+        };
+        /** DemoSeedRequest */
+        DemoSeedRequest: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Text */
+            text: string;
+        };
+        /** DemoSeedResponse */
+        DemoSeedResponse: {
+            /**
+             * Domain Id
+             * Format: uuid
+             */
+            domain_id: string;
+            /** Requires */
+            requires: number;
+            /** Skills */
+            skills: number;
+            /** Topics */
+            topics: string[];
         };
         /** @enum {string} */
         DisplayState: "confused_with" | "persistent_error" | "struggling" | "inconsistent" | "solved_independently" | "known_from_other_domain" | "in_progress" | "not_tested" | "none";
@@ -1809,6 +2154,8 @@ export interface components {
          * @description A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1).
          */
         DomainSummary: {
+            /** About */
+            about?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1823,6 +2170,22 @@ export interface components {
             domain_id: string;
             /** Name */
             name: string;
+        };
+        /** DraftRequest */
+        DraftRequest: {
+            /** Code */
+            code: string;
+        };
+        /**
+         * DraftSaved
+         * @description The draft is kept (every route answers with a model, WP8.7).
+         */
+        DraftSaved: {
+            /**
+             * Saved
+             * @default true
+             */
+            saved?: boolean;
         };
         /**
          * EditHub
@@ -1843,7 +2206,7 @@ export interface components {
             /** Seq */
             seq: number;
         };
-        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"];
+        Element: components["schemas"]["ChoiceElement"] | components["schemas"]["WhyChoiceElement"] | components["schemas"]["ShortAnswerElement"] | components["schemas"]["TaskElement"] | components["schemas"]["ScaffoldElement"] | components["schemas"]["PredictionElement"] | components["schemas"]["FreeAnswerElement"] | components["schemas"]["PairElement"] | components["schemas"]["CardSeriesElement"] | components["schemas"]["TimedQuizElement"] | components["schemas"]["VisualizationElement"] | components["schemas"]["MaterialLinkElement"] | components["schemas"]["ReferenceCardElement"] | components["schemas"]["CodeTaskElement"] | components["schemas"]["CodeSandboxElement"] | components["schemas"]["SkillProposalElement"];
         /**
          * ElementFrame
          * @description `element {block_id, element}`: after its markup passed the code check.
@@ -2165,6 +2528,8 @@ export interface components {
          */
         HubGoal: {
             control_type: components["schemas"]["ControlType"];
+            /** Created Seq */
+            created_seq?: number | null;
             /** Deadline At Ms */
             deadline_at_ms?: number | null;
             /**
@@ -2624,6 +2989,28 @@ export interface components {
             /** Task Id */
             task_id?: string | null;
         };
+        /** OpenPythonTest */
+        OpenPythonTest: {
+            /** Args */
+            args: unknown[];
+            /** Expected */
+            expected?: unknown;
+            /** Mutates Arg */
+            mutates_arg?: number | null;
+            /** Number */
+            number: number;
+            /** Raises */
+            raises?: string | null;
+        };
+        /** OpenSqlTest */
+        OpenSqlTest: {
+            /** Data Sql */
+            data_sql: string;
+            /** Expected Rows */
+            expected_rows: unknown[][];
+            /** Number */
+            number: number;
+        };
         /** @enum {string} */
         Outcome: "correct" | "incorrect" | "partial" | "unclear";
         /** @enum {string} */
@@ -2946,6 +3333,21 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** RunRequest */
+        RunRequest: {
+            /** Args */
+            args?: unknown[] | null;
+            /** Code */
+            code: string;
+        };
+        /** RunResponse */
+        RunResponse: {
+            /** @default ready */
+            build?: components["schemas"]["BuildStatus"];
+            custom?: components["schemas"]["CustomRunView"] | null;
+            /** Tests */
+            tests: components["schemas"]["CodeTestView"][];
+        };
         /** SaveTopicNotesRequest */
         SaveTopicNotesRequest: {
             /** Content */
@@ -3013,6 +3415,14 @@ export interface components {
         SearchHits: {
             /** Hits */
             hits: components["schemas"]["SearchHitView"][];
+        };
+        /**
+         * SessionDeletedResponse
+         * @description The number of `session.deleted` in the journal.
+         */
+        SessionDeletedResponse: {
+            /** Seq */
+            seq: number;
         };
         /**
          * SessionDetail
@@ -3245,6 +3655,8 @@ export interface components {
              */
             status?: "signed_out";
         };
+        /** @enum {string} */
+        SkillArtifactType: "notes" | "cards" | "cheatsheet";
         /**
          * SkillChange
          * @description `before` is `None` for a skill that did not exist before the session; `after` is `None`
@@ -3276,6 +3688,28 @@ export interface components {
             gap_type?: components["schemas"]["GapType"] | null;
             /** Levels */
             levels: components["schemas"]["LevelCode"][];
+        };
+        /**
+         * SkillProposalElement
+         * @description Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision
+         *     2026-11-24): a draft of a learner skill the learner may edit and save from the browser
+         *     (`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the
+         *     name and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it
+         *     is bound to, or null.
+         */
+        SkillProposalElement: {
+            artifact_type: components["schemas"]["SkillArtifactType"] | null;
+            /** Element Id */
+            element_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "skill_proposal";
+            /** Name */
+            name: string;
+            /** Text */
+            text: string;
         };
         /** SkillView */
         SkillView: {
@@ -3347,6 +3781,25 @@ export interface components {
             state: "thinking" | "tool";
             /** Tool */
             tool?: string | null;
+        };
+        /** SubmitRequest */
+        SubmitRequest: {
+            /** Code */
+            code: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** SubmitResponse */
+        SubmitResponse: {
+            /** Answer Seq */
+            answer_seq: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "correct" | "incorrect" | "partial" | "unclear";
+            /** Tests */
+            tests: components["schemas"]["CodeTestView"][];
         };
         /** SystemTemplate */
         SystemTemplate: {
@@ -3545,9 +3998,15 @@ export interface components {
         };
         /**
          * TopicRequires
-         * @description A derived link between topics (Т-§4.6); weight — the number of skill links.
+         * @description A derived link between topics (Т-§4.6); weight — the number of skill links,
+         *     confidence — max confidence across those links.
          */
         TopicRequires: {
+            /**
+             * Confidence
+             * @default 1
+             */
+            confidence?: number;
             /**
              * From Topic Id
              * Format: uuid
@@ -3645,7 +4104,7 @@ export interface components {
              * Method
              * @enum {string}
              */
-            method: "exact" | "numeric" | "symbolic" | "units" | "model";
+            method: "exact" | "numeric" | "symbolic" | "units" | "model" | "tests";
             /**
              * Outcome
              * @enum {string}
@@ -5303,6 +5762,86 @@ export interface operations {
             };
         };
     };
+    demo_seed_endpoint_v1_domains__domain_id__demo_seed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DemoSeedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoSeedResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_domain_graph_endpoint_v1_domains__domain_id__graph_get: {
         parameters: {
             query?: {
@@ -5817,6 +6356,82 @@ export interface operations {
             };
             /** @description VALIDATION_ERROR */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_hub_endpoint_v1_hubs__hub_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hub_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Edited"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7315,6 +7930,82 @@ export interface operations {
             };
         };
     };
+    delete_session_v1_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDeletedResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     post_action_v1_sessions__session_id__actions_post: {
         parameters: {
             query?: never;
@@ -7786,6 +8477,147 @@ export interface operations {
             };
         };
     };
+    submit_v1_sessions__session_id__tasks__task_id__code_submit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmitResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_element_code_task_v1_sessions__session_id__turns__turn_seq__elements__element_id__code_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                turn_seq: number;
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodeTaskView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     upload_voice_v1_sessions__session_id__voice_post: {
         parameters: {
             query?: never;
@@ -7886,6 +8718,206 @@ export interface operations {
             };
             /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_code_task_v1_tasks__task_id__code_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodeTaskView"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_draft_v1_tasks__task_id__code_draft_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftSaved"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    run_code_v1_tasks__task_id__code_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResponse"];
+                };
+            };
+            /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description NOT_FOUND: the resource does not exist or belongs to another learner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_CONFLICT or TURN_LOCKED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description VALIDATION_ERROR */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description RATE_LIMITED; details.retry_after_sec */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

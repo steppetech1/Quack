@@ -108,6 +108,7 @@ def test_extractor_v3_output_schema_has_no_weights() -> None:
     assert _open_strings(schema, defs) == {
         "elements.skill",
         "elements.new_skill.name",
+        "elements.new_skill.reason",
         "elements.misconception",
         "elements.new_misconception",
         "elements.root_cause.skill",

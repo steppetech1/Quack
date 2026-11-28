@@ -32,7 +32,7 @@ export function StateDot({ state, className }: { state: Topic["state"]; classNam
 }
 
 /** Содержимое карточки темы: одна строка, состояние, заблуждение, четыре действия */
-export function TopicCardBody({ topic, hubLabel }: { topic: Topic; hubLabel?: string }) {
+export function TopicCardBody({ topic, hubLabel, onOpen }: { topic: Topic; hubLabel?: string; /** The card stands in a pane beside a session: the title shows the notes there, and there are no actions that would leave the session */ onOpen?: () => void }) {
   const t = useT();
   const soon = useSoon();
   const { domain } = useShell();
@@ -46,7 +46,19 @@ export function TopicCardBody({ topic, hubLabel }: { topic: Topic; hubLabel?: st
     <>
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="display-caps text-[1.0625rem]">
-          <Link href={`/topic/${topic.id}`} className="text-paper underline decoration-seam decoration-1 underline-offset-4 hover:decoration-rule">
+          <Link
+            href={`/topic/${topic.id}`}
+            onClick={
+              onOpen
+                ? (e) => {
+                    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                    e.preventDefault();
+                    onOpen();
+                  }
+                : undefined
+            }
+            className="text-paper underline decoration-seam decoration-1 underline-offset-4 hover:decoration-rule"
+          >
             {topic.title}
           </Link>
         </h3>
@@ -60,7 +72,7 @@ export function TopicCardBody({ topic, hubLabel }: { topic: Topic; hubLabel?: st
       {topic.misconception && (
         <p className="mt-1.5 text-small text-st-confused">{topic.misconception}</p>
       )}
-      <div className="mt-3.5 grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
+      {!onOpen && <div className="mt-3.5 grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
         {actions.map((a) =>
           a === t.topicCard.practice ? (
             <Link
@@ -86,7 +98,7 @@ export function TopicCardBody({ topic, hubLabel }: { topic: Topic; hubLabel?: st
           </button>
           ),
         )}
-      </div>
+      </div>}
     </>
   );
 }

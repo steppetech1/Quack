@@ -198,7 +198,8 @@
           "proof",
           "free_text",
           "drawing",
-          "short_text"
+          "short_text",
+          "code"
         ],
         "type": "string"
       },
@@ -449,6 +450,15 @@
         ],
         "title": "Body_verify_link_submit_auth_link_verify_post",
         "type": "object"
+      },
+      "BuildStatus": {
+        "enum": [
+          "none",
+          "pending",
+          "ready",
+          "failed"
+        ],
+        "type": "string"
       },
       "CanvasList": {
         "properties": {
@@ -890,6 +900,509 @@
         "title": "ClientParams",
         "type": "object"
       },
+      "CodeDraft": {
+        "additionalProperties": false,
+        "description": "The learner's current code and the statuses of its last run (`number: status`).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "statuses": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Statuses",
+            "type": "object"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "CodeDraft",
+        "type": "object"
+      },
+      "CodeMode": {
+        "enum": [
+          "inline_patch",
+          "full_problem"
+        ],
+        "type": "string"
+      },
+      "CodeRunErrorView": {
+        "properties": {
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "message"
+        ],
+        "title": "CodeRunErrorView",
+        "type": "object"
+      },
+      "CodeSandboxElement": {
+        "additionalProperties": false,
+        "description": "Песочница для кода (teacher@5, owner decision 2026-11-26): a code task the teacher writes\nin the turn; the editor opens at once. Its markup is in `p3_markup.tasks` (answer type\n`code`), as for any task element.\n\n- `mode`: `inline_patch` — complete a `TODO` or fix a bug, checked on the sample and by the\n  teacher's review; `full_problem` — a whole block: hidden tests are built in the background.\n- `statement` — the statement (Markdown) the editor shows; `starter_code` — the code the\n  learner starts from.\n- Python: `entry_point` — the function the tests call; `sample_args_json` — a JSON array of\n  its arguments; `sample_expected_json` — the JSON of what it must return.\n- SQL: `sql_preset` — a ready database (`shop`, `university`), no `CREATE TABLE`;\n  `sample_expected_json` — the JSON array of the rows the query must give; `entry_point` and\n  `sample_args_json` are null. Column names are not compared.\n- `compare`: `exact` (for SQL — the order of rows counts), `unordered` (order does not count),\n  `float_approx` (numbers within `epsilon`; null — the default tolerance).",
+        "properties": {
+          "compare": {
+            "enum": [
+              "exact",
+              "unordered",
+              "float_approx"
+            ],
+            "title": "Compare",
+            "type": "string"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "entry_point": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Point"
+          },
+          "epsilon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epsilon"
+          },
+          "kind": {
+            "const": "code_sandbox",
+            "title": "Kind",
+            "type": "string"
+          },
+          "language": {
+            "enum": [
+              "python",
+              "sql"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "inline_patch",
+              "full_problem"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "sample_args_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Args Json"
+          },
+          "sample_expected_json": {
+            "title": "Sample Expected Json",
+            "type": "string"
+          },
+          "sql_preset": {
+            "anyOf": [
+              {
+                "enum": [
+                  "shop",
+                  "university"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sql Preset"
+          },
+          "starter_code": {
+            "title": "Starter Code",
+            "type": "string"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "mode",
+          "language",
+          "statement",
+          "starter_code",
+          "entry_point",
+          "sql_preset",
+          "sample_args_json",
+          "sample_expected_json",
+          "compare",
+          "epsilon"
+        ],
+        "title": "CodeSandboxElement",
+        "type": "object"
+      },
+      "CodeTaskElement": {
+        "additionalProperties": false,
+        "description": "Задача с кодом (Т-§6.10): a ready code task of the label table (`K…`, from a\n`task_generation` request with a language), shown as it is; the learner solves it in the\ncode editor and its tests check it. The teacher writes no task markup for it.",
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "code_task",
+            "title": "Kind",
+            "type": "string"
+          },
+          "task": {
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "task"
+        ],
+        "title": "CodeTaskElement",
+        "type": "object"
+      },
+      "CodeTaskView": {
+        "description": "The editor of a `code` task. Hidden tests: their count only.",
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/BuildStatus"
+          },
+          "condition": {
+            "title": "Condition",
+            "type": "string"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "function": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Function"
+          },
+          "hidden_tests": {
+            "title": "Hidden Tests",
+            "type": "integer"
+          },
+          "language": {
+            "enum": [
+              "python",
+              "sql"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CodeMode"
+          },
+          "open_python_tests": {
+            "items": {
+              "$ref": "#/components/schemas/OpenPythonTest"
+            },
+            "title": "Open Python Tests",
+            "type": "array"
+          },
+          "open_sql_tests": {
+            "items": {
+              "$ref": "#/components/schemas/OpenSqlTest"
+            },
+            "title": "Open Sql Tests",
+            "type": "array"
+          },
+          "ordered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ordered"
+          },
+          "schema_sql": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Sql"
+          },
+          "sql_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sql Preset"
+          },
+          "starter_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starter Code"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "condition",
+          "language",
+          "function",
+          "starter_code",
+          "schema_sql",
+          "ordered",
+          "open_python_tests",
+          "open_sql_tests",
+          "hidden_tests",
+          "mode",
+          "build"
+        ],
+        "title": "CodeTaskView",
+        "type": "object"
+      },
+      "CodeTestStatus": {
+        "enum": [
+          "passed",
+          "wrong",
+          "error",
+          "timeout",
+          "memory",
+          "output_limit",
+          "no_function",
+          "unsupported_value",
+          "row_limit",
+          "not_run"
+        ],
+        "type": "string"
+      },
+      "CodeTestView": {
+        "description": "One test as the learner sees it. Every field after `status` is `None` for a hidden test.",
+        "properties": {
+          "actual": {
+            "title": "Actual"
+          },
+          "actual_rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {},
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Rows"
+          },
+          "args": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Args"
+          },
+          "called": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Called"
+          },
+          "columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Columns"
+          },
+          "data_sql": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Sql"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeRunErrorView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected": {
+            "title": "Expected"
+          },
+          "expected_rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {},
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Rows"
+          },
+          "hidden": {
+            "title": "Hidden",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CodeTestStatus"
+          },
+          "stderr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stderr"
+          },
+          "stdout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdout"
+          },
+          "time_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Ms"
+          }
+        },
+        "required": [
+          "number",
+          "hidden",
+          "status"
+        ],
+        "title": "CodeTestView",
+        "type": "object"
+      },
       "Confidence": {
         "maximum": 4.0,
         "minimum": 1.0,
@@ -1064,6 +1577,18 @@
       },
       "CreateDomainRequest": {
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "idempotency_key": {
             "maxLength": 200,
             "minLength": 1,
@@ -1086,6 +1611,17 @@
       },
       "CreateDomainResponse": {
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "domain_id": {
             "format": "uuid",
             "title": "Domain Id",
@@ -1142,6 +1678,58 @@
         "title": "CreateHub",
         "type": "object"
       },
+      "CustomRunView": {
+        "description": "«Запустить свой ввод»: the function on the learner's own arguments, nothing compared.",
+        "properties": {
+          "called": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Called"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeRunErrorView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/CodeTestStatus"
+          },
+          "stderr": {
+            "default": "",
+            "title": "Stderr",
+            "type": "string"
+          },
+          "stdout": {
+            "default": "",
+            "title": "Stdout",
+            "type": "string"
+          },
+          "time_ms": {
+            "default": 0,
+            "title": "Time Ms",
+            "type": "integer"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "CustomRunView",
+        "type": "object"
+      },
       "DeletionResponse": {
         "description": "The id of the deletion and the term the copies still live (Д-§8.6).",
         "properties": {
@@ -1160,6 +1748,61 @@
           "copies_days"
         ],
         "title": "DeletionResponse",
+        "type": "object"
+      },
+      "DemoSeedRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "idempotency_key"
+        ],
+        "title": "DemoSeedRequest",
+        "type": "object"
+      },
+      "DemoSeedResponse": {
+        "properties": {
+          "domain_id": {
+            "format": "uuid",
+            "title": "Domain Id",
+            "type": "string"
+          },
+          "requires": {
+            "title": "Requires",
+            "type": "integer"
+          },
+          "skills": {
+            "title": "Skills",
+            "type": "integer"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "domain_id",
+          "topics",
+          "skills",
+          "requires"
+        ],
+        "title": "DemoSeedResponse",
         "type": "object"
       },
       "DisplayState": {
@@ -1322,6 +1965,17 @@
       "DomainSummary": {
         "description": "A domain of the learner, from its `domain.created` (ТЗ Ф4 §6.1).",
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1348,6 +2002,31 @@
           "created_at"
         ],
         "title": "DomainSummary",
+        "type": "object"
+      },
+      "DraftRequest": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "DraftRequest",
+        "type": "object"
+      },
+      "DraftSaved": {
+        "description": "The draft is kept (every route answers with a model, WP8.7).",
+        "properties": {
+          "saved": {
+            "default": true,
+            "title": "Saved",
+            "type": "boolean"
+          }
+        },
+        "title": "DraftSaved",
         "type": "object"
       },
       "EditHub": {
@@ -1402,6 +2081,8 @@
           "mapping": {
             "card_series": "#/components/schemas/CardSeriesElement",
             "choice": "#/components/schemas/ChoiceElement",
+            "code_sandbox": "#/components/schemas/CodeSandboxElement",
+            "code_task": "#/components/schemas/CodeTaskElement",
             "free_answer": "#/components/schemas/FreeAnswerElement",
             "material_link": "#/components/schemas/MaterialLinkElement",
             "pair": "#/components/schemas/PairElement",
@@ -1409,6 +2090,7 @@
             "reference_card": "#/components/schemas/ReferenceCardElement",
             "scaffold": "#/components/schemas/ScaffoldElement",
             "short_answer": "#/components/schemas/ShortAnswerElement",
+            "skill_proposal": "#/components/schemas/SkillProposalElement",
             "task": "#/components/schemas/TaskElement",
             "timed_quiz": "#/components/schemas/TimedQuizElement",
             "visualization": "#/components/schemas/VisualizationElement",
@@ -1455,6 +2137,15 @@
           },
           {
             "$ref": "#/components/schemas/ReferenceCardElement"
+          },
+          {
+            "$ref": "#/components/schemas/CodeTaskElement"
+          },
+          {
+            "$ref": "#/components/schemas/CodeSandboxElement"
+          },
+          {
+            "$ref": "#/components/schemas/SkillProposalElement"
           }
         ]
       },
@@ -2180,6 +2871,17 @@
         "properties": {
           "control_type": {
             "$ref": "#/components/schemas/ControlType"
+          },
+          "created_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created Seq"
           },
           "deadline_at_ms": {
             "anyOf": [
@@ -3267,6 +3969,77 @@
         "title": "OpenCanvas",
         "type": "object"
       },
+      "OpenPythonTest": {
+        "properties": {
+          "args": {
+            "items": {},
+            "title": "Args",
+            "type": "array"
+          },
+          "expected": {
+            "title": "Expected"
+          },
+          "mutates_arg": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mutates Arg"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "raises": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raises"
+          }
+        },
+        "required": [
+          "number",
+          "args"
+        ],
+        "title": "OpenPythonTest",
+        "type": "object"
+      },
+      "OpenSqlTest": {
+        "properties": {
+          "data_sql": {
+            "title": "Data Sql",
+            "type": "string"
+          },
+          "expected_rows": {
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "title": "Expected Rows",
+            "type": "array"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number",
+          "data_sql",
+          "expected_rows"
+        ],
+        "title": "OpenSqlTest",
+        "type": "object"
+      },
       "Outcome": {
         "enum": [
           "correct",
@@ -3911,6 +4684,62 @@
         "title": "ReviewResponse",
         "type": "object"
       },
+      "RunRequest": {
+        "properties": {
+          "args": {
+            "anyOf": [
+              {
+                "items": {},
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Args"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "RunRequest",
+        "type": "object"
+      },
+      "RunResponse": {
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/BuildStatus",
+            "default": "ready"
+          },
+          "custom": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CustomRunView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tests": {
+            "items": {
+              "$ref": "#/components/schemas/CodeTestView"
+            },
+            "title": "Tests",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tests"
+        ],
+        "title": "RunResponse",
+        "type": "object"
+      },
       "SaveTopicNotesRequest": {
         "additionalProperties": false,
         "properties": {
@@ -4070,6 +4899,20 @@
           "hits"
         ],
         "title": "SearchHits",
+        "type": "object"
+      },
+      "SessionDeletedResponse": {
+        "description": "The number of `session.deleted` in the journal.",
+        "properties": {
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "SessionDeletedResponse",
         "type": "object"
       },
       "SessionDetail": {
@@ -4721,6 +5564,14 @@
         "title": "SignedOut",
         "type": "object"
       },
+      "SkillArtifactType": {
+        "enum": [
+          "notes",
+          "cards",
+          "cheatsheet"
+        ],
+        "type": "string"
+      },
       "SkillChange": {
         "additionalProperties": false,
         "description": "`before` is `None` for a skill that did not exist before the session; `after` is `None`\nwhen the skill is no longer read under this id (merged away).",
@@ -4805,6 +5656,48 @@
           "levels"
         ],
         "title": "SkillCodes",
+        "type": "object"
+      },
+      "SkillProposalElement": {
+        "additionalProperties": false,
+        "description": "Предложение скилла, only in a service turn of the built-in `/skill-creator` (owner decision\n2026-11-24): a draft of a learner skill the learner may edit and save from the browser\n(`POST /v1/learner-skills`). The model never writes the skill store (law 2); code settles the\nname and the text (`session.service_turns.settle_proposal`). `artifact_type` — the artifact it\nis bound to, or null.",
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillArtifactType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "skill_proposal",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "kind",
+          "name",
+          "text",
+          "artifact_type"
+        ],
+        "title": "SkillProposalElement",
         "type": "object"
       },
       "SkillView": {
@@ -4956,6 +5849,58 @@
           "state"
         ],
         "title": "StatusFrame",
+        "type": "object"
+      },
+      "SubmitRequest": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "idempotency_key"
+        ],
+        "title": "SubmitRequest",
+        "type": "object"
+      },
+      "SubmitResponse": {
+        "properties": {
+          "answer_seq": {
+            "title": "Answer Seq",
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": [
+              "correct",
+              "incorrect",
+              "partial",
+              "unclear"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "tests": {
+            "items": {
+              "$ref": "#/components/schemas/CodeTestView"
+            },
+            "title": "Tests",
+            "type": "array"
+          }
+        },
+        "required": [
+          "answer_seq",
+          "outcome",
+          "tests"
+        ],
+        "title": "SubmitResponse",
         "type": "object"
       },
       "SystemTemplate": {
@@ -5340,8 +6285,15 @@
       },
       "TopicRequires": {
         "additionalProperties": false,
-        "description": "A derived link between topics (Т-§4.6); weight — the number of skill links.",
+        "description": "A derived link between topics (Т-§4.6); weight — the number of skill links,\nconfidence — max confidence across those links.",
         "properties": {
+          "confidence": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
           "from_topic_id": {
             "format": "uuid",
             "title": "From Topic Id",
@@ -5526,7 +6478,8 @@
               "numeric",
               "symbolic",
               "units",
-              "model"
+              "model",
+              "tests"
             ],
             "title": "Method",
             "type": "string"
@@ -7730,6 +8683,109 @@
         ]
       }
     },
+    "/v1/domains/{domain_id}/demo-seed": {
+      "post": {
+        "operationId": "demo_seed_endpoint_v1_domains__domain_id__demo_seed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "domain_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Domain Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoSeedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoSeedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Demo Seed Endpoint",
+        "tags": [
+          "domains"
+        ]
+      }
+    },
     "/v1/domains/{domain_id}/graph": {
       "get": {
         "operationId": "get_domain_graph_endpoint_v1_domains__domain_id__graph_get",
@@ -8341,6 +9397,98 @@
       }
     },
     "/v1/hubs/{hub_id}": {
+      "delete": {
+        "description": "The chapter leaves the left panel (`hub.deleted`); the topics stay without a chapter.",
+        "operationId": "delete_hub_endpoint_v1_hubs__hub_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hub_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Hub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Edited"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Delete Hub Endpoint",
+        "tags": [
+          "domains"
+        ]
+      },
       "get": {
         "operationId": "hub_view_endpoint_v1_hubs__hub_id__get",
         "parameters": [
@@ -10190,6 +11338,95 @@
       }
     },
     "/v1/sessions/{session_id}": {
+      "delete": {
+        "description": "The session leaves the left panel and every read: its page, its stream and its actions\nanswer `404` from now on. Its events stay in the journal (the evidence and the model are not\ntouched); a turn in progress finishes. A session of another learner, none, or one deleted\nalready — `404`.",
+        "operationId": "delete_session_v1_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Delete Session"
+      },
       "get": {
         "operationId": "get_session_v1_sessions__session_id__get",
         "parameters": [
@@ -10921,6 +12158,211 @@
         "summary": "Session Summary Route"
       }
     },
+    "/v1/sessions/{session_id}/tasks/{task_id}/code/submit": {
+      "post": {
+        "operationId": "submit_v1_sessions__session_id__tasks__task_id__code_submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Submit",
+        "tags": [
+          "code"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/turns/{turn_seq}/elements/{element_id}/code": {
+      "get": {
+        "description": "The code task behind an element of a teacher turn: elements carry no task id, so the\nclient asks here whether to open the editor; 404 — no task, or not a code task.",
+        "operationId": "get_element_code_task_v1_sessions__session_id__turns__turn_seq__elements__element_id__code_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_seq",
+            "required": true,
+            "schema": {
+              "title": "Turn Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "title": "Element Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeTaskView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Get Element Code Task",
+        "tags": [
+          "code"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/voice": {
       "post": {
         "description": "WP21.6: one segment of speech (WAV) with its start and end by the device clock; the\naudio is not stored (П-14.1). The companion has no voice (T-CP1: 403). A session of another\nlearner is 404; compressed audio is 415; the same segment again gives the same answer.\nLarger than `upload_max_mb` is 413 before the body is read (Т-§19.8, as photos).",
@@ -11064,6 +12506,266 @@
         "summary": "Get System Templates",
         "tags": [
           "artifacts"
+        ]
+      }
+    },
+    "/v1/tasks/{task_id}/code": {
+      "get": {
+        "operationId": "get_code_task_v1_tasks__task_id__code_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeTaskView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Get Code Task",
+        "tags": [
+          "code"
+        ]
+      }
+    },
+    "/v1/tasks/{task_id}/code/draft": {
+      "put": {
+        "description": "The learner's current code (the statuses of the last run are kept); writes no event.",
+        "operationId": "save_draft_v1_tasks__task_id__code_draft_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftSaved"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Save Draft",
+        "tags": [
+          "code"
+        ]
+      }
+    },
+    "/v1/tasks/{task_id}/code/run": {
+      "post": {
+        "operationId": "run_code_v1_tasks__task_id__code_run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "UNAUTHENTICATED: no session, or it expired or was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "NOT_FOUND: the resource does not exist or belongs to another learner"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "IDEMPOTENCY_CONFLICT or TURN_LOCKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "VALIDATION_ERROR"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "RATE_LIMITED; details.retry_after_sec"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "SERVICE_UNAVAILABLE or LLM_DEGRADED: a dependency of the answer is down"
+          }
+        },
+        "summary": "Run Code",
+        "tags": [
+          "code"
         ]
       }
     },

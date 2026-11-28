@@ -11,6 +11,11 @@ services:
   redis:
     networks: [backend, local]
     ports: ["127.0.0.1:6379:6379"]
+  # Migrations come from the working tree like the Python code below, so recreating the database
+  # applies new migrations without rebuilding the backend image.
+  migrate:
+    volumes:
+      - ./backend/db:/app/db:ro
   api:
     ports: ["127.0.0.1:8000:8000"]
     volumes:
@@ -19,6 +24,11 @@ services:
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-quack}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-quack12345}
+      DELETIONS_BUCKET: ${DELETIONS_BUCKET:-quack-deletions}
+      DELETIONS_S3_ENDPOINT: ${DELETIONS_S3_ENDPOINT:-http://minio:9000}
+      DELETIONS_S3_ACCESS_KEY: ${DELETIONS_S3_ACCESS_KEY:-quack}
+      DELETIONS_S3_SECRET_KEY: ${DELETIONS_S3_SECRET_KEY:-quack12345}
+      AUTH_EMAIL_LOG_ONLY: ${AUTH_EMAIL_LOG_ONLY:-false}
       # Signed links (canvas replay, exports, materials) go to the browser: it reaches MinIO at the
       # published port, not at the container name the API itself uses.
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
@@ -27,7 +37,9 @@ services:
       # localhost:3000 got 403 and the board neither saved strokes nor heard the teacher.
       CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
       SESSION_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN:-}"
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
       AUTH_SUCCESS_REDIRECT_URL: "${AUTH_SUCCESS_REDIRECT_URL:-http://localhost:3000/}"
+      AUTH_VERIFY_URL: "${AUTH_VERIFY_URL:-http://localhost:3000/api/auth/link/verify}"
       GOOGLE_OIDC_REDIRECT_URL: "${GOOGLE_OIDC_REDIRECT_URL:-http://localhost:3000/api/auth/google/callback}"
   # compute runs the code of the working tree too (a new endpoint, such as the one that reads a
   # presentation, would not exist in the image until a rebuild).
@@ -47,6 +59,10 @@ services:
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-quack}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-quack12345}
+      DELETIONS_BUCKET: ${DELETIONS_BUCKET:-quack-deletions}
+      DELETIONS_S3_ENDPOINT: ${DELETIONS_S3_ENDPOINT:-http://minio:9000}
+      DELETIONS_S3_ACCESS_KEY: ${DELETIONS_S3_ACCESS_KEY:-quack}
+      DELETIONS_S3_SECRET_KEY: ${DELETIONS_S3_SECRET_KEY:-quack12345}
 
   # Local S3-compatible storage for `s3_bucket_learners` (Д-§8.4, WP19), so canvas strokes and
   # other learner objects actually persist on a local stand instead of only not crashing
@@ -60,7 +76,7 @@ services:
     environment:
       MINIO_ROOT_USER: quack
       MINIO_ROOT_PASSWORD: quack12345
-      MINIO_DEFAULT_BUCKETS: quack-learners
+      MINIO_DEFAULT_BUCKETS: ${S3_BUCKET_LEARNERS:-quack-learners},${DELETIONS_BUCKET:-quack-deletions}
     volumes:
       - minio-data:/bitnami/minio/data
 

@@ -51,3 +51,40 @@ def test_text_of_the_file_cannot_pose_as_the_teachers_own_words() -> None:
     text = render_attached([(_row("e.pdf", "application/pdf", "read"), [(1, evil)])], budget=1000)
     assert f"> {evil}" in text.splitlines()  # quoted, in the data block
     assert not any(line.startswith(evil) for line in text.splitlines())
+
+
+def test_several_long_files_each_get_a_part_within_the_budget() -> None:
+    materials = [
+        (_row(f"f{i}.pdf", "application/pdf", "read"), [(1, "y" * 5000)]) for i in range(5)
+    ]
+    text = render_attached(materials, budget=1000)
+    assert text.count("Page 1:") == 5
+    assert "Only the first 0" not in text
+    quoted = sum(len(line) - 2 for line in text.splitlines() if line.startswith("> "))
+    assert 0 < quoted <= 1000 + 5  # the "…" of each cut page may add a character
+
+
+def test_unreadable_files_take_no_budget_and_a_short_files_rest_goes_on() -> None:
+    materials = [
+        (_row("a.pdf", "application/pdf", "read"), [(1, "s" * 100)]),
+        (_row("broken.pdf", "application/pdf", "failed"), []),
+        (_row("b.pdf", "application/pdf", "read"), [(1, "z" * 5000)]),
+    ]
+    text = render_attached(materials, budget=1000)
+    # a: share 500, uses 100; b gets the other 900, not 500
+    assert text.count("z") == 900
+
+
+def test_the_teacher_is_told_where_the_topic_graph_of_the_file_is() -> None:
+    """The graph of a file's topics is built by the background step of the material, not by the
+    teacher: a file being worked on says so, and a parsed one says its topics are on the graph."""
+    pending = render_attached(
+        [(_row("p.pdf", "application/pdf", "read"), [(1, "Kinematics")])], budget=1000
+    )
+    head = pending.splitlines()[0]
+    assert "still being placed on the learner's topic graph" in head
+    assert "do not call it built or ready" in head and head.endswith("Its text, as data:")
+    done = render_attached(
+        [(_row("p.pdf", "application/pdf", "parsed"), [(1, "Kinematics")])], budget=1000
+    )
+    assert "already on the learner's topic graph" in done.splitlines()[0]

@@ -155,5 +155,5 @@ export function useSkills() {
 
   const toggle = useCallback((id: string) => update((prev) => prev.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x))), [update]);
 
-  return { skills, update, save, remove, migrate, toggle, /** the backend keeps no on/off for a skill */ canToggle: !API_MODE, nameOf: skillName };
+  return { skills, /** the list is read (mocks are always there; the backend list comes after the first request) */ loaded: !API_MODE || remote !== null, update, save, remove, migrate, toggle, /** the backend keeps no on/off for a skill */ canToggle: !API_MODE, nameOf: skillName };
 }

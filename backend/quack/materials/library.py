@@ -34,7 +34,9 @@ _DOMAIN_OF_LEARNER = (
 # canvases: a foreign `session_id` must not reach the event and the parse job.
 _SESSION_OF_LEARNER = (
     "SELECT 1 AS found FROM core.events WHERE learner_id = %(learner_id)s "
-    "AND type = 'session.started' AND payload ->> 'session_id' = %(session_id)s LIMIT 1"
+    "AND type = 'session.started' AND payload ->> 'session_id' = %(session_id)s "
+    "AND NOT EXISTS (SELECT 1 FROM core.events x WHERE x.learner_id = %(learner_id)s "
+    "AND x.type = 'session.deleted' AND x.payload ->> 'session_id' = %(session_id)s) LIMIT 1"
 )
 _INSERT_MATERIAL = (
     "INSERT INTO content.materials "

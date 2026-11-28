@@ -27,6 +27,10 @@ _LATEST_DEADLINE = (
     "WHERE learner_id = %(learner_id)s AND type = 'hub.deadline_set' "
     "AND payload ->> 'hub_id' = %(hub_id)s ORDER BY seq DESC LIMIT 1"
 )
+_HUB_DELETED = (
+    "SELECT 1 AS found FROM core.events WHERE learner_id = %(learner_id)s "
+    "AND type = 'hub.deleted' AND payload ->> 'hub_id' = %(hub_id)s LIMIT 1"
+)
 _AGREED_OR_WRITTEN = (
     "SELECT 1 AS found FROM core.events WHERE learner_id = %(learner_id)s "
     "AND ((type = 'agent.requested' AND payload ->> 'kind' = 'artifact' "
@@ -44,6 +48,8 @@ async def cheatsheet_offer(
     server clock by default."""
     now = int(time.time() * 1000) if now_ms is None else now_ms
     params = {"learner_id": learner_id, "hub_id": str(hub_id)}
+    if await db.fetch_one(_HUB_DELETED, params) is not None:
+        return False
     deadline = await db.fetch_one(_LATEST_DEADLINE, params)
     if deadline is None or deadline["deadline_at_ms"] is None:
         return False

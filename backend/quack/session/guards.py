@@ -43,6 +43,7 @@ from quack.llm.labels import LabelKind, LabelMap, UnknownLabelError
 from quack.practice.check import Verdict
 from quack.session.elements import (
     CardSeriesElement,
+    CodeTaskElement,
     Element,
     MaterialLinkElement,
     VisualizationElement,
@@ -247,6 +248,8 @@ def _element_labels(element: Element) -> list[tuple[LabelKind, str]]:
         return [("request", element.request)]
     if isinstance(element, MaterialLinkElement):
         return [("chunk", element.chunk)]
+    if isinstance(element, CodeTaskElement):
+        return [("task", element.task)]
     return []
 
 

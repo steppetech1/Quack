@@ -10,7 +10,9 @@ import { daysFromToday, localIso } from "@/lib/format";
 import { useFmt, useMocks, useT } from "@/lib/i18n/provider";
 import type { Material, Moment, Topic } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
+import { useFileDrop } from "@/lib/use-file-drop";
 import { useShell } from "./app-shell";
+import { DropOverlay, useDropNote } from "./drop-overlay";
 import { ArtifactHost, type WindowSpec } from "./artifact-window";
 import { CheatCard, CheatSheetContent } from "./artifact-content";
 import { Duck } from "./duck";
@@ -20,7 +22,7 @@ import { ArtifactMarkdown, plainText } from "./live/markdown";
 import { useHubApi } from "./live/use-hub-api";
 import { NumText } from "./num-text";
 import { useStartSession } from "./live/use-start-session";
-import { useSoon } from "./soon";
+import { useNotice, useSoon } from "./soon";
 
 const clean = (s: string) => s.replace(/­/g, "");
 
@@ -76,6 +78,23 @@ export function HubPage({ id }: { id: string }) {
     ? api.materials.map((m) => ({ id: m.material_id, title: m.mime === "application/pdf" ? `PDF${m.pages_count ? ` · ${m.pages_count}` : ""}` : tx.hub.photoMaterial, ref: fullDate(localIso(Date.parse(m.created_at))), kind: "pdf" as const, state: materialState(m.status) }))
     : data?.materials ?? [];
   const fileRef = useRef<HTMLInputElement>(null);
+  // lectures dragged in from the OS go the same road as «Add a lecture», one after another (the picker takes one file at a time)
+  const notice = useNotice();
+  const [materialsEl, setMaterialsEl] = useState<HTMLDivElement | null>(null);
+  const { say, region } = useDropNote();
+  const { dragging } = useFileDrop({
+    zone: materialsEl,
+    enabled: api.real && !api.uploading,
+    onBlocked: () => api.real && notice(tx.hub.addMaterialBusy), // on mocks there is no «Add a lecture» either
+    onFiles: (dropped, rejected) => {
+      if (rejected) notice(tx.live.materialRejected);
+      if (!dropped.length) return;
+      say(tx.composer.dropDone(dropped.length));
+      void (async () => {
+        for (const f of dropped) await api.addMaterial(f);
+      })();
+    },
+  });
 
   // a hard load of /hub/<id>: the chapter list arrives with the graph, so "absent" is only true once that settled
   const loading = !hub && API_MODE && (!ready || (domains.length > 0 && !graphSettled[domain.id]));
@@ -291,6 +310,9 @@ export function HubPage({ id }: { id: string }) {
       </PageSection>
 
       <PageSection id="hub-materials" title={tx.hub.materials}>
+        <div ref={setMaterialsEl} className="relative">
+        {region}
+        <DropOverlay active={dragging} className="rounded-[6px]" />
         <MaterialsList items={materialItems} />
         {api.real && (
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -313,6 +335,7 @@ export function HubPage({ id }: { id: string }) {
             <p className="text-small text-paper-dim">{tx.hub.materialHint}</p>
           </div>
         )}
+        </div>
       </PageSection>
 
       <PageSection id="hub-sessions" title={tx.hub.inSessions}>

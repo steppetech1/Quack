@@ -18,6 +18,7 @@ from quack.jobs.runner import JOB_HANDLERS, JobContext, JobHandler
 from quack.llm.gateway import LLMGateway
 from quack.llm.responses_client import ResponsesClient
 from quack.llm.tracing import create_tracer
+from quack.runner_client.client import create_runner_client
 from quack.storage.deletions import create_deletion_journal
 from quack.storage.objects import create_object_store
 
@@ -67,12 +68,15 @@ async def create_job_context(settings: Settings) -> JobContext:
         storage=create_object_store(settings),
         embeddings=create_embedding_client(settings),
         deletions=create_deletion_journal(settings),
+        runner=create_runner_client(settings),
     )
 
 
 async def close_job_context(context: JobContext) -> None:
     """Close in reverse creation order: deletions, embeddings, storage, compute, llm, redis,
     neo4j, db (§4.2)."""
+    if context.runner is not None:
+        await context.runner.aclose()
     await context.deletions.aclose()
     await context.embeddings.aclose()
     await context.storage.aclose()

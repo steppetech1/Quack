@@ -1,0 +1,23 @@
+-- 05-hubs
+-- captured 2026-11-25T20:33:24Z from the local stand
+                         hub                         |   kind   |              domain_id               
+-----------------------------------------------------+----------+--------------------------------------
+ Seminar 4. Probability                              | material | 72d2e36a-f67e-529f-ba07-c094a99263a9
+ Seminar 4. Probability                              | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 2. Graphs and Measures of Center            | material | 72d2e36a-f67e-529f-ba07-c094a99263a9
+ Seminar 2. Graphs and Measures of Center            | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 7. The Central Limit Theorem                | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 1. Sampling and Data                        | material | 72d2e36a-f67e-529f-ba07-c094a99263a9
+ Seminar 1 Problems                                  | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 5. Discrete Random Variables                | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 6. The Normal Distribution                  | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 3. Shape, Location and Dispersion           | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 6. The Normal Distribution                  | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 3. Shape, Location and Dispersion           | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 4. Probability                              | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Statistics (3 credits) Fall 2026 Seminar 1 Problems | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 2. Graphs and Measures of Center            | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 7. The Central Limit Theorem                | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+ Seminar 5. Discrete Random Variables                | material | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc
+(17 rows)
+

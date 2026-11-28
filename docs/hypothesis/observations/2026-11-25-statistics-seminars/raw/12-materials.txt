@@ -1,0 +1,23 @@
+-- 12-materials
+-- captured 2026-11-25T20:38:33Z from the local stand
+            title            |              domain_id               |      mime       | pages_count | status |          created_at           
+-----------------------------+--------------------------------------+-----------------+-------------+--------+-------------------------------
+ Seminar_04_Problems (2).pdf | 72d2e36a-f67e-529f-ba07-c094a99263a9 | application/pdf |           3 | parsed | 2026-11-24 20:03:29.715982+00
+ Seminar_01_Problems (2).pdf | 72d2e36a-f67e-529f-ba07-c094a99263a9 | application/pdf |           3 | parsed | 2026-11-24 20:03:31.080034+00
+ Seminar_02_Problems (2).pdf | 72d2e36a-f67e-529f-ba07-c094a99263a9 | application/pdf |           3 | parsed | 2026-11-24 20:03:32.740402+00
+ Seminar_04_Problems (2).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-24 20:18:52.338155+00
+ Seminar_01_Problems (2).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-24 20:18:53.431025+00
+ Seminar_02_Problems (2).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-24 20:18:54.601641+00
+ Seminar_07_Problems (1).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-24 20:18:58.171845+00
+ Seminar_05_Problems (1).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-24 20:19:01.114342+00
+ Seminar_06_Problems (1).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-24 20:19:03.626818+00
+ Seminar_03_Problems (3).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-24 20:19:05.565887+00
+ Seminar_06_Problems (1).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-25 18:05:36.752913+00
+ Seminar_03_Problems (3).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-25 18:05:36.779934+00
+ Seminar_04_Problems (2).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-25 18:05:36.801866+00
+ Seminar_01_Problems (2).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-25 18:05:36.820954+00
+ Seminar_02_Problems (2).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-25 18:05:36.842923+00
+ Seminar_07_Problems (1).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-25 18:05:36.862488+00
+ Seminar_05_Problems (1).pdf | 8c604bb9-7c1c-5cbc-8a45-95d388ae97fc | application/pdf |           3 | parsed | 2026-11-25 18:05:36.880199+00
+(17 rows)
+

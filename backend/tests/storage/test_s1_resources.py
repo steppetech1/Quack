@@ -56,6 +56,8 @@ def test_app_resources_fields() -> None:
         "embeddings",
         "email",
         "deletions",
+        # Т-§6.10: the learner-code sandbox.
+        "runner",
     }
 
 

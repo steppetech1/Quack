@@ -47,7 +47,9 @@ _ANSWERS = (
 )
 _SELECTED = (
     "learner_id = %(learner_id)s AND ("
-    "payload->>'topic_id' = %(topic)s "
+    # a task is the topic's by its markup (`tasks`), not by the topic it was made for: its
+    # `task.created` goes only with the rest of the task (its row, its answers)
+    "(payload->>'topic_id' = %(topic)s AND type <> 'task.created') "
     "OR (type IN ('topic.merged', 'topic.split') AND (payload->>'from_id' = %(topic)s "
     "OR payload->>'into_id' = %(topic)s)) "
     "OR (payload->>'skill_id' = ANY(%(skills)s) AND type <> 'answer.submitted') "

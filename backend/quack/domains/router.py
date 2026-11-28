@@ -18,7 +18,15 @@ from quack.api.auth import get_current_learner_id
 from quack.api.errors import ApiError
 from quack.api.ratelimit import enforce_action_rate_limit
 from quack.api.resources import get_llm, get_resources
-from quack.domains import disputes, graph_reads, graph_view, learner, service, topic_edits
+from quack.domains import (
+    demo_seed,
+    disputes,
+    graph_reads,
+    graph_view,
+    learner,
+    service,
+    topic_edits,
+)
 from quack.domains.schemas import (
     CreateDomainRequest,
     CreateDomainResponse,
@@ -83,6 +91,22 @@ async def classify_domain_endpoint(
     return await domain_classify.classify_domain(
         resources.db, llm, resources.settings, learner_id=learner_id, request=req
     )
+
+
+# DEMO-ONLY: a map from the learner's own words when no material is uploaded (domains/demo_seed.py).
+@_protected.post(
+    "/domains/{domain_id}/demo-seed", response_model=demo_seed.DemoSeedResponse, status_code=201
+)
+async def demo_seed_endpoint(
+    domain_id: UUID, req: demo_seed.DemoSeedRequest, request: Request, learner_id: CurrentLearnerId
+) -> demo_seed.DemoSeedResponse:
+    r = get_resources(request)
+    seeded = await demo_seed.seed_domain(
+        r.db, r.redis, learner_id, domain_id, req, r.settings.demo_seed_max_topics
+    )
+    if seeded is None:
+        raise _not_yours()
+    return seeded
 
 
 @_protected.get("/domains", response_model=DomainListResponse, status_code=200)
@@ -211,6 +235,15 @@ async def edit_hub_endpoint(
     """WP6.3, ТЗ §6.4 «Хабы»: the learner corrects the scope and the date (Т-§4.8)."""
     r = get_resources(request)
     return _edited(await topic_edits.edit_hub(r.db, r.neo4j, r.redis, learner_id, hub_id, req))
+
+
+@_protected.delete("/hubs/{hub_id}", response_model=topic_edits.Edited, status_code=202)
+async def delete_hub_endpoint(
+    hub_id: UUID, request: Request, learner_id: CurrentLearnerId
+) -> topic_edits.Edited:
+    """The chapter leaves the left panel (`hub.deleted`); the topics stay without a chapter."""
+    r = get_resources(request)
+    return _edited(await topic_edits.delete_hub(r.db, r.neo4j, r.redis, learner_id, hub_id))
 
 
 # --- ТЗ Ф4 WP6.5: reads of topics and hubs (codes, not text; Т-§22.2) ---

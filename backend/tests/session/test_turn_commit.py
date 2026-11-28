@@ -251,7 +251,9 @@ async def test_turn_atomic_and_manifest(pg_db: Db) -> None:
     )
     assert [(v["type"], v["schema_version"]) for v in versions] == [("turn.committed", 2)]
     [task] = turn["markup"]["tasks"]
-    assert task["tests"] == [{"skill_id": str(SKILL), "new_skill": None, "level": 3}]
+    assert task["tests"] == [
+        {"skill_id": str(SKILL), "new_skill": None, "level": 3, "context": None}
+    ]
     assert events[0]["payload"]["task_id"] == task["task_id"]
     assert events[0]["payload"]["source"] == "teacher"
     assert await get_task(pg_db, learner_id=learner_id, task_id=UUID(task["task_id"]))
@@ -338,6 +340,19 @@ async def test_unknown_label_writes_nothing(pg_db: Db) -> None:
 
     assert await _events(pg_db, learner_id) == []
     assert await _manifests(pg_db, learner_id) == []
+
+
+def test_skill_label_beyond_the_table_is_dropped_not_fatal() -> None:
+    """A subject without skills: the guard's retries ran out on a label the table lacks, the
+    shown turn is still committed, without that skill."""
+    output = _bare(exposures=[{"skill": "H1", "kind": "explained", "approach": "none"}])
+    head = output.p1_head.model_copy(update={"target_skills": ["H1", "S1"]})
+
+    batch = _batch(uuid4(), output.model_copy(update={"p1_head": head}))
+
+    committed = batch.events[0].payload
+    assert committed.head.target_skill_ids == [SKILL]
+    assert committed.markup.exposures == []
 
 
 def test_turn_without_side_effects_is_one_event() -> None:
@@ -949,3 +964,162 @@ async def test_timings_ride_in_the_turn_and_an_old_event_reads_without_them(pg_d
     assert committed["payload"]["timings"] == {"admit_ms": 3, "ttft_ms": 900, "total_ms": 4000}
     old = {k: v for k, v in committed["payload"].items() if k != "timings"}
     assert TurnCommitted.model_validate(old).timings == {}
+
+
+def test_focus_topic_id_priority_rules() -> None:
+    """Hot-path `focus_topic_id` follows the 4 deterministic rules:
+    1) latest non-null `message.sent.topic_id`
+    2) else `session.started.topic_id`
+    3) else topic of latest existing skill marked in session turns (prior or current)
+    4) else `None` (and service turns always yield `None`).
+    """
+    from datetime import UTC, datetime
+
+    from quack.events.event_types import TaskCreated
+    from quack.events.log import StoredEvent
+    from quack.session.turn_commit import focus_inputs_from_events, resolve_focus_topic_id
+
+    t_msg1, t_msg2, t_start, t_turn1, t_turn2 = uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    s1, s2 = uuid4(), uuid4()
+    learner_id, session_id = uuid4(), uuid4()
+    skill_topics = {s1: t_turn1, s2: t_turn2}
+
+    def ev(seq: int, etype: str, payload: dict[str, Any]) -> StoredEvent:
+        now = datetime(2026, 11, 25, 12, 0, tzinfo=UTC)
+        return StoredEvent(
+            id=seq,
+            seq=seq,
+            learner_id=learner_id,
+            domain_id=DOMAIN,
+            session_id=session_id,
+            causation_seq=None,
+            correlation_id=None,
+            type=etype,
+            payload=payload,
+            actor="learner",
+            idempotency_key=f"k:{seq}",
+            schema_version=1,
+            payload_hash="h",
+            occurred_at=now,
+            source_refs=[],
+        )
+
+    def started_payload(topic: UUID | None) -> dict[str, Any]:
+        return {
+            "session_id": str(session_id),
+            "domain_id": str(DOMAIN),
+            "intent": "learn",
+            "topic_id": str(topic) if topic else None,
+        }
+
+    # Rule 1: latest non-null message.sent overrides session.started and turn skills
+    events_r1 = [
+        ev(1, "session.started", started_payload(t_start)),
+        ev(2, "message.sent", {"text": "first", "topic_id": str(t_msg1)}),
+        ev(3, "message.sent", {"text": "switch", "topic_id": str(t_msg2)}),
+        ev(4, "message.sent", {"text": "follow up", "topic_id": None}),
+    ]
+    msg_t, start_t, turn_skills = focus_inputs_from_events(events_r1)
+    assert (msg_t, start_t, turn_skills) == (t_msg2, t_start, [])
+    assert (
+        resolve_focus_topic_id(
+            message_topic_id=msg_t,
+            session_topic_id=start_t,
+            turn_skill_ids=[s1],
+            skill_topics=skill_topics,
+        )
+        == t_msg2
+    )
+
+    # Rule 2: no message.sent topic -> falls back to session.started.topic_id
+    events_r2 = [
+        ev(1, "session.started", started_payload(t_start)),
+        ev(2, "message.sent", {"text": "hi"}),
+    ]
+    msg_t, start_t, turn_skills = focus_inputs_from_events(events_r2)
+    assert (
+        resolve_focus_topic_id(
+            message_topic_id=msg_t,
+            session_topic_id=start_t,
+            turn_skill_ids=[s1],
+            skill_topics=skill_topics,
+        )
+        == t_start
+    )
+
+    # Rule 3: neither message nor session topic -> latest existing skill marked in turns
+    prior_turn_payload = {
+        "head": {"target_skill_ids": [str(s1)]},
+        "markup": {"exposures": [], "tasks": []},
+        "service": None,
+    }
+    second_turn_payload = {
+        "head": {"target_skill_ids": [str(s2)]},
+        "markup": {"exposures": [], "tasks": []},
+        "service": None,
+    }
+    events_r3 = [
+        ev(1, "session.started", started_payload(None)),
+        ev(2, "message.sent", {"text": "hi"}),
+        ev(3, "turn.committed", prior_turn_payload),
+        ev(4, "turn.committed", second_turn_payload),
+    ]
+    msg_t, start_t, turn_skills = focus_inputs_from_events(events_r3)
+    assert (msg_t, start_t, turn_skills) == (None, None, [s1, s2])
+    assert (
+        resolve_focus_topic_id(
+            message_topic_id=msg_t,
+            session_topic_id=start_t,
+            turn_skill_ids=turn_skills,
+            skill_topics=skill_topics,
+        )
+        == t_turn2
+    )
+
+    # Rule 4: none available -> None
+    assert (
+        resolve_focus_topic_id(
+            message_topic_id=None,
+            session_topic_id=None,
+            turn_skill_ids=[uuid4()],
+            skill_topics=skill_topics,
+        )
+        is None
+    )
+
+    # End-to-end through turn_batch: focus_topic_id lands on TurnCommitted AND TaskCreated
+    labels = _labels()
+    batch = turn_batch(
+        _turn(),
+        labels,
+        manifest=_manifest(learner_id, session_id, labels),
+        action_seq=1,
+        domain_id=DOMAIN,
+        settings=SETTINGS,
+        learner_texts=LEARNER,
+        message_topic_id=None,
+        session_topic_id=None,
+        prior_turn_skill_ids=[],
+        skill_topics={SKILL: t_turn1},
+    )
+    tc_events = [e for e in batch.events if e.type == "task.created"]
+    turn_events = [e for e in batch.events if e.type == "turn.committed"]
+    assert len(tc_events) == 1 and isinstance(tc_events[0].payload, TaskCreated)
+    assert tc_events[0].payload.topic_id == t_turn1
+    assert len(turn_events) == 1 and isinstance(turn_events[0].payload, TurnCommitted)
+    assert turn_events[0].payload.focus_topic_id == t_turn1
+
+    # Service turn clears focus_topic_id to None
+    service_batch = turn_batch(
+        _turn(),
+        labels,
+        manifest=_manifest(learner_id, session_id, labels),
+        action_seq=1,
+        domain_id=DOMAIN,
+        settings=SETTINGS,
+        service="skill_creator",
+        message_topic_id=t_msg1,
+    )
+    [svc_turn] = [e for e in service_batch.events if e.type == "turn.committed"]
+    assert isinstance(svc_turn.payload, TurnCommitted)
+    assert svc_turn.payload.focus_topic_id is None

@@ -25,6 +25,7 @@ from quack.events.event_types import (
     EmbeddingReady,
     HubCreated,
     HubDeadlineSet,
+    HubDeleted,
     HubTopicsChanged,
     KnownClaimed,
     MaterialParsed,
@@ -36,6 +37,7 @@ from quack.events.event_types import (
     PreferenceSet,
     SessionEnded,
     SkillCreated,
+    SkillDeleted,
     SkillPlaced,
     SkillSplit,
     TaskClosed,
@@ -134,6 +136,7 @@ def _domain_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
                 "controlType": "no_goal",
                 "deadlineAtMs": 0,
                 "status": "active",
+                "createdSeq": event.seq,
             },
         ),
         MergeRel("Domain", domain, "HAS_HUB", "Hub", hub, {}),
@@ -165,9 +168,16 @@ def _topic_new(event: StoredEvent, view: SliceView) -> list[Mutation]:
     if live is not None:
         if live != topic or event.type == "topic.proposed":
             return []
+        if p.description is not None:
+            props["description"] = p.description
         return [SetProps("Topic", live, props)]
     learner = str(event.learner_id)
-    base: Props = {"learnerId": learner, "domainId": domain, "knownClaimedAtMs": 0}
+    base: Props = {
+        "learnerId": learner,
+        "domainId": domain,
+        "knownClaimedAtMs": 0,
+        "description": p.description or "",
+    }
     return [
         MergeNode("Topic", topic, base | props),
         MergeRel("Domain", domain, "HAS_TOPIC", "Topic", topic, {}),
@@ -196,6 +206,7 @@ def _skill_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
     if topic is None:
         return []
     learner, skill = str(event.learner_id), str(p.skill_id)
+    summary = p.definition if p.definition else p.summary
     return [
         MergeNode(
             "Skill",
@@ -204,13 +215,30 @@ def _skill_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
                 "learnerId": learner,
                 "domainId": str(p.domain_id),
                 "name": p.name,
-                "summary": p.summary,
+                "summary": summary,
                 "status": p.status,
                 "origin": p.origin,
+                "core": p.core,
+                "definition": p.definition,
+                "exemplar": p.exemplar,
+                "kind": p.kind or "",
             },
         ),
         MergeRel("Topic", topic, "COVERS", "Skill", skill, {}),
     ]
+
+
+def _skill_deleted_needs(event: StoredEvent) -> Need:
+    return Need(neighbourhoods=frozenset({("Skill", str(event.payload["skill_id"]))}))
+
+
+def _skill_deleted(event: StoredEvent, view: SliceView) -> list[Mutation]:
+    """Deletes a non-core skill from the graph; a core skill cannot be deleted independently."""
+    skill = view.resolve("Skill", str(_payload(event, SkillDeleted).skill_id))
+    node = None if skill is None else view.node("Skill", skill)
+    if skill is None or node is None or node.get("core") is True:
+        return []
+    return [DeleteNode("Skill", skill)]
 
 
 def _skill_placed_needs(event: StoredEvent) -> Need:
@@ -238,6 +266,7 @@ def _skill_placed(event: StoredEvent, view: SliceView) -> list[Mutation]:
 
 
 _EDGE_TYPES = {"requires": "REQUIRES", "same_idea": "SAME_IDEA"}
+_ORIGIN_PRIORITY = {"material": 0, "learner": 1, "model": 2}
 
 
 def _edge_needs(event: StoredEvent) -> Need:
@@ -248,9 +277,9 @@ def _edge_needs(event: StoredEvent) -> Need:
 
 
 def _edge(event: StoredEvent, view: SliceView) -> list[Mutation]:
-    """`REQUIRES {origin, confidence}` or `SAME_IDEA {confidence}` between skills (Т-§4.6). On
-    removal the evidence derived over the relation becomes `superseded` — with the derived
-    evidence of WP4.6."""
+    """`REQUIRES {origin, origins, confidence}` or `SAME_IDEA {confidence}` between skills
+    (Т-§4.6). On removal the evidence derived over the relation becomes `superseded` — with the
+    derived evidence of WP4.6."""
     p = _payload(event, EdgeAdded if event.type == "edge.added" else EdgeRemoved)
     a, b = view.resolve("Skill", str(p.from_id)), view.resolve("Skill", str(p.to_id))
     if a is None or b is None or a == b:
@@ -264,9 +293,23 @@ def _edge(event: StoredEvent, view: SliceView) -> list[Mutation]:
             *(DeleteRel("Skill", x, rel_type, "Skill", y) for x, y in ends),
             *_supersede_derived(event, view, p.kind, a, b),
         ]
-    props: Props = {"confidence": p.confidence}
+    existing = next(
+        (r for r in view.out_rels("Skill", a, rel_type) if r.to_id == b),
+        None,
+    )
+    confidence = max(_num(existing.props.get("confidence")) if existing else 0.0, p.confidence)
+    props: Props = {"confidence": confidence}
     if p.kind == "requires":
-        props["origin"] = p.origin
+        existing_origins: set[str] = set()
+        if existing is not None:
+            raw_origins = existing.props.get("origins")
+            if isinstance(raw_origins, list):
+                existing_origins.update(str(o) for o in raw_origins)
+            elif isinstance(existing.props.get("origin"), str):
+                existing_origins.add(str(existing.props["origin"]))
+        origins = sorted(existing_origins | {p.origin})
+        props["origins"] = origins
+        props["origin"] = min(origins, key=lambda o: _ORIGIN_PRIORITY.get(o, 99))
     return [MergeRel("Skill", a, rel_type, "Skill", b, props)]
 
 
@@ -311,10 +354,27 @@ def _hub_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
                 "controlType": p.control_type,
                 "deadlineAtMs": 0,
                 "status": "active",
+                "createdSeq": event.seq,
             },
         ),
         MergeRel("Domain", domain, "HAS_HUB", "Hub", hub, {}),
     ]
+
+
+def _hub_deleted_needs(event: StoredEvent) -> Need:
+    return Need(neighbourhoods=frozenset({("Hub", str(event.payload["hub_id"]))}))
+
+
+def _hub_deleted(event: StoredEvent, view: SliceView) -> list[Mutation]:
+    """The learner removed a chapter: the hub goes with `HAS_HUB` and `INCLUDES`, the topics stay
+    (they are «without a chapter» now). A hub «весь домен» is the domain's own and is never
+    deleted; a hub the graph does not know (deleted already, or deleted before it was created)
+    changes nothing, so a replay gives the same graph."""
+    hub = view.resolve("Hub", str(_payload(event, HubDeleted).hub_id))
+    node = None if hub is None else view.node("Hub", hub)
+    if hub is None or node is None or node.get("kind") == "domain_all":
+        return []
+    return [DeleteNode("Hub", hub)]
 
 
 def _hub_deadline_set(event: StoredEvent, view: SliceView) -> list[Mutation]:
@@ -565,30 +625,45 @@ def _identity(r: RelRecord) -> tuple[object, ...]:
     return tuple(r.props.get(name) for name in REL_IDENTITY.get(r.rel_type, ()))
 
 
-def _merged(event: StoredEvent, view: SliceView) -> list[Mutation]:
-    """Relations and evidence go to the target, the old node is deleted and its id becomes an
-    `Alias` of the target; aliases of the old node move with its other relations (Т-§2.8). A
-    relation the target already has, or one that would lead to the target itself, is dropped.
-    The target's state is folded again in phase B."""
-    label = _MERGED[event.type]
-    old_ref, into_ref = str(event.payload["from_id"]), str(event.payload["into_id"])
-    old, target = view.resolve(label, old_ref), view.resolve(label, into_ref)
-    if old is None or target is None or old == target:
-        return []
+def _merge_pair(
+    event: StoredEvent, view: SliceView, label: str, old: str, target: str
+) -> list[Mutation]:
+    """Moves relations and evidence from `old` to `target`, deletes `old`, and writes `Alias`.
+    When merging topics that each cover a `core = True` skill, merges the old core skill into
+    the surviving topic's core skill so the target keeps only one core skill."""
     own = _OWN_RELS[label]
     # A relation is told apart by its identity props too: `TESTS {level, part}` of the old skill
     # is not the `TESTS` of the same task with another level or part (Т-§3.4.3, D-A-133).
     target_out = {(r.rel_type, r.to_label, r.to_id, *_identity(r))
-                  for r in view.out_rels(label, into_ref)}  # fmt: skip
+                  for r in view.out_rels(label, target)}  # fmt: skip
     target_in = {(r.rel_type, r.from_label, r.from_id, *_identity(r))
-                 for r in view.in_rels(label, into_ref)}  # fmt: skip
+                 for r in view.in_rels(label, target)}  # fmt: skip
     changes: list[Mutation] = []
-    for r in view.out_rels(label, old_ref):
+    skip_skills: set[str] = set()
+    if label == "Topic":
+        old_cores = [
+            r.to_id
+            for r in view.out_rels("Topic", old, "COVERS")
+            if (s := view.node("Skill", r.to_id)) is not None and s.get("core") is True
+        ]
+        target_cores = [
+            r.to_id
+            for r in view.out_rels("Topic", target, "COVERS")
+            if (s := view.node("Skill", r.to_id)) is not None and s.get("core") is True
+        ]
+        if old_cores and target_cores:
+            target_core = target_cores[0]
+            for old_core in old_cores:
+                skip_skills.add(old_core)
+                changes += _merge_pair(event, view, "Skill", old_core, target_core)
+    for r in view.out_rels(label, old):
         if (r.rel_type, True) in own or (r.to_label, r.to_id) == (label, target):
+            continue
+        if label == "Topic" and r.rel_type == "COVERS" and r.to_id in skip_skills:
             continue
         if (r.rel_type, r.to_label, r.to_id, *_identity(r)) not in target_out:
             changes.append(MergeRel(label, target, r.rel_type, r.to_label, r.to_id, r.props))
-    for r in view.in_rels(label, old_ref):
+    for r in view.in_rels(label, old):
         if (r.rel_type, False) in own or (r.from_label, r.from_id) == (label, target):
             continue
         if (r.rel_type, r.from_label, r.from_id, *_identity(r)) not in target_in:
@@ -601,12 +676,25 @@ def _merged(event: StoredEvent, view: SliceView) -> list[Mutation]:
     ]
 
 
+def _merged(event: StoredEvent, view: SliceView) -> list[Mutation]:
+    """Relations and evidence go to the target, the old node is deleted and its id becomes an
+    `Alias` of the target; aliases of the old node move with its other relations (Т-§2.8). A
+    relation the target already has, or one that would lead to the target itself, is dropped.
+    The target's state is folded again in phase B."""
+    label = _MERGED[event.type]
+    old_ref, into_ref = str(event.payload["from_id"]), str(event.payload["into_id"])
+    old, target = view.resolve(label, old_ref), view.resolve(label, into_ref)
+    if old is None or target is None or old == target:
+        return []
+    return _merge_pair(event, view, label, old, target)
+
+
 def _topic_split_needs(event: StoredEvent) -> Need:
     p = _payload(event, TopicSplit)
     return Need(
-        nodes=frozenset(("Topic", str(part.topic_id)) for part in p.into),
         neighbourhoods=frozenset(
             {("Topic", str(p.topic_id))}
+            | {("Topic", str(part.topic_id)) for part in p.into}
             | {("Skill", str(skill)) for part in p.into for skill in part.skill_ids}
         ),
     )
@@ -623,8 +711,14 @@ def _topic_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
     if old is None or old_props is None:
         return []
     domain = str(old_props["domainId"])
+    old_covers = [r.to_id for r in view.out_rels("Topic", old, "COVERS")]
+    old_has_core = any(
+        (s := view.node("Skill", sid)) is not None and s.get("core") is True for sid in old_covers
+    )
     changes: list[Mutation] = []
     parts: set[str] = set()
+    assigned: dict[str, list[str]] = {}
+    moved_away_from: dict[str, set[str]] = {}
     for part in p.into:
         topic = view.resolve("Topic", str(part.topic_id))
         if topic is None:
@@ -640,6 +734,7 @@ def _topic_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
                         "origin": old_props["origin"],
                         "status": old_props["status"],
                         "knownClaimedAtMs": 0,
+                        "description": "",
                     },
                 ),
                 MergeRel("Domain", domain, "HAS_TOPIC", "Topic", topic, {}),
@@ -647,14 +742,36 @@ def _topic_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
         else:
             changes.append(SetProps("Topic", topic, {"name": part.name}))
         parts.add(topic)
+        part_skills: list[str] = []
         for skill_ref in part.skill_ids:
             skill = view.resolve("Skill", str(skill_ref))
             if skill is None:
                 continue
+            part_skills.append(skill)
             for r in view.in_rels("Skill", str(skill_ref), "COVERS"):
                 if r.from_id != topic:
                     changes.append(DeleteRel("Topic", r.from_id, "COVERS", "Skill", skill))
+                    moved_away_from.setdefault(r.from_id, set()).add(skill)
             changes.append(MergeRel("Topic", topic, "COVERS", "Skill", skill, {}))
+        assigned[topic] = part_skills
+    if old_has_core:
+        for part in p.into:
+            if not part.skill_ids:
+                continue
+            topic = view.resolve("Topic", str(part.topic_id)) or str(part.topic_id)
+            skills_in_part = set(assigned.get(topic, ()))
+            if view.node("Topic", topic) is not None:
+                existing_covers = {r.to_id for r in view.out_rels("Topic", topic, "COVERS")}
+                skills_in_part |= existing_covers - moved_away_from.get(topic, set())
+            has_core = any(
+                (s := view.node("Skill", sid)) is not None and s.get("core") is True
+                for sid in skills_in_part
+            )
+            # The first skill of the part becomes its core: the projector makes no skill of
+            # its own (a node without an event would be invisible to the log and to evidence).
+            first = next(iter(assigned.get(topic, ())), None)
+            if not has_core and first is not None:
+                changes.append(SetProps("Skill", first, {"core": True}))
     if old not in parts:
         changes.append(SetProps("Topic", old, {"status": "hidden"}))
     return changes
@@ -663,23 +780,41 @@ def _topic_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
 def _skill_split_needs(event: StoredEvent) -> Need:
     p = _payload(event, SkillSplit)
     topics = {("Topic", str(part.topic_id)) for part in p.into}
-    return Need(nodes=frozenset({("Skill", str(p.skill_id)), *topics}))
+    return Need(
+        nodes=frozenset({("Skill", str(p.skill_id)), *topics}), neighbourhoods=frozenset(topics)
+    )
 
 
 def _skill_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
     """New skills appear; the old evidence stays on the old skill and the dispatcher re-extracts
-    its episodes (Т-§2.8). A part takes the domain, status and origin of the split skill; its
-    summary is not known yet — `''` (D-A-131)."""
+    its episodes (Т-§2.8). A part takes the domain, status, origin, and core flag of the split
+    skill; when a core skill is split, the old node is demoted and the core flag goes to the
+    first part in each topic that has no other core, so a topic keeps one core skill."""
     p = _payload(event, SkillSplit)
-    old = view.node("Skill", str(p.skill_id))
-    if old is None:
+    old_id = view.resolve("Skill", str(p.skill_id))
+    old = None if old_id is None else view.node("Skill", old_id)
+    if old_id is None or old is None:
         return []
+    old_is_core = old.get("core") is True
     changes: list[Mutation] = []
+    if old_is_core:
+        changes.append(SetProps("Skill", old_id, {"core": False}))
+    cored: set[str] = set()  # topics that have a core besides the split skill, or got one here
     for part in p.into:
         topic = view.resolve("Topic", str(part.topic_id))
         if topic is None:
             continue
         skill = str(part.skill_id)
+        if topic not in cored and any(
+            r.to_id != old_id
+            and (s := view.node("Skill", r.to_id)) is not None
+            and s.get("core") is True
+            for r in view.out_rels("Topic", topic, "COVERS")
+        ):
+            cored.add(topic)
+        core = old_is_core and topic not in cored
+        if core:
+            cored.add(topic)
         changes += [
             MergeNode(
                 "Skill",
@@ -691,6 +826,10 @@ def _skill_split(event: StoredEvent, view: SliceView) -> list[Mutation]:
                     "summary": "",
                     "status": old["status"],
                     "origin": old["origin"],
+                    "core": core,
+                    "definition": "",
+                    "exemplar": "",
+                    "kind": "",
                 },
             ),
             MergeRel("Topic", topic, "COVERS", "Skill", skill, {}),
@@ -736,7 +875,14 @@ def _markup_need(markup: TaskMarkupRecord, domain: UUID | None) -> Need:
 def _task_needs(event: StoredEvent) -> Need:
     if event.type == "task.created":
         p = _payload(event, TaskCreated)
-        return _markup_need(p.markup, event.domain_id)
+        need = _markup_need(p.markup, event.domain_id)
+        if p.topic_id is not None:
+            need = Need(
+                nodes=need.nodes | {("Topic", str(p.topic_id))},
+                neighbourhoods=need.neighbourhoods,
+                domain_labels=need.domain_labels,
+            )
+        return need
     check = _payload(event, _CHECK_MODELS[event.type])
     need = Need(neighbourhoods=frozenset({("Task", str(check.task_id))}))
     if check.corrected_markup is not None:
@@ -745,11 +891,19 @@ def _task_needs(event: StoredEvent) -> Need:
 
 
 class _Markup:
-    """Changes of one markup of a task: provisional skills and topics, `TESTS {level}`, options
-    and traps. New ids — UUIDv5 of `(learner_id, seq, key)` with a key per new node."""
+    """Changes of one markup of a task: provisional skills and topics, `TESTS {level, context}`,
+    options and traps. New ids — UUIDv5 of `(learner_id, seq, key)` with a key per new node."""
 
-    def __init__(self, event: StoredEvent, view: SliceView, task: str, domain: str) -> None:
+    def __init__(
+        self,
+        event: StoredEvent,
+        view: SliceView,
+        task: str,
+        domain: str,
+        focus_topic_id: str | None = None,
+    ) -> None:
         self.event, self.view, self.task, self.domain = event, view, task, domain
+        self.focus_topic_id = focus_topic_id
         self.learner = str(event.learner_id)
         self.changes: list[Mutation] = []
         self._skills: dict[str, str] | None = None
@@ -760,8 +914,9 @@ class _Markup:
 
     def skill_for(self, description: NewSkill) -> str | None:
         """One provisional skill per normalized name in the domain (Т-§4.4). Without a legacy
-        `topic_hint`, the skill stays unassigned until the background builder places it via
-        `skill.placed`; historical events with `topic_hint` still link/propose a topic."""
+        `topic_hint`, uses `focus_topic_id` if present and resolvable; otherwise leaves unassigned
+        until the background builder places it via `skill.placed`. Historical events with
+        `topic_hint` still link/propose a topic."""
         if self.event.domain_id is None:
             return None
         if self._skills is None:
@@ -784,6 +939,10 @@ class _Markup:
                     "summary": "",
                     "status": "provisional",
                     "origin": "session",
+                    "core": False,
+                    "definition": "",
+                    "exemplar": "",
+                    "kind": "",
                 },
             )
         )
@@ -804,17 +963,22 @@ class _Markup:
                             "origin": "session",
                             "status": "proposed",
                             "knownClaimedAtMs": 0,
+                            "description": "",
                         },
                     ),
                     MergeRel("Domain", self.domain, "HAS_TOPIC", "Topic", topic, {}),
                 ]
                 self._topics[topic_key] = topic
             self.changes.append(MergeRel("Topic", topic, "COVERS", "Skill", skill, {}))
+        elif self.focus_topic_id:
+            topic = self.view.resolve("Topic", self.focus_topic_id)
+            if topic is not None:
+                self.changes.append(MergeRel("Topic", topic, "COVERS", "Skill", skill, {}))
         self._skills[key] = skill
         return skill
 
     def apply(self, markup: TaskMarkupRecord, *, replace: bool) -> list[Mutation]:
-        pairs: list[tuple[str, int, str]] = []
+        pairs: dict[tuple[str, int, str], str] = {}
         for part, t in _all_tests(markup):
             if t.skill_id is not None:
                 skill = self.view.resolve("Skill", str(t.skill_id))
@@ -823,7 +987,7 @@ class _Markup:
             else:
                 skill = None
             if skill is not None and (skill, t.level, part) not in pairs:
-                pairs.append((skill, t.level, part))
+                pairs[(skill, t.level, part)] = t.context or ""
         if replace:
             for r in self.view.out_rels("Task", self.task, "TESTS"):
                 level, part = r.props["level"], r.props["part"]
@@ -835,10 +999,18 @@ class _Markup:
             options = self.view.out_rels("Task", self.task, "HAS_OPTION")
             self.changes += [DeleteNode("Option", r.to_id) for r in options]
         self.changes += [
-            MergeRel("Task", self.task, "TESTS", "Skill", skill, {"level": level, "part": part})
-            for skill, level, part in pairs
+            MergeRel(
+                "Task",
+                self.task,
+                "TESTS",
+                "Skill",
+                skill,
+                {"level": level, "part": part, "context": context},
+            )
+            for (skill, level, part), context in pairs.items()
         ]
-        self._options(markup, pairs[0][0] if pairs else None)
+        first_skill = next(iter(pairs))[0] if pairs else None
+        self._options(markup, first_skill)
         return self.changes
 
     def _options(self, markup: TaskMarkupRecord, first_skill: str | None) -> None:
@@ -907,7 +1079,10 @@ def _task_created(event: StoredEvent, view: SliceView) -> list[Mutation]:
             },
         ),
     ]
-    return head + _Markup(event, view, task, domain).apply(p.markup, replace=False)
+    focus = str(p.topic_id) if p.topic_id is not None else None
+    return head + _Markup(event, view, task, domain, focus_topic_id=focus).apply(
+        p.markup, replace=False
+    )
 
 
 def _task_checked(event: StoredEvent, view: SliceView) -> list[Mutation]:
@@ -961,6 +1136,7 @@ def _evidence(
     episode_seq: int = 0,
     at_ms: int | None = None,
     source_seq: int | None = None,
+    context: str = "",
 ) -> tuple[str, Props]:
     """A new Evidence (`Т-§3.4.2`) with every property explicit (law 8). `source` — the event of
     the learner's action: its time is `atMs`, its `seq` is `sourceSeq` (law 6). Weight, novelty
@@ -984,6 +1160,7 @@ def _evidence(
         "solveTimeMs": 0,
         "gapType": gap_type or ("none" if outcome == "correct" else "unknown"),
         "quote": quote,
+        "context": context,
         "sourceSessionId": _id(source.session_id),
         "sessionDomainId": _id(source.domain_id),
         "sourceSeq": source_seq if source_seq is not None else source.seq,
@@ -997,14 +1174,15 @@ def _evidence(
     return deterministic_id(event.learner_id, event.seq, f"evidence:{n}"), props
 
 
-def _pairs(view: SliceView, task: str, part: str) -> list[tuple[str, int]]:
-    """`(skill, level)` of the markup of one part of a task (`Т-§7.8` п.1)."""
-    found: set[tuple[str, int]] = set()
+def _pairs(view: SliceView, task: str, part: str) -> list[tuple[str, int, str]]:
+    """`(skill, level, context)` of the markup of one part of a task (`Т-§7.8` п.1)."""
+    found: dict[tuple[str, int], str] = {}
     for r in view.out_rels("Task", task, "TESTS"):
         level = r.props["level"]
         if r.props.get("part") == part and isinstance(level, int):
-            found.add((r.to_id, level))
-    return sorted(found)
+            ctx = r.props.get("context")
+            found[(r.to_id, level)] = ctx if isinstance(ctx, str) else ""
+    return [(skill, level, ctx) for (skill, level), ctx in sorted(found.items())]
 
 
 def _answer_needs(seq: int) -> Need:
@@ -1053,7 +1231,7 @@ def _verdict_recorded(event: StoredEvent, view: SliceView) -> list[Mutation]:
     domain = str(task_props["domainId"])
     changes: list[Mutation] = []
     made: list[tuple[str, Props]] = []
-    for n, (skill, level) in enumerate(pairs):
+    for n, (skill, level, context) in enumerate(pairs):
         evidence, props = _evidence(
             event,
             n,
@@ -1065,6 +1243,7 @@ def _verdict_recorded(event: StoredEvent, view: SliceView) -> list[Mutation]:
             verification=verification,
             assistance=assistance,
             hint_step=p.help_step,
+            context=context,
         )
         made.append((evidence, props))
         changes += [
@@ -1074,7 +1253,7 @@ def _verdict_recorded(event: StoredEvent, view: SliceView) -> list[Mutation]:
         ]
     if p.outcome == "correct":
         done: set[tuple[str, str, int]] = set()
-        for (evidence, props), (skill, level) in zip(made, pairs, strict=True):
+        for (evidence, props), (skill, level, _) in zip(made, pairs, strict=True):
             changes += _derived(event, view, (evidence, props), skill, level, task, done)
     first = deterministic_id(event.learner_id, event.seq, "evidence:0")
     if p.outcome != "correct":
@@ -1178,9 +1357,12 @@ def _answer_submitted(event: StoredEvent, view: SliceView) -> list[Mutation]:
     if task_props is None:
         return []
     outcome = "correct" if p.self_assessment else "incorrect"
-    skills = sorted({skill for skill, _ in _pairs(view, task, p.part or MAIN_PART)})
+    skill_contexts: dict[str, str] = {}
+    for skill, _, context in _pairs(view, task, p.part or MAIN_PART):
+        if skill not in skill_contexts or (not skill_contexts[skill] and context):
+            skill_contexts[skill] = context
     changes: list[Mutation] = []
-    for n, skill in enumerate(skills):
+    for n, skill in enumerate(sorted(skill_contexts)):
         evidence, props = _evidence(
             event,
             n,
@@ -1190,6 +1372,7 @@ def _answer_submitted(event: StoredEvent, view: SliceView) -> list[Mutation]:
             outcome=outcome,
             tier=4,
             verification="model",
+            context=skill_contexts[skill],
         )
         changes += [
             MergeNode("Evidence", evidence, props),
@@ -1215,7 +1398,7 @@ def _verdict_evidence(view: SliceView, answer_seq: int, part: str) -> list[str]:
     task = str(answer.payload["task_id"])
     if view.node("Task", task) is None:
         return []
-    pairs = set(_pairs(view, task, part))
+    pairs = {(skill, level) for skill, level, _ in _pairs(view, task, part)}
     found: list[str] = []
     for r in view.in_rels("Task", task, "ON_TASK"):
         props = view.node("Evidence", r.from_id)
@@ -1273,20 +1456,56 @@ EXTRACTOR_PRECEDENCE = ("extractor@3",)
 def _turn_needs(event: StoredEvent) -> Need:
     p = _payload(event, TurnCommitted)
     nodes = {("Skill", str(x.skill_id)) for x in p.markup.exposures}
-    nodes |= {("Task", str(t.task_id)) for t in p.markup.tasks}
+    near = {("Task", str(t.task_id)) for t in p.markup.tasks}
     if p.markup.targets_misconception_id is not None:
         nodes.add(("Misconception", str(p.markup.targets_misconception_id)))
-    return Need(nodes=frozenset(nodes))
+    if p.focus_topic_id is not None:
+        nodes.add(("Topic", str(p.focus_topic_id)))
+    labels: set[tuple[str, str]] = set()
+    if event.domain_id is not None and any(
+        t.new_skill is not None for task in p.markup.tasks for _, t in _all_tests(task)
+    ):
+        nodes.add(("Domain", str(event.domain_id)))
+        labels = {(str(event.domain_id), "Skill"), (str(event.domain_id), "Topic")}
+    return Need(
+        nodes=frozenset(nodes),
+        neighbourhoods=frozenset(near),
+        domain_labels=frozenset(labels),
+    )
 
 
 def _turn_committed(event: StoredEvent, view: SliceView) -> list[Mutation]:
     """Т-§7.8 п.6: an `Exposure` per exposure of the markup, `OF` its skill. Т-§9.1: a turn that
     targets a misconception marks it with the session (`targetedInSessionId`) and marks its
     tasks (`targetsMisconceptionId`, read for `RESISTED`). Temporary skills of the markup come
-    with `task.created` of the same append (D-A-180)."""
+    with `task.created` of the same append (D-A-180); when `focus_topic_id` is set and a new
+    skill has no `topic_hint`, it is covered by `focus_topic_id`."""
     p = _payload(event, TurnCommitted)
     learner = str(event.learner_id)
     changes: list[Mutation] = []
+    if p.focus_topic_id is not None and event.domain_id is not None:
+        focus = str(p.focus_topic_id)
+        markup = _Markup(event, view, "", _id(event.domain_id), focus_topic_id=focus)
+        resolved_topic = view.resolve("Topic", focus)
+        linked: set[str] = set()
+        for task_rec in p.markup.tasks:
+            has_task = view.node("Task", str(task_rec.task_id)) is not None
+            for _, t in _all_tests(task_rec):
+                if t.new_skill is None:
+                    continue
+                skill = markup.skill_for(t.new_skill)
+                changes += markup.changes
+                markup.changes = []
+                if (
+                    skill is not None
+                    and not t.new_skill.topic_hint
+                    and resolved_topic is not None
+                    and has_task
+                    and skill not in linked
+                    and not view.in_rels("Skill", skill, "COVERS")
+                ):
+                    changes.append(MergeRel("Topic", resolved_topic, "COVERS", "Skill", skill, {}))
+                    linked.add(skill)
     for n, exposure in enumerate(p.markup.exposures):
         skill = view.resolve("Skill", str(exposure.skill_id))
         if skill is None:
@@ -1527,11 +1746,13 @@ HANDLERS: dict[str, Handler] = {
     "topic.renamed": Handler(_ref("Topic", "topic_id"), _topic_set),
     "topic.hidden": Handler(_ref("Topic", "topic_id"), _topic_set),
     "skill.created": Handler(_ref("Topic", "topic_id"), _skill_created),
+    "skill.deleted": Handler(_skill_deleted_needs, _skill_deleted),
     "skill.placed": Handler(_skill_placed_needs, _skill_placed),
     "edge.added": Handler(_edge_needs, _edge),
     "edge.removed": Handler(_edge_needs, _edge),
     "hub.created": Handler(_ref("Domain", "domain_id"), _hub_created),
     "hub.deadline_set": Handler(_ref("Hub", "hub_id"), _hub_deadline_set),
+    "hub.deleted": Handler(_hub_deleted_needs, _hub_deleted),
     "hub.topics_changed": Handler(_hub_topics_needs, _hub_topics_changed),
     "embedding.ready": Handler(_embedding_needs, _embedding_ready),
     "known.claimed": Handler(_ref("Topic", "topic_id"), _known_claimed),

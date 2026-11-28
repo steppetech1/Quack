@@ -24,7 +24,9 @@ from quack.events.event_types import (
     TurnCommitted,
 )
 from quack.events.log import NewEvent, append_events
+from quack.events.records import CodeTaskElementRecord
 from quack.events.registry import EventPayload
+from quack.events.service_turns import BUILTIN_SKILL_CREATOR
 from quack.events.values import AnswerSpec, LearnerAnswer
 from quack.practice.answers import part_spec, record_answer
 from quack.practice.check import Verdict
@@ -46,6 +48,7 @@ from quack.session.actions import (
     RetryTurnAction,
     SolutionRequestAction,
 )
+from quack.session.service_turns import creator_dialogue_open
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,16 @@ async def _write_action(
         await _own_task(db, learner_id, action.task_id)
     if isinstance(action, MessageAction) and action.voice_seq is not None:
         await _own_voice(db, learner_id, session_id, action.voice_seq)
+    payload = _payload(action)
+    if (
+        isinstance(action, MessageAction)
+        and isinstance(payload, MessageSent)
+        and payload.skill_invocation is None
+        and await _follows_creator_dialogue(db, learner_id, session_id, key, settings)
+    ):
+        # a plain message that follows an open `/skill-creator` dialogue belongs to it: the mark
+        # is written here, so every reader of the journal sees it on the message itself
+        payload = payload.model_copy(update={"skill_invocation": BUILTIN_SKILL_CREATOR})
     async with db.transaction():
         [event] = await append_events(
             db,
@@ -115,7 +128,7 @@ async def _write_action(
             [
                 NewEvent(
                     type=ACTION_EVENT_TYPES[action.kind],
-                    payload=_payload(action),
+                    payload=payload,
                     actor="learner",
                     idempotency_key=key,
                     domain_id=domain_id,
@@ -252,6 +265,26 @@ def _answer_from_response(response: str, spec: AnswerSpec) -> LearnerAnswer:
     return LearnerAnswer(kind=spec.type, value=value)
 
 
+_BY_KEY = (
+    "SELECT payload ->> 'skill_invocation' AS skill_invocation FROM core.events "
+    "WHERE learner_id = %(learner_id)s AND idempotency_key = %(key)s"
+)
+
+
+async def _follows_creator_dialogue(
+    db: Db, learner_id: UUID, session_id: UUID, key: str, settings: Settings
+) -> bool:
+    """Whether a plain message belongs to an open `/skill-creator` dialogue. A repeat of a message
+    already written keeps the mark it got then (the state of the dialogue has moved on since, and a
+    changed payload would be an idempotency conflict)."""
+    written = await db.fetch_one(_BY_KEY, {"learner_id": learner_id, "key": key})
+    if written is not None:
+        return written["skill_invocation"] == BUILTIN_SKILL_CREATOR
+    return await creator_dialogue_open(
+        db, learner_id=learner_id, session_id=session_id, settings=settings
+    )
+
+
 async def _own_task(db: Db, learner_id: UUID, task_id: UUID) -> TaskDocument:
     """The learner's task; `LookupError` for a task of another learner or none (D-B-147)."""
     task = await get_task(db, learner_id=learner_id, task_id=task_id)
@@ -278,7 +311,15 @@ async def _find_element_task(
         return None
     turn = TurnCommitted.model_validate(event.payload)
     task = next((t for t in turn.markup.tasks if t.element_id == element_id), None)
-    return None if task is None else task.task_id
+    if task is not None:
+        return task.task_id
+    # Т-§6.10: a code task element points at a ready task of the bank, not at a task markup.
+    element = next((e for e in turn.markup.elements if e.element_id == element_id), None)
+    return element.task_id if isinstance(element, CodeTaskElementRecord) else None
+
+
+# Public for the code editor routes (Т-§6.10): the task behind an element of a turn.
+find_element_task = _find_element_task
 
 
 async def _element_task(db: Db, learner_id: UUID, turn_seq: int, element_id: str) -> UUID:

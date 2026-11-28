@@ -185,11 +185,13 @@ class WhyFacts(_Fact):
 
 
 class TopicRequires(_Fact):
-    """A derived link between topics (Т-§4.6); weight — the number of skill links."""
+    """A derived link between topics (Т-§4.6); weight — the number of skill links,
+    confidence — max confidence across those links."""
 
     from_topic_id: UUID
     to_topic_id: UUID
     weight: int = Field(ge=1)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class ReviewScope(_Fact):
@@ -297,6 +299,9 @@ class HubGoal(_Fact):
     kind: str
     control_type: ControlType
     deadline_at_ms: int | None = None
+    # The number of the event in the learner's log that created the hub; `None` for a hub
+    # projected before the property existed (until a rebuild).
+    created_seq: int | None = None
     topics: list[HubTopicGoal] = []
 
 

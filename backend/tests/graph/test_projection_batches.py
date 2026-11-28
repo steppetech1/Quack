@@ -224,9 +224,11 @@ def test_a_late_topic_event_leaves_a_live_or_merged_topic_alone_in_every_mode() 
 _LEVEL = ("Status", "Basis", "DecisiveEvidenceId", "SuccessW", "FailW", "ProvenAtMs", "FailedAtMs")
 REQUIRED: dict[str, set[str]] = {
     "Domain": {"name", "status"},
-    "Topic": {"name", "origin", "status", "displayState", "displayReason", "displayLevel",
-              "displayDomainId", "nearestDueAtMs", "visibility", "knownClaimedAtMs"},
-    "Skill": {"name", "summary", "status", "origin", "retState", "retStability", "retDifficulty",
+    "Topic": {"name", "origin", "status", "description", "displayState", "displayReason",
+              "displayLevel", "displayDomainId", "nearestDueAtMs", "visibility",
+              "knownClaimedAtMs"},
+    "Skill": {"name", "summary", "status", "origin", "core", "definition", "exemplar", "kind",
+              "retState", "retStability", "retDifficulty",
               "retLastRecallAtMs", "retDueAtMs", "retReviews", "retLapses", "retLastLapseAtMs",
               "expCount", "expLastExplainedAtMs", "expLastExampleAtMs", "expLastMethodNamedAtMs",
               "expLastSolutionShownAtMs", "gapType", "gapTypeConfidence", "lastPracticeAtMs",
@@ -235,7 +237,7 @@ REQUIRED: dict[str, set[str]] = {
     "Hub": {"name", "kind", "deadlineAtMs", "origin", "status"},
     "Evidence": {"domainId", "atMs", "level", "outcome", "assistance", "hintStep", "novelty",
                  "confidence", "tier", "weight", "verification", "delayed", "solveTimeMs",
-                 "gapType", "quote", "sourceSessionId", "sessionDomainId", "sourceSeq",
+                 "gapType", "quote", "context", "sourceSessionId", "sessionDomainId", "sourceSeq",
                  "derivedKind", "status", "observationSeq", "extractor", "searchable"},
     "Exposure": {"atMs", "kind", "approach", "sourceSeq", "sessionDomainId"},
     "Misconception": {"domainId", "statement", "status", "triggers", "occurrences",

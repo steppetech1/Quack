@@ -40,6 +40,7 @@ from quack.events.values import (
     Verification,
 )
 from quack.practice.answer_spec import (
+    CODE_TYPES,
     INSTANT_TYPES,
     SLOW_TYPES,
     AnswerSpec,
@@ -118,6 +119,9 @@ async def check(
     handwritten or photographed answer: lowers the verdict confidence and, with a negative
     verdict, sets `needs_reading_confirmation` (Т-§6.9, WP11.7).
     """
+    if spec.type in CODE_TYPES:
+        # Т-§6.10: code is judged by its tests (`code_answers.submit_code`), never here.
+        raise ValueError("a code answer is checked by its tests, not by check()")
     if spec.type in SLOW_TYPES:
         return NeedsModel(answer_seq, part)
     if spec.type in INSTANT_TYPES:

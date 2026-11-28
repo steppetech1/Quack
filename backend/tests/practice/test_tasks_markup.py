@@ -110,3 +110,29 @@ def test_markup_common_rules() -> None:
         }
     )
     assert _rules(new_only) == set()
+
+
+def test_markup_record_propagates_reason_and_context() -> None:
+    from uuid import uuid4
+
+    from quack.config import Settings
+    from quack.llm.labels import LabelMap
+    from quack.practice.markup import markup_record
+
+    skill_id = uuid4()
+    labels = LabelMap.build(Settings(), skills=[skill_id])
+    markup = TaskMarkup.model_validate(
+        {
+            "tests": [
+                {"skill": "S1", "level": 3, "context": "Excel"},
+                {"new_skill": {"name": "Pivot tables", "reason": "learner asked"}, "level": 2},
+            ],
+            "methodNamed": False,
+            "answer": NUMBER,
+        }
+    )
+    rec = markup_record(markup, labels)
+    assert rec.tests[0].context == "Excel"
+    assert rec.tests[1].context is None
+    assert rec.tests[1].new_skill is not None
+    assert rec.tests[1].new_skill.reason == "learner asked"

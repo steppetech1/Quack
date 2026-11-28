@@ -1,0 +1,21 @@
+-- 15-second-upload-context
+-- captured 2026-11-25T20:38:50Z from the local stand
+       minute_utc       |         type          |       actor       |              session_id              | count 
+------------------------+-----------------------+-------------------+--------------------------------------+-------
+ 2026-11-25 18:05:00+00 | material.uploaded     | learner           |                                      |     7
+ 2026-11-25 18:07:00+00 | chunk.indexed         | material_parser@1 |                                      |     4
+ 2026-11-25 18:07:00+00 | episode.closed        | system            | b7c5e617-56db-4fa4-b9e1-b6dd05ff6598 |     1
+ 2026-11-25 18:07:00+00 | hub.created           | material_parser@1 |                                      |     1
+ 2026-11-25 18:07:00+00 | hub.topics_changed    | material_parser@1 |                                      |     1
+ 2026-11-25 18:07:00+00 | material.parsed       | system            |                                      |     1
+ 2026-11-25 18:08:00+00 | embedding.ready       | system            |                                      |     4
+ 2026-11-25 18:08:00+00 | observation.extracted | extractor@3       | b7c5e617-56db-4fa4-b9e1-b6dd05ff6598 |     1
+ 2026-11-25 18:08:00+00 | task.created          | task_generator@1  |                                      |     1
+ 2026-11-25 18:09:00+00 | chunk.indexed         | material_parser@1 |                                      |     4
+ 2026-11-25 18:09:00+00 | embedding.ready       | system            |                                      |     8
+ 2026-11-25 18:09:00+00 | hub.created           | material_parser@1 |                                      |     1
+ 2026-11-25 18:09:00+00 | hub.topics_changed    | material_parser@1 |                                      |     1
+ 2026-11-25 18:09:00+00 | material.parsed       | system            |                                      |     1
+ 2026-11-25 18:09:00+00 | skill.created         | builder@1         |                                      |     4
+(15 rows)
+

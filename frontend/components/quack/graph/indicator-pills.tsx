@@ -42,8 +42,8 @@ function Mark({ id, color }: { id: IndicatorId; color: string }) {
 }
 
 /**
- * Five fixed pills. They sit against the left edge of the sessions panel and are children of that panel,
- * so they ride on its edge as it opens and closes: one movement, no lag.
+ * Five fixed pills. They are a column of their own to the right of the graph canvas, so they never lie on top of the graph
+ * or of the controls above it: the canvas is simply narrower by the width of the column.
  */
 export function IndicatorPills() {
   const t = useT();
@@ -53,7 +53,7 @@ export function IndicatorPills() {
   const off: Record<IndicatorId, string> = { new: t.graphInd.offNew, relevant: t.graphInd.offRelevant, deadline: t.graphInd.offDeadline, weak: t.graphInd.offWeak, review: t.graphInd.offReview };
 
   return (
-    <ul aria-label={t.graphInd.group} className="absolute top-1/3 right-full z-30 mr-2 hidden -translate-y-1/2 flex-col items-end gap-1.5 md:flex">
+    <ul aria-label={t.graphInd.group} className="flex flex-col items-stretch gap-1.5">
       {INDICATORS.map((id) => {
         const sel = st.selections[id];
         const nothing = sel.topics.length === 0 && sel.hubs.length === 0;
@@ -71,7 +71,7 @@ export function IndicatorPills() {
               onClick={() => toggleIndicator(id)}
               style={on ? { borderColor: color } : undefined}
               className={cn(
-                "caps inline-flex h-10 items-center gap-2 rounded-pill border bg-cloth-deep pr-3.5 pl-2.5 whitespace-nowrap transition-colors duration-(--dur-s) ease-(--ease-out) focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ribbon",
+                "caps inline-flex h-10 w-full items-center gap-2 rounded-pill border bg-cloth-deep pr-3 pl-2.5 whitespace-nowrap transition-colors duration-(--dur-s) ease-(--ease-out) focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ribbon",
                 nothing ? "cursor-default border-seam-soft text-paper-dim/50" : on ? "bg-cloth-raised text-paper" : "border-seam text-paper-dim hover:border-rule hover:text-paper",
               )}
             >

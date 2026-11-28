@@ -1,4 +1,5 @@
 import type { Locale } from "@/lib/i18n/locale";
+import { simulateUploads } from "@/lib/api/domain-uploads";
 import { getMocks, MOCK_TODAY } from "@/lib/mock";
 import type { DisplayCode, GraphHub, GraphModel, GraphTopic, HubLink } from "./types";
 import { getVisit } from "./visit-store";
@@ -26,6 +27,8 @@ function topicOf(id: string, name: string, kind: Kind): GraphTopic {
   return { id, name, status: "active", visibility: "shown", displayState: code, nearestDueAtMs: due };
 }
 
+const MOCK_EDGE_CONFIDENCES = [1.0, 0.85, 0.5] as const;
+
 /** Calculus, built from the existing presentation mock */
 function matanGraph(locale: Locale): GraphModel | undefined {
   const domain = getMocks(locale).domains.find((d) => d.id === "matan");
@@ -40,13 +43,14 @@ function matanGraph(locale: Locale): GraphModel | undefined {
   hubs.push({ id: "all", name: domain.title, kind: "domain_all" });
   // Asked about in calculus, but there is no subject for it: it stays here with status off_domain
   topics.push({ id: "wave", name: locale === "en" ? "Wave–particle duality" : "Корпускулярно-волновой дуализм", status: "off_domain", visibility: "shown" });
+  let edgeIdx = 0;
   return {
     domainId: domain.id,
     domainName: domain.title,
     topics,
     hubs,
     includes: domain.topics.filter((t) => t.hubId).map((t) => ({ hubId: t.hubId!, topicId: t.id })),
-    requires: domain.topics.flatMap((t) => t.requires.map((r) => ({ topicId: t.id, requiresId: r }))),
+    requires: domain.topics.flatMap((t) => t.requires.map((r) => ({ topicId: t.id, requiresId: r, confidence: MOCK_EDGE_CONFIDENCES[edgeIdx++ % MOCK_EDGE_CONFIDENCES.length] }))),
     otherDomain: domain.outside.map((o) => ({ topic: topicOf(o.id, o.title, "solid"), domainId: "linal", domainName: o.fromDomain })),
     recentSessions: domain.sessions.map((s) => ({
       id: s.id,
@@ -116,7 +120,7 @@ function linalGraph(locale: Locale): GraphModel {
     ],
     hubs,
     includes,
-    requires: ROWS.flatMap((r) => r.requires.map((q) => ({ topicId: r.id, requiresId: q }))),
+    requires: ROWS.flatMap((r, i) => r.requires.map((q, j) => ({ topicId: r.id, requiresId: q, confidence: MOCK_EDGE_CONFIDENCES[(i + j) % MOCK_EDGE_CONFIDENCES.length] }))),
     recentSessions: [
       { id: "l1", atMs: MOCK_NOW_MS - 1 * DAY, topicIds: ["det", "matmul"] },
       { id: "l2", atMs: MOCK_NOW_MS - 3 * DAY, topicIds: ["gauss", "inverse"] },
@@ -151,6 +155,8 @@ export function subscribeGraph(cb: () => void) {
   return () => void listeners.delete(cb);
 }
 
+const anyModel = (domainId: string) => [...cache.values()].find((m) => m?.domainId === domainId) ?? undefined;
+
 /** Stands in for a change arriving from the backend: replaces the model with an edited copy and tells the views */
 function editGraph(domainId: string, edit: (m: GraphModel) => GraphModel) {
   for (const key of [...cache.keys()]) {
@@ -167,8 +173,34 @@ declare global {
       link: (domainId: string, topicId: string, requiresId: string) => void;
       /** What counts as new in this domain right now */
       visit: (domainId: string) => { baseline: boolean; topics: string[]; hubs: string[] };
+      /** A topic that appears while files are read: it needs the given topics, and sits in the hub if one is named */
+      add: (domainId: string, topicId: string, name: string, requires?: string[], hubId?: string) => void;
+      /** Plays «files uploaded, read, graph built» for a domain: the agent lines run and, per file, new topics grow in (linear algebra) */
+      simulate: (domainId: string, names?: string[]) => void;
     };
   }
+}
+
+/** Topics the simulated files «find» in linear algebra, in this order */
+const FOUND = [
+  { id: "proj", en: "Orthogonal projection", ru: "Ортогональная проекция", requires: ["orth"], hub: "vectors" },
+  { id: "gram", en: "Gram–Schmidt process", ru: "Процесс Грама — Шмидта", requires: ["proj"], hub: "vectors" },
+  { id: "lsq", en: "Least squares", ru: "Метод наименьших квадратов", requires: ["proj", "gauss"], hub: "systems" },
+  { id: "svd", en: "Singular value decomposition", ru: "Сингулярное разложение", requires: ["diag"], hub: "colloq" },
+  { id: "pca", en: "Principal components", ru: "Метод главных компонент", requires: ["svd"], hub: "colloq" },
+  { id: "norm", en: "Norms", ru: "Нормы", requires: ["dot"], hub: "spaces" },
+];
+
+function addTopic(domainId: string, topicId: string, name: string, requires: string[] = [], hubId?: string) {
+  editGraph(domainId, (m) => {
+    if (m.topics.some((t) => t.id === topicId)) return m;
+    return {
+      ...m,
+      topics: [...m.topics, { id: topicId, name, status: "active", visibility: "shown", displayState: "not_tested" }],
+      includes: hubId ? [...m.includes, { hubId, topicId }] : m.includes,
+      requires: [...m.requires, ...requires.map((requiresId) => ({ topicId, requiresId }))],
+    };
+  });
 }
 
 /** Development only: exposes `window.__quackGraph` so a change can be fed to the view by hand */
@@ -180,5 +212,11 @@ export function installGraphDevHandle() {
       const v = getVisit(domainId);
       return { baseline: v.baseline, topics: [...v.topics], hubs: [...v.hubs] };
     },
+    add: addTopic,
+    simulate: (domainId, names = ["lecture-7.pdf", "notes.pdf", "board-photo.jpg"]) =>
+      simulateUploads(domainId, names, (_name, i) => {
+        const ru = /[а-яё]/i.test(anyModel(domainId)?.topics[0]?.name ?? "");
+        for (const f of FOUND.slice(i * 2, i * 2 + 2)) addTopic(domainId, f.id, ru ? f.ru : f.en, f.requires, f.hub);
+      }),
   };
 }

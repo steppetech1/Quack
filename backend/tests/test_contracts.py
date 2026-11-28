@@ -28,6 +28,8 @@ CORE = {
     "llm",
     "prompts",
     "compute_client",
+    # Т-§6.10: the client of the learner-code sandbox.
+    "runner_client",
 }
 # ТЗ Ф4 §4.1: `agents` (stream B), `auth` (stream C, WP18), `materials` (stream C, WP20) and
 # `canvas` (stream C, WP21) are product packages; other new packages join with their WPs.

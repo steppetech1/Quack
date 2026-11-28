@@ -181,6 +181,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "status": "provisional",
         "origin": "session",
     },
+    "skill.deleted": {"skill_id": uid("skill")},
     "skill.merged": {"from_id": uid("skill2"), "into_id": uid("skill")},
     "skill.split": {
         "skill_id": uid("skill"),
@@ -212,6 +213,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "control_type": "tasks",
     },
     "hub.deadline_set": {"hub_id": uid("hub"), "deadline_at_ms": 9_000_000, "source": "turn"},
+    "hub.deleted": {"hub_id": uid("hub")},
     "hub.topics_changed": {
         "hub_id": uid("hub"),
         "topics": [{"topic_id": uid("topic"), "required_levels": [3, 4]}],
@@ -255,6 +257,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "intent": "learn",
     },
     "session.ended": {"session_id": uid("session"), "reason": "learner"},
+    "session.deleted": {"session_id": uid("session")},
     "session.titled": {"session_id": uid("session"), "title": "Limits of sequences"},
     "hint.shown": {"task_id": uid("task"), "step": 1, "source": "teacher"},
     "today.shown": {

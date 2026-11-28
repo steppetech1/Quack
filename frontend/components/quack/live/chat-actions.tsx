@@ -8,6 +8,7 @@ import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { useErrorText } from "./error-text";
 import { plainText } from "./markdown";
+import { useWorkspaceOptional } from "../workspace/workspace-context";
 
 export type LiveT = ReturnType<typeof useT>["live"];
 
@@ -343,15 +344,17 @@ export function ChatTurnActions({ ctx }: { ctx: TurnActionContext }) {
 
 /** Renders topic/hub notes cards in `ExpandableCard` style with live preparing/ready status. */
 export function NoteCardsGrid({ cards }: { cards: NoteCard[] }) {
-  const t = useT().live;
+  const tx = useT();
+  const t = tx.live;
+  const ws = useWorkspaceOptional();
   if (!cards.length) return null;
   return (
     <div className={cn("grid gap-2", cards.length > 1 && "sm:grid-cols-2")}>
       {cards.map((card) => (
+        <div key={card.key} className="flex flex-col items-start gap-1.5">
         <Link
-          key={card.key}
           href={card.href}
-          className="block rounded-[2px] border border-seam bg-cloth-raised p-4 text-left transition-[transform,border-color] duration-(--dur-s) ease-(--ease-out) hover:-translate-y-px hover:border-ribbon focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ribbon motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+          className="block w-full rounded-[2px] border border-seam bg-cloth-raised p-4 text-left transition-[transform,border-color] duration-(--dur-s) ease-(--ease-out) hover:-translate-y-px hover:border-ribbon focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ribbon motion-reduce:transition-none motion-reduce:hover:translate-y-0"
         >
           <span className="display-caps block text-paper">{card.title}</span>
           <span className="mt-1 flex items-center gap-1.5 text-small text-paper-dim">
@@ -379,6 +382,17 @@ export function NoteCardsGrid({ cards }: { cards: NoteCard[] }) {
             {card.kind === "hub" ? t.openHubCheat : t.openTopicNotes}
           </span>
         </Link>
+        {ws && card.status === "ready" && (
+          <button
+            type="button"
+            aria-label={`${tx.workspace.openNotes}: ${card.title}`}
+            onClick={() => ws.open({ kind: "note", id: card.id, title: card.title, noteKind: card.kind, href: card.href })}
+            className="caps relative h-10 rounded-pill border border-seam px-4 text-small text-paper transition-colors duration-(--dur-s) ease-out hover:border-ribbon hover:text-ribbon"
+          >
+            {tx.workspace.openNotes}
+          </button>
+        )}
+        </div>
       ))}
     </div>
   );

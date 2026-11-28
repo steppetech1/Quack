@@ -20,6 +20,8 @@ WORKERS_FIELDS = {
     "storage",
     "embeddings",
     "deletions",
+    # Т-§6.10: the learner-code sandbox (checks of generated code tasks).
+    "runner",
 }
 
 
@@ -46,6 +48,7 @@ async def test_close_job_context_in_reverse_creation_order() -> None:
     context = JobContext(settings=Settings(), **resources)
     await close_job_context(context)
     assert closed == [
+        "runner",
         "deletions",
         "embeddings",
         "storage",

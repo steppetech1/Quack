@@ -32,6 +32,7 @@ from uuid import UUID
 
 from quack.config import Settings
 from quack.events.log import StoredEvent
+from quack.events.service_turns import is_service_event, without_service
 
 type CloseReason = Literal["task_closed", "boundary", "max_turns", "idle", "session_ended"]
 
@@ -128,6 +129,8 @@ class EpisodeTracker:
         sid = event.session_id
         if sid is None or event.type not in EPISODE_TYPES:
             return []
+        if is_service_event(event.type, event.payload):
+            return []  # the `/skill-creator` dialogue is no learning: no episode, no boundary
         closed: list[ClosedEpisode] = []
         ep = self._open.get(sid)
         if ep is not None and event.occurred_at - ep.last_at >= self._idle:
@@ -223,10 +226,11 @@ def episode_has_content(events: Iterable[StoredEvent]) -> bool:
     """`Т-§7.5`: False only when the episode holds nothing but closed answers with a code verdict
     — no words of the learner, no canvas lines (D-A-160). A closed answer whose verdict is not in
     the episode (the insurance check comes later) counts as content: the extractor reads
-    more than it needs rather than miss a word. Teacher turns are not the learner's content."""
+    more than it needs rather than miss a word. Teacher turns are not the learner's content. The
+    words of the built-in `/skill-creator` dialogue are not either (`events.service_turns`)."""
     answers: dict[tuple[int, str], StoredEvent] = {}
     code_verdicts: set[tuple[int, str]] = set()
-    for event in events:
+    for event in without_service(events):
         if event.type in _FREE_TYPES:
             return True
         if event.type == "element.responded" and event.payload.get("text"):

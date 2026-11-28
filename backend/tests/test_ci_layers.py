@@ -108,9 +108,10 @@ def test_compute_job_always_reports_but_gates_heavy_steps_by_changed_files() -> 
 def test_images_job_builds_only_when_backend_or_compute_changed() -> None:
     job = _jobs()["images"]
     gate = next(step for step in job["steps"] if step.get("id") == "changes")
-    assert "backend/" in gate["run"] and "compute/" in gate["run"]
+    assert "backend/" in gate["run"] and "compute/" in gate["run"] and "runner/" in gate["run"]
     builds = [step for step in job["steps"] if "build-push-action" in str(step.get("uses", ""))]
-    assert len(builds) == 2
+    # backend, compute and the learner-code sandbox (Т-§6.10).
+    assert len(builds) == 3
     for step in builds:
         assert step.get("if") == "steps.changes.outputs.images == 'true'"
         assert step["with"]["push"] is False

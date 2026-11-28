@@ -57,8 +57,9 @@ def _answer(kind: str, **extra: Any) -> StoredEvent:
 def test_every_kind_of_the_spec_is_listed_once_and_removed_ones_are_gone() -> None:
     # 24 kinds of the list of ТЗ §6.5 + `agent.topic_split` (WP8.2, D-A-226) + `session.title`
     # (the name of a session, owner decision 2026-11-19) + `viz.plan` (demos ahead, owner decision
-    # 2026-11-20) + 5 periodic
-    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 1 + 5
+    # 2026-11-20) + `material.seminar_tasks` (seminar tasks out of the structure step, decision of
+    # 2026-11-25) + 5 periodic
+    assert len(set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)) == 25 + 1 + 1 + 1 + 5
     assert not set(r.REMOVED_JOB_KINDS) & set(r.JOB_KINDS + r.PERIODIC_JOB_KINDS)
 
 
@@ -70,7 +71,8 @@ def test_rule_table() -> None:
 
 def test_every_non_periodic_kind_has_a_row() -> None:
     covered = {k for row in r.RULES for k in row.job_kinds}
-    assert covered >= set(r.JOB_KINDS)
+    assert covered | r.QUEUED_BY_JOBS >= set(r.JOB_KINDS)
+    assert not covered & r.QUEUED_BY_JOBS  # a kind of a job is not also put by an event
 
 
 def test_rows_with_events_exist_in_the_catalog() -> None:
@@ -290,6 +292,7 @@ def test_new_skill_events_schedule_graph_hygiene() -> None:
     assert plans[0].lock_key == f"domain:{domain}"
     assert plans[0].coalesce_key == f"hygiene:{domain}"
     assert plans[0].payload["reason"] == "new_skills"
+    assert plans[0].run_at == NOW + timedelta(minutes=SETTINGS.curation_defer_min)
 
     obs_el = {
         **sample_payload("observation.extracted")["elements"][0],
@@ -316,6 +319,64 @@ def test_new_skill_events_schedule_graph_hygiene() -> None:
     obs_plans = [p for p in r.plan_jobs(obs_ev, SETTINGS) if p.kind == "graph.hygiene"]
     assert len(obs_plans) == 1
     assert obs_plans[0].payload["reason"] == "new_skills"
+    assert obs_plans[0].run_at == NOW + timedelta(minutes=SETTINGS.curation_defer_min)
+
+    turn_markup = {
+        **sample_payload("turn.committed")["markup"],
+        "tasks": [
+            {
+                **sample_payload("turn.committed")["markup"]["tasks"][0],
+                "tests": [{"new_skill": {"name": "Poisson mean"}, "level": 3}],
+            }
+        ],
+    }
+    turn_ev = StoredEvent(
+        learner_id=LEARNER,
+        seq=22,
+        id=22,
+        type="turn.committed",
+        schema_version=1,
+        actor="teacher@3",
+        domain_id=domain,
+        session_id=UUID(int=99),
+        causation_seq=None,
+        correlation_id=None,
+        idempotency_key="k22",
+        payload_hash="h",
+        occurred_at=NOW,
+        payload={**sample_payload("turn.committed"), "markup": turn_markup},
+        source_refs=[],
+    )
+    turn_plans = [p for p in r.plan_jobs(turn_ev, SETTINGS) if p.kind == "graph.hygiene"]
+    assert len(turn_plans) == 1
+    assert turn_plans[0].lock_key == f"domain:{domain}"
+    assert turn_plans[0].coalesce_key == f"hygiene:{domain}"
+    assert turn_plans[0].payload["reason"] == "new_skills"
+    assert turn_plans[0].run_at == NOW + timedelta(minutes=SETTINGS.curation_defer_min)
+
+    parsed_ev = StoredEvent(
+        learner_id=LEARNER,
+        seq=23,
+        id=23,
+        type="material.parsed",
+        schema_version=1,
+        actor="system",
+        domain_id=domain,
+        session_id=None,
+        causation_seq=None,
+        correlation_id=None,
+        idempotency_key="k23",
+        payload_hash="h",
+        occurred_at=NOW,
+        payload=sample_payload("material.parsed"),
+        source_refs=[],
+    )
+    parsed_plans = [p for p in r.plan_jobs(parsed_ev, SETTINGS) if p.kind == "graph.hygiene"]
+    assert len(parsed_plans) == 1
+    assert parsed_plans[0].lock_key == f"domain:{domain}"
+    assert parsed_plans[0].coalesce_key == f"hygiene:{domain}"
+    assert parsed_plans[0].payload["reason"] == "material_parsed"
+    assert parsed_plans[0].run_at is None
 
 
 def test_agent_request_class_and_kind() -> None:
@@ -466,6 +527,8 @@ def test_graph_hygiene_after_a_session_with_temporary_entities_and_every_n_topic
     assert (plan.priority_class, plan.visible, plan.required_seq) == ("P3", False, 40)
     assert plan.lock_key == f"domain:{domain}" and plan.coalesce_key == f"hygiene:{domain}"
     assert plan.job_key == f"hygiene:{domain}:40"
+    assert plan.payload["session_id"] == ended.payload["session_id"]
+    assert plan.run_at is None
     # No domain known: nothing to clean.
     assert not [
         p
@@ -474,8 +537,14 @@ def test_graph_hygiene_after_a_session_with_temporary_entities_and_every_n_topic
     ]
 
     created = _event("topic.created", seq=41)
-    assert r.plan_with_facts(created, SETTINGS, r.RuleFacts()) == []
-    (counted,) = r.plan_with_facts(created, SETTINGS, r.RuleFacts(hygiene_due=True))
+    assert [
+        p for p in r.plan_with_facts(created, SETTINGS, r.RuleFacts()) if p.kind == "graph.hygiene"
+    ] == []
+    (counted,) = [
+        p
+        for p in r.plan_with_facts(created, SETTINGS, r.RuleFacts(hygiene_due=True))
+        if p.kind == "graph.hygiene"
+    ]
     assert counted.kind == "graph.hygiene" and counted.coalesce_key == f"hygiene:{domain}"
     assert counted.payload["reason"] == "new_topics"
 
@@ -495,7 +564,7 @@ def test_embedding_rows_carry_the_text_and_read_no_graph() -> None:
             "text": "limit equals the value",
         }
     ]
-    # Topic, skill and evidence stay open: the text property is [ПРОВЕРИТЬ], evidence has no id.
+    # Evidence stays open: its id is given by the projector, not the event.
     (open_row,) = [row for row in r.ROWS_NEED_FACTS if row.job_kinds == ("embedding.compute",)]
     assert open_row.event_type == "*"
 
@@ -579,10 +648,9 @@ def test_dispatcher_column_of_the_catalog_is_covered_by_rows_or_episodes() -> No
     rows = {row.event_type for row in r.RULES}
     marked = {key[0] for key, spec in SPECS.items() if spec.dispatcher}
     unhandled = marked - rows - EPISODE_TYPES
-    # skill.created, topic.proposed — the open embedding row (the embedded property is
-    # [ПРОВЕРИТЬ]); skill.merged, material.parsed — a mark without a row in Т-§13.3 / WP7.1
-    # (D-A-162, question to the owner).
-    assert unhandled == {"skill.created", "topic.proposed", "skill.merged", "material.parsed"}
+    # skill.merged — a mark without a row in Т-§13.3 / WP7.1 (D-A-162).
+    # material.parsed now triggers graph.hygiene; skill.created and topic.proposed have embeddings.
+    assert unhandled == {"skill.merged"}
 
 
 def test_cheatsheet_consent_is_the_job_of_its_hub() -> None:
@@ -609,3 +677,23 @@ def test_cheatsheet_consent_is_the_job_of_its_hub() -> None:
     assert r.plan_jobs(_event("agent.requested", payload=no_hub), SETTINGS) == []
     notes = {"kind": "artifact", "params": {"artifact": "notes"}, "needed_in_session": False}
     assert _one(_event("agent.requested", payload=notes)).kind == "agent.artifact"
+
+
+def test_new_topics_and_skills_are_embedded() -> None:
+    """2026-11-24: the reconciliation finds candidates only by vector, so every new topic and
+    skill gets `embedding.compute` with the text it is searched by (a topic — its name, a skill —
+    its name and summary); without it the builder created twins of existing nodes."""
+    topic = _event("topic.created", payload={"name": "Доверительные интервалы"})
+    jobs = [p for p in r.plan_jobs(topic, SETTINGS) if p.kind == "embedding.compute"]
+    (job,) = jobs
+    (node,) = job.payload["nodes"]
+    assert node["node_kind"] == "topic" and node["text"] == "Доверительные интервалы"
+    assert node["node_id"] == str(topic.payload["topic_id"])
+
+    skill = _event("skill.created", payload={"name": "строить интервал", "summary": "x̄ ± z·SE"})
+    (job,) = [p for p in r.plan_jobs(skill, SETTINGS) if p.kind == "embedding.compute"]
+    (node,) = job.payload["nodes"]
+    assert node["node_kind"] == "skill" and node["text"] == "строить интервал\nx̄ ± z·SE"
+
+    proposed = _event("topic.proposed", payload={"name": "ЦПТ"})
+    assert "embedding.compute" in _kinds(proposed)

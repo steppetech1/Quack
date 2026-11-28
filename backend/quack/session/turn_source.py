@@ -41,6 +41,12 @@ from quack.events.event_types import (
     TaskCreated,
 )
 from quack.events.log import StoredEvent
+from quack.events.service_turns import (
+    SERVICE_SKILL_CREATOR,
+    ServiceMode,
+    is_service_event,
+    without_service,
+)
 from quack.events.values import AnswerSpec, Level, Verdict
 from quack.graph.overlay import SessionOverlay
 from quack.graph.overlay_build import build_session_overlay, empty_overlay
@@ -64,7 +70,7 @@ from quack.llm.streaming import StreamRequest
 from quack.llm.strict_schema import to_strict_json_schema
 from quack.llm.tool_loop import stream_step
 from quack.logging import get_logger
-from quack.practice.answer_spec import SLOW_TYPES, LearnerAnswer
+from quack.practice.answer_spec import CODE_TYPES, SLOW_TYPES, LearnerAnswer
 from quack.practice.answers import DEFAULT_PART, help_in_session, part_spec
 from quack.practice.check import check
 from quack.practice.model_check import record_verdict
@@ -93,6 +99,7 @@ from quack.session.plan_view import (
 from quack.session.prep_mode import prep_for_turn, render_prep
 from quack.session.review_turn import bank_for_review, review_for_turn
 from quack.session.schemas import PlanLandmark
+from quack.session.service_turns import SKILL_ARTIFACT_TYPES, SKILL_NAME_MAX
 from quack.session.spoiler_guard import answer_in_text, remove_answer_sentences, spoiler_hits
 from quack.session.teacher_context import (
     LearnerState,
@@ -119,7 +126,12 @@ from quack.session.tools import (
     run_tool,
     tool_definition,
 )
-from quack.session.turn_commit import AnsweredAction, LearnerText, TurnManifestRow
+from quack.session.turn_commit import (
+    AnsweredAction,
+    LearnerText,
+    TurnManifestRow,
+    focus_inputs_from_events,
+)
 from quack.session.turn_graph import AssembledTurn, Effort, GuardInputs, MarkupFix, Role
 from quack.session.turn_inputs import (
     cards_for_turn,
@@ -204,6 +216,9 @@ class SessionJournal:
     answered: AnsweredAction | None = None
     answered_verdict: Verdict | None = None
     answer_seq: int | None = None  # the `answer.submitted` the turn answers
+    message_topic_id: UUID | None = None
+    session_topic_id: UUID | None = None
+    turn_skill_ids: list[UUID] = field(default_factory=list)
 
 
 def _latest_verdicts(events: Sequence[StoredEvent]) -> dict[tuple[int, str], Verdict]:
@@ -296,14 +311,35 @@ _KIND_WORDS = (
     ("image", "a photo or a picture"),
 )
 _SLIDES = "presentationml.presentation"
+_UNREADABLE = ("failed", "uploaded")
+
+
+def _graph_state(status: str) -> str:
+    """Where the topics of a readable file are: the topic graph is built from it by the
+    background step of the material (`material.parse`), never by the teacher. Without this a
+    teacher asked for «граф тем» by a file drew one in text and called it ready (2026-11-27)."""
+    if status == "parsed":
+        return "Its topics are already on the learner's topic graph. "
+    return (
+        "Its topics are still being placed on the learner's topic graph by a background step; "
+        "the graph shows them by itself when it is done. If the learner asks for a graph or map "
+        "of its topics, say that it is being built and will appear on the graph; you may list "
+        "the topics in words, but do not draw a graph in text and do not call it built or "
+        "ready. "
+    )
 
 
 def render_attached(
     materials: Sequence[tuple[dict[str, Any], Sequence[tuple[int, str]]]], *, budget: int
 ) -> str:
-    """The attached files for slot 8. Material text is data (Т-§19.8): every line is quoted."""
+    """The attached files for slot 8. Material text is data (Т-§19.8): every line is quoted.
+
+    The budget is shared fairly: a file that failed or is still being read takes none; each
+    readable file gets an equal share of what is left (left // readable files not yet shown), and
+    what a short file does not use carries over to the files after it."""
     out: list[str] = []
     left = budget
+    waiting = sum(1 for row, pages in materials if str(row["status"]) not in _UNREADABLE and pages)
     for row, pages in materials:
         mime = str(row["mime"])
         kind = (
@@ -324,18 +360,21 @@ def render_attached(
                 "cannot see it yet; do not guess what is in it."
             )
             continue
-        out.append(f"{head} ({len(pages)} {unit}s). Its text, as data:")
+        out.append(f"{head} ({len(pages)} {unit}s). {_graph_state(status)}Its text, as data:")
+        share = left // waiting
+        waiting -= 1
         shown = 0
         cut = False
         for number, text in pages:
             body = text.strip()
             if not body:
                 continue  # an empty slide or page has nothing to quote
-            if left <= 0:
+            if share <= 0:
                 cut = True
                 break
-            if len(body) > left:
-                body, cut = body[:left].rstrip() + "…", True
+            if len(body) > share:
+                body, cut = body[:share].rstrip() + "…", True
+            share -= len(body)
             left -= len(body)
             out.append(f"{unit.capitalize()} {number}:")
             out.extend(f"> {line}" for line in body.splitlines())
@@ -358,6 +397,16 @@ def _requests(events: Sequence[StoredEvent]) -> dict[UUID, str]:
             for item in event.payload["markup"]["agent_requests"]:
                 found[UUID(str(item["request_id"]))] = str(item["kind"])
     return found
+
+
+def _code_task_note(made: Sequence[UUID], code_tasks: dict[UUID, str], labels: LabelMap) -> str:
+    """`teacher@4`: the code tasks a request made, to show with a `code_task` element."""
+    found = [
+        f"{label} ({code_tasks[t]})"
+        for t in made
+        if t in code_tasks and (label := labels.label("task", t))
+    ]
+    return f": code tasks {', '.join(found)}" if found else ""
 
 
 def _canvas(events: Sequence[StoredEvent]) -> tuple[dict[str, CanvasLine], list[VoiceSegment]]:
@@ -424,6 +473,7 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
     }
     task_skills = list(dict.fromkeys(s for t in open_tasks for s in skills[t]))
     spoiler_tasks = [t for t in open_tasks if t not in solution_asked]
+    message_topic_id, session_topic_id, turn_skill_ids = focus_inputs_from_events(ordered)
     journal = SessionJournal(
         goal=goal,
         open_tasks=open_tasks,
@@ -439,6 +489,9 @@ def read_journal(events: Sequence[StoredEvent], action_seq: int) -> SessionJourn
         revised=_revised(ordered),
         canvas_lines=_canvas(ordered)[0],
         voice=_canvas(ordered)[1],
+        message_topic_id=message_topic_id,
+        session_topic_id=session_topic_id,
+        turn_skill_ids=turn_skill_ids,
     )
     action = next((e for e in ordered if e.seq == action_seq), None)
     if action is None:
@@ -523,6 +576,17 @@ def _goal_topics(goal: SessionGoal, hubs: Sequence[HubGoal]) -> list[UUID]:
     if goal.hub_id is not None:
         return [t.topic_id for hub in hubs if hub.hub_id == goal.hub_id for t in hub.topics]
     return []
+
+
+def skill_topics(goal_topics: Sequence[UUID], hubs: Sequence[HubGoal], limit: int) -> list[UUID]:
+    """The topics whose skills the turn reads: those of the goal; a session on the whole domain
+    (no topic, no hub) takes the topics of the domain's hubs, at most `limit`. Without them a
+    chat on a domain gets the topics in its label table but none of their skills, and the
+    teacher cannot name a skill (a `task_generation` request needs one)."""
+    if goal_topics:
+        return list(goal_topics)
+    found = [t.topic_id for hub in hubs for t in hub.topics]
+    return list(dict.fromkeys(found))[:limit]
 
 
 def _plan_refs(plan: PlanDoc | None) -> tuple[list[UUID], list[UUID]]:
@@ -790,14 +854,32 @@ class MemoryTurnContextSource:
         row = await self._db.fetch_one(_LATEST_DIGEST, {"learner_id": learner_id, "d": domain_id})
         return None if row is None else str(row["payload"]["text"])
 
-    async def _completed(self, learner_id: UUID, requests: dict[UUID, str]) -> set[UUID]:
-        """Requests of the session with a successful `agent.completed` (Т-§13.7)."""
+    async def _completed(
+        self, learner_id: UUID, requests: dict[UUID, str]
+    ) -> dict[UUID, list[UUID]]:
+        """Requests of the session with a successful `agent.completed` (Т-§13.7), with the tasks
+        they made (a `task_generation` request; `teacher@4` shows a code task by its label)."""
         if not requests:
-            return set()
+            return {}
         rows = await self._db.fetch_all(
             _COMPLETED, {"learner_id": learner_id, "ids": [str(r) for r in requests]}
         )
-        return {UUID(str(r["payload"]["request_id"])) for r in rows if r["payload"]["ok"]}
+        return {
+            UUID(str(r["payload"]["request_id"])): [
+                UUID(str(t)) for t in r["payload"].get("task_ids") or []
+            ]
+            for r in rows
+            if r["payload"]["ok"]
+        }
+
+    async def _code_tasks(self, learner_id: UUID, task_ids: list[UUID]) -> dict[UUID, str]:
+        """The code tasks among `task_ids` with their language (Т-§6.10)."""
+        found: dict[UUID, str] = {}
+        for task_id in task_ids:
+            task = await get_task(self._db, learner_id=learner_id, task_id=task_id)
+            if task is not None and task.answer_spec.type in CODE_TYPES:
+                found[task_id] = task.answer_spec.language or "code"
+        return found
 
     async def _answers(self, learner_id: UUID, journal: SessionJournal) -> list[str]:
         found: list[str] = []
@@ -832,8 +914,8 @@ class MemoryTurnContextSource:
             if task is None:
                 return None
             spec = await part_spec(self._db, learner_id=learner_id, task=task, part=payload.part)
-            if spec.type in SLOW_TYPES:
-                return None
+            if spec.type in SLOW_TYPES or spec.type in CODE_TYPES:
+                return None  # Т-§6.10: code has its verdict from the tests already
             result = await check(
                 LearnerAnswer.model_validate(payload.answer.model_dump()),
                 spec,
@@ -864,6 +946,24 @@ class MemoryTurnContextSource:
             return None
         return result
 
+    def _service_instruction(self) -> dict[str, Any]:
+        """The instruction of the built-in command, a developer message of the first step: it comes
+        from our own prompt file (`Settings.skill_creator_prompt`), not from the learner."""
+        name, version = self._settings.skill_creator_prompt.rsplit("@", 1)
+        template = self._gateway.prompts.load(name, int(version))
+        text = template.render(
+            {
+                "name_max": SKILL_NAME_MAX,
+                "text_max": self._settings.learner_skill_max_chars,
+                "artifact_types": ", ".join(SKILL_ARTIFACT_TYPES),
+            }
+        )
+        return {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": text}],
+        }
+
     async def assemble(self, request: TurnRequest) -> TurnSetup:
         settings, db = self._settings, self._db
         learner_id, session_id = request.learner_id, request.session_id
@@ -875,6 +975,16 @@ class MemoryTurnContextSource:
         events = await session_events_of_action(
             db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
         )
+        # The built-in `/skill-creator` (owner decision 2026-11-24): a turn that answers a message
+        # of that dialogue is a service turn; every other turn does not see the dialogue at all.
+        action_event = next((e for e in events if e.seq == request.action_seq), None)
+        service: ServiceMode | None = (
+            SERVICE_SKILL_CREATOR
+            if action_event is not None
+            and is_service_event(action_event.type, action_event.payload)
+            else None
+        )
+        events = _scoped(events, service)
         journal = read_journal(events, request.action_seq)
         put_since(parts, "journal_ms", started)
         started = now_ns()
@@ -883,7 +993,7 @@ class MemoryTurnContextSource:
             learner_timezone(db, learner_id=learner_id),
             load_snapshot(db, learner_id=learner_id, session_id=session_id),
             load_learner_skill(db, learner_id=learner_id, name=journal.skill_invocation)
-            if journal.skill_invocation
+            if journal.skill_invocation and service is None
             else _none(),
             has_topic_notes(db, learner_id=learner_id, topic_id=journal.goal.topic_id),
         )
@@ -897,11 +1007,20 @@ class MemoryTurnContextSource:
             hubs = await reader.domain_goals(request.domain_id)
             topics = _goal_topics(journal.goal, hubs)
             memory: list[TopicMemory] = await reader.topic_memory(topics) if topics else []
+            read_topics = skill_topics(topics, hubs, settings.label_max_topics)
+            skill_memory: list[TopicMemory] = (
+                memory
+                if read_topics == topics
+                else await reader.topic_memory(read_topics)
+                if read_topics
+                else []
+            )
         except NEO4J_UNAVAILABLE:
             memory_down = True
             now, hubs, topics, memory = LearnerState(profile=Profile()), [], [], []
+            skill_memory = []
         put_since(parts, "memory_ms", started)
-        topic_skills = [s.skill_id for m in memory for s in m.skills]
+        topic_skills = [s.skill_id for m in skill_memory for s in m.skills]
         targets = target_levels(hubs, memory)
         focus = SliceFocus(
             skill_ids=list(dict.fromkeys([*journal.task_skills, *topic_skills])),
@@ -985,8 +1104,14 @@ class MemoryTurnContextSource:
                 method=inline.method,
                 verification=inline.verification,
             )
-            events = await session_events_of_action(
-                db, learner_id=learner_id, session_id=session_id, action_seq=request.action_seq
+            events = _scoped(
+                await session_events_of_action(
+                    db,
+                    learner_id=learner_id,
+                    session_id=session_id,
+                    action_seq=request.action_seq,
+                ),
+                service,
             )
             journal = read_journal(events, request.action_seq)
         answers = await self._answers(learner_id, journal)
@@ -997,11 +1122,21 @@ class MemoryTurnContextSource:
             dict.fromkeys([*read_focus.skill_ids, *(s.skill_id for s in memory_slice.skills)])
         )
         bank = {} if unavailable else await self._bank(reader, learner_id, review, targets)
+        made = [t for ts in completed.values() for t in ts]
+        code_tasks = await self._code_tasks(learner_id, made)
         labels = LabelMap.build(
             settings,
             skills=skill_ids,
             topics=label_topics,
-            tasks=[*journal.open_tasks, *(t.task_id for ts in bank.values() for t in ts)],
+            tasks=list(
+                dict.fromkeys(
+                    [
+                        *journal.open_tasks,
+                        *(t.task_id for ts in bank.values() for t in ts),
+                        *code_tasks,
+                    ]
+                )
+            ),
             misconceptions=[m.misconception_id for m in memory_slice.misconceptions],
             hubs=[hub.hub_id for hub in hubs],
             chunks=[chunk.chunk_id for chunk in chunks],
@@ -1034,6 +1169,7 @@ class MemoryTurnContextSource:
                     analyst_summary=digest,
                     agent_results=[
                         f"{labels.label('request', r) or 'a request'}: {kind} is ready"
+                        + _code_task_note(completed[r], code_tasks, labels)
                         for r, kind in journal.requests.items()
                         if r in completed
                     ],
@@ -1069,34 +1205,42 @@ class MemoryTurnContextSource:
                 points = apply_edits(points, plan, resolved)
             visited = visited_landmarks([e.payload for e in events if e.type == "turn.committed"])
             landmarks = view_of(points, current_ref, visited=visited)
+        if service is not None:
+            # a service turn works from the dialogue alone: no plan, memory, materials or labels
+            session_plan_text, picture, materials_text, labels_text = "", "", "", ""
+        else:
+            session_plan_text = _session_plan(
+                journal.goal,
+                plan,
+                labels,
+                prep,
+                names,
+                settings,
+                landmarks,
+                has_topic_notes=topic_has_notes,
+            )
+            materials_text = "\n".join(
+                part for part in (render_materials(chunks, labels), attached) if part
+            )
+            labels_text = render_labels(labels, {**names, **card_names})
         variables = teacher_variables(
             TeacherSlots(
                 frozen=frozen,
                 conversation=render_conversation(events, labels, settings),
-                session_plan=_session_plan(
-                    journal.goal,
-                    plan,
-                    labels,
-                    prep,
-                    names,
-                    settings,
-                    landmarks,
-                    has_topic_notes=topic_has_notes,
-                ),
+                session_plan=session_plan_text,
                 memory_picture=picture,
-                materials="\n".join(
-                    part for part in (render_materials(chunks, labels), attached) if part
-                ),
-                labels=render_labels(labels, {**names, **card_names}),
+                materials=materials_text,
+                labels=labels_text,
                 skill=skill,
+                service=service,
             )
         )
         role = request.role
-        prompt_version = settings.llm_roles[role].prompt or "teacher@3"
+        prompt_version = settings.llm_roles[role].prompt or "teacher@4"
         prompt_name, version = prompt_version.rsplit("@", 1)
         template = self._gateway.prompts.load(prompt_name, int(version))
         variables = fit_budget(template.render, variables, settings.teacher_context_max_tokens)
-        effort = turn_effort(role, journal)
+        effort = "low" if service is not None and role == "teacher" else turn_effort(role, journal)
         output_schema, parse_output = teacher_schema_for_prompt(prompt_name, int(version))
         stream, prompt = self._gateway.stream_request(
             role,
@@ -1105,8 +1249,10 @@ class MemoryTurnContextSource:
             variables,
             prompt_role=prompt_name,
             reasoning_effort=effort,
-            tools=[tool_definition(tool) for tool in TOOLS],
+            tools=[] if service is not None else [tool_definition(tool) for tool in TOOLS],
         )
+        if service is not None:
+            stream = replace(stream, input_items=(self._service_instruction(),))
         tools = ToolContext(
             learner_id=learner_id,
             labels=labels,
@@ -1145,6 +1291,32 @@ class MemoryTurnContextSource:
             teacher_fallback=role == "teacher_fallback",
             projector_lag=memory_slice.lag_degraded,
         )
+        topic_of_skill: dict[UUID, UUID] = {
+            s.skill_id: m.topic_id for m in memory for s in m.skills
+        }
+        for s in memory_slice.skills:
+            if s.topic_id is not None:
+                topic_of_skill[s.skill_id] = s.topic_id
+        if (
+            not unavailable
+            and journal.message_topic_id is None
+            and journal.session_topic_id is None
+        ):
+            missing_skills = [
+                sid for sid in dict.fromkeys(journal.turn_skill_ids) if sid not in topic_of_skill
+            ]
+            if missing_skills:
+                try:
+                    extra_slice = await reader.slice_for_turn(
+                        learner_id,
+                        session_id,
+                        SliceFocus(skill_ids=missing_skills, domain_id=request.domain_id),
+                    )
+                    for s in extra_slice.skills:
+                        if s.topic_id is not None:
+                            topic_of_skill[s.skill_id] = s.topic_id
+                except NEO4J_UNAVAILABLE:
+                    pass
         return TurnSetup(
             assembled=AssembledTurn(
                 request=stream,
@@ -1164,6 +1336,7 @@ class MemoryTurnContextSource:
                 degraded_mode=degraded,
                 verdict=verdict_frame,
                 parse_output=parse_output,
+                service=service,
             ),
             provider=streaming,
             labels=labels,
@@ -1199,11 +1372,21 @@ class MemoryTurnContextSource:
             answered=journal.answered,
             timings=parts,
             fix_markup=fix_markup,
+            message_topic_id=journal.message_topic_id,
+            session_topic_id=journal.session_topic_id,
+            prior_turn_skill_ids=journal.turn_skill_ids,
+            skill_topics=topic_of_skill,
         )
 
 
 async def _none() -> None:
     return None
+
+
+def _scoped(events: list[StoredEvent], service: ServiceMode | None) -> list[StoredEvent]:
+    """The events a turn sees: a service turn the whole journal, any other turn without the
+    `/skill-creator` dialogue (it is not learning content, `events.service_turns`)."""
+    return events if service is not None else without_service(events)
 
 
 async def _ignore_text(_text: str) -> None:

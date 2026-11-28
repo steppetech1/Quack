@@ -23,8 +23,12 @@ from quack.canvas.recognition import RecognizerOutput, RecognizerSheetOutput
 from quack.domains.schemas import CuratorOutput, DiagnosticOutput, StructurerOutput
 from quack.llm.labels import LABEL_PREFIX
 from quack.llm.strict_schema import to_strict_json_schema
-from quack.materials.parse import MaterialParserOutput
-from quack.practice import role_outputs
+from quack.materials.parse import (
+    MaterialParserOutput,
+    MaterialParserV2Output,
+    MaterialTocOutput,
+)
+from quack.practice import code_hidden, code_role_outputs, role_outputs
 from quack.practice.schemas import EvaluatorOutput, TaskGenOutput
 from quack.prompts.registry import PromptRegistry
 from quack.session.schemas import ExtractorOutputV2, TeacherOutput
@@ -52,13 +56,21 @@ PROMPT_SCHEMAS: dict[str, type[BaseModel]] = {
 PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     "teacher@2": (TeacherOutputLegacyV2,),
     "teacher@3": (TeacherOutputV2,),
+    "teacher@4": (TeacherOutputV2,),
+    # The code sandbox (owner decision 2026-11-26): the teacher writes a `code_sandbox` element.
+    "teacher@5": (TeacherOutputV2,),
     "extractor@3": (agents.ExtractorOutputV3,),
     "verdict_free@1": (role_outputs.ModelVerdictOutput,),
     "verdict_proof@1": (role_outputs.ModelVerdictOutput,),
     "second_opinion@1": (role_outputs.ModelVerdictOutput,),
     "task_generator@1": (role_outputs.TaskGeneratorOutput,),
+    "task_generator@2": (role_outputs.TaskGeneratorOutput,),
     "task_checker@1": (role_outputs.TaskCheckOutput,),
     "task_arbiter@1": (role_outputs.TaskCheckOutput,),
+    # Т-§6.10: programming tasks.
+    "code_task_generator@1": (code_role_outputs.CodeTaskGeneratorOutput,),
+    "code_task_checker@1": (code_role_outputs.CodeTaskCheckOutput,),
+    "code_test_builder@1": (code_hidden.CodeTestBuilderOutput,),
     "solution_space@1": (role_outputs.SolutionSpace,),
     "analyst@1": (agents.AnalystOutput,),
     "builder@1": (
@@ -66,6 +78,13 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
         agents.HygieneOutput,
         agents.SplitOutput,
         agents.TopicsOutput,
+    ),
+    "builder@2": (
+        agents.BuilderOutput,
+        agents.HygieneOutput,
+        agents.SplitOutput,
+        agents.TopicsOutput,
+        agents.StructureOutput,
     ),
     "misconception_describer@1": (agents.MisconceptionDescription,),
     "today_planner@1": (agents.TodayPlannerOutput,),
@@ -80,12 +99,20 @@ PHASE4_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     "artifact_writer@1": (ArtifactWriterOutput,),
     "canvas_diagnoser@1": (CanvasDiagnoserOutput,),
     "material_parser@1": (MaterialParserOutput,),
+    "material_parser@2": (MaterialParserV2Output, MaterialTocOutput),
 }
 
 # Every prompt with its schemas: what `T-M5` and `PROMPT_CONTRACTS.md` cover.
 ALL_PROMPT_SCHEMAS: dict[str, tuple[type[BaseModel], ...]] = {
     **{ref: (model,) for ref, model in PROMPT_SCHEMAS.items()},
     **PHASE4_PROMPT_SCHEMAS,
+}
+
+# Instructions the code gives to a role in some turns, as a developer message: they are not roles
+# of the table (no own call, no own schema); the output is the role's. `skill_creator@1` is given
+# to the teacher in the service turns of the built-in `/skill-creator` (owner decision 2026-11-24).
+INSTRUCTION_PROMPTS: dict[str, tuple[type[BaseModel], ...]] = {
+    "skill_creator@1": (TeacherOutputV2,),
 }
 
 # Prompts that run on a stub until the owner's doctrine arrives (ТЗ Ф4 §0.4.3, §7.6 п.5):
@@ -144,11 +171,62 @@ LABEL_FIELDS: dict[str, list[str]] = {
         "p3_markup.deadline.hub_label",
         "p3_markup.deadline.coverage",
     ],
+    "teacher@4": [
+        "p1_head.targetSkills",
+        "p1_head.topicLabel",
+        "p3_markup.tasks.tests.skill",
+        "p3_markup.tasks.variantOf",
+        "p3_markup.tasks.options.misconception",
+        "p3_markup.tasks.pairTaskId",
+        "p3_markup.exposures.skill",
+        "p3_markup.targetsMisconception",
+        "p3_markup.planUpdate.cancel_requests",
+        "p3_markup.planUpdate.current_step.landmark",
+        "p3_markup.planUpdate.next_steps.landmark",
+        "p3_markup.planUpdate.landmark_edits.add.label",
+        "p3_markup.planUpdate.landmark_edits.add.before",
+        "p3_markup.planUpdate.landmark_edits.remove",
+        "p3_markup.agentRequests.params.skill",
+        "p3_markup.agentRequests.params.topic",
+        "p3_markup.agentRequests.params.task",
+        "p3_markup.agentRequests.params.misconception",
+        "p3_markup.deadline.hub_label",
+        "p3_markup.deadline.coverage",
+    ],
+    "teacher@5": [
+        "p1_head.targetSkills",
+        "p1_head.topicLabel",
+        "p3_markup.tasks.tests.skill",
+        "p3_markup.tasks.variantOf",
+        "p3_markup.tasks.options.misconception",
+        "p3_markup.tasks.pairTaskId",
+        "p3_markup.exposures.skill",
+        "p3_markup.targetsMisconception",
+        "p3_markup.planUpdate.cancel_requests",
+        "p3_markup.planUpdate.current_step.landmark",
+        "p3_markup.planUpdate.next_steps.landmark",
+        "p3_markup.planUpdate.landmark_edits.add.label",
+        "p3_markup.planUpdate.landmark_edits.add.before",
+        "p3_markup.planUpdate.landmark_edits.remove",
+        "p3_markup.agentRequests.params.skill",
+        "p3_markup.agentRequests.params.topic",
+        "p3_markup.agentRequests.params.task",
+        "p3_markup.agentRequests.params.misconception",
+        "p3_markup.deadline.hub_label",
+        "p3_markup.deadline.coverage",
+    ],
     "extractor@3": ["elements.skill", "elements.misconception", "elements.root_cause.skill"],
     "verdict_free@1": ["misconception"],
     "verdict_proof@1": ["misconception"],
     "second_opinion@1": ["misconception"],
     "task_generator@1": [
+        "tasks.markup.tests.skill",
+        "tasks.markup.variantOf",
+        "tasks.markup.options.misconception",
+        "tasks.markup.pairTaskId",
+        "tasks.markup.parts.tests.skill",
+    ],
+    "task_generator@2": [
         "tasks.markup.tests.skill",
         "tasks.markup.variantOf",
         "tasks.markup.options.misconception",
@@ -180,6 +258,22 @@ LABEL_FIELDS: dict[str, list[str]] = {
         "merges.from_topic",
         "merges.into_topic",
     ],
+    "builder@2": [
+        "items.target",
+        "items.same_idea",
+        "pairs.first",
+        "pairs.second",
+        "parts.skills",
+        "placements.skill",
+        "placements.topic",
+        "merges.from_topic",
+        "merges.into_topic",
+        "topic_candidates.target_topic",
+        "topic_candidates.requires.target_core_skill_label",
+        "provisional_skills.skill",
+        "provisional_skills.target_skill",
+        "provisional_skills.target_topic",
+    ],
     "today_planner@1": ["items.tasks"],
     "canvas_diagnoser@1": ["misconception", "root_cause"],
 }
@@ -191,6 +285,8 @@ MARKERS: dict[str, list[str]] = {
     "teacher@1": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@2": [MEMORY_UNAVAILABLE_MARKER],
     "teacher@3": [MEMORY_UNAVAILABLE_MARKER],
+    "teacher@4": [MEMORY_UNAVAILABLE_MARKER],
+    "teacher@5": [MEMORY_UNAVAILABLE_MARKER],
     "viz_builder@1": [VIZ_PARAMS_MARKER],
     "viz_builder@2": [VIZ_PARAMS_MARKER],
 }
@@ -265,7 +361,8 @@ def undeclared_names(ref: str, text: str) -> list[str]:
     block = output_contract_block(text)
     if block is None:
         return []
-    allowed = set().union(*(field_names(model) for model in ALL_PROMPT_SCHEMAS[ref]))
+    models = {**ALL_PROMPT_SCHEMAS, **INSTRUCTION_PROMPTS}[ref]
+    allowed = set().union(*(field_names(model) for model in models))
     return sorted(
         {n for n in _BACKTICKED.findall(block) if n not in allowed and not LABEL_RE.match(n)}
     )
@@ -305,6 +402,17 @@ def render_contracts(registry: PromptRegistry | None = None) -> str:
         if ref in DOCTRINE_PENDING:
             lines.append(f"Layer 1: stub, owner's doctrine pending ({DOCTRINE_PENDING[ref]})")
         lines.append("")
+    lines += ["## Instructions given to a role", ""]
+    for ref, models in INSTRUCTION_PROMPTS.items():
+        role, version = ref.split("@")
+        template = registry.load(role, int(version))
+        inputs = list(dict.fromkeys(_PLACEHOLDER.findall(template.text)))
+        names = ", ".join(f"`{model.__name__}`" for model in models)
+        lines += [
+            f"- `{ref}`: a developer message of the teacher turns of a built-in command, output "
+            f"{names}; input variables: " + (", ".join(f"`{i}`" for i in inputs) or "none"),
+        ]
+    lines.append("")
     lines += ["## Edit points after G1", ""]
     lines += [f"- {point}" for point in EDIT_POINTS]
     return "\n".join(lines) + "\n"

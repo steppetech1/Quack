@@ -191,10 +191,14 @@ def default_llm_roles() -> dict[str, RoleConfig]:
     `llm_timeout_sec` (60 s). Classes of roles with two uses (`recognizer`, `builder`) and of
     `voice` — D-B-101.
     Output limits of ten roles are set by the stand measurement with `effort` (D-B-134): the
-    Т-§11.1 figure of 4096 came from a spike without a reasoning level."""
+    Т-§11.1 figure of 4096 came from a spike without a reasoning level. `material_parser`: a
+    TOC call of about 3.7k input tokens spent 7.7k at `high` and was cut at 8192 (2026-11-27)."""
     return {
-        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@3", 45.0),
-        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@3", 30.0),
+        # `teacher@4` (owner decision 2026-11-25, Т-§6.10): `teacher@3` plus code tasks.
+        # `teacher@5` (owner decision 2026-11-26, the code sandbox): the teacher writes a code task
+        # itself (`code_sandbox`); `teacher@4` stays for a rollback by this setting.
+        "teacher": _role(WONDER, "low", 8192, "P0", "teacher@5", 45.0),
+        "teacher_fallback": _role(SPARK, "low", 8192, "P0", "teacher@5", 30.0),
         "extractor": _role(SPARK, "high", 16384, "P2", "extractor@3"),
         "verdict_free": _role(SPARK, "high", 8192, "P1", "verdict_free@1"),
         "verdict_proof": _role(WONDER, "high", 8192, "P1", "verdict_proof@1"),
@@ -205,12 +209,21 @@ def default_llm_roles() -> dict[str, RoleConfig]:
         "voice": _role("muse-voice-transcribe-1.0", None, None, "P1", None),
         "analyst": _role(SPARK, "high", 16384, "P2", "analyst@1"),
         "analyst_deep": _role(WONDER, "high", 16384, "P2", "analyst@1"),
-        "builder": _role(SPARK, "high", 8192, "P2", "builder@1"),
-        "material_parser": _role(SPARK, "high", 4096, "P2", "material_parser@1"),
-        "task_generator": _role(SPARK, "high", 8192, "P2", "task_generator@1").model_copy(
+        "builder": _role(SPARK, "high", 8192, "P2", "builder@2"),
+        "material_parser": _role(SPARK, "high", 16384, "P2", "material_parser@2"),
+        "task_generator": _role(SPARK, "high", 8192, "P2", "task_generator@2").model_copy(
             update={"hard_model": WONDER}
         ),
         "task_checker": _role(SPARK, "high", 8192, "P1", "task_checker@1"),
+        # Т-§6.10: programming tasks — the generator writes the reference and the test inputs,
+        # the checker an independent solution from the statement and the open tests.
+        # 180 s as `viz_builder`: a statement, a reference and five test inputs on Wonder timed
+        # out at 60 s on the live stand (2026-11-25).
+        "code_task_generator": _role(WONDER, "high", 16384, "P2", "code_task_generator@1", 180.0),
+        "code_task_checker": _role(SPARK, "high", 8192, "P2", "code_task_checker@1"),
+        # The code sandbox: the reference solution and up to four hidden inputs of a
+        # `full_problem` task, built in the background (`task.check`) while the learner writes.
+        "code_test_builder": _role(SPARK, "high", 8192, "P1", "code_test_builder@1", 90.0),
         "task_arbiter": _role(WONDER, "high", 8192, "P2", "task_arbiter@1"),
         "solution_space": _role(SPARK, "high", 8192, "P2", "solution_space@1").model_copy(
             update={"hard_model": WONDER}
@@ -300,6 +313,37 @@ class Settings(BaseSettings):
 
     # --- Compute client (spec §8.4) ---
     compute_timeout_sec: float = 5.0
+
+    # --- Runner client and code answers (Т-§6.10, documentation/идея-редактор-кода-и-запуск.md)
+    # `unix:<path>` — the socket of the runner volume (compose); `http://…` — a local runner.
+    runner_url: str = "http://localhost:8002"
+    # Longer than the runner's own budget of a run (20 s), so the runner answers first.
+    runner_timeout_sec: float = 25.0
+    # «Лимиты частоты»: runs and submissions of one learner per minute (the 60 s window of §6.3).
+    code_runs_per_min: int = 10
+    code_submits_per_min: int = 3
+    # «Лимиты по умолчанию»: the longest code / query the learner may send, in characters.
+    code_max_chars: int = 64 * 1024
+    sql_max_chars: int = 16 * 1024
+    # «Значения и сравнение»: relative and absolute tolerance of floats.
+    code_float_tolerance: float = 1e-9
+    # Significant digits of floats in the sort key of SQL rows compared without order: coarser
+    # than the tolerance, so rows equal within it sort next to each other.
+    code_sql_sort_digits: int = 8
+    # Т-§6.10, `teacher@4`: how much of an open test a verdict keeps for the teacher (characters of
+    # each of args / expected / got), and how much of the learner's code the conversation shows.
+    code_test_detail_chars: int = 160
+    code_in_context_chars: int = 4000
+    # Т-§6.10: open and hidden tests of a task.
+    code_open_tests: int = 2
+    code_hidden_tests: int = 3
+    # The code sandbox (teacher@5, ТЗ «песочница для кода»): `stdout` / `stderr` of a test as the
+    # learner and the teacher see them, in characters; the hidden cases the background builder may
+    # add to the sample (at most 1 + 4 tests); the attempts of the builder (the first and one retry)
+    # before the task silently stays on the sample.
+    code_output_chars: int = 2000
+    code_hidden_max: int = 4
+    code_build_attempts: int = 2
 
     # Phase 3 (ТЗ Фазы 3 §6.2, §0.5): each stream edits only its own block below.
 
@@ -598,8 +642,11 @@ class Settings(BaseSettings):
         default_factory=lambda: {"low": 0.4, "medium": 0.75, "high": 0.9}
     )
     reconcile_requires_confidence: dict[str, float] = Field(
-        default_factory=lambda: {"material": 0.85, "model": 0.65}
+        default_factory=lambda: {"material": 0.85, "model": 0.5}
     )
+    structure_full_list_max_topics: int = 80
+    structure_requires_min_score: float = 0.3
+    structure_batch_size: int = 15
     # WP16.3 (Т-§4.10; D-B-185): a duplicate candidate scores cosine + weight × shared neighbours.
     hygiene_min_score: float = 0.9
     hygiene_neighbour_weight: float = 0.1
@@ -652,6 +699,8 @@ class Settings(BaseSettings):
     # WP8.2 (WP16.6): the short check of «я это уже знаю» — at most this many tasks, one per
     # skill of the topic (the document says «1–3»). D-B-193.
     known_check_max_tasks: int = Field(default=3, ge=1)
+    # DEMO-ONLY (`domains/demo_seed.py`): at most this many topics from the learner's list.
+    demo_seed_max_topics: int = Field(default=6, ge=3)
     # WP10.6 (ТЗ Ф4 §2.3 строка 20): UUIDv5 namespace of the learner pseudonym in traces.
     # Phase 4 decision D-B-105: a fixed namespace, never changed after the first trace.
     langsmith_pseudonym_ns: str = "6f1c2a9e-4b7d-5e3a-9c21-0d8e7f6a5b43"
@@ -707,10 +756,15 @@ class Settings(BaseSettings):
     auth_link_per_ip_per_hour: int = 20
     auth_session_ttl_days: int = 7
     session_cookie_domain: str = "qvack.online"
+    session_cookie_secure: bool = True
     auth_success_redirect_url: str | None = None
+    auth_verify_url: str | None = None
     terms_version: str | None = None
     # Phase 4 decision D-C-104: names of sender and redirect URI are not in §6.7.
     auth_email_from: str = "login@qvack.online"
+    # Local sign-in without a mail provider: the link goes to the api log instead of an email.
+    # Refused in prod (the link is a credential).
+    auth_email_log_only: bool = False
     google_oidc_redirect_url: str = "https://api.qvack.online/auth/google/callback"
     email_api_key: SecretStr = SecretStr("")
     google_oidc_client_id: SecretStr = SecretStr("")
@@ -743,8 +797,9 @@ class Settings(BaseSettings):
     # Files the learner attached to messages of the session (`message.sent.material_ids`): the
     # teacher gets the text of the last `material_attached_files` of them straight from the stored
     # pages, no matter whether the graph work on the material is done; at most
-    # `material_attached_chars` characters in all (the rest of a long file is found by the search).
-    material_attached_files: int = Field(default=3, ge=1)
+    # `material_attached_chars` characters in all, shared fairly between the files (a short file
+    # leaves its unused share to the others; the rest of a long file is found by the search).
+    material_attached_files: int = Field(default=15, ge=1)
     material_attached_chars: int = Field(default=12000, ge=500)
     # WP20.2 (Т-§3.4.5 «около 1–2 КБ», Т-§4.3 «параллельно для больших материалов»;
     # Phase 4 decision D-C-201): chunk size in characters, chunks per `material_parser` call,
@@ -762,6 +817,16 @@ class Settings(BaseSettings):
     material_seminar_tasks_max: int = Field(default=30, ge=1)
     material_scan_min_chars: int = Field(default=20, ge=0)
     material_scan_max_pages: int = Field(default=50, ge=1)
+    material_toc_max_chunks: int = 40
+    # A course uploaded at once is put into the graph in the order of upload (decision of
+    # 2026-11-24): the structure step of a material waits while an older material of the domain
+    # is still being read, for at most `material_order_wait_minutes` after that one was uploaded;
+    # it asks again in `material_order_retry_s`.
+    material_order_wait_minutes: int = Field(default=30, ge=0)
+    material_order_retry_s: int = Field(default=5, ge=1)
+    # The reconciliation finds its candidates in Neo4j: before each call the structure step waits
+    # up to this long for the projector to apply the nodes and vectors written before it.
+    material_projection_wait_s: float = Field(default=20.0, ge=0)
     # Т-§3.4.6, Т-§10.5: the reserve taken inside SEARCH before post-filters and the final k.
     vector_search_reserve: int = 30
     embedding_dim: int = 768
@@ -797,6 +862,11 @@ class Settings(BaseSettings):
     cheatsheet_fit_rounds: int = 2
     # Т-§17.8 (WP23.6): longest instruction of a learner skill, in characters (D-C-216)
     learner_skill_max_chars: int = 2000
+    # Built-in `/skill-creator` of the teacher chat (owner decision 2026-11-24): the prompt it gives
+    # the teacher, and how many service turns in a row a dialogue may last before the learner has to
+    # call it again (the mode stays open after a question or a proposal, `session.service_turns`)
+    skill_creator_prompt: str = "skill_creator@1"
+    skill_creator_dialogue_turns_max: int = 8
     # Т-§17.4 (WP23.3): formulas of one block that code sends to compute; the rest stay unchecked
     artifact_formulas_per_block_max: int = 5
     # Т-§17.4 (WP23.3): longest side of a formula sent to compute (the `MathInput` limit)
@@ -898,6 +968,12 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise ValueError(f"missing required secrets for ENV=prod: {', '.join(missing)}")
+        return self
+
+    @model_validator(mode="after")
+    def _no_log_only_mail_in_prod(self) -> Settings:
+        if self.env == "prod" and self.auth_email_log_only:
+            raise ValueError("AUTH_EMAIL_LOG_ONLY must not be set for ENV=prod")
         return self
 
     @model_validator(mode="after")

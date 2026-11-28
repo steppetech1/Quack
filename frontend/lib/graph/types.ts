@@ -42,8 +42,8 @@ export type GraphHub = {
 /** `(Hub)-[:INCLUDES]->(Topic)` */
 export type HubLink = { hubId: string; topicId: string };
 
-/** `(Topic)-[:REQUIRES]->(Topic)`: `topicId` needs `requiresId` first. Cycles are possible (4.6) */
-export type RequiresEdge = { topicId: string; requiresId: string };
+/** `(Topic)-[:REQUIRES]->(Topic)`: `topicId` needs `requiresId` first; `confidence` drives edge weight/opacity (4.6). Cycles are possible */
+export type RequiresEdge = { topicId: string; requiresId: string; confidence?: number };
 
 /**
  * A topic asked about in this domain that belongs to a subject the learner has its own domain for (4.7).
@@ -94,3 +94,6 @@ export type GraphModel = {
 
 /** Shown on the graph: not hidden, not off-domain (off-domain topics live in the left column) */
 export const onGraph = (t: GraphTopic) => t.visibility !== "hidden" && t.status !== "off_domain";
+
+/** Which part of the domain graph the camera is on: the whole graph or one hub */
+export type GraphMode = { kind: "overview" } | { kind: "hub"; hubId: string };

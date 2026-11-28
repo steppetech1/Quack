@@ -26,7 +26,17 @@ from tests.support.llm import ScriptedLLMProvider, ScriptedToolCall, ScriptedToo
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "meta_smoke.py"
 # Versions of Phase 3 replaced by the role table (D-B-203).
-SUPERSEDED = {"teacher@1", "teacher@2", "extractor@2", "viz_builder@1"}
+SUPERSEDED = {
+    "teacher@1",
+    "teacher@2",
+    "teacher@3",
+    "teacher@4",
+    "extractor@2",
+    "viz_builder@1",
+    "builder@1",
+    "material_parser@1",
+    "task_generator@1",
+}
 
 
 def _script() -> ModuleType:
@@ -118,13 +128,13 @@ def test_smoke_calls_follow_the_role_table_and_contracts() -> None:
 
 
 async def test_smoke_runs_every_role_through_the_gateway(settings: Settings, pg_db: Db) -> None:
-    """All 28 roles of the table, the Phase 3 prompts and the stream with a tool pass; a role
+    """All 31 roles of the table, the Phase 3 prompts and the stream with a tool pass; a role
     without a prompt is `skipped`; the table and the report carry model, status and latency."""
     smoke = _script()
     provider = MetaScripted()
     rows = await smoke.run_smoke(settings, pg_db, provider)
     by_role = {row["role"]: row for row in rows}
-    assert set(settings.llm_roles) <= set(by_role) and len(settings.llm_roles) == 28
+    assert set(settings.llm_roles) <= set(by_role) and len(settings.llm_roles) == 31
     registry = PromptRegistry()
     for role, row in settings.llm_roles.items():
         status = by_role[role]["status"]

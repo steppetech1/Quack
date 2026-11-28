@@ -49,6 +49,8 @@ export type Session = {
   date: string;
   title: string;
   topics: string[];
+  /** The last message of the learner has no answer yet */
+  unanswered?: boolean;
 };
 
 export type TodayItem = {
@@ -173,13 +175,17 @@ export type PlanStep = {
 export type Option = { id: string; text: string; plain?: string; correct?: boolean };
 
 export type Turn =
-  | { kind: "student"; id: string; text: string }
+  | { kind: "student"; id: string; text: string; /** files that went with the message */ files?: { id: string; name: string }[] }
   | {
       kind: "teacher";
       id: string;
       memory?: { session: string; date: string };
       thinking?: string;
       text: string;
+      /** a demo the duck made for this turn (opens in the workspace pane) */
+      demo?: { id: string; title: string };
+      /** a notes card under the turn (opens in the workspace pane) */
+      note?: { id: string; title: string; preview: string };
     }
   | {
       kind: "question";
@@ -223,3 +229,10 @@ export type Skill = {
 
 export type ChatPart = string | { ref: string; label: string };
 export type ChatMsg = { id: string; role: "teacher" | "student"; parts: ChatPart[] };
+
+/** Mock content of the workspace pane: what its tabs show in mock mode */
+export type WorkspaceMock = {
+  demoLabels: { title: string; sliderLabel: string; readout: (x: string, sum: string, limit: string) => string };
+  materials: Record<string, { title: string; mime: string; pages: { page: number; text: string }[] }>;
+  note: { title: string; text: string };
+};

@@ -28,6 +28,7 @@ from quack.jobs.rules_p4 import JobPlan
 from quack.storage.deletions import DeletionRecord
 from quack.storage.objects import StorageUnavailable
 from tests.db.fixtures import create_learner
+from tests.events.samples import sample_payload
 from tests.support.deletions import FakeDeletionJournal
 from tests.support.storage import BrokenObjectStore, InMemoryObjectStore
 
@@ -267,3 +268,15 @@ async def test_domain_deletion_takes_the_guard_samples_of_its_sessions(pg_db: Db
     await erase_domain(pg_db, InMemoryObjectStore(), learner, domain)
     rows = await pg_db.fetch_all("SELECT session_id FROM ops.guard_samples")
     assert [r["session_id"] for r in rows] == [sessions["kept"]]
+
+
+async def test_topic_keeps_a_task_made_for_it_that_tests_other_skills(pg_db: Db) -> None:
+    """A task is the topic's by its markup: a task made for the topic (`topic_id`) whose markup
+    tests a skill of another topic keeps its `task.created` (its row and answers stay too)."""
+    learner, topic, other_skill, domain = await create_learner(pg_db), uuid4(), uuid4(), uuid4()
+    task = sample_payload("task.created")
+    task["topic_id"] = str(topic)
+    task["markup"]["tests"] = [{"skill_id": str(other_skill), "level": 3}]
+    await append_events(pg_db, learner, [_event("task.created", task, "t", domain)])
+    await erase_topic(pg_db, InMemoryObjectStore(), learner, topic, [], [])
+    assert await _count(pg_db, _COUNT_EVENTS, learner) == 1

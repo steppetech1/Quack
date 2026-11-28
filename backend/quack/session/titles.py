@@ -40,11 +40,17 @@ _ROW_FOR_UPDATE = _ROW + " FOR UPDATE"
 _MESSAGES = (
     "SELECT payload ->> 'text' AS text FROM core.events WHERE learner_id = %(learner_id)s "
     "AND session_id = %(session_id)s AND type IN ('message.sent', 'voice.transcribed') "
-    "AND btrim(payload ->> 'text') <> '' ORDER BY seq LIMIT %(limit)s"
+    "AND btrim(payload ->> 'text') <> '' "
+    "AND payload ->> 'skill_invocation' IS DISTINCT FROM 'skill-creator' "
+    "AND NOT EXISTS (SELECT 1 FROM core.events m WHERE m.learner_id = core.events.learner_id "
+    "AND m.type = 'message.sent' AND m.payload ->> 'skill_invocation' = 'skill-creator' "
+    "AND m.payload ->> 'voice_seq' = core.events.seq::text) "
+    "ORDER BY seq LIMIT %(limit)s"
 )
 _FIRST_REPLY = (
     "SELECT payload ->> 'text' AS text FROM core.events WHERE learner_id = %(learner_id)s "
     "AND session_id = %(session_id)s AND type = 'turn.committed' "
+    "AND payload ->> 'service' IS NULL "
     "AND btrim(payload ->> 'text') <> '' ORDER BY seq LIMIT 1"
 )
 _TITLED = (

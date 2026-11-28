@@ -1,21 +1,20 @@
 "use client";
 
-import { History, PanelLeft, X } from "lucide-react";
+import { PanelLeft, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from "react";
 import type { FileRef } from "./attachments";
-import type { GraphMode } from "@/lib/graph-layout";
+import type { GraphMode } from "@/lib/graph/types";
 import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";
 import { useT } from "@/lib/i18n/provider";
-import { todayIso } from "@/lib/format";
+import { MOCK_TODAY } from "@/lib/mock";
 import type { Domain, Session } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
 import { DomainSidebar } from "./domain-sidebar";
 import { IconButton } from "./icon-button";
-import { IndicatorPills } from "./graph/indicator-pills";
-import { SessionsPanel } from "./sessions-panel";
+import { ResizeHandle, useResizable } from "./resize-handle";
 import { BackLink } from "./page-parts";
 import { SoonProvider } from "./soon";
 
@@ -35,8 +34,13 @@ type Shell = {
   /** Показать граф в режиме: закрывает шторку и уводит на «/», если нужно */
   openGraph: (m: GraphMode) => void;
   closeDrawer: () => void;
+  /** Сессии текущего домена; только что начатая стоит первой */
+  sessions: Session[];
   /** Сделать домен текущим без перехода (страница темы или сессии реального домена) */
   focusDomain: (id: string) => void;
+  /** Клик по названию домена в левой панели: граф встаёт по центру экрана. Граф сбрасывает флаг, когда выровнялся */
+  centerPending: boolean;
+  consumeCenter: () => void;
 };
 
 const ShellContext = createContext<Shell | null>(null);
@@ -49,8 +53,19 @@ export function useShell() {
 
 /** Сессии пока есть только в матанализе */
 const SESSION_DOMAIN = "matan";
+const SIDEBAR_KEY = "quack.sidebar-collapsed";
 
-/** «/?domain=» (ссылка из просмотра канваса) выбирает домен и убирает параметр из адреса */
+/** Левую панель можно тянуть за правый край: от 200 px до 480 px, но чтобы центру осталось не меньше 640 px */
+const SIDEBAR_MIN_PX = 200;
+const sidebarMax = (panel: HTMLElement) => Math.min(480, (panel.parentElement?.clientWidth ?? 1280) - 640);
+
+/** Правый край верхней полосы сессии: сюда сессия кладёт кнопки инструментов */
+export const SESSION_TOOLS_SLOT = "session-tools-slot";
+
+/** Вид домена (граф или канвасы) живёт здесь; «/» — экран «Все графы» */
+export const DOMAIN_PATH = "/domain";
+
+/** «/domain?domain=» (ссылка из просмотра канваса) выбирает домен и убирает параметр из адреса */
 function DomainFromQuery({ domains, onDomain }: { domains: Domain[]; onDomain: (id: string) => void }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -58,10 +73,10 @@ function DomainFromQuery({ domains, onDomain }: { domains: Domain[]; onDomain: (
   const param = search.get("domain");
   const view = search.get("view");
   useEffect(() => {
-    if (pathname !== "/" || !param) return;
+    if (pathname !== DOMAIN_PATH || !param) return;
     const id = domains.find((d) => d.id === param)?.id;
     if (id) onDomain(id);
-    router.replace(view === "canvases" ? "/?view=canvases" : "/", { scroll: false });
+    router.replace(view === "canvases" ? `${DOMAIN_PATH}?view=canvases` : DOMAIN_PATH, { scroll: false });
   }, [pathname, param, view, domains, onDomain, router]);
   return null;
 }
@@ -72,10 +87,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const domains = data.domains.length ? data.domains : [EMPTY_DOMAIN];
   const router = useRouter();
   const pathname = usePathname();
-  const inSettings = pathname.startsWith("/settings");
   const inSession = /^\/(session|topic|hub|canvas)\//.test(pathname);
   const inSessionPage = pathname.startsWith("/session/");
-  // Доска канваса занимает весь экран: ни панели доменов, ни панели сессий
+  // Доска канваса занимает весь экран: ни панели доменов, ни индикаторов графа
   const fullscreen = pathname.startsWith("/canvas/");
   // Живой режим: пока данные грузятся (или «/» без предметов — сейчас уведёт на создание) — пустой центр; ошибка — плашка
   const busy = API_MODE && (!data.ready || (!data.error && data.domains.length === 0 && pathname === "/"));
@@ -85,17 +99,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<string | null>(null);
   const [pendingTopic, setPendingTopic] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
-  // null — решает ширина экрана: на узком десктопе панель свёрнута
-  const [sessionsPref, setSessionsPref] = useState<boolean | null>(null);
-  // Панель предметов слева: сворачивается только на десктопе (≥768px); на телефоне тоггла нет, всегда развёрнута
-  const [domainsCollapsed, setDomainsCollapsed] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>({ kind: "overview" });
-  const [drawer, setDrawer] = useState<"domains" | "sessions" | null>(null);
+  const [drawer, setDrawer] = useState(false);
+  const [centerPending, setCenterPending] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const sidebar = useResizable({ id: "sidebar", min: SIDEBAR_MIN_PX, max: sidebarMax, edge: "right" });
+  // localStorage is only readable after mount
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
+  }, []);
+  const toggleSidebar = () => {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? "0" : "1");
+    setCollapsed(!collapsed);
+  };
   const trigger = useRef<HTMLElement | null>(null);
   const closeBtn = useRef<HTMLButtonElement | null>(null);
-  const openDrawer = (side: "domains" | "sessions", el: HTMLElement) => {
+  const openDrawer = (el: HTMLElement) => {
     trigger.current = el;
-    setDrawer(side);
+    setDrawer(true);
   };
 
   // Моки: сессии есть только в матанализе. Бэкенд: домен выбирает сама страница сессии или темы
@@ -113,7 +135,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!drawer) return;
     closeBtn.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(false);
     window.addEventListener("keydown", onKey);
     const opener = trigger.current;
     return () => {
@@ -142,14 +164,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const selectDomain = (id: string) => {
     setDomainId(id);
     setGraphMode({ kind: "overview" });
-    setDrawer(null);
-    if (pathname !== "/") router.push("/");
+    setDrawer(false);
+    setCenterPending(true);
+    if (pathname !== DOMAIN_PATH) router.push(DOMAIN_PATH);
   };
 
   const openGraph = (m: GraphMode) => {
     setGraphMode(m);
-    setDrawer(null);
-    if (pathname !== "/" || window.location.search.includes("view=canvases")) router.push("/");
+    setDrawer(false);
+    if (pathname !== DOMAIN_PATH || window.location.search.includes("view=canvases")) router.push(DOMAIN_PATH);
   };
 
   const startSession = (text: string, topicId: string | null = null, files: FileRef[] = []) => {
@@ -164,28 +187,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sessions: Session[] =
     // С бэкендом новая сессия появляется в списке сама, как только создана
     pending && !API_MODE && domain.id === SESSION_DOMAIN
-      ? [{ id: "new", href: "/session/new", date: todayIso(), title: pending, topics: [] }, ...domain.sessions]
+      ? [{ id: "new", href: "/session/new", date: MOCK_TODAY, title: pending, topics: [] }, ...domain.sessions]
       : domain.sessions;
-
-  const toggleSessions = () =>
-    setSessionsPref((p) => !(p ?? window.matchMedia("(max-width: 1279px)").matches));
-
-  const panel = (collapsed?: boolean, onToggle?: () => void) => (
-    <SessionsPanel
-      sessions={sessions}
-      activeHref={pathname}
-      collapsed={collapsed}
-      onToggle={onToggle}
-      onNavigate={() => setDrawer(null)}
-    />
-  );
 
   return (
     <SoonProvider>
       <Suspense fallback={null}>
         <DomainFromQuery domains={domains} onDomain={setDomainId} />
       </Suspense>
-      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(null), focusDomain: setDomainId }}>
+      <ShellContext.Provider value={{ domain, selectDomain, pending, pendingFiles, pendingTopic, startSession, graphMode, setGraphMode, openGraph, closeDrawer: () => setDrawer(false), sessions, focusDomain: setDomainId, centerPending, consumeCenter: () => setCenterPending(false) }}>
         <a
           href="#main"
           onClick={(e) => {
@@ -196,39 +206,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           {t.shell.skip}
         </a>
-        <div inert={!!drawer} className="flex h-dvh">
+        <div inert={drawer} className="flex h-dvh">
           {!fullscreen && (
             <aside
               aria-label={t.shell.subjects}
-              className={cn("hidden shrink-0 border-r border-seam-soft transition-[width] duration-300 ease-out md:block", domainsCollapsed ? "w-14" : "w-62")}
+              className={cn("relative hidden shrink-0 border-r border-seam-soft md:block", collapsed ? "w-15" : sidebar.width === null && "w-62")}
+              // a width the learner dragged to (never more than 45% of the window, so the centre keeps its room)
+              style={!collapsed && sidebar.width !== null ? { width: `min(${sidebar.width}px, 45vw)` } : undefined}
             >
-              <DomainSidebar
-                domains={domains}
-                activeId={activeId}
-                onSelect={selectDomain}
-                collapsed={domainsCollapsed}
-                onToggle={() => setDomainsCollapsed((v) => !v)}
-              />
+              {!collapsed && <ResizeHandle r={sidebar} />}
+              <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} collapsed={collapsed} onToggle={toggleSidebar} />
             </aside>
           )}
 
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
-            {/* Домашняя страница на телефоне: сама панель — основной контент, кнопка «Предметы» здесь не нужна */}
             {!fullscreen && <div className="flex items-center gap-1 border-b border-seam-soft px-2 py-1.5 md:hidden">
-              {pathname !== "/" && (
-                <IconButton label={t.shell.subjects} onClick={(e) => openDrawer("domains", e.currentTarget)}>
-                  <PanelLeft />
-                </IconButton>
-              )}
-              <p className="display-caps text-[1.125rem] text-paper">Quack!</p>
-              {!inSettings && <IconButton className="ml-auto" label={t.shell.sessions} onClick={(e) => openDrawer("sessions", e.currentTarget)}>
-                <History />
-              </IconButton>}
+              <IconButton label={t.shell.subjects} onClick={(e) => openDrawer(e.currentTarget)}>
+                <PanelLeft />
+              </IconButton>
+              <p className="display-caps text-[1.125rem] text-paper">Qvack!</p>
             </div>}
             {/* Сессия: путь назад в граф домена; граф открывается по «/» */}
             {inSessionPage && (
-              <div className="shrink-0 border-b border-seam-soft px-4 md:px-7">
-                <BackLink href="/">{t.shell.backToGraph}</BackLink>
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-seam-soft px-4 md:px-7">
+                <BackLink href={DOMAIN_PATH}>{t.shell.backToGraph}</BackLink>
+                {/* the session puts its tool buttons here (live/session-tools.tsx): the bar is outside the session's workspace, so they come through a portal */}
+                <div id={SESSION_TOOLS_SLOT} className="-mr-2 flex items-center" />
               </div>
             )}
             {busy ? (
@@ -250,61 +253,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className={busy || failed ? "hidden" : "contents"}>{children}</div>
           </main>
 
-          {!inSettings && !fullscreen && <aside
-            aria-label={t.shell.sessions}
-            className={cn(
-              "relative hidden shrink-0 border-l border-seam-soft transition-[width] duration-300 ease-out md:block",
-              sessionsPref === null ? "w-14 xl:w-73" : sessionsPref ? "w-14" : "w-73",
-            )}
-          >
-            <IndicatorPills />
-            {sessionsPref === null ? (
-              <>
-                <div className="h-full xl:hidden">{panel(true, toggleSessions)}</div>
-                <div className="hidden h-full xl:block">{panel(false, toggleSessions)}</div>
-              </>
-            ) : (
-              panel(sessionsPref, toggleSessions)
-            )}
-          </aside>}
         </div>
 
-        {/* Телефон: панели — шторки */}
+        {/* Телефон: левая панель (предметы, темы, сессии) — шторка */}
         <div
           aria-hidden
-          onClick={() => setDrawer(null)}
+          onClick={() => setDrawer(false)}
           className={cn(
             "fixed inset-0 z-40 bg-cloth-deep/70 transition-opacity duration-300 md:hidden",
             drawer ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         />
-        {(fullscreen ? ([] as const) : inSettings ? (["domains"] as const) : (["domains", "sessions"] as const)).map((side) => {
-          const open = drawer === side;
-          return (
-            <div
-              key={side}
-              role="dialog"
-              aria-modal="true"
-              aria-label={side === "domains" ? t.shell.subjects : t.shell.sessions}
-              inert={!open}
-              onKeyDown={trapTab}
-              className={cn(
-                "fixed inset-y-0 z-50 w-[min(20rem,86vw)] border-seam bg-cloth-deep transition-transform duration-300 ease-out md:hidden",
-                side === "domains" ? "left-0 border-r" : "right-0 border-l",
-                open ? "translate-x-0" : side === "domains" ? "-translate-x-full" : "translate-x-full",
-              )}
-            >
-              <IconButton ref={open ? closeBtn : undefined} label={t.shell.close} className="absolute top-2 right-2 z-10" onClick={() => setDrawer(null)}>
-                <X />
-              </IconButton>
-              {side === "domains" ? (
-                <DomainSidebar domains={domains} activeId={activeId} onSelect={selectDomain} />
-              ) : (
-                panel()
-              )}
-            </div>
-          );
-        })}
+        {!fullscreen && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={t.shell.subjects}
+            inert={!drawer}
+            onKeyDown={trapTab}
+            className={cn(
+              "fixed inset-y-0 left-0 z-50 w-[min(20rem,86vw)] border-r border-seam bg-cloth-deep transition-transform duration-300 ease-out md:hidden",
+              drawer ? "translate-x-0" : "-translate-x-full",
+            )}
+          >
+            <IconButton ref={drawer ? closeBtn : undefined} label={t.shell.close} className="absolute top-2 right-2 z-10" onClick={() => setDrawer(false)}>
+              <X />
+            </IconButton>
+            <DomainSidebar domains={data.domains} activeId={activeId} onSelect={selectDomain} />
+          </div>
+        )}
       </ShellContext.Provider>
     </SoonProvider>
   );

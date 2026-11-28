@@ -603,11 +603,28 @@ async def _cheatsheet_handler(job: ClaimedJob, ctx: JobContext) -> None:
 
     reader = create_graph_reader(ctx.neo4j, ctx.settings, learner_id=learner_id)  # D-A-144
     hub_id = UUID(job.payload["hub_id"])
-    result = await generate_hub_cheatsheet(
-        ctx.db, ctx.llm, ctx.compute, reader, prefetch, ctx.settings,
-        learner_id=learner_id, hub_id=hub_id, key=str(request_id),
-        redis=ctx.redis, session_id=job.session_id,
-    )  # fmt: skip
+    try:
+        result = await generate_hub_cheatsheet(
+            ctx.db, ctx.llm, ctx.compute, reader, prefetch, ctx.settings,
+            learner_id=learner_id, hub_id=hub_id, key=str(request_id),
+            redis=ctx.redis, session_id=job.session_id,
+        )  # fmt: skip
+    except ArtifactNotFound:
+        # the learner deleted the chapter while the job waited: answer the request, write nothing
+        log.info("cheatsheet_hub_deleted", hub_id=str(hub_id))
+        await deliver(
+            ctx.db,
+            learner_id=learner_id,
+            request_id=UUID(str(request_id)),
+            job_key=None,
+            kind="artifact",
+            ok=False,
+            actor=ctx.settings.llm_roles[WRITER_ROLE].prompt or WRITER_ROLE,
+            error="hub_deleted",
+            result_ref=None,
+            session_id=job.session_id,
+        )
+        return
     await deliver(
         ctx.db,
         learner_id=learner_id,

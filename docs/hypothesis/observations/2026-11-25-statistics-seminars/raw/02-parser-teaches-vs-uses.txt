@@ -1,0 +1,15 @@
+-- 02-parser-teaches-vs-uses
+-- captured 2026-11-25T20:33:23Z from the local stand
+                        title                        | chunks | teaches | uses 
+-----------------------------------------------------+--------+---------+------
+ Seminar 1 Problems                                  |      5 |       0 |   13
+ Seminar 1. Sampling and Data                        |      5 |       0 |   14
+ Seminar 2. Graphs and Measures of Center            |     12 |       0 |   40
+ Seminar 3. Shape, Location and Dispersion           |      8 |       0 |   32
+ Seminar 4. Probability                              |     12 |       0 |   40
+ Seminar 5. Discrete Random Variables                |     10 |       0 |   33
+ Seminar 6. The Normal Distribution                  |      8 |       0 |   28
+ Seminar 7. The Central Limit Theorem                |      8 |       0 |   24
+ Statistics (3 credits) Fall 2026 Seminar 1 Problems |      5 |       0 |   14
+(9 rows)
+

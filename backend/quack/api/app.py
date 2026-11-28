@@ -38,6 +38,7 @@ from quack.logging import configure_logging, get_logger, log_context
 from quack.materials.router import router as materials_router
 from quack.ops.status import collect_status
 from quack.review.router import router as review_router
+from quack.session.code_routes import router as code_router
 from quack.session.router import router as session_router
 
 log = get_logger(__name__)
@@ -246,6 +247,7 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(materials_router)
     app.include_router(canvas_router)
+    app.include_router(code_router)
     return app
 
 

@@ -201,6 +201,9 @@ async def _read_slice(
         (r.from_label, r.from_id) if r.rel_type == "ON_TASK" else (r.to_label, r.to_id)
         for r in out.rels.values()
         if (r.rel_type in ("HAS_OPTION", "TESTS") and (r.from_label, r.from_id) in seen)
+        or (
+            r.rel_type == "COVERS" and r.from_label == "Topic" and (r.from_label, r.from_id) in seen
+        )
         or (r.rel_type == "ON_TASK" and (r.to_label, r.to_id) in seen)
     }  # the skills of the markup with their REQUIRES / SAME_IDEA (WP4.6, D-A-185)
     await _neighbourhoods(tx, learner, second - seen, out)

@@ -5,6 +5,7 @@ import { domains } from "./domains";
 import { radiusSession } from "./session";
 import { skills } from "./skills";
 import { cheatSheets, topicDetails } from "./topic-details";
+import { workspace } from "./workspace";
 
 /** English mock content. Same ids as ../ru; anything missing here falls back to Russian. */
 export const en: Partial<MockData> = {
@@ -17,4 +18,5 @@ export const en: Partial<MockData> = {
   skills,
   topicDetails,
   cheatSheets,
+  workspace,
 };

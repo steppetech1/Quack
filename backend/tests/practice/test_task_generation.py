@@ -242,3 +242,56 @@ async def test_variant_of_the_source_takes_its_family(
     expected = source_family if shares else family_id("gen:req1")
     assert generated["payload"]["family_id"] == str(expected)
     assert "K1" in roles.calls[0]["variables"]["source_problem"]
+
+
+def test_generate_tasks_topic_skills_and_topic_id(monkeypatch: Any) -> None:
+    """`generate_tasks` includes all topic skills in `LabelMap` and `generator_variables`, and
+    passes `topic_id` into `create_task` -> `task.created`."""
+    import asyncio
+    from pathlib import Path
+
+    from quack.practice import task_generation
+    from quack.prompts.registry import PromptTemplate
+
+    sibling = uuid4()
+    topic_id = uuid4()
+    req = _request(
+        topic_id=topic_id,
+        topic_skill_ids=[sibling],
+        topic_skill_names={sibling: "Subtracting numbers"},
+    )
+    labels = LabelMap.build(
+        SETTINGS,
+        skills=[SKILL, sibling],
+        misconceptions=[MISCONCEPTION],
+    )
+    variables = generator_variables(req, labels)
+    assert "S1: Adding numbers" in variables["topic_skills"]
+    assert "S2: Subtracting numbers" in variables["topic_skills"]
+
+    v2_text = Path("quack/prompts/task_generator/v2.md").read_text(encoding="utf-8")
+    rendered = PromptTemplate(role="task_generator", version=2, text=v2_text, sha256="x").render(
+        variables
+    )
+    assert "S2: Subtracting numbers" in rendered
+
+    captured: list[dict[str, Any]] = []
+
+    async def fake_create_task(db: Db, **kw: Any) -> int:
+        captured.append(kw)
+        return 1
+
+    monkeypatch.setattr(task_generation, "create_task", fake_create_task)
+    roles = _Roles([_draft("5", skill="S2")], {"task_checker:gen:req1:0": "5"})
+    stored = asyncio.run(
+        generate_tasks(
+            cast(Db, object()),
+            cast(LLMGateway, roles),
+            SETTINGS,
+            req,
+            learner_id=uuid4(),
+        )
+    )
+    assert len(stored) == 1
+    assert captured[0]["topic_id"] == topic_id
+    assert captured[0]["markup"].tests[0].skill_id == sibling

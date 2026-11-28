@@ -66,6 +66,7 @@ CATALOG: dict[str, tuple[bool, bool]] = {
     "topic.renamed": (True, False),
     "topic.hidden": (True, False),
     "skill.created": (True, True),
+    "skill.deleted": (True, False),
     "skill.placed": (True, False),
     "skill.merged": (True, True),
     "skill.split": (True, True),
@@ -75,6 +76,7 @@ CATALOG: dict[str, tuple[bool, bool]] = {
     "hub.created": (True, False),
     "hub.deadline_set": (True, True),
     "hub.topics_changed": (True, False),
+    "hub.deleted": (True, False),
     "task.created": (True, True),
     "task.verified": (True, False),
     "task.key_disputed": (True, False),
@@ -93,6 +95,7 @@ CATALOG: dict[str, tuple[bool, bool]] = {
     "session.started": (False, True),
     "session.ended": (True, True),
     "session.titled": (False, False),
+    "session.deleted": (False, False),
     "hint.shown": (False, True),
     "today.shown": (False, True),
     "task.closed": (True, True),
@@ -372,3 +375,68 @@ def test_image_registry_has_no_gaps_and_tracks_rollback() -> None:
     verdict = can_rollback(previous, seen)
     assert not verdict["can_rollback"] and verdict["new_pairs_seen"] == [first]
     assert not can_rollback({**current, "rules_version": "rules@2"}, set())["can_rollback"]
+
+
+def test_wave1_event_fields_and_backward_compatibility() -> None:
+    from quack.events.event_types import (
+        SkillCreated,
+        SkillDeleted,
+        TopicCreated,
+        TopicProposed,
+        TurnCommitted,
+    )
+    from quack.events.records import TestedLevelRecord
+    from quack.events.values import NewSkill
+
+    # Legacy payloads without new optional fields still validate.
+    assert isinstance(
+        validate_payload("topic.proposed", sample_payload("topic.proposed")), TopicProposed
+    )
+    assert isinstance(
+        validate_payload("topic.created", sample_payload("topic.created")), TopicCreated
+    )
+    legacy_skill = validate_payload("skill.created", sample_payload("skill.created"))
+    assert isinstance(legacy_skill, SkillCreated)
+    assert (
+        legacy_skill.core,
+        legacy_skill.definition,
+        legacy_skill.exemplar,
+        legacy_skill.kind,
+    ) == (False, "", "", None)
+    legacy_turn = validate_payload("turn.committed", sample_payload("turn.committed"))
+    assert isinstance(legacy_turn, TurnCommitted) and legacy_turn.focus_topic_id is None
+
+    # New fields validate and preserve values.
+    topic = validate_payload(
+        "topic.created", {**sample_payload("topic.created"), "description": "Core limits"}
+    )
+    assert isinstance(topic, TopicCreated) and topic.description == "Core limits"
+    skill = validate_payload(
+        "skill.created",
+        {
+            **sample_payload("skill.created"),
+            "core": True,
+            "definition": "Formal limit definition",
+            "exemplar": "lim x->0 sin(x)/x = 1",
+            "kind": "concept",
+        },
+    )
+    assert isinstance(skill, SkillCreated)
+    assert skill.core is True and skill.kind == "concept"
+    deleted = validate_payload(
+        "skill.deleted", {**sample_payload("skill.deleted"), "reason": "merged away"}
+    )
+    assert isinstance(deleted, SkillDeleted) and deleted.reason == "merged away"
+    focus_id = uuid4()
+    turn = validate_payload(
+        "turn.committed", {**sample_payload("turn.committed"), "focus_topic_id": str(focus_id)}
+    )
+    assert isinstance(turn, TurnCommitted) and turn.focus_topic_id == focus_id
+
+    ns_legacy = NewSkill(name="Chain rule")
+    assert ns_legacy.topic_hint is None and ns_legacy.reason is None
+    ns_reason = NewSkill(name="Chain rule", reason="needed for composite fns")
+    assert ns_reason.reason == "needed for composite fns"
+    tl = TestedLevelRecord(skill_id=uuid4(), level=3, context="Excel")
+    assert tl.context == "Excel"
+    assert TestedLevelRecord(skill_id=uuid4(), level=3).context is None

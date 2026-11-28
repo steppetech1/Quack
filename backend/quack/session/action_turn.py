@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -127,6 +127,10 @@ class TurnSetup:
     answered: AnsweredAction | None = None
     timings: dict[str, int] = field(default_factory=dict)
     fix_markup: Callable[[MarkupFix], Awaitable[TurnTask | Element | None]] | None = None
+    message_topic_id: UUID | None = None
+    session_topic_id: UUID | None = None
+    prior_turn_skill_ids: Sequence[UUID] = ()
+    skill_topics: Mapping[UUID, UUID] = field(default_factory=dict)
 
 
 class TurnContextSource(Protocol):
@@ -210,6 +214,11 @@ class ApiTurnPorts:
             answered=setup.answered,
             learner_texts=setup.learner_texts,
             learner_timezone=setup.learner_timezone,
+            service=setup.assembled.service,
+            message_topic_id=setup.message_topic_id,
+            session_topic_id=setup.session_topic_id,
+            prior_turn_skill_ids=setup.prior_turn_skill_ids,
+            skill_topics=setup.skill_topics,
         )
         commit_started = now_ns()
         seq = await commit_turn(self._db, batch, learner_id=self._learner_id, redis=self._redis)

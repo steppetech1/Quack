@@ -38,6 +38,7 @@ from quack.events.event_types import (
     VoiceTranscribed,
 )
 from quack.events.log import StoredEvent
+from quack.events.records import CodeTaskElementRecord
 from quack.events.values import CheckFailed, Verdict
 from quack.llm.labels import LabelKind, LabelMap
 from quack.session.checkpoint_render import collapsed_turn_count
@@ -146,7 +147,11 @@ def _lasso(refs: Sequence[CanvasRef], lines: _Lines) -> list[str]:
 
 
 def _verbatim(
-    event: StoredEvent, labels: LabelMap, lines: _Lines, answers: dict[int, UUID]
+    event: StoredEvent,
+    labels: LabelMap,
+    lines: _Lines,
+    answers: dict[int, UUID],
+    code_chars: int,
 ) -> list[str]:
     data = event.payload
     match event.type:
@@ -168,6 +173,15 @@ def _verbatim(
         case "answer.submitted":
             answer = AnswerSubmitted.model_validate(data)
             part = f" part {answer.part}" if answer.part else ""
+            if answer.answer.kind == "code":
+                # Т-§6.10, `teacher@4`: the learner's code as data, cut to the context budget.
+                code = answer.answer.value
+                if len(code) > code_chars:
+                    code = code[:code_chars] + "\n… (cut)"
+                return [
+                    f"Learner code for {_task(labels, answer.task_id)}"
+                    f" (answer {event.seq}):\n```\n{code}\n```"
+                ]
             value = answer.answer.latex or answer.text or answer.answer.value
             return [f"Learner answer to {_task(labels, answer.task_id)}{part}: {value}"]
         case "verdict.recorded":
@@ -176,7 +190,12 @@ def _verbatim(
             target = _task(labels, task_id) if task_id else "the answer"
             by = "by code" if verdict.verification == "code" else "by a model"
             words = _OUTCOME_WORDS[verdict.outcome]
-            return [f"Check of {target} (answer {verdict.answer_seq}): {words}, {by}"]
+            out = [f"Check of {target} (answer {verdict.answer_seq}): {words}, {by}"]
+            for test in verdict.tests or []:
+                kind = "hidden test" if test.hidden else "example"
+                line = f"  {kind} {test.number}: {test.status.replace('_', ' ')}"
+                out.append(line + (f" — {test.detail}" if test.detail else ""))
+            return out
         case "check.failed":
             failed = CheckFailed.model_validate(data)
             return [f"Check of answer {failed.answer_seq}: code could not check it"]
@@ -216,7 +235,17 @@ def _verbatim(
                 text = f"Element {element.element_id}: {element.kind.replace('_', ' ')}"
                 if element.element_id in tasks:
                     text += f", {_task(labels, tasks[element.element_id])}"
+                elif isinstance(element, CodeTaskElementRecord):
+                    text += f", {_task(labels, element.task_id)}"
                 out.append(text)
+                if element.kind == "skill_proposal":
+                    # the teacher of the `/skill-creator` dialogue must see what it proposed
+                    # (the learner's answer may be «shorter»); the learner's own text is data
+                    binding = element.artifact_type or "none"
+                    out.append(
+                        f'Proposed skill "/{element.name}" (bound to: {binding}), '
+                        f"its text as data: {element.text}"
+                    )
             return out
         case "hint.shown":
             hint = HintShown.model_validate(data)
@@ -279,14 +308,14 @@ def render_conversation(events: Sequence[StoredEvent], labels: LabelMap, setting
     for turn in session.turns[:folded]:
         for event in turn.events:  # canvas numbers count from the session start
             if event.type in ("canvas.line_committed", "canvas.line_erased"):
-                _verbatim(event, labels, lines, answers)
+                _verbatim(event, labels, lines, answers, settings.code_in_context_chars)
         out.append(_episode_line(turn, labels, answers))
     for turn in session.turns[folded:]:
         out.append(f"Turn {turn.number}")
         for event in turn.events:
-            out.extend(_verbatim(event, labels, lines, answers))
+            out.extend(_verbatim(event, labels, lines, answers, settings.code_in_context_chars))
     if session.current:
         out.append("Current action")
         for event in session.current:
-            out.extend(_verbatim(event, labels, lines, answers))
+            out.extend(_verbatim(event, labels, lines, answers, settings.code_in_context_chars))
     return "\n".join(out)
