@@ -190,7 +190,7 @@ type Block = {
   /** Index in the ordered hubs for a chapter, -1 for the others */
   hub: number;
   topics: number[];
-  /** Original order: the order of the hubs, then the groups by their first topic */
+  /** Original order: the order of the hubs; a group with no hub goes by the chapters it is linked to (else after them, by first topic) */
   orig: number;
   /** Topics of each row of the block, bottom up */
   rows: number[][];
@@ -286,6 +286,15 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
   [...groups.values()].forEach((ts, i) => blocks.push(mk("free", -1, ts, hubList.length + i)));
   const blockOf = new Array<number>(n).fill(-1);
   blocks.forEach((b, i) => b.topics.forEach((t) => (blockOf[t] = i)));
+  // A group with no hub stands where its links put it, like a chapter: right after the last chapter it needs, or, if it only
+  // is needed, right before the first chapter that needs it (the order the hubs came in settles the rest)
+  for (const b of blocks) {
+    if (b.kind !== "free") continue;
+    const needs = b.topics.flatMap((v) => preq[v]).map((p) => blockOf[p]).filter((o) => o >= 0 && blocks[o].kind === "chapter").map((o) => blocks[o].orig);
+    const needed = b.topics.flatMap((v) => dep[v]).map((d) => blockOf[d]).filter((o) => o >= 0 && blocks[o].kind === "chapter").map((o) => blocks[o].orig);
+    if (needs.length) b.orig = Math.max(...needs) + 0.5;
+    else if (needed.length) b.orig = Math.min(...needed) - 0.5;
+  }
   let loneBlock: Block | null = null;
   if (lone.length) {
     // Known topics keep their order (their old row, then x); new ones follow
@@ -401,11 +410,12 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
       }),
     );
     b.rows.forEach((row) => {
-      row.sort(priorCmp);
+      row.sort((p, q) => p - q);
       row.forEach((v, i) => (pos[v] = mid + (i - (row.length - 1) / 2)));
     });
     const chainDir = new Map<number, number>();
-    const pass = (up: boolean) => {
+    // Only the last pass lets the previous picture settle a tie; the passes before it (and so the picture) never depend on it
+    const pass = (up: boolean, last = false) => {
       const rs = b.rows.map((_, r) => r);
       if (!up) rs.reverse();
       for (const r of rs) {
@@ -425,7 +435,7 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
           const near = [...(up ? pre : depIn(v)).map((w) => pos[w]), ...crossOf.get(v)!];
           aim.set(v, near.length ? mean(near) : pos[v]);
         }
-        row.sort((p, q) => (Math.abs(aim.get(p)! - aim.get(q)!) > 1e-9 ? aim.get(p)! - aim.get(q)! : priorCmp(p, q)));
+        row.sort((p, q) => (Math.abs(aim.get(p)! - aim.get(q)!) > 1e-9 ? aim.get(p)! - aim.get(q)! : last ? priorCmp(p, q) : p - q));
         const placed = pack(row.map((v) => aim.get(v)!), b.cols);
         row.forEach((v, i) => (pos[v] = placed[i]));
       }
@@ -434,7 +444,7 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
       pass(true);
       pass(false);
     }
-    pass(true);
+    pass(true, true);
   }
 
   // ---- y: every block stands as low as the rules allow. Rows count from the foundation and may be fractional
@@ -500,7 +510,13 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
   for (const b of seq) {
     if (b.kind !== "chapter") continue;
     const xs = b.topics.map((v) => px[v]);
-    placeHub(hubList[b.hub].id, (Math.min(...xs) + Math.max(...xs)) / 2, Math.min(...b.topics.map((v) => -rowAbs[v] * GAP_Y)) - HUB_RISE);
+    const x = (Math.min(...xs) + Math.max(...xs)) / 2;
+    let y = Math.min(...b.topics.map((v) => -rowAbs[v] * GAP_Y)) - HUB_RISE;
+    // Only after a repair can something stand there: then the hub goes up until it is free
+    const taken = (yy: number) =>
+      topicNodes.some((q) => Math.abs(q.x - x) < OVERLAP_X && Math.abs(q.y - yy) < GAP_Y * 0.5) || hubNodes.some((o) => Math.abs(o.x - x) < HUB_GAP_X && Math.abs(o.y - yy) < GAP_Y * 0.7);
+    for (let k = 0; k < 50 && taken(y); k++) y -= GAP_Y * 0.5;
+    placeHub(hubList[b.hub].id, x, y);
   }
   // Collections: beside their topics, at the middle of them, outside the occupied area on the side where more of them are
   const collections = new Set<string>();
