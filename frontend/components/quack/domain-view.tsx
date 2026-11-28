@@ -270,6 +270,7 @@ export function DomainView() {
                     center={centerPending}
                     onCentered={consumeCenter}
                     popFirst={emptyOnEntry.empty === true && jobs.rows.length > 0}
+                    insets={{ top: 76, bottom: 170 }}
                   />
                 ) : (
                   // the backend graph is still loading: a quiet empty area of the same size

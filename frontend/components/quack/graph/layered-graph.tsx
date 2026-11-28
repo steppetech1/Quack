@@ -68,6 +68,13 @@ const POP_MAX_DELAY_MS = 420;
 const GROW_TWEEN_MS = 700;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+/** Room the page chrome takes at the top and at the bottom of the graph box: the graph is fitted between them */
+type Insets = { top: number; bottom: number };
+const NO_INSETS: Insets = { top: 0, bottom: 0 };
+const areaH = (h: number, ins: Insets) => Math.max(1, h - ins.top - ins.bottom);
+const midY = (h: number, ins: Insets) => ins.top + areaH(h, ins) / 2;
+/** Height of the row of zoom buttons that floats under the top inset */
+const ZOOM_ROW_H = 44;
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 4);
 /** Fast ease-out with a small overshoot: a pop, not a fade */
 const easePop = (t: number) => {
@@ -152,8 +159,10 @@ export const LayeredGraph = forwardRef<
     compact?: boolean;
     /** A click on a topic or a hub: the caller shows it (in the pane); without it the graph goes to the page of the thing */
     onOpen?: (target: GraphTarget) => void;
+    /** The page chrome floats over the top and the bottom of the graph: the camera fits the graph between them, the controls stay out of them */
+    insets?: { top: number; bottom: number };
   }
->(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus, center = false, onCentered, popFirst = false, compact = false, onOpen }, ref) {
+>(function LayeredGraph({ model, domain, highlight, focusHubId = null, onClearFocus, center = false, onCentered, popFirst = false, compact = false, onOpen, insets = NO_INSETS }, ref) {
   const tx = useT();
   const router = useRouter();
   const openNode = (kind: GraphTarget["kind"], id: string) => (onOpen ? onOpen({ kind, id }) : router.push(kind === "hub" ? `/hub/${id}` : `/topic/${id}`));
@@ -232,6 +241,8 @@ export const LayeredGraph = forwardRef<
    */
   const autoFit = useRef(false);
   const sizeRef = useRef(size);
+  const insRef = useRef<Insets>({ top: insets.top, bottom: insets.bottom });
+  insRef.current = { top: insets.top, bottom: insets.bottom };
 
   const topicMap = useMemo(() => new Map(model.topics.map((t) => [t.id, t])), [model]);
   const hubMap = useMemo(() => new Map(model.hubs.map((h) => [h.id, h])), [model]);
@@ -572,15 +583,17 @@ export const LayeredGraph = forwardRef<
     // What the camera does not show: an arrow toward it, per direction and indicator. Review gets none: its few nodes are not a debt to chase
     if (marks.current.size) {
       const areaW = w - colW;
-      const cxA = colW + areaW / 2, cyA = h / 2;
+      const ins = insRef.current;
+      const ah = areaH(h, ins);
+      const cxA = colW + areaW / 2, cyA = midY(h, ins);
       const groups = new Map<string, { dir: Arrow["dir"]; ind: IndicatorId; n: number; key: string; d: number; sx: number; sy: number }>();
       for (const [key, ids] of marks.current) {
         const p = pos(key);
         if (!p) continue;
         const x = sx(p.x), y = sy(p.y);
-        if (x > colW + 6 && x < w - 6 && y > 6 && y < h - 6) continue;
+        if (x > colW + 6 && x < w - 6 && y > ins.top + 6 && y < h - ins.bottom - 6) continue;
         const dx = x - cxA, dy = y - cyA;
-        const dir: Arrow["dir"] = Math.abs(dx) / (areaW / 2) > Math.abs(dy) / (h / 2) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
+        const dir: Arrow["dir"] = Math.abs(dx) / (areaW / 2) > Math.abs(dy) / (ah / 2) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
         const d = Math.hypot(dx, dy);
         for (const id of ids) {
           if (id === "review") continue;
@@ -602,7 +615,7 @@ export const LayeredGraph = forwardRef<
           const along = (v: number, lo: number, hi: number) => clamp(v, lo, hi);
           const off = idx * 46;
           const x = g.dir === "left" ? colW + 22 : g.dir === "right" ? w - 22 : along(g.sx, colW + 40, w - 40) + off;
-          const y = g.dir === "up" ? 22 : g.dir === "down" ? h - 22 : along(g.sy, 40, h - 40) + off;
+          const y = g.dir === "up" ? ins.top + 22 : g.dir === "down" ? h - ins.bottom - 22 : along(g.sy, ins.top + 40, h - ins.bottom - 40) + off;
           return { id: `${g.dir}|${g.ind}`, dir: g.dir, ind: g.ind, n: g.n, x: Math.round(x), y: Math.round(y), key: g.key };
         });
       const sig = list.map((a) => `${a.id}:${a.n}:${Math.round(a.x / 12)}:${Math.round(a.y / 12)}`).join(",");
@@ -788,7 +801,7 @@ export const LayeredGraph = forwardRef<
     // While an indicator holds the camera, the place worth keeping is the one from before the click
     const v = activeRef.current.size && before.current ? before.current : view.current;
     const cx = (cw + (w - cw) / 2 - v.tx) / v.k;
-    const cy = (h / 2 - v.ty) / v.k;
+    const cy = (midY(h, insRef.current) - v.ty) / v.k;
     const near = [...target.current]
       .filter(([key]) => !key.startsWith("h:"))
       .map(([id, p]) => ({ id, x: p.x, y: p.y, d: Math.hypot(p.x - cx, p.y - cy) }))
@@ -821,8 +834,9 @@ export const LayeredGraph = forwardRef<
     const { x0, x1, y0, y1 } = scene.current.layout.bounds;
     // The graph lives to the right of the column
     const cw = scene.current.colW;
-    const k = clamp(Math.min((w - cw - FIT_MARGIN * 2) / Math.max(1, x1 - x0), (h - FIT_MARGIN * 2) / Math.max(1, y1 - y0)), K_MIN, FIT_K_MAX);
-    return { k, tx: cw + (w - cw) / 2 - ((x0 + x1) / 2) * k, ty: h / 2 - ((y0 + y1) / 2) * k };
+    const ins = insRef.current;
+    const k = clamp(Math.min((w - cw - FIT_MARGIN * 2) / Math.max(1, x1 - x0), (areaH(h, ins) - FIT_MARGIN * 2) / Math.max(1, y1 - y0)), K_MIN, FIT_K_MAX);
+    return { k, tx: cw + (w - cw) / 2 - ((x0 + x1) / 2) * k, ty: midY(h, ins) - ((y0 + y1) / 2) * k };
   }, []);
 
   // First view of a domain: where the learner stood last time, else the whole graph
@@ -834,7 +848,7 @@ export const LayeredGraph = forwardRef<
       const k = clamp(saved.k, K_MIN, K_MAX);
       const c = restoreCenter(saved, (id) => target.current.get(id));
       const cw = scene.current.colW;
-      return { k, tx: cw + (w - cw) / 2 - c.x * k, ty: h / 2 - c.y * k };
+      return { k, tx: cw + (w - cw) / 2 - c.x * k, ty: midY(h, insRef.current) - c.y * k };
     },
     [fitView, compact],
   );
@@ -902,9 +916,9 @@ export const LayeredGraph = forwardRef<
         const cw = scene.current.colW;
         const k = clamp((v.k * fitView(size.w, size.h).k) / fitView(was.w, was.h).k, K_MIN, K_MAX);
         const x = (cw + (was.w - cw) / 2 - v.tx) / v.k;
-        const y = (was.h / 2 - v.ty) / v.k;
+        const y = (midY(was.h, insRef.current) - v.ty) / v.k;
         viewTween.current = null;
-        view.current = { k, tx: cw + (size.w - cw) / 2 - x * k, ty: size.h / 2 - y * k };
+        view.current = { k, tx: cw + (size.w - cw) / 2 - x * k, ty: midY(size.h, insRef.current) - y * k };
       }
       // Resizing clears the canvas: paint at once so there is no blank frame
       draw();
@@ -1065,7 +1079,9 @@ export const LayeredGraph = forwardRef<
     const M = 90;
     const x0 = Math.min(...pts.map((p) => p.x)), x1 = Math.max(...pts.map((p) => p.x));
     const y0 = Math.min(...pts.map((p) => p.y)), y1 = Math.max(...pts.map((p) => p.y));
-    const fit = Math.min((aw - 2 * M) / Math.max(1, x1 - x0), (h - 2 * M) / Math.max(1, y1 - y0));
+    const ins = insRef.current;
+    const ah = areaH(h, ins);
+    const fit = Math.min((aw - 2 * M) / Math.max(1, x1 - x0), (ah - 2 * M) / Math.max(1, y1 - y0));
     let k: number, cx: number, cy: number;
     if (fit >= K_READ) {
       k = Math.min(fit, 1);
@@ -1074,7 +1090,7 @@ export const LayeredGraph = forwardRef<
     } else {
       // Too spread out to read: stand on the densest cluster at a readable zoom; the rest gets arrows
       k = K_READ;
-      const hw = (aw / 2 - M) / k, hh = (h / 2 - M) / k;
+      const hw = (aw / 2 - M) / k, hh = (ah / 2 - M) / k;
       let best = { n: -1, cx: pts[0].x, cy: pts[0].y };
       for (const c of pts) {
         const inside = pts.filter((p) => Math.abs(p.x - c.x) <= hw && Math.abs(p.y - c.y) <= hh);
@@ -1083,7 +1099,7 @@ export const LayeredGraph = forwardRef<
       cx = best.cx;
       cy = best.cy;
     }
-    moveView({ k: clamp(k, K_MIN, K_MAX), tx: cw + aw / 2 - cx * k, ty: h / 2 - cy * k }, true);
+    moveView({ k: clamp(k, K_MIN, K_MAX), tx: cw + aw / 2 - cx * k, ty: midY(h, ins) - cy * k }, true);
   }, [ind, moveView]);
 
   // Esc switches every indicator off and the camera goes back
@@ -1120,8 +1136,9 @@ export const LayeredGraph = forwardRef<
     const M = 70;
     const x0 = Math.min(...pts.map((p) => p.x)), x1 = Math.max(...pts.map((p) => p.x));
     const y0 = Math.min(...pts.map((p) => p.y)), y1 = Math.max(...pts.map((p) => p.y));
-    const k = clamp(Math.min((aw - 2 * M) / Math.max(1, x1 - x0), (h - 2 * M) / Math.max(1, y1 - y0), 1), K_READ, K_MAX);
-    moveView({ k, tx: cw + aw / 2 - ((x0 + x1) / 2) * k, ty: h / 2 - ((y0 + y1) / 2) * k }, true);
+    const ins = insRef.current;
+    const k = clamp(Math.min((aw - 2 * M) / Math.max(1, x1 - x0), (areaH(h, ins) - 2 * M) / Math.max(1, y1 - y0), 1), K_READ, K_MAX);
+    moveView({ k, tx: cw + aw / 2 - ((x0 + x1) / 2) * k, ty: midY(h, ins) - ((y0 + y1) / 2) * k }, true);
   }, [focusHubId, size, layout, links, moveView]);
 
   const goToArrow = (a: Arrow) => {
@@ -1131,7 +1148,7 @@ export const LayeredGraph = forwardRef<
     const { w, h } = sizeRef.current;
     const cw = scene.current.colW;
     const k = clamp(Math.max(view.current.k, K_READ), K_MIN, K_MAX);
-    moveView({ k, tx: cw + (w - cw) / 2 - p.x * k, ty: h / 2 - p.y * k }, true);
+    moveView({ k, tx: cw + (w - cw) / 2 - p.x * k, ty: midY(h, insRef.current) - p.y * k }, true);
   };
 
   // A "Today" card under the pointer lights its node
@@ -1246,9 +1263,9 @@ export const LayeredGraph = forwardRef<
       const k = clamp(Math.max(view.current.k, 0.9), K_MIN, K_MAX);
       const cw = scene.current.colW;
       const mid = cw + (w - cw) / 2;
-      moveView({ k, tx: mid - p.x * k, ty: h / 2 - p.y * k }, true);
+      moveView({ k, tx: mid - p.x * k, ty: midY(h, insRef.current) - p.y * k }, true);
       hoverKey.current = id;
-      setHover({ id, x: mid, y: h / 2 });
+      setHover({ id, x: mid, y: midY(h, insRef.current) });
     },
     [moveView],
   );
@@ -1322,30 +1339,6 @@ export const LayeredGraph = forwardRef<
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="@container flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 border-b border-seam-soft text-paper-dim">
-        <ul className="order-last flex basis-full flex-wrap items-center gap-x-3 pb-2 @[40rem]:order-none @[40rem]:min-w-0 @[40rem]:flex-1 @[40rem]:basis-auto @[40rem]:pb-0" aria-label={tx.graph.statesLabel}>
-          {(["solid", "review", "confused", "new"] as const).map((s) => (
-            <li key={s} className="caps flex items-center gap-2 whitespace-nowrap">
-              <StateDot state={s} />
-              {tx.states[s].toLowerCase()}
-            </li>
-          ))}
-        </ul>
-        <div className="ml-auto flex shrink-0 items-center">
-          <div className="flex" role="group" aria-label={tx.graph.zoomGroup}>
-            <IconButton label={tx.graph.zoomIn} onClick={() => zoomAt(cx, size.h / 2, 1.25)}>
-              <Plus />
-            </IconButton>
-            <IconButton label={tx.graph.zoomOut} onClick={() => zoomAt(cx, size.h / 2, 0.8)}>
-              <Minus />
-            </IconButton>
-            <IconButton label={tx.graph.fitAll} onClick={fitAll}>
-              <Maximize2 />
-            </IconButton>
-          </div>
-        </div>
-      </div>
-
       <div className="flex min-h-0 flex-1">
         <div
           ref={wrap}
@@ -1364,9 +1357,9 @@ export const LayeredGraph = forwardRef<
               ArrowRight: () => pan(-60, 0),
               ArrowUp: () => pan(0, 60),
               ArrowDown: () => pan(0, -60),
-              "+": () => zoomAt(cx, size.h / 2, 1.25),
-              "=": () => zoomAt(cx, size.h / 2, 1.25),
-              "-": () => zoomAt(cx, size.h / 2, 0.8),
+              "+": () => zoomAt(cx, midY(size.h, insets), 1.25),
+              "=": () => zoomAt(cx, midY(size.h, insets), 1.25),
+              "-": () => zoomAt(cx, midY(size.h, insets), 0.8),
               "0": fitAll,
             };
             const fn = map[e.key];
@@ -1414,13 +1407,48 @@ export const LayeredGraph = forwardRef<
               ref={colScroll}
               aria-label={tx.graph.columnLabel}
               onScroll={measureColumn}
-              className="absolute inset-y-0 left-0 z-[5] overflow-y-auto border-r border-seam-soft bg-cloth py-3"
-              style={{ width: column.width }}
+              className="absolute bottom-0 left-0 z-[5] overflow-y-auto border-r border-seam-soft bg-cloth py-3"
+              style={{ width: column.width, top: insets.top }}
             >
               {group(tx.graph.columnFree, column.free.map((t) => ({ topic: t })), true)}
               {group(tx.graph.columnOther, column.outside, column.free.length === 0)}
             </nav>
           )}
+
+          {/* Zoom buttons and indicator pills float over the canvas: no panel, no background, no line. They stay between the insets */}
+          <div className="pointer-events-none absolute right-2 z-[6] flex min-h-0 flex-col items-end gap-3 overflow-y-auto" style={{ top: insets.top + 8, bottom: insets.bottom + 8 }}>
+            <div className="pointer-events-auto flex shrink-0" role="group" aria-label={tx.graph.zoomGroup} style={{ minHeight: ZOOM_ROW_H - 8 }}>
+              <IconButton label={tx.graph.zoomIn} onClick={() => zoomAt(cx, midY(size.h, insets), 1.25)}>
+                <Plus />
+              </IconButton>
+              <IconButton label={tx.graph.zoomOut} onClick={() => zoomAt(cx, midY(size.h, insets), 0.8)}>
+                <Minus />
+              </IconButton>
+              <IconButton label={tx.graph.fitAll} onClick={fitAll}>
+                <Maximize2 />
+              </IconButton>
+            </div>
+            {!compact && (
+              <div className="hidden w-32 shrink-0 flex-col gap-3 md:flex">
+                <div className="pointer-events-auto">
+                  <IndicatorPills />
+                </div>
+                {allHub && (
+                  <Link
+                    href={`/hub/${allHub.id}`}
+                    onClick={stay("hub", allHub.id)}
+                    aria-label={tx.graph.allTopicsPillAria}
+                    className="caps pointer-events-auto inline-flex h-10 w-full shrink-0 items-center justify-center rounded-pill border border-seam bg-cloth-deep px-3 whitespace-nowrap text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-rule hover:bg-cloth-hover"
+                  >
+                    {tx.graph.allTopicsPill}
+                  </Link>
+                )}
+                <p aria-live="polite" className="caps px-1 text-right text-paper-dim [text-shadow:0_0_6px_var(--cloth)]">
+                  {tx.graph.status(hubCount, topicCount)}
+                </p>
+              </div>
+            )}
+          </div>
 
           {/* Real links for keyboard and screen readers. Small graphs only: 500 tab stops would be worse than none */}
           {layout.nodes.size <= 150 && (
@@ -1476,23 +1504,6 @@ export const LayeredGraph = forwardRef<
           )}
         </div>
 
-        {/* The indicators and the count have a column of their own: nothing of the graph or of its controls lies under them */}
-        {!compact && <div className="hidden w-32 shrink-0 flex-col gap-3 overflow-y-auto pt-2 pl-2 md:flex">
-          <IndicatorPills />
-          {allHub && (
-            <Link
-              href={`/hub/${allHub.id}`}
-              onClick={stay("hub", allHub.id)}
-              aria-label={tx.graph.allTopicsPillAria}
-              className="caps inline-flex h-10 w-full shrink-0 items-center justify-center rounded-pill border border-seam px-3 whitespace-nowrap text-paper transition-colors duration-(--dur-s) ease-(--ease-out) hover:border-rule hover:bg-cloth-hover"
-            >
-              {tx.graph.allTopicsPill}
-            </Link>
-          )}
-          <p aria-live="polite" className="caps px-1 text-paper-dim">
-            {tx.graph.status(hubCount, topicCount)}
-          </p>
-        </div>}
       </div>
     </div>
   );
