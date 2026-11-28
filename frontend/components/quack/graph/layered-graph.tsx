@@ -226,6 +226,11 @@ export const LayeredGraph = forwardRef<
   const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const fitted = useRef(false);
+  /**
+   * The camera follows the graph while the learner has not touched it and did not come back to a saved view: a graph that
+   * grows live (files being read) starts from one topic, and later topics used to land outside the screen
+   */
+  const autoFit = useRef(false);
   const sizeRef = useRef(size);
 
   const topicMap = useMemo(() => new Map(model.topics.map((t) => [t.id, t])), [model]);
@@ -818,6 +823,7 @@ export const LayeredGraph = forwardRef<
   const initialView = useCallback(
     (w: number, h: number): View => {
       const saved = compact ? null : loadCamera(LEARNER, scene.current.model.domainId);
+      autoFit.current = !saved;
       if (!saved) return fitView(w, h);
       const k = clamp(saved.k, K_MIN, K_MAX);
       const c = restoreCenter(saved, (id) => target.current.get(id));
@@ -830,6 +836,7 @@ export const LayeredGraph = forwardRef<
   const zoomAt = useCallback(
     (cx: number, cy: number, factor: number) => {
       const v = viewTween.current?.to ?? view.current;
+      autoFit.current = false;
       const k = clamp(v.k * factor, K_MIN, K_MAX);
       const f = k / v.k;
       moveView({ k, tx: cx - (cx - v.tx) * f, ty: cy - (cy - v.ty) * f }, false);
@@ -837,7 +844,10 @@ export const LayeredGraph = forwardRef<
     [moveView],
   );
 
-  const fitAll = useCallback(() => moveView(fitView(sizeRef.current.w, sizeRef.current.h), true), [fitView, moveView]);
+  const fitAll = useCallback(() => {
+    autoFit.current = true;
+    moveView(fitView(sizeRef.current.w, sizeRef.current.h), true);
+  }, [fitView, moveView]);
 
   // A click on the subject name: the whole graph goes to the middle. On a fresh mount the first view does it (see below)
   const centerRef = useRef(center);
@@ -876,6 +886,7 @@ export const LayeredGraph = forwardRef<
       if (!fitted.current) {
         fitted.current = true;
         if (centerRef.current) {
+          autoFit.current = true;
           view.current = fitView(size.w, size.h);
           centeredRef.current?.();
         } else view.current = initialView(size.w, size.h);
@@ -932,8 +943,11 @@ export const LayeredGraph = forwardRef<
       shown.current = new Map(target.current);
       posTween.current = null;
     } else posTween.current = performance.now();
+    // Nobody has moved the camera: the whole new graph stays in view
+    const { w: sw, h: sh } = sizeRef.current;
+    if (!first && autoFit.current && sw && sh) moveView(fitView(sw, sh), true);
     schedule();
-  }, [layout, model, topicMap, hubMap, column.width, colW, links, schedule]);
+  }, [layout, model, topicMap, hubMap, column.width, colW, links, schedule, moveView, fitView]);
 
   // Where each column item stands (for the lines to hubs). Measured after the column is laid out and whenever it scrolls
   const measureColumn = useCallback(() => {
@@ -1014,6 +1028,7 @@ export const LayeredGraph = forwardRef<
       }
       return;
     }
+    autoFit.current = false;
     if (was.size === 0 && !before.current) before.current = viewTween.current?.to ?? view.current;
     const pts: Pt[] = [];
     for (const id of act) {
@@ -1082,6 +1097,7 @@ export const LayeredGraph = forwardRef<
     const hp = target.current.get(`h:${focusHubId}`);
     if (pinApplied.current === focusHubId || !w || !h || !hp) return;
     pinApplied.current = focusHubId;
+    autoFit.current = false;
     const pts = [hp, ...(links.byHub.get(focusHubId) ?? []).map((id) => target.current.get(id)).filter((p): p is Pt => !!p)];
     const cw = scene.current.colW;
     const aw = w - cw;
@@ -1095,6 +1111,7 @@ export const LayeredGraph = forwardRef<
   const goToArrow = (a: Arrow) => {
     const p = target.current.get(a.key);
     if (!p) return;
+    autoFit.current = false;
     const { w, h } = sizeRef.current;
     const cw = scene.current.colW;
     const k = clamp(Math.max(view.current.k, K_READ), K_MIN, K_MAX);
@@ -1180,6 +1197,7 @@ export const LayeredGraph = forwardRef<
         setHover(null);
       }
       if (d.moved) {
+        autoFit.current = false;
         view.current = { ...view.current, tx: d.vx + p.x - d.x, ty: d.vy + p.y - d.y };
         schedule();
       }
@@ -1207,6 +1225,7 @@ export const LayeredGraph = forwardRef<
     (id: string) => {
       const p = target.current.get(id);
       if (!p) return;
+      autoFit.current = false;
       const { w, h } = sizeRef.current;
       const k = clamp(Math.max(view.current.k, 0.9), K_MIN, K_MAX);
       const cw = scene.current.colW;
@@ -1320,7 +1339,10 @@ export const LayeredGraph = forwardRef<
           className="relative min-h-0 min-w-0 flex-1 overflow-hidden rounded-[2px] outline-none select-none focus-visible:ring-2 focus-visible:ring-ribbon/60"
           onKeyDown={(e) => {
             if (e.target !== e.currentTarget) return;
-            const pan = (dx: number, dy: number) => moveView({ ...view.current, tx: view.current.tx + dx, ty: view.current.ty + dy }, false);
+            const pan = (dx: number, dy: number) => {
+              autoFit.current = false;
+              moveView({ ...view.current, tx: view.current.tx + dx, ty: view.current.ty + dy }, false);
+            };
             const map: Record<string, () => void> = {
               ArrowLeft: () => pan(60, 0),
               ArrowRight: () => pan(-60, 0),

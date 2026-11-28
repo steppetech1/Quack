@@ -48,8 +48,11 @@ export type Layout = {
   bounds: { x0: number; y0: number; x1: number; y1: number };
 };
 
-/** Saved `[x, layer]` per node key. Known nodes keep their x: that is what keeps the graph steady */
-export type StoredPositions = Record<string, [number, number]>;
+/**
+ * Saved `[x, layer]` per node key. Known nodes keep their x: that is what keeps the graph steady.
+ * A lone topic has no layer (-1), so its entry also carries the `y` it stands at.
+ */
+export type StoredPositions = Record<string, [number, number] | [number, number, number]>;
 
 export const hubKey = (id: string) => `h:${id}`;
 
@@ -107,9 +110,12 @@ const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
  */
 /** Topics that have at least one "needed before" link, and those links. The rest go to the left column */
 export function chainOf(model: GraphModel) {
-  const visible = model.topics.filter(onGraph);
+  // Sorted by id: the order the backend lists topics and links in is not guaranteed, and the layout must not depend on it
+  const visible = model.topics.filter(onGraph).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const ids = new Set(visible.map((t) => t.id));
-  const edges = model.requires.filter((e) => ids.has(e.topicId) && ids.has(e.requiresId) && e.topicId !== e.requiresId);
+  const edges = model.requires
+    .filter((e) => ids.has(e.topicId) && ids.has(e.requiresId) && e.topicId !== e.requiresId)
+    .sort((a, b) => (a.topicId < b.topicId ? -1 : a.topicId > b.topicId ? 1 : a.requiresId < b.requiresId ? -1 : a.requiresId > b.requiresId ? 1 : 0));
   const linked = new Set(edges.flatMap((e) => [e.topicId, e.requiresId]));
   return { topics: visible.filter((t) => linked.has(t.id)), edges, unlinked: visible.filter((t) => !linked.has(t.id)).map((t) => t.id) };
 }
@@ -149,7 +155,8 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
   for (const l of model.includes) {
     const i = at.get(l.topicId);
     const h = hubIdx.get(l.hubId);
-    if (i !== undefined && h !== undefined && ownHub[i] < 0) ownHub[i] = h;
+    // the first chapter in the order of the chapters, not in the order of the links
+    if (i !== undefined && h !== undefined && (ownHub[i] < 0 || h < ownHub[i])) ownHub[i] = h;
   }
 
   const x = new Array<number>(n).fill(NaN);
@@ -258,7 +265,12 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
       const near = [...req[v], ...dep[v]].map((w) => x[w]).filter((p) => !Number.isNaN(p));
       const row = rows[layerOf[v]].filter((w) => w !== v && !Number.isNaN(x[w])).map((w) => x[w]);
       const was = stored[topics[v].id]?.[0];
-      const want = near.length ? mean(near) : was !== undefined ? was : row.length ? mean(row) : 0;
+      // Pulled by its links and, as in the first layout, by its chapter: the middle of the chapter's topics that already
+      // stand (without this a topic that arrives later drifts to its links and leaves its chapter behind)
+      const mates = topics.map((_, i) => i).filter((i) => i !== v && ownHub[i] === ownHub[v] && !Number.isNaN(x[i])).map((i) => x[i]);
+      const home = ownHub[v] >= 0 && mates.length ? mean(mates) : NaN;
+      const link = near.length ? mean(near) : NaN;
+      const want = !Number.isNaN(home) && !Number.isNaN(link) ? link * (1 - HUB_PULL) + home * HUB_PULL : !Number.isNaN(link) ? link : !Number.isNaN(home) ? home : was !== undefined ? was : row.length ? mean(row) : 0;
       x[v] = freeSlot(want, row, GAP_X);
     }
   }
@@ -303,8 +315,12 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
       }
     });
     if (!rail.length) {
+      // No chapters carry the graph: the lone topics make a block under it, centred, about as wide as it is high
+      // (a single row of them used to run 1500+ units wide and unreadable). `perRow` slots, then the next pass
       const cx = topicNodes.length ? mean(topicNodes.map((q) => q.x)) : 0;
-      rail = [{ x: cx - 4 * LONE_STEP, y: GAP_Y }, { x: cx + 4 * LONE_STEP, y: GAP_Y }];
+      const perRow = unlinked.length < 3 ? unlinked.length : Math.max(2, Math.min(9, Math.round(Math.sqrt(unlinked.length * 1.2))));
+      const x0 = cx - ((perRow - 1) * LONE_STEP) / 2;
+      rail = [{ x: x0, y: GAP_Y }, { x: x0 + perRow * LONE_STEP, y: GAP_Y }];
     }
     if (rail.length === 1) rail.push({ x: rail[0].x + LONE_STEP, y: rail[0].y });
     const segs = rail.slice(1).map((q, i) => Math.hypot(q.x - rail[i].x, q.y - rail[i].y));
@@ -336,18 +352,30 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     };
     const order = [...unlinked].sort((u, v) => score(v) - score(u) || (topicOf.get(u)?.name ?? u).localeCompare(topicOf.get(v)?.name ?? v));
     const taken: Pt[] = topicNodes.map((q) => ({ x: q.x, y: q.y }));
-    let dist = 0;
-    for (const id of order) {
-      // the next free place along the rail: not on top of a topic of the graph or of another lone topic
-      let pt = at(dist);
-      for (let tries = 0; tries < 40 && taken.some((o) => Math.abs(o.x - pt.x) < GAP_X * 0.9 && Math.abs(o.y - pt.y) < GAP_Y * 0.55); tries++) {
-        dist += LONE_STEP / 2;
-        pt = at(dist);
-      }
+    const busy = (pt: Pt) => taken.some((o) => Math.abs(o.x - pt.x) < GAP_X * 0.9 && Math.abs(o.y - pt.y) < GAP_Y * 0.55);
+    const lone = (id: string, pt: Pt) => {
       const node: LayoutNode = { key: id, id, kind: "topic", x: pt.x, y: pt.y, layer: -1 };
       nodes.set(node.key, node);
       loneNodes.push(node);
       taken.push(pt);
+    };
+    // A lone topic that already has a place keeps it, whatever else came or went: the order above (names, sessions, due
+    // dates) changes by itself, and a row that reshuffles when one topic arrives is not a steady graph
+    const fresh: string[] = [];
+    for (const id of order) {
+      const s = stored?.[id];
+      if (s && s[1] < 0 && s.length === 3 && !busy({ x: s[0], y: s[2] })) lone(id, { x: s[0], y: s[2] });
+      else fresh.push(id);
+    }
+    // The others take the next free places along the rail, from its start
+    let dist = 0;
+    for (const id of fresh) {
+      let pt = at(dist);
+      for (let tries = 0; tries < taken.length * 2 + 40 && busy(pt); tries++) {
+        dist += LONE_STEP / 2;
+        pt = at(dist);
+      }
+      lone(id, pt);
       dist += LONE_STEP;
     }
   }
@@ -370,7 +398,8 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     .sort((a, b) => a.y - b.y || (a.h.id < b.h.id ? -1 : 1));
   for (const { h, m, y } of hubs) {
     const s = stored?.[hubKey(h.id)];
-    const want = s ? s[0] : m.length ? mean(m.map((t) => t.x)) : 0;
+    // Over the middle of its topics (they are the steady part). A saved place is only for a chapter with no topic on the graph
+    const want = m.length ? mean(m.map((t) => t.x)) : s ? s[0] : 0;
     const row = placed.filter((p) => Math.abs(p.y - y) < GAP_Y * 0.55).map((p) => p.x);
     const node: LayoutNode = { key: hubKey(h.id), id: h.id, kind: "hub", x: freeSlot(want, row, HUB_GAP_X), y, layer: Math.round(-y / GAP_Y) };
     nodes.set(node.key, node);
@@ -400,7 +429,7 @@ export function loadPositions(learner: string, domainId: string): StoredPosition
 
 export function savePositions(learner: string, domainId: string, layout: Layout) {
   const pos: StoredPositions = {};
-  for (const n of layout.nodes.values()) pos[n.key] = [Math.round(n.x * 10) / 10, n.layer];
+  for (const n of layout.nodes.values()) pos[n.key] = n.layer < 0 ? [Math.round(n.x * 10) / 10, n.layer, Math.round(n.y * 10) / 10] : [Math.round(n.x * 10) / 10, n.layer];
   try {
     localStorage.setItem(KEY(learner, domainId), JSON.stringify({ v: 10, pos }));
   } catch {
