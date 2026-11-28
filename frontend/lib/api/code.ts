@@ -36,5 +36,5 @@ export function codeTask(taskId: string): Promise<CodeTask> {
 
 /** The learner's current code, kept on the server by task, so a reload or another device opens it where it was */
 export function saveDraft(taskId: string, code: string): Promise<void> {
-  return put(`/v1/tasks/${taskId}/code/draft`, { code });
+  return put(`/v1/tasks/${taskId}/code/draft`, { code }).then(() => undefined);
 }

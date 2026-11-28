@@ -2177,6 +2177,17 @@ export interface components {
             code: string;
         };
         /**
+         * DraftSaved
+         * @description The draft is kept (every route answers with a model, WP8.7).
+         */
+        DraftSaved: {
+            /**
+             * Saved
+             * @default true
+             */
+            saved?: boolean;
+        };
+        /**
          * EditHub
          * @description `topics` — the whole new scope with required levels (empty levels — by `controlType`,
          *     WP6.3); `deadline_at_ms` — the new date, `null` removes it. At least one of them.
@@ -8797,11 +8808,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["DraftSaved"];
+                };
             };
             /** @description UNAUTHENTICATED: no session, or it expired or was revoked */
             401: {
