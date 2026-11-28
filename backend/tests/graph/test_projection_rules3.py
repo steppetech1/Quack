@@ -92,7 +92,7 @@ _SKILL_B = _node("Skill", SKILL_B, domainId=DOMAIN, name="common denominator", s
                  status="active", origin="session", core=False, definition="", exemplar="",
                  kind="")  # fmt: skip
 _HUB = _node("Hub", HUB, domainId=DOMAIN, name="Exam", kind="request", origin="learner",
-             controlType="tasks", deadlineAtMs=0, status="active")  # fmt: skip
+             controlType="tasks", deadlineAtMs=0, status="active", createdSeq=9)  # fmt: skip
 _ALIAS = NodeRecord("Alias", SKILL_OLD, {"learnerId": L})
 _ALIAS_OF = _rel(("Alias", SKILL_OLD), "ALIAS_OF", ("Skill", SKILL))
 
@@ -166,6 +166,7 @@ def test_domain_created_makes_the_domain_and_its_whole_domain_hub() -> None:
         "controlType": "no_goal",
         "deadlineAtMs": 0,
         "status": "active",
+        "createdSeq": 1,
     }
     assert ("Learner", L, "OWNS", "Domain", DOMAIN) in rels
     assert ("Domain", DOMAIN, "HAS_HUB", "Hub", hub) in rels

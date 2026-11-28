@@ -917,6 +917,7 @@ class Neo4jGraphReader(ExtraReads):
                     kind=_s(p, "kind"),
                     control_type=cast(ControlType, _s(p, "controlType", "no_goal")),
                     deadline_at_ms=deadline if deadline > 0 else None,
+                    created_seq=_i(p, "createdSeq") or None,
                     topics=[
                         HubTopicGoal(
                             topic_id=UUID(tid), name=name, required_levels=cast("list[Level]", lv)

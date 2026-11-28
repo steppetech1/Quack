@@ -2872,6 +2872,17 @@
           "control_type": {
             "$ref": "#/components/schemas/ControlType"
           },
+          "created_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created Seq"
+          },
           "deadline_at_ms": {
             "anyOf": [
               {

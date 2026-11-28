@@ -2528,6 +2528,8 @@ export interface components {
          */
         HubGoal: {
             control_type: components["schemas"]["ControlType"];
+            /** Created Seq */
+            created_seq?: number | null;
             /** Deadline At Ms */
             deadline_at_ms?: number | null;
             /**

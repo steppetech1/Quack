@@ -211,7 +211,9 @@ async def domain_hubs(
     if await _own(neo4j, learner_id, "Domain", domain_id) is None:
         return None
     reader = create_graph_reader(neo4j, settings, learner_id=learner_id)
-    return await reader.domain_goals(domain_id)
+    goals = await reader.domain_goals(domain_id)
+    # The order the hubs appeared in the domain (hubs without the number go last).
+    return sorted(goals, key=lambda g: (g.created_seq is None, g.created_seq or 0, str(g.hub_id)))
 
 
 async def hub_view(

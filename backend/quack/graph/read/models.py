@@ -299,6 +299,9 @@ class HubGoal(_Fact):
     kind: str
     control_type: ControlType
     deadline_at_ms: int | None = None
+    # The number of the event in the learner's log that created the hub; `None` for a hub
+    # projected before the property existed (until a rebuild).
+    created_seq: int | None = None
     topics: list[HubTopicGoal] = []
 
 

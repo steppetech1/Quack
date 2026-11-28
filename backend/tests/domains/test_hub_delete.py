@@ -129,6 +129,7 @@ async def test_delete_hub_keeps_the_topics_and_every_read_skips_it(
     assert (await api_client.delete(f"/v1/hubs/{hub}", headers=cookie)).status_code == 404
     listed = await api_client.get(f"/v1/domains/{domain}/hubs", headers=cookie)
     assert str(hub) not in {h["hub_id"] for h in listed.json()}
+    assert [h["created_seq"] for h in listed.json()] == [stored[0].seq]  # the domain's own hub
     try:
         await get_artifact(pg_db, learner_id=learner, kind="cheatsheet", owner_id=hub)
     except ArtifactNotFound:

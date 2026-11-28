@@ -133,7 +133,8 @@ async def _build(driver: AsyncDriver, seq: int = 10) -> World:
               approach="example_first", sourceSeq=2),
         _rel("Exposure", exposure, "OF", "Skill", s1),
         _node("Hub", hub, learner, domainId=domain, name="Exam", kind="from_request",
-              origin="learner", controlType="tasks", deadlineAtMs=NOW + 3 * DAY, status="active"),
+              origin="learner", controlType="tasks", deadlineAtMs=NOW + 3 * DAY, status="active",
+              createdSeq=7),
         _node("Hub", hub_all, learner, domainId=domain, name="Analysis", kind="domain_all",
               origin="learner", controlType="no_goal", deadlineAtMs=0, status="active"),
         _rel("Domain", domain, "HAS_HUB", "Hub", hub),
@@ -374,6 +375,7 @@ async def test_domain_goals(world: World, reader: Neo4jGraphReader) -> None:
     assert whole.kind == "domain_all" and whole.deadline_at_ms is None
     assert {t.name for t in whole.topics} == {"Series", "Limits", "Empty"}
     assert all(t.required_levels == [3] for t in whole.topics)  # `no_goal` default
+    assert (exam.created_seq, whole.created_seq) == (7, None)  # no property before a rebuild
     assert await reader.domain_goals(uuid4()) == []
 
 
