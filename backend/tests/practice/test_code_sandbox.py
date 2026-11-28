@@ -22,10 +22,10 @@ from quack.practice.code_hidden import (
     build_hidden_tests,
     validated_tests,
 )
-from quack.practice.code_sandbox import sandbox_problems, sandbox_tests
 from quack.practice.code_tests import PythonCase, PythonTests, SqlTests
 from quack.practice.sql_presets import SQL_PRESETS, sql_preset
 from quack.runner_client.client import RunnerClient
+from quack.session.code_sandbox import sandbox_problems, sandbox_tests
 from quack.session.elements import CodeSandboxElement
 
 

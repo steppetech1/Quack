@@ -45,11 +45,11 @@ from quack.events.values import AnswerSpec
 from quack.graph.ids import QUACK_UUID_NS
 from quack.llm.labels import LabelMap, UnknownLabelError
 from quack.logging import get_logger
-from quack.practice.code_sandbox import sandbox_answer_spec, sandbox_tests
 from quack.practice.markup import markup_record
 from quack.practice.role_outputs import TaskCondition
 from quack.practice.session_plan import merge_plan
 from quack.practice.task_store import get_task, insert_task_document, task_created_event
+from quack.session.code_sandbox import sandbox_answer_spec, sandbox_tests
 from quack.session.elements import CodeSandboxElement, Element
 from quack.session.guards import landmark_kind
 from quack.session.service_turns import settle_service_output
@@ -287,20 +287,19 @@ def resolve_focus_topic_id(
 
 
 def _current_turn_skill_ids(output: TeacherOutputV2, labels: LabelMap) -> list[UUID]:
-    skills: list[UUID] = [labels.resolve("skill", s) for s in output.p1_head.target_skills]
-    skills.extend(labels.resolve("skill", e.skill) for e in output.p3_markup.exposures)
+    # a label the table lacks is dropped, as in the committed head (`_known_skill_ids`)
+    skills = _known_skill_ids(labels, list(output.p1_head.target_skills))
+    skills.extend(_known_skill_ids(labels, [e.skill for e in output.p3_markup.exposures]))
     for task in output.p3_markup.tasks:
         skills.extend(_task_skill_ids(task, labels))
     return skills
 
 
 def _task_skill_ids(task: TurnTask, labels: LabelMap) -> list[UUID]:
-    ids = [labels.resolve("skill", t.skill) for t in task.tests if t.skill is not None]
+    names = [t.skill for t in task.tests if t.skill is not None]
     for part in task.parts or ():
-        ids.extend(
-            labels.resolve("skill", t.skill) for t in part.tests or () if t.skill is not None
-        )
-    return ids
+        names.extend(t.skill for t in part.tests or () if t.skill is not None)
+    return _known_skill_ids(labels, names)
 
 
 def turn_batch(

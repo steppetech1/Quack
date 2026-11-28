@@ -108,6 +108,12 @@ class DraftRequest(BaseModel):
     code: str
 
 
+class DraftSaved(BaseModel):
+    """The draft is kept (every route answers with a model, WP8.7)."""
+
+    saved: bool = True
+
+
 class RunRequest(BaseModel):
     code: str
     # Python only: run the function on these arguments (tagged JSON values), nothing compared.
@@ -284,10 +290,10 @@ async def run_code(
     return RunResponse(tests=views, build=tests.build)
 
 
-@router.put("/tasks/{task_id}/code/draft", status_code=204)
+@router.put("/tasks/{task_id}/code/draft")
 async def save_draft(
     task_id: UUID, body: DraftRequest, learner_id: CurrentLearnerId, resources: Resources
-) -> None:
+) -> DraftSaved:
     """The learner's current code (the statuses of the last run are kept); writes no event."""
     tests = await _task_tests(resources.db, learner_id, task_id)
     _check_size(body.code, tests, resources.settings)
@@ -299,6 +305,7 @@ async def save_draft(
         task_id=task_id,
         draft=CodeDraft(code=body.code, statuses=statuses),
     )
+    return DraftSaved()
 
 
 def _generated(tests: PythonTests | SqlTests) -> bool:

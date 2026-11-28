@@ -88,7 +88,6 @@ from quack.llm.tool_loop import (
 )
 from quack.logging import get_logger
 from quack.practice.check import Verdict
-from quack.practice.code_sandbox import sandbox_problems
 from quack.practice.markup import validate_markup
 from quack.session.actions import (
     ElementFrame,
@@ -98,6 +97,7 @@ from quack.session.actions import (
     TurnCommittedFrame,
     VerdictFrame,
 )
+from quack.session.code_sandbox import sandbox_problems
 from quack.session.elements import TASK_ELEMENT_KINDS, CodeSandboxElement, Element
 from quack.session.guards import (
     Boundary,

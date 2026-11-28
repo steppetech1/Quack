@@ -2017,6 +2017,18 @@
         "title": "DraftRequest",
         "type": "object"
       },
+      "DraftSaved": {
+        "description": "The draft is kept (every route answers with a model, WP8.7).",
+        "properties": {
+          "saved": {
+            "default": true,
+            "title": "Saved",
+            "type": "boolean"
+          }
+        },
+        "title": "DraftSaved",
+        "type": "object"
+      },
       "EditHub": {
         "additionalProperties": false,
         "description": "`topics` — the whole new scope with required levels (empty levels — by `controlType`,\nWP6.3); `deadline_at_ms` — the new date, `null` removes it. At least one of them.",
@@ -12586,7 +12598,14 @@
           "required": true
         },
         "responses": {
-          "204": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftSaved"
+                }
+              }
+            },
             "description": "Successful Response"
           },
           "401": {

@@ -142,6 +142,15 @@ STREAM = Stream(
             body=lambda ids, v: {"code": "def square(x): return x * x"},
             path_ids=_CODE_PATH_IDS,
         ),
+        # The editor's draft: kept by task, no event (a repeat keeps the same code).
+        Route(
+            "PUT",
+            "/v1/tasks/{task_id}/code/draft",
+            no_key="Т-§6.10: the editor's draft is kept by task, no event is written",
+            body_key="none",
+            body=lambda ids, v: {"code": ["def square(x): return x * x", "def square(x): pass"][v]},
+            path_ids=_CODE_PATH_IDS,
+        ),
         Route(
             "POST",
             "/v1/sessions/{session_id}/tasks/{task_id}/code/submit",
