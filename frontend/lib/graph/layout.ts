@@ -6,28 +6,40 @@ export const GAP_X = 110;
 export const GAP_Y = 110;
 /** A chapter block is at most this many topics wide */
 const BLOCK_MAX_COLS = 4;
-/** Empty space between two blocks of the snake (on top of the half-steps of their edge slots): chapters read as separate pieces */
-const BLOCK_GAP_X = GAP_X * 1.3;
+/** Empty space between two blocks that follow each other along the snake */
+const BLOCK_GAP_X = GAP_X * 0.6;
+/** A block starts on a grid of this many slots along the lap: a chapter that grows by a topic seldom moves the next one */
+const BLOCK_GRID_SLOTS = 2;
 /** A block with a hub is at least this wide, so the name of the hub has room above it */
 const HUB_MIN_W = GAP_X * 2;
 /** A hub stands this far above the highest topic of its block */
-const HUB_RISE = GAP_Y * 0.9;
-/** Rows reserved above a chapter block for its hub (nothing else stands there) */
-const HUB_BAND_ROWS = 1;
+const HUB_RISE = GAP_Y * 0.75;
 /** Two hubs are no closer than this */
 const HUB_GAP_X = GAP_X * 1.35;
 /**
- * The snake of blocks turns round when a row would be wider than this, world units. It is the width of the row that holds
- * all the hubs of Calculus today. Going back the row stops at the same edge on the left.
+ * One lap of the snake is this wide, world units. The graph is one long rising path (chapter after chapter, a run of topics
+ * a gentle diagonal); where it reaches this width it turns and goes back the other way, one lap higher.
  */
-const MAX_ROW_WIDTH = 2200;
+const MAX_ROW_WIDTH = 1900;
+/** A block that fits a lap waits for this much overflow before it moves to the next lap: a chapter that grows a little does not move the turn */
+const SNAKE_SLACK = GAP_X * 2;
+/** A block that stood in this lap last time waits for more (needs the saved positions) */
+const SNAKE_STAY_SLACK = GAP_X * 4;
+/** Clear rows between a lap and the lap above it, so laps never touch */
+const LAP_GAP = 1;
+/** Rows a hub name takes above the hub ring */
+const HUB_LABEL_ROWS = 0.4;
 /** Every next block of the snake starts at least this many rows above the base of the previous one: a staircase, never a flat row */
-const SNAKE_RISE = 1.25;
-/** A block taller than this many rows is at least `ZIGZAG_COLS` wide, so a long chain can wind up instead of standing as a column */
-const ZIGZAG_FROM_ROWS = 4;
-const ZIGZAG_COLS = 3;
-/** Passes of the "mean of the neighbours" ordering inside a block */
-const SWEEPS = 4;
+const SNAKE_RISE = 1;
+/** A step along a run (a topic with one prerequisite in its chapter, which has one dependent there): one slot sideways and this many rows up */
+const CHAIN_RISE = 0.3;
+/** A topic that does not fit moves up by this many rows */
+const LIFT_ROWS = 1;
+/** Two topics of a block are no closer than this (slots) when they are less than `PLACE_DY` rows apart */
+const SLOT_CLEAR = 0.95;
+const PLACE_DY = 0.6;
+/** How far (slots) a topic looks for a free place beside where it wants to stand, before it moves up */
+const SEARCH_SLOTS = BLOCK_MAX_COLS + 2;
 /** Topics with no hub and no link: a block about as wide as high, `round(sqrt(LONE_ASPECT * N))` in a row, at most `LONE_MAX_COLS` */
 const LONE_ASPECT = 1.2;
 const LONE_MAX_COLS = 9;
@@ -39,7 +51,7 @@ const COLLECTION_BAND = GAP_Y * 1.5;
 const COLLECTION_STEP_Y = GAP_Y * 0.8;
 /** Nodes closer than this (in x, at the same height) overlap, and the later one is lifted */
 const OVERLAP_X = GAP_X * 0.9;
-const REPAIR_PASSES = 40;
+const REPAIR_PASSES = 200;
 
 export type LayoutNode = {
   /** Topic id, or `h:<id>` for a hub */
@@ -60,7 +72,11 @@ export type LayoutBlock = {
   /** Hub id of a chapter */
   hubId?: string;
   topicIds: string[];
-  /** Horizontal extent the block reserves (the hub is centred over it) */
+  /** Lap of the snake the block starts in (lap 0 runs to the right, lap 1 to the left, and so on) */
+  lap: number;
+  /** The block is longer than a lap and turns inside itself */
+  wrapped: boolean;
+  /** Horizontal extent the block reserves in its lap (the hub stands over its middle) */
   x0: number;
   x1: number;
   /** y of the lowest row of the block (up is negative). Along the snake the base always rises */
@@ -83,7 +99,7 @@ export type Layout = {
 };
 
 /**
- * Saved `[x, y]` per node key. It is a hint, not a pin: it breaks ties in the order of nodes and is the point
+ * Saved `[x, y]` per node key, and `[x, lap]` per block key (`b:...`). It is a hint, not a pin: it breaks ties in the order of nodes and is the point
  * a node glides from to its new place. The layout itself is computed from the data alone.
  */
 export type StoredPositions = Record<string, [number, number]>;
@@ -93,8 +109,8 @@ export const hubKey = (id: string) => `h:${id}`;
 type Edge = { a: number; b: number; c: number };
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
 const visibleTopics = (model: GraphModel) => model.topics.filter(onGraph).sort((a, b) => cmp(a.id, b.id));
 
@@ -177,14 +193,6 @@ function topoOrder(n: number, preq: number[][], dep: number[][]): number[] {
   return queue;
 }
 
-/** Left to right, no closer than one slot, inside 0..cols-1 */
-function pack(aims: number[], cols: number): number[] {
-  const p = [...aims];
-  for (let i = 0; i < p.length; i++) p[i] = Math.max(p[i], i ? p[i - 1] + 1 : 0);
-  for (let i = p.length - 1; i >= 0; i--) p[i] = Math.min(p[i], i < p.length - 1 ? p[i + 1] - 1 : cols - 1);
-  return p;
-}
-
 type Block = {
   kind: "chapter" | "free" | "lone";
   /** Index in the ordered hubs for a chapter, -1 for the others */
@@ -192,11 +200,15 @@ type Block = {
   topics: number[];
   /** Original order: the order of the hubs; a group with no hub goes by the chapters it is linked to (else after them, by first topic) */
   orig: number;
-  /** Topics of each row of the block, bottom up */
-  rows: number[][];
-  cols: number;
+  /** Extent of the block in slots (x) and rows (y), counted for a row that goes to the right */
+  minX: number;
+  maxX: number;
+  h: number;
   w: number;
   x0: number;
+  /** Lap of the snake the block starts in, and whether it is longer than a lap and turns inside */
+  lap: number;
+  wrapped: boolean;
 };
 
 /**
@@ -262,7 +274,7 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
   }
 
   // ---- blocks: chapters (hubs with home topics), groups of linked topics with no hub, the block of lone topics
-  const mk = (kind: Block["kind"], hub: number, topics: number[], orig: number): Block => ({ kind, hub, topics, orig, rows: [], cols: 1, w: 0, x0: 0 });
+  const mk = (kind: Block["kind"], hub: number, topics: number[], orig: number): Block => ({ kind, hub, topics, orig, minX: 0, maxX: 0, h: 0, w: 0, x0: 0, lap: 0, wrapped: false });
   const blocks: Block[] = [];
   hubList.forEach((_, h) => {
     const ts = [...Array(n).keys()].filter((t) => home[t] === h);
@@ -307,32 +319,67 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     loneBlock = mk("lone", -1, lone, -1);
   }
 
-  // Rows inside a block: a topic stands above everything it needs in the block, at most BLOCK_MAX_COLS to a row.
-  // Topics with the longest chain above them go first (highest level first), the rest fill the room that is left
+  // Inside a block a topic stands above everything it needs there. Where the block is a run (a topic with exactly one
+  // prerequisite in the block, which has exactly one dependent in the block) the next topic is one slot sideways and only
+  // CHAIN_RISE up: a gentle diagonal. Branching and merging points rise a whole row. Rows are real numbers from the foot of the
+  // block, x is in slots; both are laid out for a snake row that goes right (a row that goes left is mirrored)
   const height = new Array<number>(n).fill(0);
   for (const v of [...topo].reverse()) for (const d of dep[v]) height[v] = Math.max(height[v], height[d] + 1);
+  const rise = new Map<number, number>();
+  for (const e of kept) {
+    const same = blockOf[e.a] >= 0 && blockOf[e.a] === blockOf[e.b];
+    const pc = same ? preq[e.a].filter((q) => blockOf[q] === blockOf[e.a]).length : preq[e.a].length;
+    const dc = same ? dep[e.b].filter((q) => blockOf[q] === blockOf[e.b]).length : dep[e.b].length;
+    rise.set(e.a * n + e.b, pc === 1 && dc === 1 ? CHAIN_RISE : 1);
+  }
+  /** How far above `p` the topic `d` that needs it stands at least */
+  const riseOf = (d: number, p: number) => rise.get(d * n + p) ?? 1;
+  const xl = new Array<number>(n).fill(0);
+  const yl = new Array<number>(n).fill(0);
   for (const b of blocks) {
     const inB = new Set(b.topics);
-    const todo = [...b.topics].sort((p, q) => height[q] - height[p] || p - q);
-    const rowOf = new Map<number, number>();
-    for (let r = 0; todo.length; r++) {
-      let ready = todo.filter((v) => preq[v].every((p) => !inB.has(p) || (rowOf.has(p) && rowOf.get(p)! < r))).slice(0, BLOCK_MAX_COLS);
-      if (!ready.length) ready = [todo[0]];
-      for (const v of ready) {
-        rowOf.set(v, r);
-        todo.splice(todo.indexOf(v), 1);
+    const level = new Map<number, number>();
+    for (const v of topo) if (inB.has(v)) level.set(v, Math.max(0, ...preq[v].filter((q) => inB.has(q)).map((q) => level.get(q)! + 1)));
+    const order = [...b.topics].sort((p, q) => level.get(p)! - level.get(q)! || height[q] - height[p] || p - q);
+    const done: number[] = [];
+    for (const v of order) {
+      const pre = preq[v].filter((q) => inB.has(q));
+      const link = pre.length === 1 && riseOf(v, pre[0]) === CHAIN_RISE;
+      const y0 = Math.max(0, ...pre.map((q) => yl[q] + riseOf(v, q)));
+      const aim = !pre.length ? 0 : link ? xl[pre[0]] + 1 : mean(pre.map((q) => xl[q]));
+      let at: { x: number; y: number } | null = null;
+      for (let y = y0; !at; y += LIFT_ROWS) {
+        const near = done.filter((q) => Math.abs(yl[q] - y) < PLACE_DY);
+        // a row of the block holds at most BLOCK_MAX_COLS topics (a run does not count: it climbs, it does not fill a row)
+        if (!link && near.filter((q) => Math.abs(yl[q] - y) < 0.5).length >= BLOCK_MAX_COLS) continue;
+        for (let k = 0; k <= SEARCH_SLOTS && !at; k++) {
+          for (const off of k ? [k, -k] : [0]) {
+            if (near.every((q) => Math.abs(xl[q] - (aim + off)) >= SLOT_CLEAR - 1e-9)) {
+              at = { x: aim + off, y };
+              break;
+            }
+          }
+        }
       }
-      b.rows.push(ready);
+      xl[v] = at.x;
+      yl[v] = at.y;
+      done.push(v);
     }
-    const widest = Math.max(...b.rows.map((r) => r.length));
-    b.cols = Math.min(BLOCK_MAX_COLS, Math.max(widest, b.rows.length >= ZIGZAG_FROM_ROWS ? ZIGZAG_COLS : 1));
+    b.minX = Math.min(...b.topics.map((v) => xl[v]));
+    b.maxX = Math.max(...b.topics.map((v) => xl[v]));
+    b.h = Math.max(...b.topics.map((v) => yl[v]));
   }
   if (loneBlock) {
     const cols = lone.length < 3 ? lone.length : Math.max(2, Math.min(LONE_MAX_COLS, Math.round(Math.sqrt(lone.length * LONE_ASPECT))));
-    for (let i = 0; i < lone.length; i += cols) loneBlock.rows.push(lone.slice(i, i + cols));
-    loneBlock.cols = cols;
+    lone.forEach((v, i) => {
+      xl[v] = i % cols;
+      yl[v] = Math.floor(i / cols);
+    });
+    loneBlock.minX = 0;
+    loneBlock.maxX = cols - 1;
+    loneBlock.h = Math.ceil(lone.length / cols) - 1;
   }
-  for (const b of [...blocks, ...(loneBlock ? [loneBlock] : [])]) b.w = Math.max(b.cols * GAP_X, b.kind === "chapter" ? HUB_MIN_W : 0);
+  for (const b of [...blocks, ...(loneBlock ? [loneBlock] : [])]) b.w = Math.max((b.maxX - b.minX + 1) * GAP_X, b.kind === "chapter" ? HUB_MIN_W : 0);
 
   // ---- order of the blocks along the snake: A before B when B needs A more often than A needs B; otherwise the earlier hub first
   const B = blocks.length;
@@ -363,109 +410,86 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
   }
   const seq: Block[] = [...(loneBlock ? [loneBlock] : []), ...order.map((i) => blocks[i])];
 
-  // ---- snake, horizontally: left to right, turn at the width limit, right to left, and so on
-  let dir: 1 | -1 = 1;
-  let front = 0;
-  let lastLeft = 0;
-  let lastRight = 0;
-  seq.forEach((b, i) => {
-    if (i > 0 && (dir === 1 ? front + b.w > MAX_ROW_WIDTH : front - b.w < 0)) {
-      dir = dir === 1 ? -1 : 1;
-      front = dir === 1 ? lastLeft : lastRight;
-    }
-    if (dir === 1) {
-      b.x0 = front;
-      front += b.w + BLOCK_GAP_X;
-    } else {
-      b.x0 = front - b.w;
-      front = b.x0 - BLOCK_GAP_X;
-    }
-    lastLeft = b.x0;
-    lastRight = b.x0 + b.w;
-  });
-
-  // ---- x inside a block: slots, ordered by the mean of the neighbours; a chain winds from side to side
-  const relRow = new Array<number>(n).fill(0);
-  const pos = new Array<number>(n).fill(0); // in slots, 0..cols-1
-  const centerOf = (b: Block) => b.x0 + b.w / 2;
+  // ---- the snake: blocks one after another along one rising path that is folded into laps of MAX_ROW_WIDTH.
+  // Lap 0 runs to the right, lap 1 back to the left (mirrored), and so on. A block that fits a lap never turns inside:
+  // it goes to the next lap when it would overflow. A block longer than a lap turns inside itself, at the topic
+  const keyOf = (b: Block) => (b.kind === "chapter" ? `b:${hubList[b.hub].id}` : b.kind === "lone" ? "b:lone" : `b:free:${visible[b.topics[0]].id}`);
+  const lapOf = new Array<number>(n).fill(0);
+  const ux = new Array<number>(n).fill(0); // x along the lap before the mirror
+  const grid = BLOCK_GRID_SLOTS * GAP_X;
+  let lap = 0;
+  let cur = 0;
   for (const b of seq) {
-    b.rows.forEach((row, r) => row.forEach((v) => (relRow[v] = r)));
-    if (b.kind === "lone") {
-      b.rows.forEach((row) => row.forEach((v, i) => (pos[v] = i)));
-      continue;
-    }
-    const mid = (b.cols - 1) / 2;
-    const inB = new Set(b.topics);
-    const preIn = (v: number) => preq[v].filter((p) => inB.has(p));
-    const depIn = (v: number) => dep[v].filter((d) => inB.has(d));
-    // links to other blocks pull a topic to the side where those blocks lie
-    const crossOf = new Map(
-      b.topics.map((v) => {
-        const out: number[] = [];
-        for (const w of [...preq[v], ...dep[v]]) {
-          const o = blockOf[w];
-          if (o >= 0 && blocks[o] !== b) out.push(clamp((centerOf(blocks[o]) - centerOf(b)) / GAP_X + mid, 0, b.cols - 1));
-        }
-        return [v, out] as const;
-      }),
-    );
-    b.rows.forEach((row) => {
-      row.sort((p, q) => p - q);
-      row.forEach((v, i) => (pos[v] = mid + (i - (row.length - 1) / 2)));
-    });
-    const chainDir = new Map<number, number>();
-    // Only the last pass lets the previous picture settle a tie; the passes before it (and so the picture) never depend on it
-    const pass = (up: boolean, last = false) => {
-      const rs = b.rows.map((_, r) => r);
-      if (!up) rs.reverse();
-      for (const r of rs) {
-        const row = b.rows[r];
-        const aim = new Map<number, number>();
-        for (const v of row) {
-          const pre = preIn(v);
-          if (up && pre.length === 1 && depIn(pre[0]).length === 1) {
-            // a link of a chain: one step to the side, bouncing off the walls of the block
-            const p = pre[0];
-            let d = chainDir.get(p) ?? (pos[p] > mid ? -1 : 1);
-            if (pos[p] + d < -1e-9 || pos[p] + d > b.cols - 1 + 1e-9) d = -d;
-            chainDir.set(v, d);
-            aim.set(v, clamp(pos[p] + d, 0, b.cols - 1));
-            continue;
-          }
-          const near = [...(up ? pre : depIn(v)).map((w) => pos[w]), ...crossOf.get(v)!];
-          aim.set(v, near.length ? mean(near) : pos[v]);
-        }
-        row.sort((p, q) => (Math.abs(aim.get(p)! - aim.get(q)!) > 1e-9 ? aim.get(p)! - aim.get(q)! : last ? priorCmp(p, q) : p - q));
-        const placed = pack(row.map((v) => aim.get(v)!), b.cols);
-        row.forEach((v, i) => (pos[v] = placed[i]));
+    const slots = b.maxX - b.minX + 1;
+    b.w = Math.max(slots * GAP_X, b.kind === "chapter" ? HUB_MIN_W : 0);
+    b.wrapped = b.w > MAX_ROW_WIDTH;
+    if (!b.wrapped) {
+      const slack = stored?.[keyOf(b)]?.[1] === lap ? SNAKE_STAY_SLACK : SNAKE_SLACK;
+      if (cur > 0 && cur + b.w > MAX_ROW_WIDTH + slack) {
+        lap++;
+        cur = 0;
       }
-    };
-    for (let s = 0; s < SWEEPS; s++) {
-      pass(true);
-      pass(false);
+      b.lap = lap;
+      b.x0 = cur;
+      for (const v of b.topics) {
+        lapOf[v] = lap;
+        ux[v] = cur + (b.w - slots * GAP_X) / 2 + (xl[v] - b.minX + 0.5) * GAP_X;
+      }
+      cur += b.w;
+    } else {
+      b.lap = lap;
+      b.x0 = cur;
+      for (const v of b.topics) {
+        const g = cur + (xl[v] - b.minX + 0.5) * GAP_X;
+        const k = Math.floor(g / MAX_ROW_WIDTH);
+        lapOf[v] = lap + k;
+        ux[v] = g - k * MAX_ROW_WIDTH;
+      }
+      const end = cur + b.w;
+      lap += Math.floor(end / MAX_ROW_WIDTH);
+      cur = end % MAX_ROW_WIDTH;
     }
-    pass(true, true);
+    cur = Math.ceil((cur + BLOCK_GAP_X) / grid) * grid;
   }
+  const mirror = (k: number, x: number) => (k % 2 ? MAX_ROW_WIDTH - x : x);
+  const px = new Array<number>(n).fill(0);
+  for (let v = 0; v < n; v++) px[v] = mirror(lapOf[v], ux[v]);
 
-  // ---- y: every block stands as low as the rules allow. Rows count from the foundation and may be fractional
+  // ---- y along the path: every block as low as the rules allow, and always above the base of the block before it.
+  // Rows count from the foundation and are fractional
   const rowAbs = new Array<number>(n).fill(NaN);
-  const rects: { x0: number; x1: number; bot: number; top: number }[] = [];
   let prevBase = -SNAKE_RISE;
   for (const b of seq) {
-    const span = b.rows.length - 1 + (b.kind === "chapter" ? HUB_BAND_ROWS : 0);
-    // above everything its topics need, and above the base of the previous block of the snake
     let lo = Math.max(0, prevBase + SNAKE_RISE);
-    for (const v of b.topics) for (const p of preq[v]) if (blockOf[p] !== blockOf[v] && !Number.isNaN(rowAbs[p])) lo = Math.max(lo, rowAbs[p] + 1 - relRow[v]);
-    // and clear of the blocks already standing under it
-    const clear = (o: number) => !rects.some((r) => r.x0 < b.x0 + b.w - 1e-9 && b.x0 < r.x1 - 1e-9 && o < r.top + 1 - 1e-9 && o + span + 1 > r.bot + 1e-9);
-    const cands = [lo, ...rects.map((r) => r.top + 1).filter((c) => c > lo)].sort((p, q) => p - q);
-    const o = cands.find(clear) ?? cands[cands.length - 1];
-    for (const v of b.topics) rowAbs[v] = o + relRow[v];
-    rects.push({ x0: b.x0, x1: b.x0 + b.w, bot: o, top: o + span });
-    prevBase = o;
+    for (const v of b.topics) for (const p of preq[v]) if (blockOf[p] !== blockOf[v] && !Number.isNaN(rowAbs[p])) lo = Math.max(lo, rowAbs[p] + riseOf(v, p) - yl[v]);
+    for (const v of b.topics) rowAbs[v] = lo + yl[v];
+    prevBase = lo;
   }
-  const px = new Array<number>(n).fill(0);
-  for (const b of seq) for (const v of b.topics) px[v] = b.x0 + (b.w - b.cols * GAP_X) / 2 + (pos[v] + 0.5) * GAP_X;
+  // ---- laps: lap k+1 stands above everything of the laps below it that is near it in x, with LAP_GAP clear rows between
+  // (hubs count, with their names). The offset of a lap never falls below the one under it, so edges keep pointing up
+  type Item = { lap: number; x: number; y: number; hub: boolean };
+  const items: Item[] = [];
+  for (let v = 0; v < n; v++) items.push({ lap: lapOf[v], x: px[v], y: rowAbs[v], hub: false });
+  for (const b of seq) {
+    if (b.kind !== "chapter") continue;
+    const top = b.topics.reduce((best, v) => (rowAbs[v] > rowAbs[best] ? v : best), b.topics[0]);
+    items.push({ lap: lapOf[top], x: px[top], y: rowAbs[top] + HUB_RISE / GAP_Y, hub: true });
+  }
+  const lapCount = n ? Math.max(...lapOf) + 1 : 0;
+  const lapShift = new Array<number>(lapCount).fill(0);
+  for (let k = 1; k < lapCount; k++) {
+    let o = lapShift[k - 1];
+    for (const v of items) {
+      if (v.lap !== k) continue;
+      for (const u of items) {
+        if (u.lap >= k) continue;
+        const clearX = u.hub || v.hub ? HUB_MIN_W / 2 + GAP_X / 2 : GAP_X * SLOT_CLEAR;
+        if (Math.abs(u.x - v.x) < clearX) o = Math.max(o, u.y + lapShift[u.lap] + LAP_GAP + (u.hub ? HUB_LABEL_ROWS : 0) - v.y);
+      }
+    }
+    lapShift[k] = o;
+  }
+  for (let v = 0; v < n; v++) rowAbs[v] += lapShift[lapOf[v]];
 
   // ---- repair: if the order of the blocks could not keep every edge up (chapters that need each other), lift the topics
   // that stand too low, and then whoever they now cover
@@ -473,8 +497,8 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     let changed = false;
     for (const v of topo) {
       for (const p of preq[v]) {
-        if (rowAbs[v] < rowAbs[p] + 1 - 1e-9) {
-          rowAbs[v] = rowAbs[p] + 1;
+        if (rowAbs[v] < rowAbs[p] + riseOf(v, p) - 1e-9) {
+          rowAbs[v] = rowAbs[p] + riseOf(v, p);
           changed = true;
         }
       }
@@ -492,6 +516,8 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     }
     if (!changed) break;
   }
+  // Whatever the passes left, an edge that points down is worse than two nodes that stand close: one last lift, no more moving aside
+  for (const v of topo) for (const p of preq[v]) rowAbs[v] = Math.max(rowAbs[v], rowAbs[p] + riseOf(v, p));
 
   // ---- nodes
   const nodes = new Map<string, LayoutNode>();
@@ -506,11 +532,14 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     nodes.set(node.key, node);
     hubNodes.push(node);
   };
-  // Hubs of chapters: centred over their block, above its highest topic
+  // Hubs of chapters: over the middle of their block, just above its highest topic
   for (const b of seq) {
     if (b.kind !== "chapter") continue;
     const xs = b.topics.map((v) => px[v]);
-    const x = (Math.min(...xs) + Math.max(...xs)) / 2;
+    // over the middle of the block, but no further from its highest topic than a quarter of the block's width
+    const centre = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const top = b.topics.reduce((best, v) => (rowAbs[v] > rowAbs[best] ? v : best), b.topics[0]);
+    const x = b.wrapped ? px[top] : clamp(px[top], centre - (Math.max(...xs) - Math.min(...xs)) / 4, centre + (Math.max(...xs) - Math.min(...xs)) / 4);
     let y = Math.min(...b.topics.map((v) => -rowAbs[v] * GAP_Y)) - HUB_RISE;
     // Only after a repair can something stand there: then the hub goes up until it is free
     const taken = (yy: number) =>
@@ -561,12 +590,14 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
     : { x0: 0, x1: 0, y0: 0, y1: 0 };
 
   const outBlocks: LayoutBlock[] = seq.map((b) => ({
-    key: b.kind === "chapter" ? `b:${hubList[b.hub].id}` : b.kind === "lone" ? "b:lone" : `b:free:${visible[b.topics[0]].id}`,
+    key: keyOf(b),
     kind: b.kind,
+    lap: b.lap,
+    wrapped: b.wrapped,
     hubId: b.kind === "chapter" ? hubList[b.hub].id : undefined,
     topicIds: b.topics.map((v) => visible[v].id),
-    x0: b.x0,
-    x1: b.x0 + b.w,
+    x0: b.wrapped ? 0 : mirror(b.lap, b.x0 + (b.lap % 2 ? b.w : 0)),
+    x1: b.wrapped ? MAX_ROW_WIDTH : mirror(b.lap, b.x0 + (b.lap % 2 ? 0 : b.w)),
     baseY: -Math.min(...b.topics.map((v) => rowAbs[v])) * GAP_Y,
   }));
   return {
@@ -582,7 +613,7 @@ export function layoutGraph(model: GraphModel, stored?: StoredPositions): Layout
 }
 
 const KEY = (learner: string, domainId: string) => `quack.graph.${learner}.${domainId}.pos`;
-const STORAGE_VERSION = 11;
+const STORAGE_VERSION = 13;
 
 export function loadPositions(learner: string, domainId: string): StoredPositions | undefined {
   try {
@@ -598,6 +629,8 @@ export function loadPositions(learner: string, domainId: string): StoredPosition
 export function savePositions(learner: string, domainId: string, layout: Layout) {
   const pos: StoredPositions = {};
   for (const n of layout.nodes.values()) pos[n.key] = [Math.round(n.x * 10) / 10, Math.round(n.y * 10) / 10];
+  // a block remembers the row of the snake it stood in: that is what keeps the turn of the snake where it was
+  for (const b of layout.blocks) pos[b.key] = [Math.round(b.x0 * 10) / 10, b.lap];
   try {
     localStorage.setItem(KEY(learner, domainId), JSON.stringify({ v: STORAGE_VERSION, pos }));
   } catch {
