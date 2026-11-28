@@ -6,7 +6,6 @@ import { layoutGraph, loadPositions } from "@/lib/graph/layout";
 import { LEARNER } from "@/lib/graph/visit-store";
 import { useGraphModel } from "@/lib/graph/use-graph-model";
 import { onGraph, type GraphModel } from "@/lib/graph/types";
-import { layoutDomain } from "@/lib/graph-layout";
 import { useLocale, useT } from "@/lib/i18n/provider";
 import type { Domain, TopicState } from "@/lib/mock/types";
 import { cn } from "@/lib/utils";
@@ -29,11 +28,11 @@ type Shape = {
   lines: { id: string; d: string; dashed?: boolean; faint?: boolean }[];
 };
 
-/** The same picture the domain view draws, taken from the graph model (mocks) or, without one, from the subject's own topics */
-function shapeOf(model: GraphModel | undefined, domain: Domain): Shape | null {
+/** The same picture the domain view draws, taken from the graph model. Without a model (the backend graph is still loading) there is no picture: null */
+function shapeOf(model: GraphModel | undefined): Shape | null {
   let dots: Shape["dots"] = [];
   let rings: Shape["rings"] = [];
-  let lines: Shape["lines"] = [];
+  const lines: Shape["lines"] = [];
   if (model) {
     const layout = layoutGraph(model, loadPositions(LEARNER, model.domainId));
     const byId = new Map(model.topics.map((t) => [t.id, t]));
@@ -51,10 +50,7 @@ function shapeOf(model: GraphModel | undefined, domain: Domain): Shape | null {
       if (a && b) lines.push({ id: `h:${l.hubId}>${l.topicId}`, d: `M${a.x} ${a.y}L${b.x} ${b.y}`, faint: true });
     }
   } else {
-    const layout = layoutDomain(domain);
-    dots = layout.topics.map((t) => ({ id: t.id, x: t.x, y: t.y, state: t.state }));
-    rings = layout.hubs.map((h) => ({ id: h.id, x: h.x, y: h.y }));
-    lines = layout.edges.map((e) => ({ id: e.id, d: e.d, dashed: e.kind === "related", faint: e.kind === "cross" || e.kind === "related" }));
+    return null;
   }
   const pts = [...dots, ...rings];
   if (!pts.length) return null;
@@ -93,7 +89,7 @@ function Tile({ domain }: { domain: Domain }) {
   const { locale } = useLocale();
   const { selectDomain } = useShell();
   const model = useGraphModel(locale, domain.id);
-  const shape = useMemo(() => shapeOf(model, domain), [model, domain]);
+  const shape = useMemo(() => shapeOf(model), [model]);
   const hubs = model ? model.hubs.filter((h) => h.kind !== "domain_all").length : domain.hubs.length;
   const topics = model ? model.topics.filter(onGraph).length : domain.topics.length;
   const ready = domain.readiness;

@@ -480,18 +480,14 @@ export const en = {
   graph: {
     noChapter: "No chapter",
     statesLabel: "Topic states",
-    openChapter: "Open chapter →",
-    allChapters: "← All chapters",
     zoomGroup: "Graph zoom",
     zoomIn: "Zoom in",
     zoomOut: "Zoom out",
     fitAll: "Show the whole graph",
     subtopics: (n: number) => `${n} ${plural2(n, "subtopic", "subtopics")}`,
-    statusHub: (num: string, title: string, n: number) => `§ ${num} ${title} · ${n} ${plural2(n, "subtopic", "subtopics")}`,
     status: (hubs: number, topics: number) =>
       `${hubs} ${plural2(hubs, "chapter", "chapters")} · ${topics} ${plural2(topics, "topic", "topics")}`,
     ariaGraph: (title: string) => `Topic graph “${title}”. Arrow keys pan, plus and minus zoom.`,
-    openHubAria: (title: string, n: number) => `Open chapter ${title}, ${n} ${plural2(n, "subtopic", "subtopics")}`,
     allTopicsPill: "All topics",
     allTopicsPillAria: "Open the page with all topics of the subject",
     columnLabel: "Topics outside the chains",

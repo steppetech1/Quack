@@ -481,18 +481,14 @@ export const ru: Dict = {
   graph: {
     noChapter: "Без главы",
     statesLabel: "Состояния тем",
-    openChapter: "Открыть главу →",
-    allChapters: "← Все главы",
     zoomGroup: "Масштаб графа",
     zoomIn: "Приблизить",
     zoomOut: "Отдалить",
     fitAll: "Показать весь граф",
     subtopics: (n: number) => `${n} ${plural(n, "подтема", "подтемы", "подтем")}`,
-    statusHub: (num: string, title: string, n: number) => `§ ${num} ${title} · ${n} ${plural(n, "подтема", "подтемы", "подтем")}`,
     status: (hubs: number, topics: number) =>
       `${hubs} ${plural(hubs, "глава", "главы", "глав")} · ${topics} ${plural(topics, "тема", "темы", "тем")}`,
     ariaGraph: (title: string) => `Граф тем «${title}». Стрелки — двигать, плюс и минус — масштаб.`,
-    openHubAria: (title: string, n: number) => `Открыть главу ${title}, ${n} ${plural(n, "подтема", "подтемы", "подтем")}`,
     allTopicsPill: "Все темы",
     allTopicsPillAria: "Открыть страницу со всеми темами предмета",
     columnLabel: "Темы вне цепочек",

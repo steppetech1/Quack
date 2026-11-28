@@ -4,7 +4,7 @@ import { PanelLeft, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from "react";
 import type { FileRef } from "./attachments";
-import type { GraphMode } from "@/lib/graph-layout";
+import type { GraphMode } from "@/lib/graph/types";
 import { EMPTY_DOMAIN } from "@/lib/api/adapters";
 import { API_MODE } from "@/lib/api/client";
 import { useData } from "@/lib/api/data";

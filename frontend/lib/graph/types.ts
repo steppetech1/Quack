@@ -94,3 +94,6 @@ export type GraphModel = {
 
 /** Shown on the graph: not hidden, not off-domain (off-domain topics live in the left column) */
 export const onGraph = (t: GraphTopic) => t.visibility !== "hidden" && t.status !== "off_domain";
+
+/** Which part of the domain graph the camera is on: the whole graph or one hub */
+export type GraphMode = { kind: "overview" } | { kind: "hub"; hubId: string };

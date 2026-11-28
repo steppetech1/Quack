@@ -13,8 +13,7 @@ import { useApiCanvases } from "@/lib/api/use-canvases";
 import { useShell } from "./app-shell";
 import { CanvasesList, CanvasSearch } from "./canvases-page";
 import { Composer } from "./composer";
-import { DomainGraph, type GraphHandle } from "./domain-graph";
-import { LayeredGraph } from "./graph/layered-graph";
+import { LayeredGraph, type GraphHandle } from "./graph/layered-graph";
 import { DomainJobsCorner } from "./live/domain-jobs-corner";
 import { useDomainJobs } from "./live/use-domain-jobs";
 import { NumText } from "./num-text";
@@ -130,7 +129,7 @@ export function DomainView() {
 
   const clearFocus = useCallback(() => setGraphMode({ kind: "overview" }), [setGraphMode]);
   const deadlineHub = domain.hubs.find((h) => h.deadline);
-  // The layered graph runs on the slice model. With the API on, the old graph stays until the adapter exists
+  // The layered graph runs on the slice model; with the API on it is undefined until the backend graph has loaded
   const model = useGraphModel(locale, domain.id);
   const hasGraph = model ? model.topics.length > 0 : domain.topics.length > 0;
   // with the API on the canvases are the backend's (the mock store is empty there)
@@ -246,7 +245,8 @@ export function DomainView() {
                     popFirst={emptyOnEntry.empty === true && jobs.rows.length > 0}
                   />
                 ) : (
-                  <DomainGraph key={domain.id} ref={graph} domain={domain} mode={graphMode} onModeChange={setGraphMode} center={centerPending} onCentered={consumeCenter} />
+                  // the backend graph is still loading: a quiet empty area of the same size
+                  <div aria-hidden className="min-h-0 flex-1" />
                 )}
               </div>
               <TodayCards recs={recs} nameOf={nameOf} onHover={setHot} minutes={model?.todayMinutes} className="md:hidden" idPrefix="m" />
