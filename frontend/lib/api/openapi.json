@@ -1275,6 +1275,17 @@
             ],
             "title": "Args"
           },
+          "called": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Called"
+          },
           "columns": {
             "anyOf": [
               {
@@ -1670,6 +1681,17 @@
       "CustomRunView": {
         "description": "«Запустить свой ввод»: the function on the learner's own arguments, nothing compared.",
         "properties": {
+          "called": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Called"
+          },
           "error": {
             "anyOf": [
               {

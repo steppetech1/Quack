@@ -1892,6 +1892,8 @@ export interface components {
             actual_rows?: unknown[][] | null;
             /** Args */
             args?: unknown[] | null;
+            /** Called */
+            called?: string | null;
             /** Columns */
             columns?: string[] | null;
             /** Data Sql */
@@ -2034,6 +2036,8 @@ export interface components {
          * @description «Запустить свой ввод»: the function on the learner's own arguments, nothing compared.
          */
         CustomRunView: {
+            /** Called */
+            called?: string | null;
             error?: components["schemas"]["CodeRunErrorView"] | null;
             status: components["schemas"]["CodeTestStatus"];
             /**
