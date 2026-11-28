@@ -47,7 +47,7 @@ function shapeOf(model: GraphModel | undefined): Shape | null {
     for (const l of model.includes) {
       const a = layout.nodes.get(`h:${l.hubId}`);
       const b = layout.nodes.get(l.topicId);
-      if (a && b) lines.push({ id: `h:${l.hubId}>${l.topicId}`, d: `M${a.x} ${a.y}L${b.x} ${b.y}`, faint: true, dashed: layout.collections.has(l.hubId) });
+      if (a && b) lines.push({ id: `h:${l.hubId}>${l.topicId}`, d: `M${a.x} ${a.y}L${b.x} ${b.y}`, faint: true });
     }
   } else {
     return null;
