@@ -353,7 +353,7 @@ export const LayeredGraph = forwardRef<
       const mute = bright(`h:${hubId}`);
       // A collection (a hub with no topic of its own) stands beside its topics: dashed, fainter, no stem; the curves end at the ring.
       // A chapter's foot of the stem sits below the hub on screen; its curves end there
-      const loose = false; // the old layout has no collection hubs
+      const loose = L.collections.has(hubId);
       const sxp = hx, syp = loose ? hy : hy + Math.max(ringR + 6, 0.5 * GAP_Y * k);
       ctx.setLineDash(loose ? [6, 5] : []);
       let any = false;
